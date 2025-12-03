@@ -554,9 +554,13 @@ class GeminiAPI:
         
         return None
     
-    def ocr_clusters(self, image_path: str, clusters_json_path: str, retry_count: int = 3) -> Optional[List[Dict]]:
+    def ocr_clusters(self, image_path: str, clusters_json_path: str, retry_count: int = 3) -> Optional[Dict]:
         """
-        Cluster 기반 OCR: 각 cluster의 bounding_poly 영역을 Gemini로 OCR
+        Cluster 기반 OCR: 전체 이미지 + cluster 좌표로 Gemini OCR 수행
+
+        전체 이미지를 Gemini에 전달하고, 각 cluster의 bounding_poly 좌표 정보를 함께 제공.
+        Gemini가 OCR한 텍스트를 cluster_id와 매칭하여 반환하고,
+        필요시 merge 제안도 포함.
 
         Args:
             image_path: 원본 이미지 경로
@@ -564,7 +568,10 @@ class GeminiAPI:
             retry_count: 재시도 횟수
 
         Returns:
-            List[Dict]: 각 cluster에 OCR 결과가 추가된 리스트
+            Dict: {
+                "clusters": List[Dict] - 각 cluster에 OCR 결과 추가,
+                "merge_suggestions": List[Dict] - cluster 병합 제안 (optional)
+            }
         """
         print(f"📸 Cluster 기반 OCR 시작: {Path(image_path).name}")
 
@@ -580,110 +587,173 @@ class GeminiAPI:
             clusters = json.load(f)
 
         print(f"  📦 {len(clusters)}개 cluster 로드")
+        print(f"  🖼️  전체 이미지 크기: {width}x{height}")
 
-        # 임시 디렉토리 생성
-        import tempfile
-        temp_dir = Path(tempfile.mkdtemp())
+        # Cluster 정보를 프롬프트 형식으로 변환
+        cluster_info = "\n**감지된 Cluster 영역:**\n"
+        for cluster in clusters:
+            cid = cluster['cluster_id']
+            poly = cluster['bounding_poly']
+            cv_text = cluster['text']
 
-        # 각 cluster에 대해 OCR 수행
-        for i, cluster in enumerate(clusters, 1):
-            cluster_id = cluster['cluster_id']
-            bboxes = cluster['bboxes']
-            bounding_poly = cluster['bounding_poly']
-            orientation = cluster['orientation']
+            # bounding_poly의 좌표 범위 계산
+            xs = [p[0] for p in poly]
+            ys = [p[1] for p in poly]
+            x_min, x_max = min(xs), max(xs)
+            y_min, y_max = min(ys), max(ys)
 
-            print(f"\n🔍 Cluster {cluster_id}/{len(clusters)} - {orientation}, {len(bboxes)}개 bbox")
+            cluster_info += f"\nCluster {cid}:\n"
+            cluster_info += f"  - 영역: x=[{x_min}, {x_max}], y=[{y_min}, {y_max}]\n"
+            cluster_info += f"  - CV 텍스트 (참고): '{cv_text}'\n"
 
-            # bounding_poly로 crop
-            poly_points = bounding_poly
-            xs = [p[0] for p in poly_points]
-            ys = [p[1] for p in poly_points]
-            x_min, x_max = max(0, min(xs) - 5), min(width, max(xs) + 5)
-            y_min, y_max = max(0, min(ys) - 5), min(height, max(ys) + 5)
+        # 프롬프트 생성
+        prompt = f"""이 만화 이미지에서 모든 일본어 텍스트를 OCR하고, 각 텍스트가 어느 Cluster에 속하는지 매칭해주세요.
 
-            # crop
-            cropped = img[y_min:y_max, x_min:x_max]
-            crop_path = temp_dir / f"cluster_{cluster_id}.jpg"
-            cv2.imwrite(str(crop_path), cropped)
+**이미지 크기**: {width}x{height} 픽셀
 
-            # bounding_poly 좌표 정보를 프롬프트에 포함
-            bbox_info = "\n**텍스트 구성:**\n"
-            for j, bbox_item in enumerate(bboxes, 1):
-                bbox_info += f"{j}. '{bbox_item['text']}'\n"
-
-            # 프롬프트 생성
-            prompt = f"""이 이미지에서 일본어 텍스트를 정확히 OCR해주세요.
-
-**텍스트 방향**: {orientation}
-- vertical: 오른쪽에서 왼쪽으로 읽는 세로쓰기
-- horizontal: 왼쪽에서 오른쪽으로 읽는 가로쓰기
-
-**Cloud Vision이 감지한 {len(bboxes)}개의 문자:**
-{bbox_info}
+{cluster_info}
 
 **작업:**
-1. 이미지의 모든 일본어 텍스트를 {orientation} 방향으로 읽기
-2. 완전한 문장으로 OCR 수행
+1. 이미지의 모든 일본어 텍스트를 정확히 OCR
+2. OCR된 각 텍스트가 위 Cluster 중 어디에 속하는지 판단 (좌표 기준)
+3. Cloud Vision이 놓친 문자도 포함하여 완전한 문장으로 OCR
+4. (선택) 분리된 Cluster들이 실제로는 하나의 문장인 경우 merge 제안
 
 **반환 형식 (JSON):**
 {{
-  "text": "완전한 일본어 텍스트 (올바른 읽기 순서로)",
-  "confidence": "high/medium/low"
+  "clusters": [
+    {{
+      "cluster_id": 1,
+      "text": "완전한 일본어 텍스트",
+      "confidence": "high/medium/low",
+      "text_type": "dialogue/sound_effect",
+      "location": "in_bubble/outside_bubble"
+    }},
+    ...
+  ],
+  "merge_suggestions": [
+    {{
+      "clusters": [32, 36, 38],
+      "reason": "연속된 문장으로 보임",
+      "merged_text": "병합된 완전한 텍스트"
+    }}
+  ]
 }}
 
 **중요:**
-- 이미지에 보이는 모든 텍스트를 포함
-- {orientation} 순서로 텍스트를 올바르게 연결
+- CV 텍스트는 참고용 (일부 문자 누락 가능)
+- 이미지에서 실제로 보이는 모든 텍스트를 OCR
+- 좌표를 기준으로 텍스트를 올바른 cluster_id에 매칭
+- 후리가나(furigana) 읽기는 포함하지 마세요 - 순수 한자와 히라가나/카타카나만
+- merge_suggestions는 선택사항 (필요시에만)
 - 순수 JSON만 반환"""
 
-            # Gemini API 호출
-            for attempt in range(retry_count):
-                try:
-                    # crop된 이미지 업로드
-                    image_file = genai.upload_file(str(crop_path))
+        # Gemini API 호출
+        for attempt in range(retry_count):
+            try:
+                # 전체 이미지 업로드
+                print(f"\n🔄 이미지 업로드 중... ({Path(image_path).name})")
+                import time
+                upload_start = time.time()
+                image_file = genai.upload_file(image_path)
+                upload_time = time.time() - upload_start
+                print(f"  ✅ 업로드 완료 ({upload_time:.1f}초)")
 
-                    # API 호출
-                    response = self.ocr_model.generate_content([prompt, image_file])
-                    response_text = response.text.strip()
+                # API 호출 (60초 타임아웃)
+                print(f"  🤖 Gemini API 호출 중... (prompt: {len(prompt)} chars, 타임아웃: 60초)")
+                api_start = time.time()
 
-                    # JSON 추출
-                    if response_text.startswith('```'):
-                        lines = response_text.split('\n')
-                        json_lines = []
-                        in_code_block = False
-                        for line in lines:
-                            if line.startswith('```'):
-                                in_code_block = not in_code_block
-                                continue
-                            if in_code_block:
-                                json_lines.append(line)
-                        response_text = '\n'.join(json_lines)
+                # 타임아웃 처리를 위한 threading 사용
+                import threading
+                response_container = [None]
+                error_container = [None]
 
-                    # JSON 파싱
-                    ocr_result = json.loads(response_text)
+                def api_call():
+                    try:
+                        response_container[0] = self.ocr_model.generate_content([prompt, image_file])
+                    except Exception as e:
+                        error_container[0] = e
 
-                    # cluster에 OCR 결과 추가
-                    cluster['gemini_text'] = ocr_result.get('text', '')
-                    cluster['gemini_confidence'] = ocr_result.get('confidence', 'unknown')
+                thread = threading.Thread(target=api_call)
+                thread.daemon = True
+                thread.start()
+                thread.join(timeout=60)
 
-                    print(f"  ✅ OCR: '{cluster['gemini_text'][:50]}...' ({cluster['gemini_confidence']})")
-                    break
+                if thread.is_alive():
+                    api_time = time.time() - api_start
+                    print(f"  ⏱️ API 타임아웃 ({api_time:.1f}초) - 재시도 중...")
+                    raise TimeoutError("API call exceeded 60 seconds")
 
-                except Exception as e:
-                    print(f"  ⚠️ OCR 실패 (시도 {attempt + 1}/{retry_count}): {e}")
-                    if attempt < retry_count - 1:
-                        time.sleep(2)
-                    else:
-                        cluster['gemini_text'] = cluster['text']  # CV 텍스트 사용
-                        cluster['gemini_confidence'] = 'failed'
-                        print(f"  ❌ OCR 최종 실패, CV 텍스트 사용")
+                if error_container[0]:
+                    raise error_container[0]
 
-        # 임시 파일 정리
-        import shutil
-        shutil.rmtree(temp_dir, ignore_errors=True)
+                response = response_container[0]
+                api_time = time.time() - api_start
+                print(f"  ✅ API 응답 완료 ({api_time:.1f}초)")
 
-        print(f"\n✅ Cluster 기반 OCR 완료: {len(clusters)}개 cluster")
-        return clusters
+                response_text = response.text.strip()
+                print(f"  📄 응답 길이: {len(response_text)} chars")
+
+                # JSON 추출
+                if response_text.startswith('```'):
+                    lines = response_text.split('\n')
+                    json_lines = []
+                    in_code_block = False
+                    for line in lines:
+                        if line.startswith('```'):
+                            in_code_block = not in_code_block
+                            continue
+                        if in_code_block:
+                            json_lines.append(line)
+                    response_text = '\n'.join(json_lines)
+
+                # JSON 파싱
+                ocr_result = json.loads(response_text)
+
+                # OCR 결과를 원본 clusters에 매칭
+                ocr_clusters = ocr_result.get('clusters', [])
+                merge_suggestions = ocr_result.get('merge_suggestions', [])
+
+                # cluster_id 기준으로 매칭
+                for ocr_cluster in ocr_clusters:
+                    cid = ocr_cluster['cluster_id']
+                    # 원본 clusters에서 해당 cluster 찾기
+                    for cluster in clusters:
+                        if cluster['cluster_id'] == cid:
+                            cluster['gemini_text'] = ocr_cluster.get('text', '')
+                            cluster['gemini_confidence'] = ocr_cluster.get('confidence', 'unknown')
+                            cluster['text_type'] = ocr_cluster.get('text_type', 'unknown')
+                            cluster['location'] = ocr_cluster.get('location', 'unknown')
+
+                            text_info = f"[{cluster['text_type']}|{cluster['location']}]"
+                            print(f"  ✅ C{cid}: '{cluster['gemini_text'][:40]}...' {text_info}")
+                            break
+
+                # Merge 제안이 있으면 출력
+                if merge_suggestions:
+                    print(f"\n💡 Merge 제안 {len(merge_suggestions)}개:")
+                    for suggestion in merge_suggestions:
+                        cluster_ids = suggestion['clusters']
+                        reason = suggestion.get('reason', '')
+                        print(f"  - C{cluster_ids}: {reason}")
+
+                print(f"\n✅ Cluster 기반 OCR 완료: {len(ocr_clusters)}개 cluster")
+
+                return {
+                    "clusters": clusters,
+                    "merge_suggestions": merge_suggestions
+                }
+
+            except Exception as e:
+                print(f"  ⚠️ OCR 실패 (시도 {attempt + 1}/{retry_count}): {e}")
+                if attempt < retry_count - 1:
+                    time.sleep(2)
+                else:
+                    print(f"  ❌ OCR 최종 실패")
+                    return {
+                        "clusters": clusters,
+                        "merge_suggestions": []
+                    }
 
     def process_image(self, image_path: str) -> Optional[tuple]:
         """

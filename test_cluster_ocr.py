@@ -31,15 +31,32 @@ def test_cluster_ocr(image_path: str, clusters_json_path: str, output_path: str 
     result = api.ocr_clusters(image_path, clusters_json_path)
 
     if result:
+        clusters = result.get('clusters', [])
+        merge_suggestions = result.get('merge_suggestions', [])
+
         # 결과 출력
         print("\n" + "="*60)
         print("📊 OCR 결과 요약:")
         print("="*60)
-        for cluster in result:
+        for cluster in clusters:
             print(f"\nCluster {cluster['cluster_id']} ({cluster['orientation']}):")
             print(f"  CV Text:     {cluster['text'][:60]}...")
-            print(f"  Gemini Text: {cluster['gemini_text'][:60]}...")
-            print(f"  Confidence:  {cluster['gemini_confidence']}")
+            gemini_text = cluster.get('gemini_text', cluster['text'])
+            print(f"  Gemini Text: {gemini_text[:60]}...")
+            print(f"  Confidence:  {cluster.get('gemini_confidence', 'unknown')}")
+
+        # Merge 제안 출력
+        if merge_suggestions:
+            print("\n" + "="*60)
+            print("💡 Cluster Merge 제안:")
+            print("="*60)
+            for i, suggestion in enumerate(merge_suggestions, 1):
+                cluster_ids = suggestion['clusters']
+                reason = suggestion.get('reason', '')
+                merged_text = suggestion.get('merged_text', '')
+                print(f"\n제안 {i}: Cluster {cluster_ids}")
+                print(f"  이유: {reason}")
+                print(f"  병합 텍스트: {merged_text[:80]}...")
 
         # 결과 저장
         if output_path is None:
