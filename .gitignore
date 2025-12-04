@@ -1,0 +1,90 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Virtual Environment
+.venv/
+venv/
+ENV/
+env/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Project specific
+output/
+temp_output/
+*.bak
+google-credentials.json
+
+# Test files
+test_*.py
+*_test.py
+
+# Archive and reference
+archive/
+ref/
+claudedocs/
+.serena/
+
+# Temporary visualization files
+*_viz.jpg
+*_cv_viz.jpg
+*_g3_viz.jpg
+*_ocr_viz.jpg
+*_llm_viz.jpg
+*_overlay_canvas.jpg
+
+# Intermediate JSON files (keep in output/ only)
+*_cv.json
+*_g3.json
+*_ocr.json
+*_clusters.json
+*_integrated.json
+*_translated.json
+
+# Old versions
+*_v2.py
+*_v3.py
+*_v4.py
+cluster_cv.py
+
+# Fonts (user should add their own)
+Fonts/*.ttf
+Fonts/*.otf
+
+# Images
+test_image/
+*.jpg
+*.png
+!README_assets/*.jpg
+!README_assets/*.png
+
+# Documentation drafts
+HYBRID_OCR_DOCUMENTATION.md
+VISUAL_OCR_README.md
+대화내용.md
