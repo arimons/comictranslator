@@ -28,9 +28,11 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 load_dotenv()
 
 # 전역 변수
-output_dir = Path("output")
+temp_dir = Path("temp_output")  # 중간 파일 (JSON, masked)
+output_dir = Path("output")  # 최종 결과물 (final.jpg, ZIP)
+temp_dir.mkdir(exist_ok=True)
 output_dir.mkdir(exist_ok=True)
-prompt_history_file = output_dir / "last_prompt.txt"
+prompt_history_file = temp_dir / "last_prompt.txt"
 
 
 def load_last_prompt() -> str:
@@ -54,7 +56,26 @@ def save_prompt(prompt: str):
         print(f"⚠️ 프롬프트 저장 실패: {e}")
 
 
-def process_single_image(image_path: str, extra_prompt: str = "") -> tuple:
+def check_existing_results(image_name: str) -> dict:
+    """기존 결과 파일 확인"""
+    final_img = output_dir / f"{image_name}_final.jpg"
+    
+    existing = {
+        'final': final_img if final_img.exists() else None,
+        'intermediate': []
+    }
+    
+    # 중간 파일 확인
+    for suffix in ['_cv.json', '_cv_clusters_v5.json', '_ocr_v5.json', 
+                   '_integrated.json', '_integrated_translated.json', '_masked.jpg']:
+        path = temp_dir / f"{image_name}{suffix}"
+        if path.exists():
+            existing['intermediate'].append(path.name)
+    
+    return existing
+
+
+def process_single_image(image_path: str, extra_prompt: str = "", force_reprocess: bool = False) -> tuple:
     """
     단일 이미지 전체 파이프라인 처리
     
@@ -66,16 +87,25 @@ def process_single_image(image_path: str, extra_prompt: str = "") -> tuple:
     
     try:
         # 출력 경로 설정
-        cv_json = output_dir / f"{image_name}_cv.json"
-        cv_clusters = output_dir / f"{image_name}_cv_clusters_v5.json"
-        llm_viz = output_dir / f"{image_name}_llm_viz.jpg"
-        ocr_json = output_dir / f"{image_name}_ocr_v5.json"
-        integrated = output_dir / f"{image_name}_integrated.json"
-        integrated_translated = output_dir / f"{image_name}_integrated_translated.json"
-        masked_img = output_dir / f"{image_name}_masked.jpg"
+        # 중간 파일들은 temp_output에
+        cv_json = temp_dir / f"{image_name}_cv.json"
+        cv_clusters = temp_dir / f"{image_name}_cv_clusters_v5.json"
+        llm_viz = temp_dir / f"{image_name}_llm_viz.jpg"
+        ocr_json = temp_dir / f"{image_name}_ocr_v5.json"
+        integrated = temp_dir / f"{image_name}_integrated.json"
+        integrated_translated = temp_dir / f"{image_name}_integrated_translated.json"
+        masked_img = temp_dir / f"{image_name}_masked.jpg"
+        
+        # 최종 결과물은 output에
         final_img = output_dir / f"{image_name}_final.jpg"
         
         log.append(f"📸 처리 중: {image_name}")
+        
+        # 기존 결과 확인
+        if not force_reprocess and final_img.exists():
+            log.append(f"  ✅ 기존 결과 발견: {final_img.name}")
+            log.append(f"  ℹ️  force_reprocess=False이므로 기존 파일 사용")
+            return str(final_img), "\n".join(log)
         
         # 1. Cloud Vision API (캐시 활용)
         if not cv_json.exists():
@@ -90,62 +120,73 @@ def process_single_image(image_path: str, extra_prompt: str = "") -> tuple:
             log.append("  ✅ CV JSON 캐시 사용")
         
         # 2. 클러스터링 V5
-        log.append("  📦 클러스터링 V5...")
-        result = subprocess.run(
-            ["python3", "cluster_cv_v5.py", str(cv_json), str(cv_clusters)],
-            capture_output=True, text=True, timeout=60
-        )
-        if result.returncode != 0:
-            raise Exception(f"클러스터링 실패: {result.stderr}")
+        if not cv_clusters.exists() or force_reprocess:
+            log.append("  📦 클러스터링 V5...")
+            result = subprocess.run(
+                ["python3", "cluster_cv_v5.py", str(cv_json), str(cv_clusters)],
+                capture_output=True, text=True, timeout=60
+            )
+            if result.returncode != 0:
+                raise Exception(f"클러스터링 실패: {result.stderr}")
+        else:
+            log.append("  ✅ Clusters JSON 캐시 사용")
         
         # 시각화 (옵션)
-        subprocess.run(
-            ["python3", "visualize_clusters_v5.py", image_path, str(cv_clusters), str(llm_viz)],
-            capture_output=True, text=True, timeout=30
-        )
+        if not llm_viz.exists():
+            subprocess.run(
+                ["python3", "visualize_clusters_v5.py", image_path, str(cv_clusters), str(llm_viz)],
+                capture_output=True, text=True, timeout=30
+            )
         
         # 3. Gemini OCR
-        log.append("  🤖 Gemini OCR...")
-        result = subprocess.run(
-            ["python3", "test_cluster_ocr.py", image_path, str(cv_clusters), str(ocr_json)],
-            capture_output=True, text=True, timeout=120
-        )
-        if result.returncode != 0:
-            raise Exception(f"Gemini OCR 실패: {result.stderr}")
+        if not ocr_json.exists() or force_reprocess:
+            log.append("  🤖 Gemini OCR...")
+            result = subprocess.run(
+                ["python3", "test_cluster_ocr.py", image_path, str(cv_clusters), str(ocr_json)],
+                capture_output=True, text=True, timeout=120
+            )
+            if result.returncode != 0:
+                raise Exception(f"Gemini OCR 실패: {result.stderr}")
+        else:
+            log.append("  ✅ OCR JSON 캐시 사용")
         
         # 4. 텍스트 통합
-        log.append("  🔄 텍스트 통합...")
-        result = subprocess.run(
-            ["python3", "integrate_ocr.py", str(cv_clusters), str(ocr_json), str(integrated)],
-            capture_output=True, text=True, timeout=30
-        )
-        if result.returncode != 0:
-            raise Exception(f"통합 실패: {result.stderr}")
+        if not integrated.exists() or force_reprocess:
+            log.append("  🔄 텍스트 통합...")
+            result = subprocess.run(
+                ["python3", "integrate_ocr.py", str(cv_clusters), str(ocr_json), str(integrated)],
+                capture_output=True, text=True, timeout=30
+            )
+            if result.returncode != 0:
+                raise Exception(f"통합 실패: {result.stderr}")
+        else:
+            log.append("  ✅ Integrated JSON 캐시 사용")
         
         # 5. Gemini Translation
-        log.append("  🌐 번역 중...")
-        
-        # 임시로 추가 프롬프트가 있으면 JSON에 삽입
-        # (translate_integrated.py는 extra_prompt를 받지 않으므로)
-        result = subprocess.run(
-            ["python3", "translate_integrated.py", str(integrated), str(integrated_translated)],
-            capture_output=True, text=True, timeout=120
-        )
-        if result.returncode != 0:
-            raise Exception(f"번역 실패: {result.stderr}")
-        
-        # Extra prompt가 있으면 재번역 (TODO: translate_integrated.py에 extra_prompt 지원 추가)
+        if not integrated_translated.exists() or force_reprocess:
+            log.append("  🌐 번역 중...")
+            result = subprocess.run(
+                ["python3", "translate_integrated.py", str(integrated), str(integrated_translated)],
+                capture_output=True, text=True, timeout=120
+            )
+            if result.returncode != 0:
+                raise Exception(f"번역 실패: {result.stderr}")
+        else:
+            log.append("  ✅ Translation JSON 캐시 사용")
         
         # 6. White Masking
-        log.append("  🎨 White Masking...")
-        result = subprocess.run(
-            ["python3", "apply_text_overlay.py", image_path, str(integrated), str(cv_clusters), str(masked_img)],
-            capture_output=True, text=True, timeout=60
-        )
-        if result.returncode != 0:
-            raise Exception(f"Masking 실패: {result.stderr}")
+        if not masked_img.exists() or force_reprocess:
+            log.append("  🎨 White Masking...")
+            result = subprocess.run(
+                ["python3", "apply_text_overlay.py", image_path, str(integrated), str(cv_clusters), str(masked_img)],
+                capture_output=True, text=True, timeout=60
+            )
+            if result.returncode != 0:
+                raise Exception(f"Masking 실패: {result.stderr}")
+        else:
+            log.append("  ✅ Masked 이미지 캐시 사용")
         
-        # 7. Text Overlay
+        # 7. Text Overlay (항상 최종 결과는 재생성)
         log.append("  📝 Text Overlay...")
         result = subprocess.run(
             ["python3", "render_text_overlay.py", str(masked_img), str(integrated_translated), str(cv_clusters), str(final_img)],
@@ -155,6 +196,8 @@ def process_single_image(image_path: str, extra_prompt: str = "") -> tuple:
             raise Exception(f"Text Overlay 실패: {result.stderr}")
         
         log.append(f"  ✅ 완료: {final_img.name}")
+        log.append(f"  📁 중간 파일: temp_output/")
+        log.append(f"  📁 최종 결과: output/")
         
         return str(final_img), "\n".join(log)
         
@@ -216,10 +259,10 @@ def process_batch_with_grid(
         if not cv_results:
             raise Exception("CV Grid 처리 실패")
         
-        # 각 이미지별 CV JSON 저장
+        # 각 이미지별 CV JSON 저장 (temp_output에)
         for idx, (img_path, cv_boxes) in enumerate(zip(image_paths, cv_results)):
             img_name = Path(img_path).stem
-            cv_json_path = output_dir / f"{img_name}_cv.json"
+            cv_json_path = temp_dir / f"{img_name}_cv.json"
             with open(cv_json_path, 'w', encoding='utf-8') as f:
                 json.dump(cv_boxes, f, ensure_ascii=False, indent=2)
         
@@ -316,6 +359,12 @@ with gr.Blocks(title="Comic Translator V5", theme=gr.themes.Soft()) as app:
             value=load_last_prompt()
         )
         
+        force_reprocess = gr.Checkbox(
+            label="🔄 강제 재처리 (기존 결과 무시)",
+            value=False,
+            info="체크하면 기존 캐시를 무시하고 모든 단계를 다시 실행합니다"
+        )
+        
         batch_btn = gr.Button("🚀 배치 번역 시작", variant="primary", size="lg")
         
         batch_status = gr.Textbox(label="📊 진행 상황", lines=15)
@@ -341,10 +390,15 @@ with gr.Blocks(title="Comic Translator V5", theme=gr.themes.Soft()) as app:
     6. **White Masking** → _masked.jpg (병렬)
     7. **Text Overlay** → _final.jpg (병렬)
     
+    ### 📁 폴더 구조:
+    - **temp_output/**: 중간 파일 (JSON, masked.jpg, viz.jpg)
+    - **output/**: 최종 결과물 (final.jpg, ZIP)
+    
     ### 💡 사용 팁:
     - Grid 처리로 CV API 비용 절감 (이미지 N개 → 1회 호출)
     - 병렬 처리로 빠른 속도 (최대 5개 동시 처리)
-    - 결과는 `temp_output/` 폴더에 저장됩니다
+    - 기존 결과가 있으면 자동으로 캐시 사용
+    - 강제 재처리를 체크하면 모든 단계를 다시 실행
     - 폰트: Freesentation-4Regular.ttf, 30px (±3px)
     """)
 
