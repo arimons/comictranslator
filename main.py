@@ -311,11 +311,15 @@ def process_batch_with_grid(
                 log.append(f"  📦 배치 {batch_idx+1}/{num_batches}: {batch_size}개 이미지, Grid {grid_rows}x{grid_cols}")
                 
                 from cloud_vision_api import CloudVisionAPI
-                credentials_path = os.getenv("GOOGLE_APPLICATION_CREDENTIALS")
-                if not credentials_path:
-                    raise Exception("GOOGLE_APPLICATION_CREDENTIALS 환경변수 필요")
                 
-                cv_api = CloudVisionAPI(credentials_path=credentials_path)
+                # API 키 우선, 없으면 서비스 계정
+                api_key = os.getenv("CLOUD_VISION_API_KEY")
+                credentials_path = os.getenv("GOOGLE_APPLICATION_CREDENTIALS")
+                
+                if not api_key and not credentials_path:
+                    raise Exception("CLOUD_VISION_API_KEY 또는 GOOGLE_APPLICATION_CREDENTIALS 환경변수 필요")
+                
+                cv_api = CloudVisionAPI(api_key=api_key, credentials_path=credentials_path)
                 batch_results = cv_api.detect_text_grid(batch_paths)
                 
                 if not batch_results:
@@ -326,17 +330,23 @@ def process_batch_with_grid(
             cv_results = all_cv_results
         else:
             # 단일 배치 처리
-            grid_cols = min(int(np.ceil(np.sqrt(n_images))), max_grid_size)
+            # 유연한 Grid 크기 (5x4, 4x3 등 가능)
+            grid_cols = int(np.ceil(np.sqrt(n_images * 1.2)))
             grid_rows = int(np.ceil(n_images / grid_cols))
             log.append(f"  📐 Grid: {grid_rows}x{grid_cols}")
             
             from cloud_vision_api import CloudVisionAPI
-            credentials_path = os.getenv("GOOGLE_APPLICATION_CREDENTIALS")
-            if not credentials_path:
-                raise Exception("GOOGLE_APPLICATION_CREDENTIALS 환경변수 필요")
             
-            cv_api = CloudVisionAPI(credentials_path=credentials_path)
+            # API 키 우선, 없으면 서비스 계정
+            api_key = os.getenv("CLOUD_VISION_API_KEY")
+            credentials_path = os.getenv("GOOGLE_APPLICATION_CREDENTIALS")
+            
+            if not api_key and not credentials_path:
+                raise Exception("CLOUD_VISION_API_KEY 또는 GOOGLE_APPLICATION_CREDENTIALS 환경변수 필요")
+            
+            cv_api = CloudVisionAPI(api_key=api_key, credentials_path=credentials_path)
             cv_results = cv_api.detect_text_grid(image_paths)
+            
             
             if not cv_results:
                 raise Exception("CV Grid 처리 실패")

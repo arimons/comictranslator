@@ -5,6 +5,8 @@ Cloud Vision API 통합 모듈
 """
 
 import os
+import requests
+import base64
 from typing import List, Dict, Optional
 from pathlib import Path
 from google.cloud import vision
@@ -17,19 +19,17 @@ class CloudVisionAPI:
         Cloud Vision API 초기화
 
         Args:
-            api_key: Cloud Vision API 키 (선택)
-            credentials_path: Service Account JSON 경로 (선택)
+            api_key: Cloud Vision API 키 (선택) - REST API 사용
+            credentials_path: Service Account JSON 경로 (선택) - Python 클라이언트 사용
         """
-        # Service Account 방식 우선
-        if credentials_path:
-            os.environ['GOOGLE_APPLICATION_CREDENTIALS'] = credentials_path
-            self.client = vision.ImageAnnotatorClient()
-        elif api_key:
-            # API Key 방식 (제한적)
-            os.environ['GOOGLE_API_KEY'] = api_key
-            self.client = vision.ImageAnnotatorClient()
-        else:
-            # 환경 변수에서 자동 로드
+        self.api_key = api_key
+        self.use_rest_api = bool(api_key)
+        
+        if not self.use_rest_api:
+            # Service Account 방식 우선
+            if credentials_path:
+                os.environ['GOOGLE_APPLICATION_CREDENTIALS'] = credentials_path
+            # If credentials_path is not provided, it will try to load from GOOGLE_APPLICATION_CREDENTIALS env var or default credentials.
             self.client = vision.ImageAnnotatorClient()
 
     def detect_text(self, image_path: str) -> Optional[List[Dict]]:
@@ -42,6 +42,74 @@ class CloudVisionAPI:
         Returns:
             List[Dict]: [{"box_2d": [ymin, xmin, ymax, xmax], "label": "텍스트"}, ...]
         """
+        if self.use_rest_api:
+            return self._detect_text_rest(image_path)
+        else:
+            return self._detect_text_client(image_path)
+    
+    def _detect_text_rest(self, image_path: str) -> Optional[List[Dict]]:
+        """REST API로 텍스트 감지 (API 키 사용)"""
+        try:
+            # 이미지를 base64로 인코딩
+            with open(image_path, 'rb') as f:
+                image_content = f.read()
+            
+            encoded_image = base64.b64encode(image_content).decode('utf-8')
+            
+            # REST API 요청
+            url = f"https://vision.googleapis.com/v1/images:annotate?key={self.api_key}"
+            
+            request_body = {
+                "requests": [{
+                    "image": {"content": encoded_image},
+                    "features": [{"type": "TEXT_DETECTION"}]
+                }]
+            }
+            
+            response = requests.post(url, json=request_body, timeout=60)
+            
+            if response.status_code != 200:
+                raise Exception(f"{response.status_code} {response.text}")
+            
+            result = response.json()
+            
+            if 'responses' not in result or not result['responses']:
+                return []
+            
+            annotations = result['responses'][0].get('textAnnotations', [])
+            
+            if not annotations:
+                print(f"⚠️ Cloud Vision: 텍스트를 찾지 못했습니다")
+                return []
+            
+            # 첫 번째는 전체 텍스트이므로 제외
+            results = []
+            for text in annotations[1:]:
+                vertices = text['boundingPoly']['vertices']
+                
+                xs = [v.get('x', 0) for v in vertices]
+                ys = [v.get('y', 0) for v in vertices]
+                
+                xmin = min(xs)
+                xmax = max(xs)
+                ymin = min(ys)
+                ymax = max(ys)
+                
+                results.append({
+                    "box_2d": [ymin, xmin, ymax, xmax],
+                    "label": text['description'],
+                    "confidence": 1.0 # REST API response for TEXT_DETECTION doesn't typically include confidence per word/line
+                })
+            
+            print(f"✅ Cloud Vision (API Key): {len(results)}개 텍스트 감지")
+            return results
+            
+        except Exception as e:
+            print(f"❌ Cloud Vision API 오류: {e}")
+            return None
+
+    def _detect_text_client(self, image_path: str) -> Optional[List[Dict]]:
+        """Python 클라이언트로 텍스트 감지 (서비스 계정 사용)"""
         try:
             # 이미지 로드
             with io.open(image_path, 'rb') as image_file:
