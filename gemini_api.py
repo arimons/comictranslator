@@ -23,8 +23,13 @@ class GeminiAPI:
             api_key: Google AI Studio API 키
         """
         genai.configure(api_key=api_key)
-        # OCR/BBox 추출용 (정확도 높음)
-        self.ocr_model = genai.GenerativeModel('gemini-3-pro-image-preview')
+        # OCR/BBox 추출용 - Gemini 2.5 Flash로 변경
+        try:
+            self.ocr_model = genai.GenerativeModel('gemini-2.5-flash')
+            print("✅ OCR 모델: gemini-2.5-flash")
+        except:
+            print("⚠️ gemini-2.5-flash를 찾을 수 없어 gemini-1.5-flash로 대체합니다.")
+            self.ocr_model = genai.GenerativeModel('gemini-1.5-flash')
         # 번역용 (속도 빠름, 저렴함)
         try:
             self.translation_model = genai.GenerativeModel('gemini-2.0-flash')
@@ -564,7 +569,7 @@ class GeminiAPI:
 
         Args:
             image_path: 원본 이미지 경로
-            clusters_json_path: cluster JSON 파일 경로 (cluster_cv_v4.py 출력)
+            clusters_json_path: cluster JSON 파일 경로 (cluster_cv_v5.py 출력)
             retry_count: 재시도 횟수
 
         Returns:
@@ -589,12 +594,17 @@ class GeminiAPI:
         print(f"  📦 {len(clusters)}개 cluster 로드")
         print(f"  🖼️  전체 이미지 크기: {width}x{height}")
 
-        # Cluster 정보를 프롬프트 형식으로 변환
+        # Cluster 정보를 프롬프트 형식으로 변환 (V5 구조)
         cluster_info = "\n**감지된 Cluster 영역:**\n"
         for cluster in clusters:
             cid = cluster['cluster_id']
             poly = cluster['bounding_poly']
-            cv_text = cluster['text']
+            orientation = cluster.get('orientation', 'vertical')
+            
+            # Lines 정보 추출
+            lines = cluster.get('lines', [])
+            cv_text_parts = [line['text'] for line in lines]
+            cv_text = '\n'.join(cv_text_parts)
 
             # bounding_poly의 좌표 범위 계산
             xs = [p[0] for p in poly]
@@ -602,8 +612,9 @@ class GeminiAPI:
             x_min, x_max = min(xs), max(xs)
             y_min, y_max = min(ys), max(ys)
 
-            cluster_info += f"\nCluster {cid}:\n"
+            cluster_info += f"\nCluster {cid} ({orientation}):\n"
             cluster_info += f"  - 영역: x=[{x_min}, {x_max}], y=[{y_min}, {y_max}]\n"
+            cluster_info += f"  - Poly: {poly}\n"
             cluster_info += f"  - CV 텍스트 (참고): '{cv_text}'\n"
 
         # 프롬프트 생성
@@ -617,7 +628,10 @@ class GeminiAPI:
 1. 이미지의 모든 일본어 텍스트를 정확히 OCR
 2. OCR된 각 텍스트가 위 Cluster 중 어디에 속하는지 판단 (좌표 기준)
 3. Cloud Vision이 놓친 문자도 포함하여 완전한 문장으로 OCR
-4. (선택) 분리된 Cluster들이 실제로는 하나의 문장인 경우 merge 제안
+4. **글꼴(font)이 명확히 다른 텍스트가 같은 Cluster에 포함된 경우 분리 제안**
+   - 예: 일반 대사체와 작은 글씨체(생각, 속삭임)가 섞인 경우
+   - 텍스트가 서로 다른 의미 단위로 보이는 경우
+5. (선택) 분리된 Cluster들이 실제로는 하나의 문장인 경우 merge 제안
 
 **반환 형식 (JSON):**
 {{
@@ -626,10 +640,21 @@ class GeminiAPI:
       "cluster_id": 1,
       "text": "완전한 일본어 텍스트",
       "confidence": "high/medium/low",
-      "text_type": "dialogue/sound_effect",
-      "location": "in_bubble/outside_bubble"
+      "text_type": "dialogue/sound_effect/narration/other",
+      "location": "in_bubble/outside_bubble",
+      "bubble_overlap": "none/right_bottom/left_bottom/both_bottom/top/left/right/bottom"
     }},
     ...
+  ],
+  "split_suggestions": [
+    {{
+      "cluster_id": 4,
+      "reason": "글꼴이 다른 텍스트 혼재",
+      "parts": [
+        {{"text": "３人揃って なんの用だ", "text_type": "dialogue", "location": "in_bubble"}},
+        {{"text": "そして なんだその木刀は", "text_type": "dialogue", "location": "outside_bubble"}}
+      ]
+    }}
   ],
   "merge_suggestions": [
     {{
@@ -645,116 +670,126 @@ class GeminiAPI:
 - 이미지에서 실제로 보이는 모든 텍스트를 OCR
 - 좌표를 기준으로 텍스트를 올바른 cluster_id에 매칭
 - 후리가나(furigana) 읽기는 포함하지 마세요 - 순수 한자와 히라가나/카타카나만
-- merge_suggestions는 선택사항 (필요시에만)
-- 순수 JSON만 반환"""
 
-        # Gemini API 호출
+**bubble_overlap (필수):**
+- 말풍선 안(in_bubble) 텍스트의 경우: bounding_poly가 말풍선 **테두리 선**을 침범하는지 확인
+  - "none": 테두리와 겹치지 않음
+  - "right_bottom", "left_bottom", "both_bottom", "bottom": 하단 테두리 침범
+  - "top", "left", "right": 해당 방향 테두리 침범
+- 말풍선 밖(outside_bubble)인 경우: 항상 "none"
+
+**예시:** 세로쓰기 텍스트가 말풍선 우하단 테두리에 닿으면 "right_bottom"
+
+"""
+
+        # 이미지 업로드
+        image_file = genai.upload_file(image_path)
+        
+        # API 호출 (타임아웃 처리)
+        import threading
+        response_container = [None]
+        error_container = [None]
+        
+        def api_call():
+            try:
+                response_container[0] = self.ocr_model.generate_content([prompt, image_file])
+            except Exception as e:
+                error_container[0] = e
+        
         for attempt in range(retry_count):
             try:
-                # 전체 이미지 업로드
-                print(f"\n🔄 이미지 업로드 중... ({Path(image_path).name})")
-                import time
-                upload_start = time.time()
-                image_file = genai.upload_file(image_path)
-                upload_time = time.time() - upload_start
-                print(f"  ✅ 업로드 완료 ({upload_time:.1f}초)")
-
-                # API 호출 (60초 타임아웃)
-                print(f"  🤖 Gemini API 호출 중... (prompt: {len(prompt)} chars, 타임아웃: 60초)")
-                api_start = time.time()
-
-                # 타임아웃 처리를 위한 threading 사용
-                import threading
-                response_container = [None]
-                error_container = [None]
-
-                def api_call():
-                    try:
-                        response_container[0] = self.ocr_model.generate_content([prompt, image_file])
-                    except Exception as e:
-                        error_container[0] = e
-
+                print(f"  🔄 Gemini API 호출 중... (시도 {attempt + 1}/{retry_count})")
+                
+                # 타임아웃 설정 (60초)
                 thread = threading.Thread(target=api_call)
                 thread.daemon = True
                 thread.start()
                 thread.join(timeout=60)
-
+                
                 if thread.is_alive():
-                    api_time = time.time() - api_start
-                    print(f"  ⏱️ API 타임아웃 ({api_time:.1f}초) - 재시도 중...")
-                    raise TimeoutError("API call exceeded 60 seconds")
-
+                    print(f"  ⚠️ API 호출 타임아웃 (60초 초과)")
+                    if attempt < retry_count - 1:
+                        time.sleep(2)
+                        continue
+                    else:
+                        return None
+                
                 if error_container[0]:
                     raise error_container[0]
-
+                
                 response = response_container[0]
-                api_time = time.time() - api_start
-                print(f"  ✅ API 응답 완료 ({api_time:.1f}초)")
-
+                if not response:
+                    print(f"  ⚠️ 응답 없음")
+                    if attempt < retry_count - 1:
+                        time.sleep(2)
+                        continue
+                    else:
+                        return None
+                
                 response_text = response.text.strip()
-                print(f"  📄 응답 길이: {len(response_text)} chars")
-
+                
                 # JSON 추출
                 if response_text.startswith('```'):
                     lines = response_text.split('\n')
                     json_lines = []
-                    in_code_block = False
+                    in_json = False
                     for line in lines:
-                        if line.startswith('```'):
-                            in_code_block = not in_code_block
+                        if line.strip().startswith('```'):
+                            if in_json:
+                                break
+                            in_json = True
                             continue
-                        if in_code_block:
+                        if in_json:
                             json_lines.append(line)
                     response_text = '\n'.join(json_lines)
-
+                
                 # JSON 파싱
-                ocr_result = json.loads(response_text)
-
-                # OCR 결과를 원본 clusters에 매칭
-                ocr_clusters = ocr_result.get('clusters', [])
-                merge_suggestions = ocr_result.get('merge_suggestions', [])
-
-                # cluster_id 기준으로 매칭
-                for ocr_cluster in ocr_clusters:
-                    cid = ocr_cluster['cluster_id']
-                    # 원본 clusters에서 해당 cluster 찾기
-                    for cluster in clusters:
-                        if cluster['cluster_id'] == cid:
-                            cluster['gemini_text'] = ocr_cluster.get('text', '')
-                            cluster['gemini_confidence'] = ocr_cluster.get('confidence', 'unknown')
-                            cluster['text_type'] = ocr_cluster.get('text_type', 'unknown')
-                            cluster['location'] = ocr_cluster.get('location', 'unknown')
-
-                            text_info = f"[{cluster['text_type']}|{cluster['location']}]"
-                            print(f"  ✅ C{cid}: '{cluster['gemini_text'][:40]}...' {text_info}")
-                            break
-
-                # Merge 제안이 있으면 출력
-                if merge_suggestions:
-                    print(f"\n💡 Merge 제안 {len(merge_suggestions)}개:")
-                    for suggestion in merge_suggestions:
-                        cluster_ids = suggestion['clusters']
-                        reason = suggestion.get('reason', '')
-                        print(f"  - C{cluster_ids}: {reason}")
-
-                print(f"\n✅ Cluster 기반 OCR 완료: {len(ocr_clusters)}개 cluster")
-
-                return {
-                    "clusters": clusters,
-                    "merge_suggestions": merge_suggestions
-                }
-
+                result = json.loads(response_text)
+                
+                # 결과 검증
+                if 'clusters' not in result:
+                    print(f"  ⚠️ 'clusters' 필드 없음")
+                    if attempt < retry_count - 1:
+                        time.sleep(2)
+                        continue
+                    else:
+                        return None
+                
+                print(f"  ✅ OCR 완료: {len(result['clusters'])}개 cluster")
+                
+                # Merge suggestions 출력
+                if 'merge_suggestions' in result and result['merge_suggestions']:
+                    print(f"  💡 Merge 제안: {len(result['merge_suggestions'])}개")
+                    for suggestion in result['merge_suggestions']:
+                        print(f"    - Clusters {suggestion['clusters']}: {suggestion['reason']}")
+                
+                # Split suggestions 출력
+                if 'split_suggestions' in result and result['split_suggestions']:
+                    print(f"  ✂️ Split 제안: {len(result['split_suggestions'])}개")
+                    for suggestion in result['split_suggestions']:
+                        print(f"    - Cluster {suggestion['cluster_id']}: {suggestion['reason']}")
+                
+                return result
+                
+            except json.JSONDecodeError as e:
+                print(f"  ⚠️ JSON 파싱 실패 (시도 {attempt + 1}/{retry_count}): {e}")
+                print(f"  응답: {response_text[:200]}...")
+                if attempt < retry_count - 1:
+                    time.sleep(1)
+                else:
+                    print(f"❌ JSON 파싱 최종 실패")
+                    return None
+                    
             except Exception as e:
-                print(f"  ⚠️ OCR 실패 (시도 {attempt + 1}/{retry_count}): {e}")
+                print(f"  ⚠️ API 호출 실패 (시도 {attempt + 1}/{retry_count}): {e}")
                 if attempt < retry_count - 1:
                     time.sleep(2)
                 else:
-                    print(f"  ❌ OCR 최종 실패")
-                    return {
-                        "clusters": clusters,
-                        "merge_suggestions": []
-                    }
-
+                    print(f"❌ API 호출 최종 실패")
+                    return None
+        
+        return None
+    
     def process_image(self, image_path: str) -> Optional[tuple]:
         """
         이미지 전체 처리 파이프라인
