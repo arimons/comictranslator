@@ -303,8 +303,9 @@ def process_batch_with_grid(
                 batch_paths = image_paths[start_idx:end_idx]
                 batch_size = len(batch_paths)
                 
-                # 배치별 Grid 크기 계산
-                grid_cols = min(int(np.ceil(np.sqrt(batch_size))), max_grid_size)
+                # 유연한 Grid 크기 계산 (정사각형이 아닐 수 있음)
+                # 가로를 더 길게 (5x4, 5x3 등)
+                grid_cols = int(np.ceil(np.sqrt(batch_size * 1.2)))  # 약간 넓게
                 grid_rows = int(np.ceil(batch_size / grid_cols))
                 
                 log.append(f"  📦 배치 {batch_idx+1}/{num_batches}: {batch_size}개 이미지, Grid {grid_rows}x{grid_cols}")
