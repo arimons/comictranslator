@@ -240,24 +240,79 @@ def process_batch_with_grid(
         # 프롬프트 저장
         save_prompt(extra_prompt)
         
-        # Step 1: Grid CV API 처리 (1회 호출)
+        # Step 1: Grid CV API 처리 (파일 크기 고려)
         progress(0.05, desc="Cloud Vision Grid 처리 중...")
         log.append(f"\n🔍 Step 1: Cloud Vision Grid API")
         
-        grid_cols = int(np.ceil(np.sqrt(n_images)))
-        grid_rows = int(np.ceil(n_images / grid_cols))
-        log.append(f"  📐 Grid: {grid_rows}x{grid_cols}")
+        # 파일 크기 계산 및 Grid 크기 결정
+        total_size_mb = 0
+        for img_path in image_paths:
+            size_bytes = os.path.getsize(img_path)
+            total_size_mb += size_bytes / (1024 * 1024)
         
-        from cloud_vision_api import CloudVisionAPI
-        credentials_path = os.getenv("GOOGLE_APPLICATION_CREDENTIALS")
-        if not credentials_path:
-            raise Exception("GOOGLE_APPLICATION_CREDENTIALS 환경변수 필요")
+        avg_size_mb = total_size_mb / n_images if n_images > 0 else 0
         
-        cv_api = CloudVisionAPI(credentials_path=credentials_path)
-        cv_results = cv_api.detect_text_grid(image_paths)
+        # Cloud Vision API 제한: 40MB
+        # 평균 파일 크기에 따라 Grid 크기 결정
+        if avg_size_mb < 2.0:  # 작은 파일: 4x4 (최대 16개)
+            max_grid_size = 4
+            max_images_per_batch = 16
+        else:  # 큰 파일: 3x3 (최대 9개)
+            max_grid_size = 3
+            max_images_per_batch = 9
         
-        if not cv_results:
-            raise Exception("CV Grid 처리 실패")
+        log.append(f"  📊 평균 파일 크기: {avg_size_mb:.2f}MB")
+        log.append(f"  📐 최대 Grid 크기: {max_grid_size}x{max_grid_size} ({max_images_per_batch}개)")
+        
+        # 배치 분할 필요 여부 확인
+        if n_images > max_images_per_batch:
+            num_batches = int(np.ceil(n_images / max_images_per_batch))
+            log.append(f"  ⚠️  이미지가 많아 {num_batches}개 배치로 분할")
+            
+            # 배치별 처리
+            all_cv_results = []
+            for batch_idx in range(num_batches):
+                start_idx = batch_idx * max_images_per_batch
+                end_idx = min((batch_idx + 1) * max_images_per_batch, n_images)
+                batch_paths = image_paths[start_idx:end_idx]
+                batch_size = len(batch_paths)
+                
+                # 배치별 Grid 크기 계산
+                grid_cols = min(int(np.ceil(np.sqrt(batch_size))), max_grid_size)
+                grid_rows = int(np.ceil(batch_size / grid_cols))
+                
+                log.append(f"  📦 배치 {batch_idx+1}/{num_batches}: {batch_size}개 이미지, Grid {grid_rows}x{grid_cols}")
+                
+                from cloud_vision_api import CloudVisionAPI
+                credentials_path = os.getenv("GOOGLE_APPLICATION_CREDENTIALS")
+                if not credentials_path:
+                    raise Exception("GOOGLE_APPLICATION_CREDENTIALS 환경변수 필요")
+                
+                cv_api = CloudVisionAPI(credentials_path=credentials_path)
+                batch_results = cv_api.detect_text_grid(batch_paths)
+                
+                if not batch_results:
+                    raise Exception(f"CV Grid 처리 실패 (배치 {batch_idx+1})")
+                
+                all_cv_results.extend(batch_results)
+            
+            cv_results = all_cv_results
+        else:
+            # 단일 배치 처리
+            grid_cols = min(int(np.ceil(np.sqrt(n_images))), max_grid_size)
+            grid_rows = int(np.ceil(n_images / grid_cols))
+            log.append(f"  📐 Grid: {grid_rows}x{grid_cols}")
+            
+            from cloud_vision_api import CloudVisionAPI
+            credentials_path = os.getenv("GOOGLE_APPLICATION_CREDENTIALS")
+            if not credentials_path:
+                raise Exception("GOOGLE_APPLICATION_CREDENTIALS 환경변수 필요")
+            
+            cv_api = CloudVisionAPI(credentials_path=credentials_path)
+            cv_results = cv_api.detect_text_grid(image_paths)
+            
+            if not cv_results:
+                raise Exception("CV Grid 처리 실패")
         
         # 각 이미지별 CV JSON 저장 (temp_output에)
         for idx, (img_path, cv_boxes) in enumerate(zip(image_paths, cv_results)):
