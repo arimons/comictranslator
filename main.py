@@ -244,13 +244,20 @@ def process_batch_with_grid(
         progress(0.05, desc="Cloud Vision Grid 처리 중...")
         log.append(f"\n🔍 Step 1: Cloud Vision Grid API")
         
-        # 파일 크기 계산 및 Grid 크기 결정
+        # 파일 크기 계산 및 유연한 Grid 크기 결정
         total_size_mb = 0
         max_resolution = 0
+        file_sizes_mb = []
         
         for img_path in image_paths:
             size_bytes = os.path.getsize(img_path)
-            total_size_mb += size_bytes / (1024 * 1024)
+            size_mb = size_bytes / (1024 * 1024)
+            file_sizes_mb.append(size_mb)
+            total_size_mb += size_mb
+            
+            # 개별 파일 크기 체크 (20MB 제한)
+            if size_mb > 20:
+                log.append(f"  ⚠️  {Path(img_path).name}: {size_mb:.1f}MB (제한: 20MB)")
             
             # 해상도 확인 (75 megapixel 제한)
             import cv2
@@ -268,20 +275,20 @@ def process_batch_with_grid(
             log.append(f"  ⚠️  최대 해상도: {max_resolution:,} 픽셀 (제한: {MAX_PIXELS:,})")
             log.append(f"  ℹ️  CV API가 자동으로 리사이즈 처리합니다")
         
-        # Cloud Vision API 제한: 20MB (파일), 75 megapixel (해상도)
-        # 평균 파일 크기에 따라 Grid 크기 결정
-        if avg_size_mb < 1.2:  # 작은 파일: 4x4 (최대 16개, ~19.2MB)
-            max_grid_size = 4
-            max_images_per_batch = 16
-        elif avg_size_mb < 2.0:  # 중간 파일: 3x3 (최대 9개, ~18MB)
-            max_grid_size = 3
-            max_images_per_batch = 9
-        else:  # 큰 파일: 2x2 (최대 4개, ~8MB, 안전 마진)
-            max_grid_size = 2
-            max_images_per_batch = 4
+        # Cloud Vision API 제한:
+        # - 개별 이미지: 20MB
+        # - Request payload: 40MB (Grid 전체)
+        # - 이미지 해상도: 75 megapixels
+        
+        # 40MB payload 제한에 맞게 배치 크기 계산
+        MAX_PAYLOAD_MB = 38  # 안전 마진 (40MB - 2MB for overhead)
+        
+        # 평균 파일 크기로 최대 이미지 수 계산
+        max_images_per_batch = int(MAX_PAYLOAD_MB / avg_size_mb) if avg_size_mb > 0 else 16
+        max_images_per_batch = max(1, min(max_images_per_batch, 25))  # 1~25개 제한
         
         log.append(f"  📊 평균 파일 크기: {avg_size_mb:.2f}MB")
-        log.append(f"  📐 최대 Grid 크기: {max_grid_size}x{max_grid_size} ({max_images_per_batch}개)")
+        log.append(f"  📐 배치당 최대: {max_images_per_batch}개 이미지 (40MB 제한)")
         
         # 배치 분할 필요 여부 확인
         if n_images > max_images_per_batch:
