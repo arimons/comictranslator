@@ -246,20 +246,39 @@ def process_batch_with_grid(
         
         # 파일 크기 계산 및 Grid 크기 결정
         total_size_mb = 0
+        max_resolution = 0
+        
         for img_path in image_paths:
             size_bytes = os.path.getsize(img_path)
             total_size_mb += size_bytes / (1024 * 1024)
+            
+            # 해상도 확인 (75 megapixel 제한)
+            import cv2
+            img = cv2.imread(img_path)
+            if img is not None:
+                h, w = img.shape[:2]
+                resolution = h * w
+                max_resolution = max(max_resolution, resolution)
         
         avg_size_mb = total_size_mb / n_images if n_images > 0 else 0
         
-        # Cloud Vision API 제한: 40MB
+        # 해상도 경고
+        MAX_PIXELS = 75_000_000  # 75 megapixels
+        if max_resolution > MAX_PIXELS:
+            log.append(f"  ⚠️  최대 해상도: {max_resolution:,} 픽셀 (제한: {MAX_PIXELS:,})")
+            log.append(f"  ℹ️  CV API가 자동으로 리사이즈 처리합니다")
+        
+        # Cloud Vision API 제한: 20MB (파일), 75 megapixel (해상도)
         # 평균 파일 크기에 따라 Grid 크기 결정
-        if avg_size_mb < 2.0:  # 작은 파일: 4x4 (최대 16개)
+        if avg_size_mb < 1.2:  # 작은 파일: 4x4 (최대 16개, ~19.2MB)
             max_grid_size = 4
             max_images_per_batch = 16
-        else:  # 큰 파일: 3x3 (최대 9개)
+        elif avg_size_mb < 2.0:  # 중간 파일: 3x3 (최대 9개, ~18MB)
             max_grid_size = 3
             max_images_per_batch = 9
+        else:  # 큰 파일: 2x2 (최대 4개, ~8MB, 안전 마진)
+            max_grid_size = 2
+            max_images_per_batch = 4
         
         log.append(f"  📊 평균 파일 크기: {avg_size_mb:.2f}MB")
         log.append(f"  📐 최대 Grid 크기: {max_grid_size}x{max_grid_size} ({max_images_per_batch}개)")
