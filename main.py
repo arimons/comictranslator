@@ -159,14 +159,19 @@ def process_single_image(image_path: str, extra_prompt: str = "", force_reproces
     try:
         # 출력 경로 설정
         # 중간 파일들은 temp_output에
-        integrated = temp_dir / f"{image_name}_integrated.json"
-        integrated_translated = temp_dir / f"{image_name}_integrated_translated.json"
-        masked_img = temp_dir / f"{image_name}_masked.jpg"
+        cv_json = temp_dir / f"{img_name}_cv.json"
+        cv_clusters = temp_dir / f"{img_name}_cv_clusters_v5.json"
+        ocr_json = temp_dir / f"{img_name}_ocr_v5.json"
+        llm_viz = temp_dir / f"{img_name}_llm_viz.jpg"
+        
+        integrated = temp_dir / f"{img_name}_integrated.json"
+        integrated_translated = temp_dir / f"{img_name}_integrated_translated.json"
+        masked_img = temp_dir / f"{img_name}_masked.jpg"
         
         # 최종 결과물은 output에
-        final_img = output_dir / f"{image_name}_final.jpg"
+        final_img = output_dir / f"{img_name}_final.jpg"
         
-        log.append(f"📸 처리 중: {image_name}")
+        log.append(f"📸 처리 중: {img_name}")
         
         # 기존 결과 확인
         if not force_reprocess and final_img.exists():
