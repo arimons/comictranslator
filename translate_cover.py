@@ -1,16 +1,15 @@
 #!/usr/bin/env python3
 """
 Gemini AI로 만화책 표지 번역
-복잡한 레이아웃의 표지 이미지를 Gemini 2.0 Flash Thinking으로 자연스럽게 번역
+복잡한 레이아웃의 표지 이미지를 Gemini 3 Pro Image Preview로 자연스럽게 번역
 """
 
 import sys
 import os
+import time
 from pathlib import Path
 import google.generativeai as genai
 from dotenv import load_dotenv
-from PIL import Image
-import io
 
 load_dotenv()
 
@@ -31,7 +30,6 @@ def translate_cover(image_path: str, output_path: str):
     genai.configure(api_key=api_key)
     
     # Gemini 3 Pro Image Preview 모델 사용
-    # 이미지 이해 및 생성에 최적화
     model = genai.GenerativeModel('gemini-3-pro-image-preview')
     
     print(f"📖 표지 번역 시작: {Path(image_path).name}")
@@ -70,16 +68,15 @@ def translate_cover(image_path: str, output_path: str):
 
 번역된 표지 이미지를 생성해주세요."""
 
-    # API 호출 (타임아웃 및 재시도 포함)
+    # API 호출 (타임아웃 및 재시도)
     print(f"  🔄 Gemini AI 처리 중...")
     
     max_retries = 3
-    response = None # Initialize response outside the loop
     for attempt in range(max_retries):
         try:
             if attempt > 0:
                 print(f"     재시도 {attempt}/{max_retries-1}...")
-                time.sleep(5)  # 5초 대기
+                time.sleep(5)
             
             response = model.generate_content(
                 [prompt, image_file],
@@ -89,28 +86,47 @@ def translate_cover(image_path: str, output_path: str):
                     top_k=40,
                     max_output_tokens=8192,
                 ),
-                request_options={"timeout": 120}  # 120초 타임아웃
+                request_options={"timeout": 120}
             )
-                    with open(output_path, 'wb') as f:
-                        f.write(image_data)
-                    print(f"\n✅ 번역 완료: {output_path}")
-                    return True
-        
-        # 이미지가 없으면 텍스트만 반환됨
-        print("\n⚠️  생성된 이미지가 없습니다. Gemini가 텍스트 설명만 반환했습니다.")
-        print("이미지 생성 기능은 현재 Gemini API에서 제한적일 수 있습니다.")
-        
-        # 대안: 텍스트 가이드 저장
-        guide_path = Path(output_path).with_suffix('.txt')
-        with open(guide_path, 'w', encoding='utf-8') as f:
-            f.write(response.text)
-        print(f"  📄 번역 가이드 저장: {guide_path}")
-        
-        return False
-        
-    except Exception as e:
-        print(f"❌ 오류 발생: {e}")
-        return False
+            
+            # 성공 - 응답 처리
+            if not response or not response.text:
+                if attempt < max_retries - 1:
+                    print(f"     ⚠️  빈 응답, 재시도 중...")
+                    continue
+                print("❌ Gemini 응답이 비어있습니다")
+                return False
+            
+            print(f"\n📝 Gemini 응답:")
+            print(response.text)
+            
+            # 생성된 이미지 확인
+            if hasattr(response, 'parts'):
+                for part in response.parts:
+                    if hasattr(part, 'inline_data'):
+                        image_data = part.inline_data.data
+                        with open(output_path, 'wb') as f:
+                            f.write(image_data)
+                        print(f"\n✅ 번역 완료: {output_path}")
+                        return True
+            
+            # 이미지 없음 - 텍스트만 반환
+            print("\n⚠️  생성된 이미지가 없습니다.")
+            guide_path = Path(output_path).with_suffix('.txt')
+            with open(guide_path, 'w', encoding='utf-8') as f:
+                f.write(response.text)
+            print(f"  📄 번역 가이드 저장: {guide_path}")
+            return False
+            
+        except Exception as e:
+            error_msg = str(e)
+            if attempt < max_retries - 1:
+                print(f"     ⚠️  오류: {error_msg[:100]}, 재시도 중...")
+                continue
+            print(f"❌ 오류 발생: {error_msg}")
+            return False
+    
+    return False
 
 def main():
     if len(sys.argv) < 2:
@@ -130,7 +146,6 @@ def main():
     if len(sys.argv) >= 3:
         output_path = sys.argv[2]
     else:
-        # 기본: 원본 파일명에 _ko 추가
         p = Path(image_path)
         output_path = str(p.parent / f"{p.stem}_ko{p.suffix}")
     
@@ -143,7 +158,7 @@ def main():
     if success:
         print("\n🎉 표지 번역 완료!")
     else:
-        print("\n⚠️  이미지 생성 실패 - 텍스트 가이드를 참고하여 수동 편집이 필요할 수 있습니다")
+        print("\n⚠️  이미지 생성 실패 - 텍스트 가이드를 참고하세요")
 
 if __name__ == "__main__":
     main()
