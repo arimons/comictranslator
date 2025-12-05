@@ -142,7 +142,7 @@ def process_single_image(image_path: str, extra_prompt: str = "", force_reproces
         if not ocr_json.exists() or force_reprocess:
             log.append("  🤖 Gemini OCR...")
             result = subprocess.run(
-                ["python3", "test_cluster_ocr.py", image_path, str(cv_clusters), str(ocr_json)],
+                ["python3", "gemini_ocr_v5.py", image_path, str(cv_clusters), str(ocr_json)],
                 capture_output=True, text=True, timeout=120
             )
             if result.returncode != 0:
@@ -308,7 +308,9 @@ def process_batch_with_grid(
                 grid_cols = int(np.ceil(np.sqrt(batch_size * 1.2)))  # 약간 넓게
                 grid_rows = int(np.ceil(batch_size / grid_cols))
                 
-                log.append(f"  📦 배치 {batch_idx+1}/{num_batches}: {batch_size}개 이미지, Grid {grid_rows}x{grid_cols}")
+                # 누적 진행률 표시 (이미지 1~25/160 형식)
+                log.append(f"  📦 배치 {batch_idx+1}/{num_batches}: 이미지 {start_idx+1}~{end_idx}/{n_images}, Grid {grid_rows}x{grid_cols}")
+                
                 
                 from cloud_vision_api import CloudVisionAPI
                 
