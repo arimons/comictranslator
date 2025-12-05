@@ -75,23 +75,26 @@ def check_existing_results(image_name: str) -> dict:
     return existing
 
 
-def process_single_image(image_path: str, extra_prompt: str = "", force_reprocess: bool = False) -> tuple:
+def process_single_image(image_path: str, extra_prompt: str = "") -> tuple:
     """
-    단일 이미지 전체 파이프라인 처리
+    단일 이미지 처리 (병렬 실행용)
     
     Returns:
-        (최종 이미지 경로, 로그 메시지)
+        (final_image_path, log_text)
     """
-    image_name = Path(image_path).stem
+    temp_dir = Path("temp_output")
+    output_dir = Path("output")
+    
+    img_name = Path(image_path).stem
     log = []
+    log.append(f"📸 처리 중: {img_name}")
+    
+    # 빈 이미지 플래그 (텍스트 없는 이미지)
+    is_blank_image = False
     
     try:
         # 출력 경로 설정
         # 중간 파일들은 temp_output에
-        cv_json = temp_dir / f"{image_name}_cv.json"
-        cv_clusters = temp_dir / f"{image_name}_cv_clusters_v5.json"
-        llm_viz = temp_dir / f"{image_name}_llm_viz.jpg"
-        ocr_json = temp_dir / f"{image_name}_ocr_v5.json"
         integrated = temp_dir / f"{image_name}_integrated.json"
         integrated_translated = temp_dir / f"{image_name}_integrated_translated.json"
         masked_img = temp_dir / f"{image_name}_masked.jpg"
@@ -118,6 +121,18 @@ def process_single_image(image_path: str, extra_prompt: str = "", force_reproces
                 raise Exception(f"CV API 실패: {result.stderr}")
         else:
             log.append("  ✅ CV JSON 캐시 사용")
+        
+        # CV JSON이 비어있는지 확인 (텍스트 없는 이미지)
+        with open(cv_json, 'r', encoding='utf-8') as f:
+            cv_data = json.load(f)
+            if not cv_data or len(cv_data) == 0:
+                is_blank_image = True
+                log.append("  ℹ️  텍스트 없는 이미지 - 원본 복사")
+                # 원본을 output으로 복사
+                import shutil
+                final_output = output_dir / f"{img_name}_final.jpg"
+                shutil.copy(image_path, final_output)
+                return str(final_output), "\n".join(log)
         
         # 2. 클러스터링 V5
         if not cv_clusters.exists() or force_reprocess:
@@ -166,7 +181,7 @@ def process_single_image(image_path: str, extra_prompt: str = "", force_reproces
         if not integrated_translated.exists() or force_reprocess:
             log.append("  🌐 번역 중...")
             
-            max_retries = 3
+            max_retries = 5
             translation_success = False
             
             for attempt in range(max_retries):
