@@ -401,18 +401,30 @@ def process_batch_with_grid(
             }
             
             # 완료되는 순서대로 결과 수집
+            failed_images = []
             for future in as_completed(future_to_path):
                 img_path = future_to_path[future]
-                final_img, img_log = future.result()
                 
-                log.append(f"\n{img_log}")
+                try:
+                    final_img, img_log = future.result()
+                    
+                    log.append(f"\n{img_log}")
+                    
+                    if final_img:
+                        output_files.append(final_img)
+                        print(f"  ✅ 이미지 {completed_count+1}/{n_images} 완료: {Path(img_path).name}")
+                    else:
+                        failed_images.append(Path(img_path).name)
+                        print(f"  ⚠️  이미지 {completed_count+1}/{n_images} 실패: {Path(img_path).name}")
+                        
+                except Exception as e:
+                    failed_images.append(Path(img_path).name)
+                    error_msg = str(e)[:200]  # 에러 메시지 200자 제한
+                    print(f"  ❌ 이미지 {completed_count+1}/{n_images} 에러: {Path(img_path).name} - {error_msg}")
+                    log.append(f"\n❌ {Path(img_path).name}: {error_msg}")
                 
-                if final_img:
-                    output_files.append(final_img)
-                
-                # 각 이미지 처리 완료 시
+                # 각 이미지 처리 완료 시 (성공/실패 무관)
                 completed_count += 1
-                print(f"  ✅ 이미지 {completed_count}/{n_images} 완료: {Path(img_path).name}")
                 progress((0.15 + (0.75 * completed_count / n_images)), 
                         desc=f"처리 중 ({completed_count}/{n_images})...")
         
