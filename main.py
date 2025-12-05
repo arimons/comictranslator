@@ -244,68 +244,111 @@ def process_batch_with_grid(
         progress(0.05, desc="Cloud Vision Grid 처리 중...")
         log.append(f"\n🔍 Step 1: Cloud Vision Grid API")
         
-        for img_path in image_paths:
-            size_bytes = os.path.getsize(img_path)
-            size_mb = size_bytes / (1024 * 1024)
-            file_sizes_mb.append(size_mb)
-            total_size_mb += size_mb
+        # 캐싱 체크: 모든 이미지의 CV JSON이 있으면 건너뜀
+        all_cv_exist = all((temp_dir / f"{Path(p).stem}_cv.json").exists() for p in image_paths)
+        
+        if all_cv_exist and not force_reprocess:
+            print(f"  ✅ CV JSON 캐시 사용 (모든 파일 존재, {n_images}개)")
+            log.append(f"  ✅ CV JSON 캐시 사용 (모든 파일 존재)")
+            cv_results = []
+            for img_path in image_paths:
+                img_name = Path(img_path).stem
+                cv_json_path = temp_dir / f"{img_name}_cv.json"
+                with open(cv_json_path, 'r', encoding='utf-8') as f:
+                    cv_results.append(json.load(f))
+        else:
+            # 파일 크기 계산 및 유연한 Grid 크기 결정
+            file_sizes_mb = []
+            total_size_mb = 0
+            max_resolution = 0
             
-            # 개별 파일 크기 체크 (20MB 제한)
-            if size_mb > 20:
-                log.append(f"  ⚠️  {Path(img_path).name}: {size_mb:.1f}MB (제한: 20MB)")
+            for img_path in image_paths:
+                size_bytes = os.path.getsize(img_path)
+                size_mb = size_bytes / (1024 * 1024)
+                file_sizes_mb.append(size_mb)
+                total_size_mb += size_mb
+                
+                # 개별 파일 크기 체크 (20MB 제한)
+                if size_mb > 20:
+                    log.append(f"  ⚠️  {Path(img_path).name}: {size_mb:.1f}MB (제한: 20MB)")
+                
+                # 해상도 확인 (75 megapixel 제한)
+                import cv2
+                img = cv2.imread(img_path)
+                if img is not None:
+                    h, w = img.shape[:2]
+                    resolution = h * w
+                    max_resolution = max(max_resolution, resolution)
             
-            # 해상도 확인 (75 megapixel 제한)
-            import cv2
-            img = cv2.imread(img_path)
-            if img is not None:
-                h, w = img.shape[:2]
-                resolution = h * w
-                max_resolution = max(max_resolution, resolution)
-        
-        avg_size_mb = total_size_mb / n_images if n_images > 0 else 0
-        
-        # 해상도 경고
-        MAX_PIXELS = 75_000_000  # 75 megapixels
-        if max_resolution > MAX_PIXELS:
-            log.append(f"  ⚠️  최대 해상도: {max_resolution:,} 픽셀 (제한: {MAX_PIXELS:,})")
-            log.append(f"  ℹ️  CV API가 자동으로 리사이즈 처리합니다")
-        
-        # Cloud Vision API 제한:
-        # - 개별 이미지: 20MB
-        # - Request payload: 40MB (Grid 전체)
-        # - 이미지 해상도: 75 megapixels
-        
-        # 40MB payload 제한에 맞게 배치 크기 계산
-        MAX_PAYLOAD_MB = 38  # 안전 마진 (40MB - 2MB for overhead)
-        
-        # 평균 파일 크기로 최대 이미지 수 계산
-        max_images_per_batch = int(MAX_PAYLOAD_MB / avg_size_mb) if avg_size_mb > 0 else 16
-        max_images_per_batch = max(1, min(max_images_per_batch, 25))  # 1~25개 제한
-        
-        log.append(f"  📊 평균 파일 크기: {avg_size_mb:.2f}MB")
-        log.append(f"  📐 배치당 최대: {max_images_per_batch}개 이미지 (40MB 제한)")
-        
-        # 배치 분할 필요 여부 확인
-        if n_images > max_images_per_batch:
-            num_batches = int(np.ceil(n_images / max_images_per_batch))
-            log.append(f"  ⚠️  이미지가 많아 {num_batches}개 배치로 분할")
+            avg_size_mb = total_size_mb / n_images if n_images > 0 else 0
             
-            # 배치별 처리
-            all_cv_results = []
-            for batch_idx in range(num_batches):
-                start_idx = batch_idx * max_images_per_batch
-                end_idx = min((batch_idx + 1) * max_images_per_batch, n_images)
-                batch_paths = image_paths[start_idx:end_idx]
-                batch_size = len(batch_paths)
+            # 해상도 경고
+            MAX_PIXELS = 75_000_000  # 75 megapixels
+            if max_resolution > MAX_PIXELS:
+                log.append(f"  ⚠️  최대 해상도: {max_resolution:,} 픽셀 (제한: {MAX_PIXELS:,})")
+                log.append(f"  ℹ️  CV API가 자동으로 리사이즈 처리합니다")
+            
+            # Cloud Vision API 제한:
+            # - 개별 이미지: 20MB
+            # - Request payload: 40MB (Grid 전체)
+            # - 이미지 해상도: 75 megapixels
+            
+            # 40MB payload 제한에 맞게 배치 크기 계산
+            MAX_PAYLOAD_MB = 38  # 안전 마진 (40MB - 2MB for overhead)
+            
+            # 평균 파일 크기로 최대 이미지 수 계산
+            max_images_per_batch = int(MAX_PAYLOAD_MB / avg_size_mb) if avg_size_mb > 0 else 16
+            max_images_per_batch = max(1, min(max_images_per_batch, 25))  # 1~25개 제한
+            
+            log.append(f"  📊 평균 파일 크기: {avg_size_mb:.2f}MB")
+            log.append(f"  📐 배치당 최대: {max_images_per_batch}개 이미지 (40MB 제한)")
+            
+            # 배치 분할 필요 여부 확인
+            if n_images > max_images_per_batch:
+                num_batches = int(np.ceil(n_images / max_images_per_batch))
+                log.append(f"  ⚠️  이미지가 많아 {num_batches}개 배치로 분할")
                 
-                # 유연한 Grid 크기 계산 (정사각형이 아닐 수 있음)
-                # 가로를 더 길게 (5x4, 5x3 등)
-                grid_cols = int(np.ceil(np.sqrt(batch_size * 1.2)))  # 약간 넓게
-                grid_rows = int(np.ceil(batch_size / grid_cols))
+                # 배치별 처리
+                all_cv_results = []
+                for batch_idx in range(num_batches):
+                    start_idx = batch_idx * max_images_per_batch
+                    end_idx = min((batch_idx + 1) * max_images_per_batch, n_images)
+                    batch_paths = image_paths[start_idx:end_idx]
+                    batch_size = len(batch_paths)
+                    
+                    # 유연한 Grid 크기 계산 (정사각형이 아닐 수 있음)
+                    # 가로를 더 길게 (5x4, 5x3 등)
+                    grid_cols = int(np.ceil(np.sqrt(batch_size * 1.2)))  # 약간 넓게
+                    grid_rows = int(np.ceil(batch_size / grid_cols))
+                    
+                    # 누적 진행률 표시 (이미지 1~25/160 형식)
+                    log.append(f"  📦 배치 {batch_idx+1}/{num_batches}: 이미지 {start_idx+1}~{end_idx}/{n_images}, Grid {grid_rows}x{grid_cols}")
+                    
+                    
+                    from cloud_vision_api import CloudVisionAPI
+                    
+                    # API 키 우선, 없으면 서비스 계정
+                    api_key = os.getenv("CLOUD_VISION_API_KEY")
+                    credentials_path = os.getenv("GOOGLE_APPLICATION_CREDENTIALS")
+                    
+                    if not api_key and not credentials_path:
+                        raise Exception("CLOUD_VISION_API_KEY 또는 GOOGLE_APPLICATION_CREDENTIALS 환경변수 필요")
+                    
+                    cv_api = CloudVisionAPI(api_key=api_key, credentials_path=credentials_path)
+                    batch_results = cv_api.detect_text_grid(batch_paths)
+                    
+                    if not batch_results:
+                        raise Exception(f"CV Grid 처리 실패 (배치 {batch_idx+1})")
+                    
+                    all_cv_results.extend(batch_results)
                 
-                # 누적 진행률 표시 (이미지 1~25/160 형식)
-                log.append(f"  📦 배치 {batch_idx+1}/{num_batches}: 이미지 {start_idx+1}~{end_idx}/{n_images}, Grid {grid_rows}x{grid_cols}")
-                
+                cv_results = all_cv_results
+            else:
+                # 단일 배치 처리
+                # 유연한 Grid 크기 (5x4, 4x3 등 가능)
+                grid_cols = int(np.ceil(np.sqrt(n_images * 1.2)))
+                grid_rows = int(np.ceil(n_images / grid_cols))
+                log.append(f"  📐 Grid: {grid_rows}x{grid_cols}")
                 
                 from cloud_vision_api import CloudVisionAPI
                 
@@ -317,36 +360,11 @@ def process_batch_with_grid(
                     raise Exception("CLOUD_VISION_API_KEY 또는 GOOGLE_APPLICATION_CREDENTIALS 환경변수 필요")
                 
                 cv_api = CloudVisionAPI(api_key=api_key, credentials_path=credentials_path)
-                batch_results = cv_api.detect_text_grid(batch_paths)
+                cv_results = cv_api.detect_text_grid(image_paths)
                 
-                if not batch_results:
-                    raise Exception(f"CV Grid 처리 실패 (배치 {batch_idx+1})")
                 
-                all_cv_results.extend(batch_results)
-            
-            cv_results = all_cv_results
-        else:
-            # 단일 배치 처리
-            # 유연한 Grid 크기 (5x4, 4x3 등 가능)
-            grid_cols = int(np.ceil(np.sqrt(n_images * 1.2)))
-            grid_rows = int(np.ceil(n_images / grid_cols))
-            log.append(f"  📐 Grid: {grid_rows}x{grid_cols}")
-            
-            from cloud_vision_api import CloudVisionAPI
-            
-            # API 키 우선, 없으면 서비스 계정
-            api_key = os.getenv("CLOUD_VISION_API_KEY")
-            credentials_path = os.getenv("GOOGLE_APPLICATION_CREDENTIALS")
-            
-            if not api_key and not credentials_path:
-                raise Exception("CLOUD_VISION_API_KEY 또는 GOOGLE_APPLICATION_CREDENTIALS 환경변수 필요")
-            
-            cv_api = CloudVisionAPI(api_key=api_key, credentials_path=credentials_path)
-            cv_results = cv_api.detect_text_grid(image_paths)
-            
-            
-            if not cv_results:
-                raise Exception("CV Grid 처리 실패")
+                if not cv_results:
+                    raise Exception("CV Grid 처리 실패")
         
         # 각 이미지별 CV JSON 저장 (temp_output에)
         for idx, (img_path, cv_boxes) in enumerate(zip(image_paths, cv_results)):
@@ -382,9 +400,11 @@ def process_batch_with_grid(
                 if final_img:
                     output_files.append(final_img)
                 
+                # 각 이미지 처리 완료 시
                 completed_count += 1
-                progress(0.15 + (0.8 * completed_count / n_images),
-                        desc=f"처리 중... ({completed_count}/{n_images})")
+                print(f"  ✅ 이미지 {completed_count}/{n_images} 완료: {Path(img_path).name}")
+                progress((0.15 + (0.75 * completed_count / n_images)), 
+                        desc=f"처리 중 ({completed_count}/{n_images})...")
         
         progress(0.95, desc="ZIP 파일 생성 중...")
         
