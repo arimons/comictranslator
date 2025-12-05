@@ -312,9 +312,10 @@ class CloudVisionAPI:
         # 임시 파일 삭제
         temp_grid_path.unlink(missing_ok=True)
 
-        # 결과 출력
-        for idx, boxes in enumerate(results):
-            print(f"  ✅ 이미지 {idx+1}/{n_images}: {len(boxes)}개 bbox")
+        # 결과 출력 (개별 이미지 세부사항은 생략)
+        total_boxes = sum(len(boxes) for boxes in results)
+        print(f"  ✅ Grid OCR 완료: {n_images}개 이미지, 총 {total_boxes}개 bbox")
+        
 
         return results
 
