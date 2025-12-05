@@ -245,7 +245,17 @@ def process_batch_with_grid(
         log.append(f"\n🔍 Step 1: Cloud Vision Grid API")
         
         # 캐싱 체크: 모든 이미지의 CV JSON이 있으면 건너뜀
-        all_cv_exist = all((temp_dir / f"{Path(p).stem}_cv.json").exists() for p in image_paths)
+        cv_json_exists = [(temp_dir / f"{Path(p).stem}_cv.json").exists() for p in image_paths]
+        all_cv_exist = all(cv_json_exists)
+        
+        # 디버깅: 어떤 파일이 없는지 확인
+        if not all_cv_exist:
+            missing_count = sum(1 for exists in cv_json_exists if not exists)
+            print(f"  ⚠️  CV JSON 누락: {missing_count}/{n_images}개 파일")
+            # 첫 5개 누락 파일 출력
+            for idx, (p, exists) in enumerate(zip(image_paths, cv_json_exists)):
+                if not exists and idx < 5:
+                    print(f"     - {Path(p).stem}_cv.json 없음")
         
         if all_cv_exist and not force_reprocess:
             print(f"  ✅ CV JSON 캐시 사용 (모든 파일 존재, {n_images}개)")
