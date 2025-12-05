@@ -75,6 +75,70 @@ def check_existing_results(image_name: str) -> dict:
     return existing
 
 
+def get_available_fonts() -> List[str]:
+    """fonts/ 폴더에서 사용 가능한 폰트 목록 반환"""
+    fonts_dir = Path("fonts")
+    if not fonts_dir.exists():
+        return ["기본 폰트"]
+    
+    fonts = []
+    for font_file in sorted(fonts_dir.glob("*.ttf")):
+        fonts.append(font_file.stem)
+    for font_file in sorted(fonts_dir.glob("*.otf")):
+        fonts.append(font_file.stem)
+    
+    return fonts if fonts else ["기본 폰트"]
+
+
+def translate_cover_batch(image_files, progress=gr.Progress()):
+    """Gemini 3 Pro Image Preview로 배치 번역"""
+    from translate_cover import translate_cover
+    
+    if not image_files:
+        return [], "이미지를 업로드해주세요"
+    
+    results = []
+    log = []
+    log.append("🎨 AI 표지 번역 시작\n")
+    
+    for idx, img_file in enumerate(image_files):
+        img_path = img_file.name if hasattr(img_file, 'name') else img_file
+        img_name = Path(img_path).stem
+        output_path = output_dir / f"{img_name}_ai.jpg"
+        
+        progress((idx + 1) / len(image_files), 
+                desc=f"처리 중 ({idx+1}/{len(image_files)})...")
+        
+        log.append(f"\n🎨 {img_name}")
+        success = translate_cover(str(img_path), str(output_path))
+        
+        if success:
+            results.append(str(output_path))
+            log.append("  ✅ 완료")
+        else:
+            log.append("  ⚠️ 텍스트 가이드 생성")
+    
+    log.append(f"\n\n✅ 완료: {len(results)}/{len(image_files)}개 성공")
+    return results, "\n".join(log)
+
+
+def create_output_zip():
+    """output/ 폴더의 모든 이미지를 ZIP으로 압축"""
+    output_files = list(output_dir.glob("*.jpg"))
+    if not output_files:
+        return None
+    
+    from datetime import datetime
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    zip_path = output_dir / f"translated_{timestamp}.zip"
+    
+    with zipfile.ZipFile(zip_path, 'w') as zf:
+        for f in output_files:
+            zf.write(f, f.name)
+    
+    return str(zip_path)
+
+
 def process_single_image(image_path: str, extra_prompt: str = "") -> tuple:
     """
     단일 이미지 처리 (병렬 실행용)
@@ -472,110 +536,129 @@ def process_batch_with_grid(
                 progress((0.15 + (0.75 * completed_count / n_images)), 
                         desc=f"처리 중 ({completed_count}/{n_images})...")
         
-        progress(0.95, desc="ZIP 파일 생성 중...")
+        progress(1.0, desc="완료!")
         
-        # ZIP 파일 생성
-        if output_files:
-            log.append(f"\n📦 ZIP 파일 생성 중...")
-            zip_path = output_dir / "translated_comics.zip"
-            with zipfile.ZipFile(zip_path, 'w') as zipf:
-                for file_path in output_files:
-                    zipf.write(file_path, Path(file_path).name)
-            
-            log.append(f"✅ 완료! {len(output_files)}/{n_images}개 성공")
-            log.append(f"{'='*60}")
-            
-            progress(1.0, desc="완료!")
-            return output_files, "\n".join(log), str(zip_path)
-        else:
-            log.append(f"\n❌ 모든 이미지 처리 실패")
-            return None, "\n".join(log), None
+        # 완료 메시지
+        log.append(f"\n✅ 완료: {len(output_files)}/{n_images}개 성공")
+        if failed_images:
+            log.append(f"⚠️  실패: {len(failed_images)}개")
+        log.append(f"{'='*60}")
+        
+        return output_files, "\n".join(log)
     
     except Exception as e:
         import traceback
         error_msg = f"\n❌ 배치 처리 오류: {e}\n{traceback.format_exc()}"
         log.append(error_msg)
-        return None, "\n".join(log), None
+        return None, "\n".join(log)
 
 
 # Gradio UI 구성
 with gr.Blocks(title="Comic Translator V5", theme=gr.themes.Soft()) as app:
     gr.Markdown("""
     # 🎨 Comic Translator V5
-    ### 만화 자동 번역 시스템 (일본어 → 한국어)
-    
-    **새로운 기능:**
-    - ✨ V5 클러스터링 (orientation, lines 구조)
-    - 🎯 최소 4글자/줄 의미 단위 줄바꿈
-    - 📝 말줄임표 별도 줄 처리
-    - 🎨 짧은 텍스트 중앙 정렬
-    - 🔄 Grid CV 처리 (1회 API 호출)
-    - ⚡ 병렬 파이프라인 실행
+    V5 클러스터링 • Grid CV • 병렬 처리 • AI 표지 번역
     """)
     
-    # API 키 입력
-    with gr.Accordion("🔑 API 설정", open=False):
-        gr.Markdown("GEMINI_API_KEY와 GOOGLE_APPLICATION_CREDENTIALS를 .env 파일에 설정하세요")
-    
-    with gr.Tab("🚀 배치 번역"):
-        gr.Markdown("### Grid 처리 + 병렬 파이프라인")
+    # 상단: API 설정 + 폰트 선택
+    with gr.Row():
+        with gr.Accordion("🔑 API 설정", open=False):
+            gr.Markdown("GEMINI_API_KEY와 CLOUD_VISION_API_KEY를 .env에 설정")
         
-        with gr.Row():
+        font_dropdown = gr.Dropdown(
+            choices=get_available_fonts(),
+            label="🎨 폰트 선택",
+            value=get_available_fonts()[0] if get_available_fonts() else "기본 폰트",
+            scale=1
+        )
+    
+    # 메인: 2-Column
+    with gr.Row():
+        # 좌측: 배치 번역
+        with gr.Column():
+            gr.Markdown("### 🚀 배치 번역 (표준 파이프라인)")
+            
             batch_images = gr.File(
                 label="📤 이미지 업로드 (복수 가능)",
                 file_count="multiple",
-                file_types=["image"]
+                file_types=["image"],
+                height=200
             )
+            
+            batch_prompt = gr.Textbox(
+                label="추가 번역 프롬프트 (선택)",
+                placeholder="예: 반말을 사용하고, 소년 만화 스타일로 박진감 넘치게 번역해줘",
+                lines=2,
+                value=load_last_prompt()
+            )
+            
+            force_reprocess = gr.Checkbox(
+                label="🔄 강제 재처리",
+                value=False
+            )
+            
+            batch_btn = gr.Button("🚀 배치 번역 시작", variant="primary", size="lg")
+            batch_status = gr.Textbox(label="📊 진행 상황", lines=10)
+            batch_gallery = gr.Gallery(label="📸 결과 이미지", columns=3, height=400)
         
-        batch_prompt = gr.Textbox(
-            label="추가 번역 프롬프트 (선택)",
-            placeholder="예: 반말을 사용하고, 소년 만화 스타일로 박진감 넘치게 번역해줘",
-            lines=2,
-            value=load_last_prompt()
-        )
-        
-        force_reprocess = gr.Checkbox(
-            label="🔄 강제 재처리 (기존 결과 무시)",
-            value=False,
-            info="체크하면 기존 캐시를 무시하고 모든 단계를 다시 실행합니다"
-        )
-        
-        batch_btn = gr.Button("🚀 배치 번역 시작", variant="primary", size="lg")
-        
-        batch_status = gr.Textbox(label="📊 진행 상황", lines=15)
-        
-        with gr.Row():
-            batch_gallery = gr.Gallery(label="📸 결과 이미지", columns=3, height="auto")
-            batch_download = gr.File(label="📥 ZIP 다운로드")
-        
-        batch_btn.click(
-            fn=process_batch_with_grid,
-            inputs=[batch_images, batch_prompt],
-            outputs=[batch_gallery, batch_status, batch_download]
-        )
+        # 우측: AI 표지 번역
+        with gr.Column():
+            gr.Markdown("### 🎨 AI 표지 번역 (Gemini 3 Pro)")
+            
+            cover_images = gr.File(
+                label="📤 이미지 업로드 (복수 가능)",
+                file_count="multiple",
+                file_types=["image"],
+                height=200
+            )
+            
+            gr.Markdown("""
+            **사용 시기:**
+            - 📖 만화책 표지
+            - 🎨 복잡한 레이아웃
+            - 🌈 색상이 많은 디자인
+            
+            > ⚠️ 이미지 생성 실패 시 텍스트 가이드 제공
+            """)
+            
+            cover_btn = gr.Button("🎨 AI 번역 시작", variant="primary", size="lg")
+            cover_status = gr.Textbox(label="📊 진행 상황", lines=10)
+            cover_gallery = gr.Gallery(label="📸 결과 이미지", columns=3, height=400)
+    
+    # 하단: ZIP 압축
+    with gr.Row():
+        zip_btn = gr.Button("📦 결과 압축하기", size="lg", scale=3)
+        zip_download = gr.File(label="📥 ZIP 다운로드", scale=2)
+    
+    # 이벤트 연결
+    batch_btn.click(
+        fn=batch_translate_images,
+        inputs=[batch_images, batch_prompt, force_reprocess],
+        outputs=[batch_gallery, batch_status]
+    )
+    
+    cover_btn.click(
+        fn=translate_cover_batch,
+        inputs=[cover_images],
+        outputs=[cover_gallery, cover_status]
+    )
+    
+    zip_btn.click(
+        fn=create_output_zip,
+        outputs=[zip_download]
+    )
     
     gr.Markdown("""
     ---
-    ### 📋 파이프라인 단계:
-    1. **Cloud Vision Grid API** → cv.json (1회 호출)
-    2. **클러스터링 V5** → cv_cluster_v5.json (병렬)  
-    3. **Gemini OCR** → ocr_v5.json (병렬)
-    4. **텍스트 통합** → integrated.json (병렬)
-    5. **Gemini Translation** → integrated_translated.json (병렬)
-    6. **White Masking** → _masked.jpg (병렬)
-    7. **Text Overlay** → _final.jpg (병렬)
+    ### 📋 파이프라인:
+    **배치 번역:** CV Grid → Cluster → OCR → 번역 → Masking → Overlay  
+    **AI 번역:** Gemini 3 Pro 직접 처리
     
-    ### 📁 폴더 구조:
-    - **temp_output/**: 중간 파일 (JSON, masked.jpg, viz.jpg)
-    - **output/**: 최종 결과물 (final.jpg, ZIP)
-    
-    ### 💡 사용 팁:
-    - Grid 처리로 CV API 비용 절감 (이미지 N개 → 1회 호출)
-    - 병렬 처리로 빠른 속도 (최대 5개 동시 처리)
-    - 기존 결과가 있으면 자동으로 캐시 사용
-    - 강제 재처리를 체크하면 모든 단계를 다시 실행
-    - 폰트: Freesentation-4Regular.ttf, 30px (±3px)
+    ### 📁 폴더:
+    - **temp_output/**: 중간 파일
+    - **output/**: 최종 결과물
     """)
+
 
 if __name__ == "__main__":
     # 서버 실행
