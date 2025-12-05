@@ -244,11 +244,6 @@ def process_batch_with_grid(
         progress(0.05, desc="Cloud Vision Grid 처리 중...")
         log.append(f"\n🔍 Step 1: Cloud Vision Grid API")
         
-        # 파일 크기 계산 및 유연한 Grid 크기 결정
-        total_size_mb = 0
-        max_resolution = 0
-        file_sizes_mb = []
-        
         for img_path in image_paths:
             size_bytes = os.path.getsize(img_path)
             size_mb = size_bytes / (1024 * 1024)
