@@ -162,17 +162,46 @@ def process_single_image(image_path: str, extra_prompt: str = "", force_reproces
         else:
             log.append("  ✅ Integrated JSON 캐시 사용")
         
-        # 5. Gemini Translation
+        # 5. Gemini Translation (재시도 로직 포함)
         if not integrated_translated.exists() or force_reprocess:
             log.append("  🌐 번역 중...")
-            result = subprocess.run(
-                ["python3", "translate_integrated.py", str(integrated), str(integrated_translated)],
-                capture_output=True, text=True, timeout=120
-            )
-            if result.returncode != 0:
-                raise Exception(f"번역 실패: {result.stderr}")
+            
+            max_retries = 3
+            translation_success = False
+            
+            for attempt in range(max_retries):
+                try:
+                    if attempt > 0:
+                        log.append(f"     재시도 {attempt}/{max_retries-1}...")
+                        import time
+                        time.sleep(3)  # 3초 대기
+                    
+                    result = subprocess.run(
+                        ["python3", "translate_integrated.py", str(integrated), str(integrated_translated)],
+                        capture_output=True, text=True, timeout=120
+                    )
+                    
+                    if result.returncode == 0:
+                        # 파일이 실제로 생성되었는지 확인
+                        if integrated_translated.exists():
+                            translation_success = True
+                            break
+                        else:
+                            log.append(f"     ⚠️  번역 파일 미생성, 재시도...")
+                    else:
+                        error_msg = result.stderr[:200] if result.stderr else "Unknown error"
+                        log.append(f"     ⚠️  번역 오류: {error_msg}")
+                        
+                except subprocess.TimeoutExpired:
+                    log.append(f"     ⚠️  번역 타임아웃 (120초)")
+                except Exception as e:
+                    log.append(f"     ⚠️  번역 예외: {str(e)[:100]}")
+            
+            if not translation_success:
+                raise Exception(f"번역 실패 (3회 시도 후)")
         else:
             log.append("  ✅ Translation JSON 캐시 사용")
+        
         
         # 6. White Masking
         if not masked_img.exists() or force_reprocess:
