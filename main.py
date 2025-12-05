@@ -404,15 +404,15 @@ def process_batch_with_grid(
                 
                 if not cv_results:
                     raise Exception("CV Grid 처리 실패")
-        
-        # 각 이미지별 CV JSON 저장 (temp_output에)
-        for idx, (img_path, cv_boxes) in enumerate(zip(image_paths, cv_results)):
-            img_name = Path(img_path).stem
-            cv_json_path = temp_dir / f"{img_name}_cv.json"
-            with open(cv_json_path, 'w', encoding='utf-8') as f:
-                json.dump(cv_boxes, f, ensure_ascii=False, indent=2)
-        
-        log.append(f"  ✅ CV JSON 생성 완료")
+            
+            # 각 이미지별 CV JSON 저장 (temp_output에)
+            for idx, (img_path, cv_boxes) in enumerate(zip(image_paths, cv_results)):
+                img_name = Path(img_path).stem
+                cv_json_path = temp_dir / f"{img_name}_cv.json"
+                with open(cv_json_path, 'w', encoding='utf-8') as f:
+                    json.dump(cv_boxes, f, ensure_ascii=False, indent=2)
+            
+            log.append(f"  ✅ CV JSON 생성 완료")
         
         # Step 2-7: 병렬 처리
         progress(0.15, desc="파이프라인 병렬 처리 중...")
