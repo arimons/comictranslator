@@ -100,13 +100,13 @@ def split_text_intelligently(text, min_chars=4):
     텍스트를 의미 단위로 줄바꿈
     
     우선순위:
-    1. 말줄임표(..., …)로 시작하는 경우 별도 줄로 분리
-    2. 띄어쓰기 기준, 단 최소 4글자 유지
-    3. 조사 기준 (은/는/이/가/을/를/의/에/로/와/과/도/만 등)
+    1. 말줄임표(..., …, ……) 뒤에서 줄바꿈 (최우선)
+    2. 띄어쓰기 기준 - 자연스러운 단어 경계
+    3. 최소 글자수는 권장사항 (말줄임표 등 예외 허용)
     
     Args:
         text: 원본 텍스트
-        min_chars: 한 줄 최소 글자수 (기본값 4)
+        min_chars: 한 줄 권장 최소 글자수 (기본값 4, 강제 아님)
     
     Returns:
         분리된 줄들의 리스트
@@ -114,85 +114,59 @@ def split_text_intelligently(text, min_chars=4):
     if not text:
         return []
     
-    # 한국어 조사 목록
-    particles = ['은', '는', '이', '가', '을', '를', '의', '에', '에서', '로', '으로', 
-                 '와', '과', '도', '만', '부터', '까지', '한테', '에게', '께', '더러',
-                 '라', '야', '아', '여', '이여', '이야']
-    
     lines = []
     current_line = ""
-    words = text.split()  # 띄어쓰기로 먼저 분리
     
-    if not words:  # 띄어쓰기가 없는 경우
-        words = [text]
+    # 말줄임표 패턴으로 먼저 분리
+    import re
+    # 말줄임표(......, ..., …, ……) 뒤에서 분할
+    parts = re.split(r'(\.{2,}|…+)', text)
     
-    i = 0
-    while i < len(words):
-        word = words[i]
+    for part_idx, part in enumerate(parts):
+        if not part:
+            continue
         
-        # 말줄임표로 시작하는 경우 처리
-        if word.startswith('...') or word.startswith('…'):
-            # 현재 줄이 있으면 저장
-            if current_line:
+        # 말줄임표 자체인 경우
+        if re.match(r'^(\.{2,}|…+)$', part):
+            current_line += part
+            # 말줄임표 뒤에서 줄바꿈 (다음 파트가 있으면)
+            if part_idx < len(parts) - 1 and parts[part_idx + 1].strip():
                 lines.append(current_line)
-            
-            # 말줄임표만 별도 줄로
-            if word in ['...', '…']:
-                lines.append(word)
                 current_line = ""
-                i += 1
-                continue
-            else:
-                # 말줄임표 + 다른 텍스트
-                ellipsis = '...' if word.startswith('...') else '…'
-                rest = word[len(ellipsis):]
-                lines.append(ellipsis)
-                word = rest
-                current_line = ""
+            continue
         
-        # 현재 줄에 단어 추가
-        if current_line:
-            test_line = current_line + " " + word
-        else:
-            test_line = word
+        # 일반 텍스트는 띄어쓰기로 분리
+        words = part.split()
         
-        # 다음 단어가 있는지 확인
-        has_next = i + 1 < len(words)
-        
-        # 현재 줄이 최소 글자수를 만족하거나, 더 이상 단어가 없으면 줄바꿈
-        if len(test_line) >= min_chars or not has_next:
+        for word_idx, word in enumerate(words):
+            # 현재 줄에 단어 추가
             if current_line:
+                test_line = current_line + " " + word
+            else:
+                test_line = word
+            
+            # 줄바꿈 판단
+            is_last_word = (word_idx == len(words) - 1) and (part_idx == len(parts) - 1)
+            
+            # 1. 마지막 단어면 추가하고 종료
+            if is_last_word:
+                current_line = test_line
+                break
+            
+            # 2. 현재 줄이 적당한 길이면 계속 추가
+            if len(test_line) < min_chars * 1.5:  # 권장 길이보다 약간 여유
                 current_line = test_line
             else:
-                current_line = word
-            
-            # 다음 단어가 없거나, 다음 단어를 추가하면 너무 길어지는 경우
-            if not has_next:
-                lines.append(current_line)
-                current_line = ""
-            elif has_next:
-                # 다음 단어를 미리보기
-                next_word = words[i + 1]
-                next_test = current_line + " " + next_word
-                
-                # 다음 단어를 추가해도 자연스러운 길이면 추가, 아니면 현재 줄 마무리
-                if len(next_test) <= min_chars * 2:  # 너무 길지 않으면 계속 추가 가능
-                    i += 1
-                    continue
-                else:
-                    # 현재 줄 저장
+                # 너무 길어지므로 현재 줄 완료하고 다음 줄로
+                if current_line:
                     lines.append(current_line)
-                    current_line = ""
-        else:
-            # 최소 글자수 미만이면 계속 단어 추가
-            current_line = test_line
-        
-        i += 1
+                current_line = word
     
+    # 남은 줄 추가
     if current_line:
         lines.append(current_line)
     
-    return lines
+    return lines if lines else [text]
 
 
 def calculate_font_size(bbox_width, bbox_height, text):

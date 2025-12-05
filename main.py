@@ -178,7 +178,7 @@ def process_single_image(image_path: str, extra_prompt: str = "", force_reproces
         if not masked_img.exists() or force_reprocess:
             log.append("  🎨 White Masking...")
             result = subprocess.run(
-                ["python3", "apply_text_overlay.py", image_path, str(integrated), str(cv_clusters), str(masked_img)],
+                ["python3", "apply_masking.py", image_path, str(integrated), str(cv_clusters), str(masked_img)],
                 capture_output=True, text=True, timeout=60
             )
             if result.returncode != 0:
