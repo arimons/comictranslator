@@ -30,12 +30,12 @@ def translate_cover(image_path: str, output_path: str):
     
     genai.configure(api_key=api_key)
     
-    # Gemini 2.0 Flash Thinking 모델 사용
-    # 복잡한 레이아웃 처리에 최적화
-    model = genai.GenerativeModel('gemini-2.0-flash-thinking-exp-1219')
+    # Gemini 3 Pro Image Preview 모델 사용
+    # 이미지 이해 및 생성에 최적화
+    model = genai.GenerativeModel('gemini-3-pro-image-preview')
     
     print(f"📖 표지 번역 시작: {Path(image_path).name}")
-    print(f"🤖 모델: gemini-2.0-flash-thinking-exp-1219")
+    print(f"🤖 모델: gemini-3-pro-image-preview")
     
     # 이미지 업로드
     print(f"  📤 이미지 업로드 중...")
