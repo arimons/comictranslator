@@ -139,7 +139,7 @@ def create_output_zip():
     return str(zip_path)
 
 
-def process_single_image(image_path: str, extra_prompt: str = "") -> tuple:
+def process_single_image(image_path: str, extra_prompt: str = "", force_reprocess: bool = False, font_path: str = None) -> tuple:
     """
     단일 이미지 처리 (병렬 실행용)
     
@@ -296,8 +296,12 @@ def process_single_image(image_path: str, extra_prompt: str = "") -> tuple:
         
         # 7. Text Overlay (항상 최종 결과는 재생성)
         log.append("  📝 Text Overlay...")
+        cmd = ["python3", "render_text_overlay.py", str(masked_img), str(integrated_translated), str(cv_clusters), str(final_img)]
+        if font_path:
+            cmd.append(font_path)
+            
         result = subprocess.run(
-            ["python3", "render_text_overlay.py", str(masked_img), str(integrated_translated), str(cv_clusters), str(final_img)],
+            cmd,
             capture_output=True, text=True, timeout=60
         )
         if result.returncode != 0:
@@ -315,9 +319,11 @@ def process_single_image(image_path: str, extra_prompt: str = "") -> tuple:
         return None, "\n".join(log)
 
 
-def process_batch_with_grid(
+def batch_translate_images(
     image_files: List, 
     extra_prompt: str = "", 
+    force_reprocess: bool = False,
+    font_name: str = "기본 폰트",
     progress=gr.Progress()
 ) -> tuple:
     """
@@ -347,6 +353,21 @@ def process_batch_with_grid(
         
         # 프롬프트 저장
         save_prompt(extra_prompt)
+        
+        # 폰트 경로 결정
+        font_path = "fonts/Freesentation-5Medium.ttf"  # 기본값
+        if font_name and font_name != "기본 폰트":
+            # ttf 우선 확인
+            p = Path(f"fonts/{font_name}.ttf")
+            if p.exists():
+                font_path = str(p)
+            else:
+                # otf 확인
+                p = Path(f"fonts/{font_name}.otf")
+                if p.exists():
+                    font_path = str(p)
+        
+        log.append(f"🎨 폰트: {font_name} ({font_path})")
         
         # Step 1: Grid CV API 처리 (파일 크기 고려)
         progress(0.05, desc="Cloud Vision Grid 처리 중...")
@@ -504,7 +525,7 @@ def process_batch_with_grid(
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
             # 각 이미지를 병렬로 처리
             future_to_path = {
-                executor.submit(process_single_image, img_path, extra_prompt): img_path
+                executor.submit(process_single_image, img_path, extra_prompt, force_reprocess, font_path): img_path
                 for img_path in image_paths
             }
             
@@ -568,7 +589,7 @@ with gr.Blocks(title="Comic Translator V5", theme=gr.themes.Soft()) as app:
         font_dropdown = gr.Dropdown(
             choices=get_available_fonts(),
             label="🎨 폰트 선택",
-            value=get_available_fonts()[0] if get_available_fonts() else "기본 폰트",
+            value="Freesentation-5Medium" if "Freesentation-5Medium" in get_available_fonts() else (get_available_fonts()[0] if get_available_fonts() else "기본 폰트"),
             scale=1
         )
     
@@ -633,7 +654,7 @@ with gr.Blocks(title="Comic Translator V5", theme=gr.themes.Soft()) as app:
     # 이벤트 연결
     batch_btn.click(
         fn=batch_translate_images,
-        inputs=[batch_images, batch_prompt, force_reprocess],
+        inputs=[batch_images, batch_prompt, force_reprocess, font_dropdown],
         outputs=[batch_gallery, batch_status]
     )
     

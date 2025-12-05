@@ -95,124 +95,236 @@ def calculate_max_chars(bbox_width, font_size):
     return max(1, max_chars)
 
 
-def split_text_intelligently(text, min_chars=4):
+def split_compound_word(word, max_chars):
+    """
+    긴 단어를 의미있는 경계에서 분리
+
+    한국어 복합동사 및 어미 패턴 기반 분리
+
+    Args:
+        word: 분리할 단어
+        max_chars: 최대 글자수
+
+    Returns:
+        분리된 부분들의 리스트 (분리 불가능하면 [word])
+    """
+    import re
+
+    # max_chars 이하면 분리 필요 없음
+    if len(word) <= max_chars:
+        return [word]
+
+    # 1. 복합동사 패턴 (어간 + 보조동사)
+    # "피어오르는데요" → "피어" + "오르는데요"
+    compound_patterns = [
+        (r'^(.{2,}?)(어|아)(오르|가|나|지|내|대|버리|주|보)(.*)$', 2),  # 어/아 + 보조동사
+        (r'^(.{2,}?)(고)(있|싶|말)(.*)$', 2),  # 고 + 있다/싶다/말다
+    ]
+
+    for pattern, split_after_group in compound_patterns:
+        match = re.match(pattern, word)
+        if match:
+            # 첫 부분: 어간 + 연결어미
+            part1 = ''.join(match.groups()[:split_after_group])
+            # 나머지: 보조동사 + 어미
+            part2 = ''.join(match.groups()[split_after_group:])
+
+            # 분리 후 둘 다 너무 짧지 않은지 확인
+            if len(part1) >= 2 and len(part2) >= 2:
+                # 재귀적으로 part2도 확인
+                if len(part2) > max_chars:
+                    sub_parts = split_compound_word(part2, max_chars)
+                    return [part1] + sub_parts
+                else:
+                    return [part1, part2]
+
+    # 2. 어미 분리 (마지막 수단)
+    # "오르는데요" → "오르는" + "데요"
+    # 일반적인 한국어 어미 패턴
+    ending_patterns = [
+        (r'^(.{2,}?)(는데요?|ㄴ데요?|은데요?)$', 1),  # ~는데요
+        (r'^(.{2,}?)(습니까|ㅂ니까|ㄴ가요?|나요?)$', 1),  # 의문형 어미
+        (r'^(.{2,}?)(는지|ㄴ지|을지)(.*)$', 1),  # ~는지
+        (r'^(.{3,}?)(네요|군요|거든요?)$', 1),  # ~네요, ~군요
+    ]
+
+    for pattern, split_after_group in ending_patterns:
+        match = re.match(pattern, word)
+        if match:
+            part1 = ''.join(match.groups()[:split_after_group])
+            part2 = ''.join(match.groups()[split_after_group:])
+
+            if len(part1) >= 2 and len(part2) >= 2:
+                return [part1, part2]
+
+    # 3. 모든 패턴 실패 시 음절 단위로 강제 분리
+    # 하지만 너무 짧지 않게
+    if len(word) > max_chars * 1.5:
+        mid = len(word) // 2
+        return [word[:mid], word[mid:]]
+
+    # 분리 불가능
+    return [word]
+
+
+def split_text_intelligently(text, max_chars=8, min_chars=3):
     """
     텍스트를 의미 단위로 줄바꿈
-    
+
+    타원형 말풍선 고려:
+    - 첫 줄/마지막 줄: max_chars (타이트)
+    - 중간 줄들: max_chars × 1.4 (여유)
+
     우선순위:
-    1. 말줄임표(..., …, ……) 뒤에서 줄바꿈 (최우선)
+    1. 말줄임표 + 특수문자는 분리 (...? → 별도 줄)
     2. 띄어쓰기 기준 - 자연스러운 단어 경계
-    3. 최소 글자수는 권장사항 (말줄임표 등 예외 허용)
-    
+    3. 복합동사 분리 (긴 단어 처리)
+    4. 최대 글자수 강제 적용 (타원형 고려)
+
     Args:
         text: 원본 텍스트
-        min_chars: 한 줄 권장 최소 글자수 (기본값 4, 강제 아님)
-    
+        max_chars: 한 줄 최대 글자수 (강제, 기본값 8)
+        min_chars: 한 줄 최소 글자수 (권장, 기본값 3)
+
     Returns:
         분리된 줄들의 리스트
     """
     if not text:
         return []
-    
+
+    import re
+
     lines = []
     current_line = ""
-    
-    # 말줄임표 패턴으로 먼저 분리
-    import re
-    # 말줄임표(......, ..., …, ……) 뒤에서 분할
-    parts = re.split(r'(\.{2,}|…+)', text)
-    
-    for part_idx, part in enumerate(parts):
-        if not part:
+
+    # 말줄임표 + 특수문자를 분리 (앞 텍스트와 줄바꿈)
+    # "뭐지...?" → "뭐지" + "...?"
+    # 패턴: (일반텍스트)(말줄임표+특수문자)
+    chunks = re.split(r'(\.{2,}[?!]*|…+[?!]*)', text)
+
+    for chunk_idx, chunk in enumerate(chunks):
+        if not chunk:
             continue
-        
-        # 말줄임표 자체인 경우
-        if re.match(r'^(\.{2,}|…+)$', part):
-            current_line += part
-            # 말줄임표 뒤에서 줄바꿈 (다음 파트가 있으면)
-            if part_idx < len(parts) - 1 and parts[part_idx + 1].strip():
+
+        # 말줄임표 + 특수문자 청크인 경우
+        if re.match(r'^(\.{2,}|…+)[?!]*$', chunk):
+            # 현재 줄이 있으면 먼저 완료
+            if current_line:
                 lines.append(current_line)
                 current_line = ""
+            # 말줄임표+특수문자를 별도 줄로
+            lines.append(chunk)
             continue
-        
+
         # 일반 텍스트는 띄어쓰기로 분리
-        words = part.split()
-        
+        words = chunk.split()
+
         for word_idx, word in enumerate(words):
-            # 현재 줄에 단어 추가
+            # 단어가 너무 긴 경우 복합동사 분리 시도
+            if len(word) > max_chars:
+                sub_words = split_compound_word(word, max_chars)
+                words[word_idx:word_idx+1] = sub_words  # 리스트에서 교체
+
+        # 다시 분리된 단어들로 줄바꿈 처리
+        for word_idx, word in enumerate(words):
+            # 현재 줄에 단어 추가했을 때의 길이 계산
             if current_line:
                 test_line = current_line + " " + word
             else:
                 test_line = word
-            
+
             # 줄바꿈 판단
-            is_last_word = (word_idx == len(words) - 1) and (part_idx == len(parts) - 1)
-            
-            # 1. 마지막 단어면 추가하고 종료
-            if is_last_word:
-                current_line = test_line
-                break
-            
-            # 2. 현재 줄이 적당한 길이면 계속 추가
-            if len(test_line) < min_chars * 1.5:  # 권장 길이보다 약간 여유
-                current_line = test_line
+            is_last_word = (word_idx == len(words) - 1) and (chunk_idx == len(chunks) - 1)
+
+            # 타원형 말풍선 고려: 중간 줄은 여유있게
+            # 첫 줄이거나 마지막이 될 가능성이 있으면 타이트하게
+            if len(lines) == 0:
+                # 첫 줄: 타이트
+                effective_max = max_chars
+            elif is_last_word:
+                # 마지막 줄: 타이트
+                effective_max = max_chars
             else:
-                # 너무 길어지므로 현재 줄 완료하고 다음 줄로
+                # 중간 줄: 여유 (1.4배)
+                effective_max = int(max_chars * 1.4)
+
+            # 1. 최대 글자수 초과 체크 (타원형 고려)
+            if len(test_line) > effective_max:
+                # 현재 줄이 비어있지 않으면 현재 줄 완료
                 if current_line:
                     lines.append(current_line)
-                current_line = word
-    
+                    current_line = word
+                else:
+                    # 현재 줄이 비어있는데 단어 자체가 max_chars 초과
+                    # 이미 split_compound_word 시도했으므로 그대로 추가
+                    current_line = word
+            # 2. 마지막 단어면 추가하고 종료
+            elif is_last_word:
+                current_line = test_line
+                break
+            # 3. 적당한 길이면 계속 추가
+            else:
+                current_line = test_line
+
     # 남은 줄 추가
     if current_line:
         lines.append(current_line)
-    
+
     return lines if lines else [text]
 
 
 def calculate_font_size(bbox_width, bbox_height, text):
     """
     bbox 크기와 텍스트 길이에 맞는 폰트 크기 계산
-    
+
     기본 30px, ±3px 범위 (27-33px)
-    최소 4글자/줄
-    
+    bbox_width 기반으로 최대 글자수 계산하여 줄바꿈
+
     Args:
         bbox_width: bbox 너비
         bbox_height: bbox 높이
         text: 렌더링할 텍스트
-    
+
     Returns:
-        적절한 폰트 크기 (픽셀)
+        (폰트 크기, 최대 글자수)
     """
-    base_font_size = 30
-    min_font_size = 27
-    max_font_size = 33
-    min_chars = 4  # 최소
-    
+    base_font_size = 33
+    min_font_size = 30
+    max_font_size = 36
+
+    # bbox_width 기반으로 최대 글자수 계산
+    def calc_max_chars_for_font(font_size):
+        usable_width = bbox_width * 0.85
+        avg_char_width = font_size * 0.9
+        return max(3, int(usable_width / avg_char_width))
+
     # 기본 30px로 시작해서 bbox에 맞는지 확인
     for font_size in range(base_font_size, min_font_size - 1, -1):
-        lines = split_text_intelligently(text, min_chars)
+        max_chars = calc_max_chars_for_font(font_size)
+        lines = split_text_intelligently(text, max_chars)
         line_count = len(lines)
-        
+
         # 줄 간격 1.3 고려
         required_height = font_size * line_count * 1.3
-        
+
         # 높이가 bbox에 맞으면 이 폰트 크기 사용
         if required_height <= bbox_height * 0.95:
-            return font_size
-    
+            return font_size, max_chars
+
     # 최소값도 안 맞으면, 더 큰 폰트 시도
     for font_size in range(base_font_size + 1, max_font_size + 1):
-        lines = split_text_intelligently(text, min_chars)
+        max_chars = calc_max_chars_for_font(font_size)
+        lines = split_text_intelligently(text, max_chars)
         line_count = len(lines)
-        
+
         required_height = font_size * line_count * 1.3
-        
+
         if required_height <= bbox_height * 0.95:
-            return font_size
-    
+            return font_size, max_chars
+
     # 모든 경우에 기본값 반환
-    return base_font_size
+    max_chars = calc_max_chars_for_font(base_font_size)
+    return base_font_size, max_chars
 
 
 def render_korean_text(
@@ -249,19 +361,18 @@ def render_korean_text(
     # PIL 이미지로 변환
     pil_img = Image.fromarray(cv2.cvtColor(image, cv2.COLOR_BGR2RGB))
     draw = ImageDraw.Draw(pil_img)
-    
-    # 폰트 크기 계산
-    font_size = calculate_font_size(w, h, text)
-    
+
+    # 폰트 크기 및 최대 글자수 계산
+    font_size, max_chars = calculate_font_size(w, h, text)
+
     try:
         font = ImageFont.truetype(font_path, font_size)
     except:
         print(f"⚠️  폰트 로드 실패: {font_path}, 기본 폰트 사용")
         font = ImageFont.load_default()
-    
-    # 텍스트를 의미 단위로 줄별로 분리 (최소 4글자)
-    min_chars = 4
-    lines = split_text_intelligently(text, min_chars)
+
+    # 텍스트를 의미 단위로 줄별로 분리 (max_chars 기반)
+    lines = split_text_intelligently(text, max_chars)
     
     # 줄 간격
     line_height = font_size * 1.3
@@ -410,14 +521,13 @@ def apply_text_overlay(
         )
         
         rendered_count += 1
-        
+
         if rendered_count <= 5:
-            font_size = calculate_font_size(exp_w, exp_h, translated_text)
-            min_chars = 4
-            lines = split_text_intelligently(translated_text, min_chars)
+            font_size, max_chars = calculate_font_size(exp_w, exp_h, translated_text)
+            lines = split_text_intelligently(translated_text, max_chars)
             short_text = len(translated_text.replace('?', '').replace('!', '').replace(' ', '')) <= 4 and len(lines) == 1
             print(f"  C{cluster_id}: {line_count}줄 → '{translated_text[:20]}...'")
-            print(f"         BBox: {exp_w}x{exp_h}px, 최소 {min_chars}자/줄, 폰트: {font_size}px")
+            print(f"         BBox: {exp_w}x{exp_h}px, 최대 {max_chars}자/줄, 폰트: {font_size}px")
             print(f"         줄바꿈: {lines}")
             if short_text and orientation == 'vertical':
                 print(f"         ⭐ 짧은 텍스트: 원본 bbox 중간부터 시작")
@@ -440,8 +550,8 @@ def apply_text_overlay(
     print(f"  • Line수 < 4: 4 / (line수 + 1)")
     print(f"  • Line수 >= 4: 원래 width 유지")
     print(f"\n폰트 크기 결정:")
-    print(f"  • 기본 30px, ±3px 범위 (27-33px)")
-    print(f"  • 최소 4글자/줄 (띄어쓰기 우선)")
+    print(f"  • 기본 33px, ±3px 범위 (30-36px)")
+    print(f"  • bbox_width 기반 최대 글자수 계산하여 줄바꿈 강제")
     print(f"  • 기본 폰트: Freesentation-4Regular.ttf")
     print(f"\n짧은 텍스트 (4글자 이하, 1줄, 세로):")
     print(f"  • 원본 bbox 중간부터 렌더링")
@@ -459,6 +569,6 @@ if __name__ == "__main__":
     integrated_json = sys.argv[2]
     cv_clusters_json = sys.argv[3]
     output_path = sys.argv[4] if len(sys.argv) > 4 else None
-    font_path = sys.argv[5] if len(sys.argv) > 5 else "Fonts/Freesentation-4Regular.ttf"
+    font_path = sys.argv[5] if len(sys.argv) > 5 else "fonts/Freesentation-5Medium.ttf"
     
     apply_text_overlay(masked_image, integrated_json, cv_clusters_json, output_path, font_path)
