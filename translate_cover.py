@@ -70,33 +70,27 @@ def translate_cover(image_path: str, output_path: str):
 
 번역된 표지 이미지를 생성해주세요."""
 
-    # API 호출
+    # API 호출 (타임아웃 및 재시도 포함)
     print(f"  🔄 Gemini AI 처리 중...")
-    try:
-        response = model.generate_content(
-            [prompt, image_file],
-            generation_config=genai.types.GenerationConfig(
-                temperature=0.4,  # 일관성을 위해 낮춤
-                top_p=0.95,
-                top_k=40,
-                max_output_tokens=8192,
+    
+    max_retries = 3
+    response = None # Initialize response outside the loop
+    for attempt in range(max_retries):
+        try:
+            if attempt > 0:
+                print(f"     재시도 {attempt}/{max_retries-1}...")
+                time.sleep(5)  # 5초 대기
+            
+            response = model.generate_content(
+                [prompt, image_file],
+                generation_config=genai.types.GenerationConfig(
+                    temperature=0.4,
+                    top_p=0.95,
+                    top_k=40,
+                    max_output_tokens=8192,
+                ),
+                request_options={"timeout": 120}  # 120초 타임아웃
             )
-        )
-        
-        # 응답 확인
-        if not response.text:
-            print("❌ Gemini 응답이 비어있습니다")
-            return False
-        
-        print(f"\n📝 Gemini 응답:")
-        print(response.text)
-        
-        # 생성된 이미지가 있는지 확인
-        if hasattr(response, 'parts'):
-            for part in response.parts:
-                if hasattr(part, 'inline_data'):
-                    # 이미지 데이터 저장
-                    image_data = part.inline_data.data
                     with open(output_path, 'wb') as f:
                         f.write(image_data)
                     print(f"\n✅ 번역 완료: {output_path}")
