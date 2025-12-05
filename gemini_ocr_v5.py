@@ -4,6 +4,7 @@ Gemini OCR for V5 Clusters
 """
 
 import sys
+import json
 from pathlib import Path
 from gemini_api import GeminiAPI
 from dotenv import load_dotenv
@@ -28,15 +29,20 @@ def main():
     
     gemini = GeminiAPI(api_key=api_key)
     
-    # Gemini OCR 수행 (파일 경로를 직접 전달)
+    # Gemini OCR 수행
+    # ocr_clusters signature: (image_path, clusters_json_path, retry_count=3)
     print(f"🤖 Gemini OCR 시작: {Path(image_path).name}")
-    result = gemini.ocr_clusters(image_path, clusters_json, output_json)
+    result = gemini.ocr_clusters(image_path, clusters_json)
     
     if not result:
         print("❌ Gemini OCR 실패")
         sys.exit(1)
     
-    print(f"✅ OCR 완료")
+    # 결과를 output_json에 저장
+    with open(output_json, 'w', encoding='utf-8') as f:
+        json.dump(result, f, ensure_ascii=False, indent=2)
+    
+    print(f"✅ OCR 완료: {len(result.get('clusters', []))}개 클러스터")
     
 if __name__ == "__main__":
     main()
