@@ -108,14 +108,21 @@ def is_grayscale(image_path: str, threshold: int = 30) -> bool:
         return True # 에러 시 안전하게 흑백으로 처리
 
 
-def process_cover_image_wrapper(image_path: str) -> tuple:
+def process_cover_image_wrapper(image_path: str, output_subfolder: str = None) -> tuple:
     """
     translate_cover를 process_single_image와 동일한 인터페이스로 래핑
     """
     from translate_cover import translate_cover
     
     img_name = Path(image_path).stem
-    output_path = output_dir / f"{img_name}_ai.jpg"
+    
+    # 하위 폴더 처리
+    target_dir = output_dir
+    if output_subfolder:
+        target_dir = output_dir / output_subfolder
+        target_dir.mkdir(parents=True, exist_ok=True)
+        
+    output_path = target_dir / f"{img_name}_ai.jpg"
     log = []
     
     log.append(f"🎨 AI 표지 번역 (컬러 감지): {img_name}")
@@ -181,8 +188,8 @@ def translate_cover_batch(image_files, progress=gr.Progress()):
 
 
 def create_output_zip():
-    """output/ 폴더의 모든 이미지를 ZIP으로 압축"""
-    output_files = list(output_dir.glob("*.jpg"))
+    """output/ 폴더의 모든 이미지를 ZIP으로 압축 (하위 폴더 포함)"""
+    output_files = list(output_dir.rglob("*.jpg"))
     if not output_files:
         return None
     
@@ -192,12 +199,14 @@ def create_output_zip():
     
     with zipfile.ZipFile(zip_path, 'w') as zf:
         for f in output_files:
-            zf.write(f, f.name)
+            # ZIP 내 경로를 output_dir 기준 상대 경로로 저장하여 폴더 구조 유지
+            arcname = f.relative_to(output_dir)
+            zf.write(f, arcname)
     
     return str(zip_path)
 
 
-def process_single_image(image_path: str, extra_prompt: str = "", force_reprocess: bool = False, font_path: str = None) -> tuple:
+def process_single_image(image_path: str, extra_prompt: str = "", force_reprocess: bool = False, font_path: str = None, output_subfolder: str = None) -> tuple:
     """
     단일 이미지 처리 (병렬 실행용)
     
@@ -205,7 +214,7 @@ def process_single_image(image_path: str, extra_prompt: str = "", force_reproces
         (final_image_path, log_text)
     """
     temp_dir = Path("temp_output")
-    output_dir = Path("output")
+    # output_dir = Path("output") # 전역 변수 사용
     
     img_name = Path(image_path).stem
     log = []
@@ -226,8 +235,13 @@ def process_single_image(image_path: str, extra_prompt: str = "", force_reproces
         integrated_translated = temp_dir / f"{img_name}_integrated_translated.json"
         masked_img = temp_dir / f"{img_name}_masked.jpg"
         
-        # 최종 결과물은 output에
-        final_img = output_dir / f"{img_name}_final.jpg"
+        # 최종 결과물은 output에 (하위 폴더 지원)
+        target_dir = output_dir
+        if output_subfolder:
+            target_dir = output_dir / output_subfolder
+            target_dir.mkdir(parents=True, exist_ok=True)
+            
+        final_img = target_dir / f"{img_name}_final.jpg"
         
         log.append(f"📸 처리 중: {img_name}")
         
@@ -388,6 +402,7 @@ def batch_translate_images(
     force_reprocess: bool = False,
     font_name: str = "기본 폰트",
     auto_detect_color: bool = False,
+    output_subfolder: str = "",
     progress=gr.Progress()
 ) -> tuple:
     """
@@ -541,12 +556,14 @@ def batch_translate_images(
             for img_path in image_paths:
                 if is_grayscale(img_path):
                     standard_images.append(img_path)
-                    # log.append(f"  📄 흑백(표준): {Path(img_path).name}")
                 else:
                     color_images.append(img_path)
                     log.append(f"  🎨 컬러(AI 표지): {Path(img_path).name}")
         else:
             standard_images = image_paths
+            
+        if output_subfolder:
+            log.append(f"📂 출력 폴더: output/{output_subfolder}")
             
         log.append(f"📋 처리 계획: 표준 {len(standard_images)}개, AI 표지 {len(color_images)}개")
         
@@ -591,12 +608,12 @@ def batch_translate_images(
             
             # 표준 이미지 작업 제출
             for img_path in standard_images:
-                future = executor.submit(process_single_image, img_path, extra_prompt, force_reprocess, font_path)
+                future = executor.submit(process_single_image, img_path, extra_prompt, force_reprocess, font_path, output_subfolder)
                 future_to_path[future] = img_path
                 
             # 컬러 이미지 작업 제출
             for img_path in color_images:
-                future = executor.submit(process_cover_image_wrapper, img_path)
+                future = executor.submit(process_cover_image_wrapper, img_path, output_subfolder)
                 future_to_path[future] = img_path
             
             # 완료되는 순서대로 결과 수집
@@ -683,6 +700,12 @@ with gr.Blocks(title="Comic Translator V5", theme=gr.themes.Soft()) as app:
                 value=load_last_prompt()
             )
             
+            output_subfolder = gr.Textbox(
+                label="📂 출력 폴더명 (선택)",
+                placeholder="예: MyManga_Vol1 (비워두면 output/에 저장)",
+                lines=1
+            )
+            
             force_reprocess = gr.Checkbox(
                 label="🔄 강제 재처리",
                 value=False
@@ -730,7 +753,7 @@ with gr.Blocks(title="Comic Translator V5", theme=gr.themes.Soft()) as app:
     # 이벤트 연결
     batch_btn.click(
         fn=batch_translate_images,
-        inputs=[batch_images, batch_prompt, force_reprocess, font_dropdown, auto_detect_color],
+        inputs=[batch_images, batch_prompt, force_reprocess, font_dropdown, auto_detect_color, output_subfolder],
         outputs=[batch_gallery, batch_status]
     )
     
