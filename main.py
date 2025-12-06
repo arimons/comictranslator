@@ -403,6 +403,7 @@ def batch_translate_images(
     font_name: str = "기본 폰트",
     auto_detect_color: bool = False,
     output_subfolder: str = "",
+    keep_cache: bool = False,
     progress=gr.Progress()
 ) -> tuple:
     """
@@ -650,6 +651,36 @@ def batch_translate_images(
         log.append(f"\n✅ 완료: {len(output_files)}/{n_images}개 성공")
         if failed_images:
             log.append(f"⚠️  실패: {len(failed_images)}개")
+            
+        # 캐시 정리 (keep_cache가 False일 때)
+        if not keep_cache:
+            log.append(f"\n🧹 캐시 정리 중...")
+            deleted_count = 0
+            for img_path in image_paths:
+                img_name = Path(img_path).stem
+                # 삭제할 중간 파일 패턴
+                patterns = [
+                    f"{img_name}_cv.json",
+                    f"{img_name}_cv_clusters_v5.json",
+                    f"{img_name}_ocr_v5.json",
+                    f"{img_name}_integrated.json",
+                    f"{img_name}_integrated_translated.json",
+                    f"{img_name}_masked.jpg",
+                    f"{img_name}_llm_viz.jpg"
+                ]
+                
+                for pattern in patterns:
+                    f_path = temp_dir / pattern
+                    if f_path.exists():
+                        try:
+                            f_path.unlink()
+                            deleted_count += 1
+                        except Exception:
+                            pass
+            log.append(f"  🗑️ {deleted_count}개 중간 파일 삭제 완료")
+        else:
+            log.append(f"\n🗄️ 캐시 파일 유지됨 (디버깅용)")
+            
         log.append(f"{'='*60}")
         
         return output_files, "\n".join(log)
@@ -717,6 +748,12 @@ with gr.Blocks(title="Comic Translator V5", theme=gr.themes.Soft()) as app:
                 info="체크하면 컬러 이미지는 자동으로 AI 표지 번역 모델로 처리합니다."
             )
             
+            keep_cache = gr.Checkbox(
+                label="🗄️ 캐시 파일 유지 (디버깅용)",
+                value=False,
+                info="체크하면 temp_output/ 폴더의 중간 파일들을 삭제하지 않습니다."
+            )
+            
             batch_btn = gr.Button("🚀 배치 번역 시작", variant="primary", size="lg")
             batch_status = gr.Textbox(label="📊 진행 상황", lines=10)
             batch_gallery = gr.Gallery(label="📸 결과 이미지", columns=3, height=400)
@@ -753,7 +790,7 @@ with gr.Blocks(title="Comic Translator V5", theme=gr.themes.Soft()) as app:
     # 이벤트 연결
     batch_btn.click(
         fn=batch_translate_images,
-        inputs=[batch_images, batch_prompt, force_reprocess, font_dropdown, auto_detect_color, output_subfolder],
+        inputs=[batch_images, batch_prompt, force_reprocess, font_dropdown, auto_detect_color, output_subfolder, keep_cache],
         outputs=[batch_gallery, batch_status]
     )
     
