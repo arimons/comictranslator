@@ -66,6 +66,7 @@ def translate_integrated(
 2. 문맥을 파악하여 자연스러운 한국어로 번역하세요
 3. 효과음(sound_effect)은 한국어 의성어/의태어로 변환하세요
 4. 나레이션(narration)은 설명조로 번역하세요
+5. 기술명(Technique Name)이나 주문은 의성어로 번역하지 말고, 발음이나 의미를 살려 번역하세요 (예: 'フレイムカラム' -> '플레임 컬럼', '화르륵' X)
 
 **텍스트 목록:**
 {json.dumps([{'id': t['cluster_id'], 'text': t['text'], 'type': t['text_type']} for t in texts_to_translate], ensure_ascii=False, indent=2)}
