@@ -75,6 +75,64 @@ def check_existing_results(image_name: str) -> dict:
     return existing
 
 
+def is_grayscale(image_path: str, threshold: int = 30) -> bool:
+    """
+    이미지가 흑백(만화 페이지)인지 컬러(표지/일러스트)인지 판별
+    
+    Args:
+        image_path: 이미지 경로
+        threshold: 채도(Saturation) 임계값 (평균 채도가 이보다 낮으면 흑백)
+    
+    Returns:
+        True if grayscale/black-and-white, False if color
+    """
+    try:
+        import cv2
+        import numpy as np
+        
+        img = cv2.imread(str(image_path))
+        if img is None:
+            return True # 읽을 수 없으면 기본값으로 처리
+            
+        # HSV로 변환하여 Saturation 확인
+        hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
+        s = hsv[:, :, 1]
+        
+        # 평균 채도 계산
+        mean_s = np.mean(s)
+        
+        # 채도가 낮으면 흑백으로 간주
+        return mean_s < threshold
+    except Exception as e:
+        print(f"⚠️ 컬러 감지 실패: {e}")
+        return True # 에러 시 안전하게 흑백으로 처리
+
+
+def process_cover_image_wrapper(image_path: str) -> tuple:
+    """
+    translate_cover를 process_single_image와 동일한 인터페이스로 래핑
+    """
+    from translate_cover import translate_cover
+    
+    img_name = Path(image_path).stem
+    output_path = output_dir / f"{img_name}_ai.jpg"
+    log = []
+    
+    log.append(f"🎨 AI 표지 번역 (컬러 감지): {img_name}")
+    
+    try:
+        success = translate_cover(str(image_path), str(output_path))
+        if success:
+            log.append("  ✅ 완료")
+            return str(output_path), "\n".join(log)
+        else:
+            log.append("  ⚠️ 실패 (텍스트 가이드 생성)")
+            return None, "\n".join(log)
+    except Exception as e:
+        log.append(f"  ❌ 오류: {e}")
+        return None, "\n".join(log)
+
+
 def get_available_fonts() -> List[str]:
     """fonts/ 폴더에서 사용 가능한 폰트 목록 반환"""
     fonts_dir = Path("fonts")
@@ -329,6 +387,7 @@ def batch_translate_images(
     extra_prompt: str = "", 
     force_reprocess: bool = False,
     font_name: str = "기본 폰트",
+    auto_detect_color: bool = False,
     progress=gr.Progress()
 ) -> tuple:
     """
@@ -472,46 +531,46 @@ def batch_translate_images(
                     from cloud_vision_api import CloudVisionAPI
                     
                     # API 키 우선, 없으면 서비스 계정
-                    api_key = os.getenv("CLOUD_VISION_API_KEY")
-                    credentials_path = os.getenv("GOOGLE_APPLICATION_CREDENTIALS")
-                    
-                    if not api_key and not credentials_path:
-                        raise Exception("CLOUD_VISION_API_KEY 또는 GOOGLE_APPLICATION_CREDENTIALS 환경변수 필요")
-                    
-                    cv_api = CloudVisionAPI(api_key=api_key, credentials_path=credentials_path)
-                    batch_results = cv_api.detect_text_grid(batch_paths)
-                    
-                    if not batch_results:
-                        raise Exception(f"CV Grid 처리 실패 (배치 {batch_idx+1})")
-                    
-                    all_cv_results.extend(batch_results)
-                
-                cv_results = all_cv_results
-            else:
-                # 단일 배치 처리
-                # 유연한 Grid 크기 (5x4, 4x3 등 가능)
-                grid_cols = int(np.ceil(np.sqrt(n_images * 1.2)))
-                grid_rows = int(np.ceil(n_images / grid_cols))
-                log.append(f"  📐 Grid: {grid_rows}x{grid_cols}")
-                
-                from cloud_vision_api import CloudVisionAPI
-                
-                # API 키 우선, 없으면 서비스 계정
-                api_key = os.getenv("CLOUD_VISION_API_KEY")
-                credentials_path = os.getenv("GOOGLE_APPLICATION_CREDENTIALS")
-                
-                if not api_key and not credentials_path:
-                    raise Exception("CLOUD_VISION_API_KEY 또는 GOOGLE_APPLICATION_CREDENTIALS 환경변수 필요")
-                
-                cv_api = CloudVisionAPI(api_key=api_key, credentials_path=credentials_path)
-                cv_results = cv_api.detect_text_grid(image_paths)
-                
-                
-                if not cv_results:
-                    raise Exception("CV Grid 처리 실패")
+        # 이미지 분류 (흑백 vs 컬러)
+        standard_images = []
+        color_images = []
+        
+        if auto_detect_color:
+            progress(0.02, desc="이미지 분석 중...")
+            log.append(f"\n🔍 이미지 분석 (흑백/컬러 자동 감지)")
+            for img_path in image_paths:
+                if is_grayscale(img_path):
+                    standard_images.append(img_path)
+                    # log.append(f"  📄 흑백(표준): {Path(img_path).name}")
+                else:
+                    color_images.append(img_path)
+                    log.append(f"  🎨 컬러(AI 표지): {Path(img_path).name}")
+        else:
+            standard_images = image_paths
             
+        log.append(f"📋 처리 계획: 표준 {len(standard_images)}개, AI 표지 {len(color_images)}개")
+        
+        # Step 1: Grid CV API 처리 (표준 이미지만)
+        if standard_images:
+            progress(0.05, desc="Cloud Vision Grid 처리 중...")
+            log.append(f"\n🔍 Step 1: Cloud Vision Grid API (표준 이미지 {len(standard_images)}개)")
+            
+            # API 키 우선, 없으면 서비스 계정
+            api_key = os.getenv("CLOUD_VISION_API_KEY")
+            credentials_path = os.getenv("GOOGLE_APPLICATION_CREDENTIALS")
+            
+            if not api_key and not credentials_path:
+                raise Exception("CLOUD_VISION_API_KEY 또는 GOOGLE_APPLICATION_CREDENTIALS 환경변수 필요")
+            
+            from cloud_vision_api import CloudVisionAPI
+            cv_api = CloudVisionAPI(api_key=api_key, credentials_path=credentials_path)
+            cv_results = cv_api.detect_text_grid(standard_images)
+            
+            if not cv_results:
+                raise Exception("CV Grid 처리 실패")
+        
             # 각 이미지별 CV JSON 저장 (temp_output에)
-            for idx, (img_path, cv_boxes) in enumerate(zip(image_paths, cv_results)):
+            for idx, (img_path, cv_boxes) in enumerate(zip(standard_images, cv_results)):
                 img_name = Path(img_path).stem
                 cv_json_path = temp_dir / f"{img_name}_cv.json"
                 with open(cv_json_path, 'w', encoding='utf-8') as f:
@@ -519,7 +578,7 @@ def batch_translate_images(
             
             log.append(f"  ✅ CV JSON 생성 완료")
         
-        # Step 2-7: 병렬 처리
+        # Step 2-7: 병렬 처리 (통합)
         progress(0.15, desc="파이프라인 병렬 처리 중...")
         log.append(f"\n🚀 Step 2-7: 병렬 파이프라인 실행")
         
@@ -528,11 +587,17 @@ def batch_translate_images(
         max_workers = min(5, n_images)  # 최대 5개 병렬
         
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
-            # 각 이미지를 병렬로 처리
-            future_to_path = {
-                executor.submit(process_single_image, img_path, extra_prompt, force_reprocess, font_path): img_path
-                for img_path in image_paths
-            }
+            future_to_path = {}
+            
+            # 표준 이미지 작업 제출
+            for img_path in standard_images:
+                future = executor.submit(process_single_image, img_path, extra_prompt, force_reprocess, font_path)
+                future_to_path[future] = img_path
+                
+            # 컬러 이미지 작업 제출
+            for img_path in color_images:
+                future = executor.submit(process_cover_image_wrapper, img_path)
+                future_to_path[future] = img_path
             
             # 완료되는 순서대로 결과 수집
             failed_images = []
@@ -623,6 +688,12 @@ with gr.Blocks(title="Comic Translator V5", theme=gr.themes.Soft()) as app:
                 value=False
             )
             
+            auto_detect_color = gr.Checkbox(
+                label="🎨 컬러 이미지 자동 감지 (Gemini 3 Pro 사용)",
+                value=False,
+                info="체크하면 컬러 이미지는 자동으로 AI 표지 번역 모델로 처리합니다."
+            )
+            
             batch_btn = gr.Button("🚀 배치 번역 시작", variant="primary", size="lg")
             batch_status = gr.Textbox(label="📊 진행 상황", lines=10)
             batch_gallery = gr.Gallery(label="📸 결과 이미지", columns=3, height=400)
@@ -659,7 +730,7 @@ with gr.Blocks(title="Comic Translator V5", theme=gr.themes.Soft()) as app:
     # 이벤트 연결
     batch_btn.click(
         fn=batch_translate_images,
-        inputs=[batch_images, batch_prompt, force_reprocess, font_dropdown],
+        inputs=[batch_images, batch_prompt, force_reprocess, font_dropdown, auto_detect_color],
         outputs=[batch_gallery, batch_status]
     )
     
