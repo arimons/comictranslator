@@ -9,6 +9,7 @@ Comic Translator V5의 전체 파이프라인에 대한 자세한 기술 문서�
 3. [데이터 구조](#데이터-구조)
 4. [텍스트 렌더링 로직](#텍스트-렌더링-로직)
 5. [최적화 전략](#최적화-전략)
+   - Step 4 V3: 청크 기반 라인 매칭 (개선됨)
 
 ---
 
@@ -57,8 +58,9 @@ Comic Translator V5의 전체 파이프라인에 대한 자세한 기술 문서�
             ▼
     ┌───────────────────────┐
     │ Step 4: 텍스트 통합   │
-    │ integrate_ocr.py      │
+    │ integrate_ocr_v3.py   │
     │ 출력: integrated.json │
+    │ (청크 기반 라인 매칭) │
     └───────┬───────────────┘
             │
             ▼
@@ -186,28 +188,35 @@ if orientation == 'vertical':
 4. Location 감지 (in_bubble/outside_bubble)
 5. Bubble overlap 판단
 
-**Gemini 프롬프트 구조**:
+**Gemini 프롬프트 개선사항**:
 ```
-다음 이미지에서 각 영역({cluster_id})의 일본어 텍스트를 정확히 추출하세요.
+세로쓰기 줄바꿈 규칙:
+- 세로쓰기는 하나의 연속된 문장입니다 (여러 열로 나뉨)
+- 각 열(column)의 경계에서만 \n을 넣으세요
+- ❌ 나쁜 예: "う\nわ\nっ\n!?" (글자 하나마다 줄바꿈)
+- ✅ 좋은 예: "うわっ!?" (하나의 열) 또는 "うわ\nっ!?" (2개 열)
 
-영역 정보:
-- Cluster #1: [x1,y1], [x2,y2], [x3,y3], [x4,y4]
-- Cluster #2: ...
+가로쓰기 줄바꿈 규칙:
+- 각 행(row)의 경계에서만 \n을 넣으세요
+- 예: "첫 줄\n둘째 줄\n셋째 줄"
 
 반환 형식 (JSON):
 {
-  "clusters": [
+  "sentences": [
     {
-      "cluster_id": 1,
-      "text": "抽出したテキスト",
-      "text_type": "dialogue",
-      "location": "in_bubble",
-      "confidence": "high",
-      "bubble_overlap": "none"
+      "sentence_id": 1,
+      "text": "완전한 일본어 문장",
+      "confidence": "high/medium/low",
+      "text_type": "dialogue/sound_effect/narration/other"
     }
   ]
 }
 ```
+
+**주요 지침**:
+- 세로쓰기는 글자 하나마다 줄바꿈하지 않기
+- 실제 열 또는 행의 경계에서만 줄바꿈 지정
+- Cloud Vision 결과와 대조하여 누락된 글자 반드시 포함
 
 **출력 형식** (`*_ocr_v5.json`):
 ```json
@@ -229,31 +238,75 @@ if orientation == 'vertical':
 
 ---
 
-### Step 4: 텍스트 통합
+### Step 4: 텍스트 통합 V3
 
-**목적**: CV clusters + Gemini OCR 결과 병합
+**목적**: Sentence 중심 청크 기반 라인 매칭으로 정확한 bbox 확장
 
 **처리 과정**:
-1. CV clusters에서 bounding_poly와 orientation 가져오기
-2. Gemini OCR에서 text, text_type, location 가져오기
-3. cluster_id 기준으로 매칭
-4. 통합 JSON 생성
+1. Gemini Sentence를 개행(`\n`) 기준으로 청크(chunk)로 분리
+2. 각 청크를 CV Cluster의 각 라인과 1:1 매칭
+3. 텍스트 길이 비교로 CV가 놓친 글자 감지
+4. 라인별 bbox 확장 (추가 글자만큼)
+5. 모든 확장된 bbox의 합집합(union) 계산
+
+**매칭 알고리즘**:
+```
+Sentence: "うわっ!?" (개행 없음 = 1개 청크)
+         ↓
+청크 분리: ["うわっ!?"]
+         ↓
+CV Lines: ["うわ" (line 0), "!!" (line 1)]
+         ↓
+라인별 매칭:
+  - Line 0: "うわ" vs "うわっ!?" → overlap 0.5, missing: ["っ", "!?"]
+  - Line 1: "!!" vs "うわっ!?" → overlap 0.4, no match
+         ↓
+최고 점수 매칭 선택 → Line 0 (overlap 0.5)
+         ↓
+Bbox 확장: CV width + (추가 글자 2개 × 평균 글자 너비 × 1.1)
+```
+
+**CV 누락 글자 감지**:
+- CV가 "うわ" 인식, Gemini가 "うわっ!?" 인식
+- 추가 글자: ["っ", "!?"] → 라인별로 정확히 어느 부분이 누락됐는지 추적
 
 **출력 형식** (`*_integrated.json`):
 ```json
 [
   {
-    "cluster_id": 1,
-    "bounding_poly": [[x1,y1], [x2,y2], [x3,y3], [x4,y4]],
-    "orientation": "vertical",
-    "text": "日本語テキスト",
+    "sentence_id": 1,
+    "text": "うわっ!?",
+    "chunks": ["うわっ!?"],
+    "matched_cluster": 1,
+    "bounding_rect": [x, y, w, h],
+    "match_score": 0.5,
+    "match_type": "partial",
     "text_type": "dialogue",
     "location": "in_bubble",
-    "confidence": "high",
-    "match_score": 1.0
+    "orientation": "vertical",
+    "line_details": [
+      {
+        "cv_line_idx": 0,
+        "cv_text": "うわ",
+        "chunk_idx": 0,
+        "chunk_text": "うわっ!?",
+        "missing_chars": ["っ", "!?"],
+        "expanded_bbox": [x, y, w_expanded, h]
+      }
+    ],
+    "missing_chars_summary": {
+      "cv_line_0": ["っ", "!?"]
+    }
   }
 ]
 ```
+
+**주요 개선점**:
+- ✅ 개행 기반 청크 매칭 (정확한 문장 단위)
+- ✅ CV 누락 글자 자동 감지
+- ✅ 라인별 bbox 확장 (개행 차이가 아닌 글자 길이 기반)
+- ✅ 매칭 상세 정보 보존 (line_details)
+- ✅ match_type 분류 (perfect/partial/none)
 
 ---
 
@@ -455,21 +508,43 @@ else:
 }
 ```
 
-### Integrated (`*_integrated.json`)
+### Integrated V3 (`*_integrated.json`)
 ```json
 [
   {
-    "cluster_id": 1,
-    "bounding_poly": [...],
-    "orientation": "vertical",
-    "text": "日本語",
+    "sentence_id": 1,
+    "text": "日本語テキスト",
+    "chunks": ["日本", "語テキスト"],
+    "matched_cluster": 1,
+    "bounding_rect": [x, y, w, h],
+    "match_score": 0.95,
+    "match_type": "perfect|partial|none",
     "text_type": "dialogue",
     "location": "in_bubble",
-    "confidence": "high",
-    "match_score": 1.0
+    "orientation": "vertical",
+    "line_details": [
+      {
+        "cv_line_idx": 0,
+        "cv_text": "日本",
+        "chunk_idx": 0,
+        "chunk_text": "日本",
+        "missing_chars": [],
+        "expanded_bbox": [x, y, w, h]
+      }
+    ],
+    "missing_chars_summary": {
+      "cv_line_0": []
+    }
   }
 ]
 ```
+
+**변경점**:
+- `cluster_id` → `matched_cluster` (명확성)
+- `bounding_poly` → `bounding_rect [x, y, w, h]` (일관성)
+- 신규: `chunks` (개행 기반 청크)
+- 신규: `line_details` (라인별 상세 정보)
+- 신규: `missing_chars_summary` (CV 누락 글자)
 
 ### Integrated Translated (`*_integrated_translated.json`)
 ```json
@@ -622,18 +697,40 @@ def detect_text_grid(image_paths):
     n = len(image_paths)
     cols = int(np.ceil(np.sqrt(n)))
     rows = int(np.ceil(n / cols))
-    
+
     # 그리드 이미지 생성
     grid_image = create_grid(image_paths, rows, cols)
-    
+
     # 1회 API 호출
     result = vision_api.text_detection(grid_image)
-    
+
     # 각 이미지별로 bbox 분리
     return split_by_grid(result, rows, cols)
 ```
 
-### 2. 병렬 처리
+### 2. 청크 기반 라인 매칭 최적화
+
+**문제**: Sentence를 전체 문자로 비교 → 개행 차이로 인한 오류
+**해결**: 개행 기준 청크로 분리 후 라인별 매칭
+
+```python
+# V3 알고리즘
+sentence_chunks = text.split('\n')  # ["청크1", "청크2", ...]
+
+for chunk in chunks:
+    for cv_line in cluster.lines:
+        overlap = calculate_chunk_overlap(chunk, cv_line.text)
+        # 청크 vs 라인 1:1 매칭 → 정확한 매칭
+        if overlap >= 0.5:
+            bbox_expansion = missing_chars * avg_char_width
+```
+
+**효과**:
+- ✅ CV 누락 글자 정확히 감지
+- ✅ Bbox 확장 정확도 향상
+- ✅ 개행 오류로 인한 과다 확장 제거
+
+### 3. 병렬 처리
 
 **문제**: 순차 처리 → 느린 속도
 **해결**: ThreadPoolExecutor로 병렬 처리
@@ -644,12 +741,12 @@ with ThreadPoolExecutor(max_workers=5) as executor:
         executor.submit(process_single_image, path): path
         for path in image_paths
     }
-    
+
     for future in as_completed(futures):
         result = future.result()
 ```
 
-### 3. 캐싱
+### 4. 캐싱
 
 **문제**: 재실행 시 중복 API 호출
 **해결**: 중간 결과 JSON 파일 캐싱
@@ -663,7 +760,7 @@ else:
     call_cv_api()
 ```
 
-### 4. Batch 처리
+### 5. Batch 번역
 
 **Gemini Translation**:
 ```python
