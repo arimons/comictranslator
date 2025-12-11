@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
 Gemini API 통합 모듈
-- gemini-3-pro-image-preview: bbox + OCR 추출 (Hybrid with Cloud Vision)
-- gemini-2.0-flash-lite: 번역
+- gemini-2.5-flash: bbox + OCR 추출 (Hybrid with Cloud Vision)
+- gemini-2.5-flash: 번역
 """
 
 import google.generativeai as genai
@@ -23,18 +23,19 @@ class GeminiAPI:
             api_key: Google AI Studio API 키
         """
         genai.configure(api_key=api_key)
-        # OCR/BBox 추출용 - Gemini 2.5 Flash로 변경
+        # OCR/BBox 추출용 - Gemini 2.5 Flash
         try:
             self.ocr_model = genai.GenerativeModel('gemini-2.5-flash')
             print("✅ OCR 모델: gemini-2.5-flash")
         except:
             print("⚠️ gemini-2.5-flash를 찾을 수 없어 gemini-1.5-flash로 대체합니다.")
             self.ocr_model = genai.GenerativeModel('gemini-1.5-flash')
-        # 번역용 (속도 빠름, 저렴함)
+        # 번역용 (Gemini 2.5 Flash)
         try:
-            self.translation_model = genai.GenerativeModel('gemini-2.0-flash')
+            self.translation_model = genai.GenerativeModel('gemini-2.5-flash')
+            print("✅ 번역 모델: gemini-2.5-flash")
         except:
-            print("⚠️ gemini-2.0-flash 모델을 찾을 수 없어 gemini-1.5-flash로 대체합니다.")
+            print("⚠️ gemini-2.5-flash를 찾을 수 없어 gemini-1.5-flash로 대체합니다.")
             self.translation_model = genai.GenerativeModel('gemini-1.5-flash')
         
     def extract_text_bubbles(self, image_path: str, retry_count: int = 3, force_gemini: bool = False) -> Optional[List[Dict]]:
@@ -563,7 +564,7 @@ class GeminiAPI:
         """
         Cluster 기반 OCR: 전체 이미지 + cluster 좌표로 Gemini OCR 수행
 
-        전체 이미지를 Gemini에 전달하고, 각 cluster의 bounding_poly 좌표 정보를 함께 제공.
+        전체 이미지를 Gemini에 전달하고, 각 cluster의 bounding_rect 좌표 정보를 함께 제공.
         Gemini가 OCR한 텍스트를 cluster_id와 매칭하여 반환하고,
         필요시 merge 제안도 포함.
 
@@ -598,7 +599,7 @@ class GeminiAPI:
         cluster_info = "\n**감지된 Cluster 영역:**\n"
         for cluster in clusters:
             cid = cluster['cluster_id']
-            poly = cluster['bounding_poly']
+            rect = cluster['bounding_rect']  # [x, y, w, h]
             orientation = cluster.get('orientation', 'vertical')
             
             # Lines 정보 추출
@@ -606,79 +607,60 @@ class GeminiAPI:
             cv_text_parts = [line['text'] for line in lines]
             cv_text = '\n'.join(cv_text_parts)
 
-            # bounding_poly의 좌표 범위 계산
-            xs = [p[0] for p in poly]
-            ys = [p[1] for p in poly]
-            x_min, x_max = min(xs), max(xs)
-            y_min, y_max = min(ys), max(ys)
+            # bounding_rect의 좌표 범위 계산
+            x, y, w, h = rect
+            x_min, x_max = x, x + w
+            y_min, y_max = y, y + h
 
             cluster_info += f"\nCluster {cid} ({orientation}):\n"
             cluster_info += f"  - 영역: x=[{x_min}, {x_max}], y=[{y_min}, {y_max}]\n"
-            cluster_info += f"  - Poly: {poly}\n"
+            cluster_info += f"  - Rect: [{x}, {y}, {w}, {h}]\n"
             cluster_info += f"  - CV 텍스트 (참고): '{cv_text}'\n"
 
         # 프롬프트 생성
-        prompt = f"""이 만화 이미지에서 모든 일본어 텍스트를 OCR하고, 각 텍스트가 어느 Cluster에 속하는지 매칭해주세요.
+        prompt = f"""이 만화 이미지에서 모든 일본어 텍스트를 OCR하고 의미 단위로 문장을 구성해주세요.
 
 **이미지 크기**: {width}x{height} 픽셀
 
 {cluster_info}
 
 **작업:**
-1. 이미지의 모든 일본어 텍스트를 정확히 OCR
-2. OCR된 각 텍스트가 위 Cluster 중 어디에 속하는지 판단 (좌표 기준)
-3. Cloud Vision이 놓친 문자도 포함하여 완전한 문장으로 OCR
-4. **글꼴(font)이 명확히 다른 텍스트가 같은 Cluster에 포함된 경우 분리 제안**
-   - 예: 일반 대사체와 작은 글씨체(생각, 속삭임)가 섞인 경우
-   - 텍스트가 서로 다른 의미 단위로 보이는 경우
-5. (선택) 분리된 Cluster들이 실제로는 하나의 문장인 경우 merge 제안
+1. 이미지의 **모든 일본어 텍스트를 정확히 OCR** (누락 금지!)
+2. 의미 단위로 **완전한 문장(Sentence)을 구성**
+3. **Cloud Vision의 텍스트 정보를 참고하면서 철저히 검토**
+   - 각 Cluster의 CV 텍스트에 나열된 모든 문자를 이미지에서 확인
+   - CV에는 있지만 이미지에 없는 경우: CV 오류 (제외)
+   - 이미지에는 있지만 CV에 없는 경우: CV가 놓친 문자 (반드시 포함!)
+   - ⚠️ 특히 누락된 문자를 놓치지 마세요! (예: 軽率)
+4. **세로쓰기 줄바꿈 규칙:**
+   - 세로쓰기는 하나의 **연속된 문장**입니다 (여러 열로 나뉨)
+   - 각 **열(column)의 경계에서만** \\n을 넣으세요
+   - ❌ 나쁜 예: "う\\nわ\\nっ\\n!?" (글자 하나마다 줄바꿈)
+   - ✅ 좋은 예: "うわっ!?" (하나의 열) 또는 "うわ\\nっ!?" (2개 열)
+5. **가로쓰기 줄바꿈 규칙:**
+   - 각 **행(row)의 경계에서만** \\n을 넣으세요
+   - 예: "첫 줄\\n둘째 줄\\n셋째 줄"
+6. 각 문장의 유형 분류 (dialogue/narration/sound_effect/other)
+7. 후리가나(furigana) 읽기는 절대 포함하지 마세요 (한자/히라가나/카타카나만)
 
 **반환 형식 (JSON):**
 {{
-  "clusters": [
+  "sentences": [
     {{
-      "cluster_id": 1,
-      "text": "완전한 일본어 텍스트",
+      "sentence_id": 1,
+      "text": "완전한 일본어 문장",
       "confidence": "high/medium/low",
-      "text_type": "dialogue/sound_effect/narration/other",
-      "location": "in_bubble/outside_bubble",
-      "bubble_overlap": "none/right_bottom/left_bottom/both_bottom/top/left/right/bottom"
+      "text_type": "dialogue/sound_effect/narration/other"
     }},
     ...
-  ],
-  "split_suggestions": [
-    {{
-      "cluster_id": 4,
-      "reason": "글꼴이 다른 텍스트 혼재",
-      "parts": [
-        {{"text": "３人揃って なんの用だ", "text_type": "dialogue", "location": "in_bubble"}},
-        {{"text": "そして なんだその木刀は", "text_type": "dialogue", "location": "outside_bubble"}}
-      ]
-    }}
-  ],
-  "merge_suggestions": [
-    {{
-      "clusters": [32, 36, 38],
-      "reason": "연속된 문장으로 보임",
-      "merged_text": "병합된 완전한 텍스트"
-    }}
   ]
 }}
 
 **중요:**
-- CV 텍스트는 참고용 (일부 문자 누락 가능)
-- 이미지에서 실제로 보이는 모든 텍스트를 OCR
-- 좌표를 기준으로 텍스트를 올바른 cluster_id에 매칭
-- 후리가나(furigana) 읽기는 포함하지 마세요 - 순수 한자와 히라가나/카타카나만
-
-**bubble_overlap (필수):**
-- 말풍선 안(in_bubble) 텍스트의 경우: bounding_poly가 말풍선 **테두리 선**을 침범하는지 확인
-  - "none": 테두리와 겹치지 않음
-  - "right_bottom", "left_bottom", "both_bottom", "bottom": 하단 테두리 침범
-  - "top", "left", "right": 해당 방향 테두리 침범
-- 말풍선 밖(outside_bubble)인 경우: 항상 "none"
-
-**예시:** 세로쓰기 텍스트가 말풍선 우하단 테두리에 닿으면 "right_bottom"
+- **텍스트 누락 금지!** 이미지의 모든 텍스트를 OCR하세요
+- **CV 참고 필수:** Cluster에 나열된 모든 글자를 이미지에서 확인
+- **줄바꿈 필수:** 모든 줄바꿈을 \\n으로 정확히 표현 (예: "줄1\\n줄2\\n줄3")
+- **후리가나 제외:** 한자와 히라가나/카타카나만 (루비 텍스트 제외)
 
 """
 
@@ -745,30 +727,18 @@ class GeminiAPI:
                 
                 # JSON 파싱
                 result = json.loads(response_text)
-                
+
                 # 결과 검증
-                if 'clusters' not in result:
-                    print(f"  ⚠️ 'clusters' 필드 없음")
+                if 'sentences' not in result:
+                    print(f"  ⚠️ 'sentences' 필드 없음")
                     if attempt < retry_count - 1:
                         time.sleep(2)
                         continue
                     else:
                         return None
-                
-                print(f"  ✅ OCR 완료: {len(result['clusters'])}개 cluster")
-                
-                # Merge suggestions 출력
-                if 'merge_suggestions' in result and result['merge_suggestions']:
-                    print(f"  💡 Merge 제안: {len(result['merge_suggestions'])}개")
-                    for suggestion in result['merge_suggestions']:
-                        print(f"    - Clusters {suggestion['clusters']}: {suggestion['reason']}")
-                
-                # Split suggestions 출력
-                if 'split_suggestions' in result and result['split_suggestions']:
-                    print(f"  ✂️ Split 제안: {len(result['split_suggestions'])}개")
-                    for suggestion in result['split_suggestions']:
-                        print(f"    - Cluster {suggestion['cluster_id']}: {suggestion['reason']}")
-                
+
+                print(f"  ✅ OCR 완료: {len(result['sentences'])}개 sentence")
+
                 return result
                 
             except json.JSONDecodeError as e:
