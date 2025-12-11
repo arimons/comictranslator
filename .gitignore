@@ -67,11 +67,11 @@ claudedocs/
 *_integrated.json
 *_translated.json
 
-# Old versions
+# Old versions (except main pipeline files)
 *_v2.py
-*_v3.py
 *_v4.py
 cluster_cv.py
+# integrate_ocr_v3.py는 활성 버전이므로 git에 추적됨
 
 # Fonts (user should add their own)
 Fonts/*.ttf
