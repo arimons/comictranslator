@@ -348,8 +348,9 @@ def process_single_image(image_path: str, extra_prompt: str = "", force_reproces
         # skip_cv=False면 필요 시 호출
         elif not cv_json.exists() or force_reprocess:
             log.append("  🔍 호출 중...")
+            cv_script = Path(__file__).parent / "cloud_vision_api.py"
             result = subprocess.run(
-                ["python3", "cloud_vision_api.py", image_path, str(cv_json)],
+                ["python3", str(cv_script), image_path, str(cv_json)],
                 capture_output=True, text=True, timeout=60
             )
             if result.returncode != 0:
@@ -374,8 +375,9 @@ def process_single_image(image_path: str, extra_prompt: str = "", force_reproces
         log.append("\n📦 Step 2: Clustering")
         if not cv_clusters.exists() or force_reprocess:
             log.append("  🔄 클러스터링 중...")
+            cluster_script = Path(__file__).parent / "cluster_cv_v5.py"
             result = subprocess.run(
-                ["python3", "cluster_cv_v5.py", str(cv_json), str(cv_clusters)],
+                ["python3", str(cluster_script), str(cv_json), str(cv_clusters)],
                 capture_output=True, text=True, timeout=60
             )
             if result.returncode != 0:
@@ -386,8 +388,9 @@ def process_single_image(image_path: str, extra_prompt: str = "", force_reproces
         
         # 시각화 (옵션)
         if not llm_viz.exists():
+            viz_script = Path(__file__).parent / "visualize_clusters_v5.py"
             subprocess.run(
-                ["python3", "visualize_clusters_v5.py", image_path, str(cv_clusters), str(llm_viz)],
+                ["python3", str(viz_script), image_path, str(cv_clusters), str(llm_viz)],
                 capture_output=True, text=True, timeout=30
             )
         
@@ -395,8 +398,9 @@ def process_single_image(image_path: str, extra_prompt: str = "", force_reproces
         log.append("\n🤖 Step 3: Gemini OCR")
         if not ocr_json.exists() or force_reprocess:
             log.append("  📝 OCR 중...")
+            ocr_script = Path(__file__).parent / "gemini_ocr_v5.py"
             result = subprocess.run(
-                ["python3", "gemini_ocr_v5.py", image_path, str(cv_clusters), str(ocr_json)],
+                ["python3", str(ocr_script), image_path, str(cv_clusters), str(ocr_json)],
                 capture_output=True, text=True, timeout=120
             )
             if result.returncode != 0:
@@ -409,8 +413,10 @@ def process_single_image(image_path: str, extra_prompt: str = "", force_reproces
         log.append("\n🔗 Step 4: Integrating")
         if not integrated.exists() or force_reprocess:
             log.append("  🔄 통합 중...")
+            # integrate_ocr_v3.py의 절대 경로
+            integrate_script = Path(__file__).parent / "integrate_ocr_v3.py"
             result = subprocess.run(
-                ["python3", "integrate_ocr_v3.py", str(cv_clusters), str(ocr_json), str(integrated), image_path],
+                ["python3", str(integrate_script), str(cv_clusters), str(ocr_json), str(integrated), image_path],
                 capture_output=True, text=True, timeout=30
             )
             if result.returncode != 0:
@@ -443,8 +449,9 @@ def process_single_image(image_path: str, extra_prompt: str = "", force_reproces
                         import time
                         time.sleep(3)  # 3초 대기
                     
+                    translate_script = Path(__file__).parent / "translate_integrated.py"
                     result = subprocess.run(
-                        ["python3", "translate_integrated.py", str(integrated), str(integrated_translated)],
+                        ["python3", str(translate_script), str(integrated), str(integrated_translated)],
                         capture_output=True, text=True, timeout=120
                     )
                     
@@ -476,8 +483,9 @@ def process_single_image(image_path: str, extra_prompt: str = "", force_reproces
         log.append("\n🎨 Step 6: Masking")
         if not masked_img.exists() or force_reprocess:
             log.append("  🖌️ 마스킹 중...")
+            masking_script = Path(__file__).parent / "apply_masking.py"
             result = subprocess.run(
-                ["python3", "apply_masking.py", image_path, str(integrated), str(cv_clusters), str(masked_img)],
+                ["python3", str(masking_script), image_path, str(integrated), str(cv_clusters), str(masked_img)],
                 capture_output=True, text=True, timeout=60
             )
             if result.returncode != 0:
@@ -489,12 +497,13 @@ def process_single_image(image_path: str, extra_prompt: str = "", force_reproces
         # 7. Text Overlay (항상 최종 결과는 재생성)
         log.append("\n✍️ Step 7: Text Overlay")
         log.append("  🖋️ 텍스트 렌더링 중...")
-        cmd = ["python3", "render_text_overlay.py", str(masked_img), str(integrated_translated), str(cv_clusters), str(final_img)]
+        render_script = Path(__file__).parent / "render_text_overlay.py"
+        cmd = ["python3", str(render_script), str(masked_img), str(integrated_translated), str(cv_clusters), str(final_img)]
         if font_path:
             cmd.append(font_path)
         if font_size != 33:  # 기본값이 아니면 추가
             cmd.append(str(font_size))
-            
+
         result = subprocess.run(
             cmd,
             capture_output=True, text=True, timeout=60
