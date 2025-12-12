@@ -13,129 +13,36 @@ import numpy as np
 from pathlib import Path
 
 
-def calculate_expanded_bbox(
-    bounding_poly,
-    line_count,
-    orientation='vertical',
-    cv_text='',
-    gemini_text=''
-):
+def rect_to_polygon(bounding_rect):
     """
-    Line 개수와 텍스트 길이를 고려한 확장된 bbox 계산
+    [x, y, w, h] 형식의 bounding_rect를 polygon 형식으로 변환
 
     Args:
-        bounding_poly: 4개 좌표 [[x1,y1], [x2,y2], [x3,y3], [x4,y4]]
-        line_count: 실제 line 개수
-        orientation: 'vertical' 또는 'horizontal'
-        cv_text: CV에서 인식한 텍스트
-        gemini_text: Gemini에서 인식한 텍스트
+        bounding_rect: [x, y, w, h]
 
     Returns:
-        (원본 bounding_poly, 전체 확장 bounding_poly, 원본+height확장 poly)
+        [[x1,y1], [x2,y1], [x2,y2], [x1,y2]] polygon 형식
     """
-    xs = [p[0] for p in bounding_poly]
-    ys = [p[1] for p in bounding_poly]
+    if not bounding_rect or len(bounding_rect) != 4:
+        return [[0, 0], [0, 0], [0, 0], [0, 0]]
 
-    x_min, x_max = min(xs), max(xs)
-    y_min, y_max = min(ys), max(ys)
+    x, y, w, h = bounding_rect
+    return [
+        [x, y],
+        [x + w, y],
+        [x + w, y + h],
+        [x, y + h]
+    ]
 
-    current_width = x_max - x_min
-    current_height = y_max - y_min
 
-    if line_count == 0:
-        return bounding_poly, bounding_poly, bounding_poly
-
-    # Width 확장 비율 계산
-    if line_count >= 4:
-        width_expansion_ratio = 1.0
-    else:
-        width_expansion_ratio = 4.0 / (line_count + 1)
-
-    # Height 확장: 1줄인 경우 텍스트 길이 비교
-    height_expansion_ratio = 1.0
-
-    if line_count == 1 and cv_text and gemini_text:
-        # 공백 제거 후 실제 글자 수 비교
-        cv_len = len(cv_text.replace(' ', '').replace('　', '').strip())
-        gemini_len = len(gemini_text.replace(' ', '').replace('　', '').strip())
-
-        if gemini_len > cv_len and cv_len > 0:
-            # Gemini가 더 긴 경우, 글자 수 비율로 높이 확장
-            height_expansion_ratio = gemini_len / cv_len
-            print(f"  [DEBUG] Line=1 확장: CV '{cv_text}'({cv_len}자) → Gemini '{gemini_text}'({gemini_len}자), ratio={height_expansion_ratio:.2f}")
-
-    if orientation == 'vertical':
-        # Vertical: width 확장 + height 확장 (1줄인 경우)
-        new_width = current_width * width_expansion_ratio
-        width_expansion = new_width - current_width
-
-        new_height = current_height * height_expansion_ratio
-        height_expansion = new_height - current_height
-
-        # Width: 중점 기준으로 좌우로 확장
-        new_x_min = x_min - width_expansion / 2
-        new_x_max = x_max + width_expansion / 2
-
-        # Height: 아래쪽으로만 확장 (세로 텍스트는 위→아래로 읽음)
-        new_y_min = y_min
-        new_y_max = y_max + height_expansion
-
-        # 전체 확장 poly (width + height)
-        expanded_poly = [
-            [new_x_min, new_y_min],
-            [new_x_max, new_y_min],
-            [new_x_max, new_y_max],
-            [new_x_min, new_y_max]
-        ]
-
-        # 원본 + height 확장만 (GREEN 영역)
-        height_expanded_poly = [
-            [x_min, y_min],
-            [x_max, y_min],
-            [x_max, new_y_max],
-            [x_min, new_y_max]
-        ]
-    else:  # horizontal
-        # Horizontal: height 확장 (기존 로직)
-        new_height = current_height * width_expansion_ratio
-        height_expansion = new_height - current_height
-
-        # Width: 1줄인 경우 텍스트 길이로 확장
-        new_width = current_width * height_expansion_ratio
-        width_expansion = new_width - current_width
-
-        # Height: 중점 기준으로 상하로 확장
-        new_y_min = y_min - height_expansion / 2
-        new_y_max = y_max + height_expansion / 2
-
-        # Width: 오른쪽으로만 확장 (가로 텍스트는 왼→오로 읽음)
-        new_x_min = x_min
-        new_x_max = x_max + width_expansion
-
-        # 전체 확장 poly
-        expanded_poly = [
-            [new_x_min, new_y_min],
-            [new_x_max, new_y_min],
-            [new_x_max, new_y_max],
-            [new_x_min, new_y_max]
-        ]
-
-        # 원본 + width 확장만 (GREEN 영역, horizontal의 경우 width가 reading direction)
-        height_expanded_poly = [
-            [x_min, new_y_min],
-            [new_x_max, new_y_min],
-            [new_x_max, new_y_max],
-            [x_min, new_y_max]
-        ]
-
-    return bounding_poly, expanded_poly, height_expanded_poly
 
 
 def apply_white_masking(
     image_path: str,
     integrated_json_path: str,
     cv_clusters_path: str,
-    output_path: str = None
+    output_path: str = None,
+    debug_viz: bool = False
 ):
     """
     White Masking 적용
@@ -143,11 +50,14 @@ def apply_white_masking(
     Args:
         image_path: 원본 이미지 경로
         integrated_json_path: integrated.json 경로
-        cv_clusters_path: cv_clusters_v5.json 경로 (line 개수 및 CV 텍스트 확인용)
+        cv_clusters_path: cv_clusters_v5.json 경로
         output_path: 결과 저장 경로
+        debug_viz: True면 원본 bbox(Green) + 확장 bbox(Blue)를 시각화
     """
     print(f"\n{'='*60}")
     print(f"🎨 White Masking 적용")
+    if debug_viz:
+        print(f"🔍 [DEBUG MODE] CV bbox(Green) + 확장(Blue) 시각화")
     print(f"{'='*60}")
 
     # 이미지 로드
@@ -167,142 +77,159 @@ def apply_white_masking(
     with open(cv_clusters_path, 'r', encoding='utf-8') as f:
         cv_clusters = json.load(f)
 
-    # CV cluster를 ID로 매핑
-    cv_cluster_map = {c['cluster_id']: c for c in cv_clusters}
+    # CV cluster를 ID로 매핑 (cluster_id 문자열 기반)
+    cv_cluster_map = {str(c['cluster_id']): c for c in cv_clusters}
 
-    print(f"📦 {len(clusters)}개 Cluster 로드")
+    print(f"📦 {len(clusters)}개 Sentence 로드")
+    
+    # Debug visualization 이미지 (BGR)
+    img_debug = img.copy() if debug_viz else None
 
     # 마스킹용 레이어 생성 (RGBA)
-    # Width 확장 영역용 (50% 투명 BLUE)
-    width_expanded_mask = np.zeros((img_height, img_width, 4), dtype=np.uint8)
-    # 원본 + Height 확장 영역용 (100% 불투명 GREEN)
+    # 마스킹용 레이어 생성 (RGBA)
     height_expanded_mask = np.zeros((img_height, img_width, 4), dtype=np.uint8)
 
     print(f"\n{'='*60}")
     print(f"🖌️ Masking 적용 중...")
     print(f"{'='*60}")
 
+    # 디버그용 이미지 복사 (필요할 때만)
+    img_debug = img.copy() if debug_viz else None
+
     masked_count = 0
 
-    for cluster in clusters:
-        cluster_id = cluster['cluster_id']
-        poly = cluster['bounding_poly']
-        orientation = cluster.get('orientation', 'vertical')
+    for sentence in clusters:
+        # ✅ bounding_rect [x, y, w, h] 사용 (V2, V3 모두 동일)
+        rect = sentence.get('bounding_rect', [0, 0, 0, 0])
 
-        # Integrated JSON에서 Gemini 텍스트 가져오기
-        gemini_text = cluster.get('text', '')
+        # [x, y, w, h]를 polygon 형식으로 변환
+        poly = rect_to_polygon(rect)
 
-        # CV cluster에서 line 정보 및 CV 텍스트 가져오기
-        cv_cluster = cv_cluster_map.get(cluster_id)
+        # V3 형식 지원: text 또는 V2 형식: text_sentence
+        text_sentence = sentence.get('text') or sentence.get('text_sentence', '')
+        location = sentence.get('location', 'in_bubble')
+
+        # V3: matched_cluster (int) / V2: matched_clusters (string) 모두 지원
+        matched_cluster = sentence.get('matched_cluster')
+        if matched_cluster is not None:
+            # V3 형식
+            cluster_id_str = str(matched_cluster)
+        else:
+            # V2 형식: matched_clusters 문자열에서 추출
+            matched_clusters = sentence.get('matched_clusters', '')
+            cluster_id_str = matched_clusters.replace('C', '').split('+')[0].strip() if matched_clusters else ''
+
+        # CV cluster에서 line 정보 가져오기
+        cv_cluster = cv_cluster_map.get(cluster_id_str)
         if cv_cluster:
             lines = cv_cluster.get('lines', [])
-            line_count = len(lines)
-            # CV 텍스트 추출 (lines에서)
-            cv_text = ''.join([line['text'] for line in lines])
+            cv_line_count = len(lines)
         else:
-            # CV cluster가 없으면 Gemini 텍스트로 추정
-            line_count = gemini_text.count(' ') + 1 if gemini_text else 1
-            cv_text = ''
+            # CV cluster가 없으면 기본값
+            cv_line_count = 1
 
-        if line_count == 0 or not gemini_text:
+        # ✅ NEW: integrated.json에서 orientation 직접 읽기
+        orientation = sentence.get('orientation', 'vertical')
+
+        if cv_line_count == 0 or not text_sentence:
             continue
 
-        # 확장된 bbox 계산 (3개 반환)
-        original_poly, expanded_poly, height_exp_poly = calculate_expanded_bbox(
-            poly, line_count, orientation, cv_text, gemini_text
-        )
+        # ✅ NEW: integrated.json의 bounding_rect를 그대로 사용 (확장 없음)
+        # poly는 이미 rect_to_polygon으로 변환된 상태
+        
+        # Debug visualization
+        if debug_viz and img_debug is not None:
+            cv2.polylines(img_debug, [np.array(poly, dtype=np.int32)], isClosed=True, color=(0, 255, 0), thickness=2)
 
-        # 전체 확장 좌표 (width + height)
-        exp_xs = [p[0] for p in expanded_poly]
-        exp_ys = [p[1] for p in expanded_poly]
-        exp_x_min, exp_x_max = int(min(exp_xs)), int(max(exp_xs))
-        exp_y_min, exp_y_max = int(min(exp_ys)), int(max(exp_ys))
+        # sentence_id 가져오기
+        sentence_id = sentence.get('sentence_id', 0)
 
-        # 원본 + height 확장 좌표 (GREEN 영역)
-        height_xs = [p[0] for p in height_exp_poly]
-        height_ys = [p[1] for p in height_exp_poly]
-        height_x_min, height_x_max = int(min(height_xs)), int(max(height_xs))
-        height_y_min, height_y_max = int(min(height_ys)), int(max(height_ys))
+        # 마스킹 색상
+        mask_color = (0, 255, 0) if debug_viz else (255, 255, 255)  # Green or White (BGR)
 
-        # 이미지 범위 내로 제한
-        exp_x_min = max(0, exp_x_min)
-        exp_y_min = max(0, exp_y_min)
-        exp_x_max = min(img_width, exp_x_max)
-        exp_y_max = min(img_height, exp_y_max)
-
-        height_x_min = max(0, height_x_min)
-        height_y_min = max(0, height_y_min)
-        height_x_max = min(img_width, height_x_max)
-        height_y_max = min(img_height, height_y_max)
-
-        # Width 확장 영역에 50% 투명 WHITE (RGBA: 255, 255, 255, 128)
-        width_expanded_mask[exp_y_min:exp_y_max, exp_x_min:exp_x_max] = [255, 255, 255, 128]
-
-        # 원본 + Height 확장 영역에 100% 불투명 WHITE (RGBA: 255, 255, 255, 255)
-        height_expanded_mask[height_y_min:height_y_max, height_x_min:height_x_max] = [255, 255, 255, 255]
+        # Location 기반 마스킹
+        if location == 'in_bubble':
+            # in_bubble: 100% 불투명 흰색
+            cv2.fillPoly(height_expanded_mask, [np.array(poly, dtype=np.int32)], mask_color + (255,))
+        else:
+            # outside_bubble: 50% 투명도 흰색
+            cv2.fillPoly(height_expanded_mask, [np.array(poly, dtype=np.int32)], mask_color + (128,))
 
         masked_count += 1
 
         if masked_count <= 5:
-            print(f"  C{cluster_id}: {line_count}줄 - "
-                  f"전체확장 ({exp_x_max-exp_x_min}x{exp_y_max-exp_y_min}), "
-                  f"GREEN영역 ({height_x_max-height_x_min}x{height_y_max-height_y_min})")
-            if cluster_id == 1:
-                print(f"    [DEBUG] 전체 확장 poly: {expanded_poly}")
-                print(f"    [DEBUG] GREEN(height) poly: {height_exp_poly}")
+            matched_display = f"C{cluster_id_str}" if cluster_id_str else "?"
+            print(f"  S{sentence_id}→{matched_display}: {text_sentence[:30]}")
+            print(f"    위치: {location}, BBox: {rect}")
 
     if masked_count > 5:
         print(f"  ... 외 {masked_count - 5}개")
 
     print(f"\n✅ {masked_count}개 Cluster Masking 완료")
 
+    # --- 마스크 적용 (NumPy 최적화) ---
     # 이미지를 BGRA로 변환
     img_bgra = cv2.cvtColor(img, cv2.COLOR_BGR2BGRA)
 
-    # Width 확장 영역 마스크 적용 (50% 투명 BLUE)
-    for y in range(img_height):
-        for x in range(img_width):
-            if width_expanded_mask[y, x, 3] > 0:  # 알파 채널이 0보다 크면
-                alpha = width_expanded_mask[y, x, 3] / 255.0
-                img_bgra[y, x, :3] = img_bgra[y, x, :3] * (1 - alpha) + width_expanded_mask[y, x, :3] * alpha
-
-    # 원본 + Height 확장 영역 마스크 적용 (100% 불투명 GREEN)
-    for y in range(img_height):
-        for x in range(img_width):
-            if height_expanded_mask[y, x, 3] > 0:  # 알파 채널이 0보다 크면
-                img_bgra[y, x, :3] = height_expanded_mask[y, x, :3]
+    # 마스크 적용 (알파 블렌딩)
+    # 알파 채널이 0보다 큰 영역만 선택
+    height_mask_area = height_expanded_mask[:, :, 3] > 0
+    alpha = height_expanded_mask[height_mask_area, 3].reshape(-1, 1) / 255.0
+    mask_color = height_expanded_mask[height_mask_area, :3]
+    
+    # 알파 블렌딩: result = original * (1 - alpha) + mask_color * alpha
+    img_bgra[height_mask_area, :3] = (
+        img_bgra[height_mask_area, :3] * (1 - alpha) +
+        mask_color * alpha
+    ).astype(np.uint8)
 
     # BGR로 다시 변환
     result = cv2.cvtColor(img_bgra, cv2.COLOR_BGRA2BGR)
 
-    # 저장
+    # 결과 저장
     if output_path is None:
         output_path = Path(image_path).parent / f"{Path(image_path).stem}_masked.jpg"
-
     cv2.imwrite(str(output_path), result)
 
+    # ✅ NEW: 디버그 이미지 저장
+    if debug_viz and img_debug is not None:
+        debug_output_path = Path(output_path).parent / f"{Path(output_path).stem}_debug.jpg"
+        cv2.imwrite(str(debug_output_path), img_debug)
+        print(f"🔍 Debug 시각화 저장: {debug_output_path}")
+
     print(f"\n{'='*60}")
-    print(f"✅ Color Masking 완료: {output_path}")
+    if debug_viz:
+        print(f"✅ Color Masking (Debug) 완료: {output_path}")
+    else:
+        print(f"✅ White Masking 완료: {output_path}")
     print(f"{'='*60}")
-    print(f"\nMasking 규칙:")
-    print(f"  🟩 GREEN 영역: 원본 + Height 확장 영역 (100% 불투명)")
-    print(f"  🟦 BLUE 영역: Width 확장 영역만 (50% 투명)")
-    print(f"\n확장 규칙:")
-    print(f"  Width: 1줄=2.0배, 2줄=1.33배, 3줄=1.0배, 4줄+=유지")
-    print(f"  Height: 1줄인 경우 텍스트 길이 비율로 확장")
-    print()
+
+    if debug_viz:
+        print(f"\nDebug 시각화 규칙:")
+        print(f"  🟩 초록색 Box: 원본 CV BBox")
+        print(f"  🟦 파란색 Box: 최종 확장 BBox")
 
 
 if __name__ == "__main__":
     if len(sys.argv) < 4:
-        print("Usage: python apply_text_overlay.py <image> <integrated.json> <cv_clusters_v5.json> [output.jpg]")
+        print("Usage: python apply_masking.py <image> <integrated.json> <cv_clusters_v5.json> [output.jpg] [--debug]")
         print("\nExample:")
-        print("  python apply_text_overlay.py temp_output/00038.jpg temp_output/00038_integrated.json temp_output/00038_cv_clusters_v5.json")
+        print("  python apply_masking.py temp_output/00038.jpg temp_output/00038_integrated.json temp_output/00038_cv_clusters_v5.json")
+        print("\nDebug Mode Example:")
+        print("  python apply_masking.py temp_output/00038.jpg temp_output/00038_integrated.json temp_output/00038_cv_clusters_v5.json --debug")
         sys.exit(1)
 
     image_path = sys.argv[1]
     integrated_json = sys.argv[2]
     cv_clusters_json = sys.argv[3]
-    output_path = sys.argv[4] if len(sys.argv) > 4 else None
+    
+    # Output path와 debug flag 처리
+    output_path = None
+    debug_mode = False
+    if len(sys.argv) > 4:
+        if sys.argv[4] != '--debug':
+            output_path = sys.argv[4]
+    if '--debug' in sys.argv:
+        debug_mode = True
 
-    apply_white_masking(image_path, integrated_json, cv_clusters_json, output_path)
+    apply_white_masking(image_path, integrated_json, cv_clusters_json, output_path, debug_viz=debug_mode)

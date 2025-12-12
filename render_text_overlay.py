@@ -11,6 +11,28 @@ from pathlib import Path
 from PIL import Image, ImageDraw, ImageFont
 
 
+def rect_to_polygon(bounding_rect):
+    """
+    [x, y, w, h] 형식의 bounding_rect를 polygon 형식으로 변환
+
+    Args:
+        bounding_rect: [x, y, w, h]
+
+    Returns:
+        [[x1,y1], [x2,y1], [x2,y2], [x1,y2]] polygon 형식
+    """
+    if not bounding_rect or len(bounding_rect) != 4:
+        return [[0, 0], [0, 0], [0, 0], [0, 0]]
+
+    x, y, w, h = bounding_rect
+    return [
+        [x, y],
+        [x + w, y],
+        [x + w, y + h],
+        [x, y + h]
+    ]
+
+
 def calculate_expanded_bbox(
     bounding_poly,
     line_count,
@@ -273,24 +295,24 @@ def split_text_intelligently(text, max_chars=8, min_chars=3):
     return lines if lines else [text]
 
 
-def calculate_font_size(bbox_width, bbox_height, text):
+def calculate_font_size(bbox_width, bbox_height, text, base_font_size=33):
     """
     bbox 크기와 텍스트 길이에 맞는 폰트 크기 계산
 
-    기본 30px, ±3px 범위 (27-33px)
+    기본 33px, 마진 대비 범위 조정
     bbox_width 기반으로 최대 글자수 계산하여 줄바꿈
 
     Args:
         bbox_width: bbox 너비
         bbox_height: bbox 높이
         text: 렌더링할 텍스트
+        base_font_size: 기본 폰트 크기 (기본값 33)
 
     Returns:
         (폰트 크기, 최대 글자수)
     """
-    base_font_size = 33
-    min_font_size = 30
-    max_font_size = 36
+    min_font_size = max(20, base_font_size - 6)  # 최소 -6px
+    max_font_size = base_font_size + 3  # 최대 +3px
 
     # bbox_width 기반으로 최대 글자수 계산
     def calc_max_chars_for_font(font_size):
@@ -335,7 +357,8 @@ def render_korean_text(
     orientation='vertical',
     font_path="Fonts/Freesentation-4Regular.ttf",
     color=(0, 0, 0),
-    align='center'
+    align='center',
+    base_font_size=33
 ):
     """
     한글 텍스트를 이미지에 렌더링
@@ -349,6 +372,7 @@ def render_korean_text(
         font_path: 폰트 파일 경로
         color: RGB 색상 튜플
         align: 텍스트 정렬 ('left', 'center', 'right')
+        base_font_size: 기본 폰트 크기 (기본값 33)
     
     Returns:
         텍스트가 렌더링된 이미지
@@ -363,7 +387,7 @@ def render_korean_text(
     draw = ImageDraw.Draw(pil_img)
 
     # 폰트 크기 및 최대 글자수 계산
-    font_size, max_chars = calculate_font_size(w, h, text)
+    font_size, max_chars = calculate_font_size(w, h, text, base_font_size)
 
     try:
         font = ImageFont.truetype(font_path, font_size)
@@ -429,7 +453,8 @@ def apply_text_overlay(
     integrated_json_path: str,
     cv_clusters_path: str,
     output_path: str = None,
-    font_path: str = "Fonts/Freesentation-4Regular.ttf"
+    font_path: str = "Fonts/Freesentation-4Regular.ttf",
+    base_font_size: int = 33
 ):
     """
     Masked 이미지에 한글 번역 텍스트 오버레이
@@ -440,6 +465,7 @@ def apply_text_overlay(
         cv_clusters_path: cv_clusters_v5.json 경로 (line 개수 확인용)
         output_path: 결과 저장 경로
         font_path: 한글 폰트 파일 경로
+        base_font_size: 기본 폰트 크기 (기본값 33)
     """
     print(f"\n{'='*60}")
     print(f"📝 텍스트 오버레이 적용")
@@ -473,16 +499,38 @@ def apply_text_overlay(
     rendered_count = 0
     
     for cluster in clusters:
-        cluster_id = cluster['cluster_id']
-        poly = cluster['bounding_poly']
+        # V3 형식 지원: matched_cluster (int) 또는 V2 형식: cluster_id (int)
+        cluster_id = cluster.get('matched_cluster') or cluster.get('cluster_id', 0)
+
+        # ✅ bounding_rect [x, y, w, h] 사용 (V3 형식)
+        rect = cluster.get('bounding_rect', [0, 0, 0, 0])
+
+        # [x, y, w, h]를 polygon 형식으로 변환
+        poly = rect_to_polygon(rect)
+
         orientation = cluster.get('orientation', 'vertical')
-        translated_text = cluster.get('translated', '')
-        
+        translated_text = cluster.get('text_translated', '')
+
         if not translated_text:
             continue
-        
+
+        # V3: matched_cluster (int) / V2: matched_clusters (string) 모두 지원
+        matched_cluster = cluster.get('matched_cluster')
+        if matched_cluster is not None:
+            # V3 형식: matched_cluster는 이미 int
+            cv_cluster_id = matched_cluster
+        else:
+            # V2 형식: matched_clusters에서 추출
+            matched_clusters = cluster.get('matched_clusters', '')
+            cluster_id_str = matched_clusters.replace('C', '').split('+')[0].strip() if matched_clusters else str(cluster_id)
+            try:
+                cv_cluster_id = int(cluster_id_str) if cluster_id_str else cluster_id
+            except:
+                cv_cluster_id = cluster_id
+
         # CV cluster에서 line 정보 가져오기
-        cv_cluster = cv_cluster_map.get(cluster_id)
+        cv_cluster = cv_cluster_map.get(cv_cluster_id)
+            
         if cv_cluster:
             lines = cv_cluster.get('lines', [])
             line_count = len(lines)
@@ -517,13 +565,14 @@ def apply_text_overlay(
             orientation=orientation,
             font_path=font_path,
             color=(0, 0, 0),  # 검정색
-            align='center'
+            align='center',
+            base_font_size=base_font_size
         )
         
         rendered_count += 1
 
         if rendered_count <= 5:
-            font_size, max_chars = calculate_font_size(exp_w, exp_h, translated_text)
+            font_size, max_chars = calculate_font_size(exp_w, exp_h, translated_text, base_font_size)
             lines = split_text_intelligently(translated_text, max_chars)
             short_text = len(translated_text.replace('?', '').replace('!', '').replace(' ', '')) <= 4 and len(lines) == 1
             print(f"  C{cluster_id}: {line_count}줄 → '{translated_text[:20]}...'")

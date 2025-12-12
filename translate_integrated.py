@@ -44,38 +44,45 @@ def translate_integrated(
 
     # 번역할 텍스트 추출
     texts_to_translate = []
-    for cluster in clusters:
-        cluster_id = cluster['cluster_id']
-        text = cluster.get('text', '')
-        text_type = cluster.get('text_type', 'unknown')
+    for sentence in clusters:
+        # V3 형식 (integrated_ocr_v3.py 출력)
+        sentence_id = sentence.get('sentence_id')
+        # text_sentence (V2) 또는 text (V3) 모두 지원
+        text = sentence.get('text') or sentence.get('text_sentence', '')
+        text_type = sentence.get('text_type', 'other')
+        location = sentence.get('location', 'unknown')
+        orientation = sentence.get('orientation', 'vertical')
 
-        if text.strip():
+        if text.strip() and sentence_id is not None:
             texts_to_translate.append({
-                'cluster_id': cluster_id,
+                'sentence_id': sentence_id,
                 'text': text,
-                'text_type': text_type
+                'text_type': text_type,
+                'location': location,
+                'orientation': orientation
             })
 
     print(f"📝 {len(texts_to_translate)}개 텍스트 번역 준비")
 
     # 번역 프롬프트 생성
-    prompt = f"""다음 일본어 만화 텍스트들을 한국어로 번역하세요.
+    prompt = f"""다음 일본어 만화 텍스트들을 자연스러운 한국어로 번역해주세요.
 
 **중요 지침:**
-1. 동일한 화자의 대사는 일관된 어투를 유지하세요 (존댓말/반말)
-2. 문맥을 파악하여 자연스러운 한국어로 번역하세요
+1. 자연스럽고 자연스러운 한국어 대사로 번역하세요
+2. 문맥을 파악하여 적절한 어투를 사용하세요 (존댓말/반말/경어)
 3. 효과음(sound_effect)은 한국어 의성어/의태어로 변환하세요
 4. 나레이션(narration)은 설명조로 번역하세요
-5. 기술명(Technique Name)이나 주문은 의성어로 번역하지 말고, 발음이나 의미를 살려 번역하세요 (예: 'フレイムカラム' -> '플레임 컬럼', '화르륵' X)
+5. orientation이 'vertical'이면 세로쓰기, 'horizontal'이면 가로쓰기 텍스트입니다. 이 문맥을 번역에 반영하세요.
+6. 기술명이나 주문은 의미를 살려 번역하세요
 
 **텍스트 목록:**
-{json.dumps([{'id': t['cluster_id'], 'text': t['text'], 'type': t['text_type']} for t in texts_to_translate], ensure_ascii=False, indent=2)}
+{json.dumps([{'id': t['sentence_id'], 'text': t['text'], 'type': t['text_type'], 'location': t['location'], 'orientation': t['orientation']} for t in texts_to_translate], ensure_ascii=False, indent=2)}
 
 **반환 형식 (JSON):**
 {{
   "translations": [
     {{
-      "cluster_id": 1,
+      "sentence_id": 1,
       "original": "일본어 텍스트",
       "translated": "한국어 번역"
     }},
@@ -121,37 +128,40 @@ def translate_integrated(
 
             print(f"  ✅ 번역 완료: {len(result['translations'])}개")
 
-            # 원본 cluster에 번역 추가
-            translated_clusters = []
-            translation_map = {t['cluster_id']: t['translated'] for t in result['translations']}
+            # 원본 sentence에 번역 추가
+            translated_sentences = []
+            translation_map = {t['sentence_id']: t['translated'] for t in result['translations']}
 
-            for cluster in clusters:
-                cid = cluster['cluster_id']
-                cluster_with_translation = cluster.copy()
-                cluster_with_translation['translated'] = translation_map.get(cid, '')
-                translated_clusters.append(cluster_with_translation)
+            for sentence in clusters:
+                # ✅ FIX: 새로운 형식 - sentence_id 사용
+                sid = sentence.get('sentence_id')
+                sentence_with_translation = sentence.copy()
+                sentence_with_translation['text_translated'] = translation_map.get(sid, '')
+                translated_sentences.append(sentence_with_translation)
 
             # 결과 출력
             print(f"\n{'='*60}")
             print(f"📊 번역 결과 미리보기:")
             print(f"{'='*60}")
-            for i, item in enumerate(translated_clusters[:3], 1):
-                print(f"\nCluster {item['cluster_id']}:")
-                print(f"  원문: {item.get('text', '')[:40]}...")
-                print(f"  번역: {item.get('translated', '')[:40]}...")
+            for i, item in enumerate(translated_sentences[:3], 1):
+                print(f"\nSentence {item.get('sentence_id')}:")
+                # V3: text, V2: text_sentence 모두 지원
+                original_text = item.get('text') or item.get('text_sentence', '')
+                print(f"  원문: {original_text[:40]}...")
+                print(f"  번역: {item.get('text_translated', '')[:40]}...")
 
-            if len(translated_clusters) > 3:
-                print(f"\n... 외 {len(translated_clusters) - 3}개")
+            if len(translated_sentences) > 3:
+                print(f"\n... 외 {len(translated_sentences) - 3}개")
 
             # 결과 저장
             if output_path is None:
                 output_path = Path(integrated_json_path).parent / f"{Path(integrated_json_path).stem}_translated.json"
 
             with open(output_path, 'w', encoding='utf-8') as f:
-                json.dump(translated_clusters, f, ensure_ascii=False, indent=2)
+                json.dump(translated_sentences, f, ensure_ascii=False, indent=2)
 
             print(f"\n✅ 번역 결과 저장: {output_path}")
-            return translated_clusters
+            return translated_sentences
 
         except json.JSONDecodeError as e:
             print(f"  ⚠️ JSON 파싱 실패 (시도 {attempt + 1}/{retry_count}): {e}")
