@@ -289,26 +289,48 @@ class CloudVisionAPI:
 
         for box in grid_boxes:
             bbox = box["box_2d"]  # [ymin, xmin, ymax, xmax]
-            center_y = (bbox[0] + bbox[2]) / 2
-            center_x = (bbox[1] + bbox[3]) / 2
 
-            # bbox 중심점이 어느 그리드 셀에 속하는지 판단
+            # ✅ 개선: bbox의 중심점이 아닌 bbox 영역과 셀의 교집합으로 판단
+            # bbox가 여러 셀에 걸쳐있을 수 있으므로, 가장 많이 겹치는 셀을 선택
+            ymin, xmin, ymax, xmax = bbox
+
+            best_idx = -1
+            best_overlap = 0
+
             for idx, (y_off, x_off, orig_w, orig_h) in enumerate(offsets):
-                if (y_off <= center_y < y_off + orig_h and
-                    x_off <= center_x < x_off + orig_w):
-                    # 그리드 좌표 → 원본 이미지 좌표로 변환
-                    local_bbox = [
-                        bbox[0] - y_off,  # ymin
-                        bbox[1] - x_off,  # xmin
-                        bbox[2] - y_off,  # ymax
-                        bbox[3] - x_off   # xmax
-                    ]
-                    results[idx].append({
-                        "box_2d": local_bbox,
-                        "label": box["label"],
-                        "confidence": box.get("confidence", 1.0)
-                    })
-                    break
+                # 셀의 범위: y [y_off, y_off + orig_h), x [x_off, x_off + orig_w)
+                cell_ymin, cell_ymax = y_off, y_off + orig_h
+                cell_xmin, cell_xmax = x_off, x_off + orig_w
+
+                # bbox와 셀의 교집합 계산
+                overlap_ymin = max(ymin, cell_ymin)
+                overlap_ymax = min(ymax, cell_ymax)
+                overlap_xmin = max(xmin, cell_xmin)
+                overlap_xmax = min(xmax, cell_xmax)
+
+                # 교집합이 존재하는지 확인
+                if overlap_ymin < overlap_ymax and overlap_xmin < overlap_xmax:
+                    overlap_area = (overlap_ymax - overlap_ymin) * (overlap_xmax - overlap_xmin)
+
+                    # 가장 많이 겹치는 셀 선택
+                    if overlap_area > best_overlap:
+                        best_overlap = overlap_area
+                        best_idx = idx
+
+            if best_idx >= 0:
+                y_off, x_off, orig_w, orig_h = offsets[best_idx]
+                # 그리드 좌표 → 원본 이미지 좌표로 변환
+                local_bbox = [
+                    bbox[0] - y_off,  # ymin
+                    bbox[1] - x_off,  # xmin
+                    bbox[2] - y_off,  # ymax
+                    bbox[3] - x_off   # xmax
+                ]
+                results[best_idx].append({
+                    "box_2d": local_bbox,
+                    "label": box["label"],
+                    "confidence": box.get("confidence", 1.0)
+                })
 
         # 임시 파일 삭제
         temp_grid_path.unlink(missing_ok=True)
