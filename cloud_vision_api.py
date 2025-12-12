@@ -245,10 +245,11 @@ class CloudVisionAPI:
             h, w = img.shape[:2]
             image_sizes.append((w, h))
 
-        # 그리드 크기 계산 (2x2, 2x3, 3x3 등)
+        # Grid 크기 계산 (grid_cols는 최대 5로 제한, grid_rows는 필요한 만큼)
+        # 40MB 제한을 위해 한 번에 처리하는 이미지 수를 제한해야 함
         n_images = len(images)
-        grid_cols = int(np.ceil(np.sqrt(n_images)))
-        grid_rows = int(np.ceil(n_images / grid_cols))
+        grid_cols = min(int(np.ceil(np.sqrt(n_images))), 5)
+        grid_rows = int(np.ceil(n_images / grid_cols))  # 실제 필요한 행 수
 
         # 각 이미지 크기 정규화 (가장 큰 이미지 기준)
         max_h = max(h for w, h in image_sizes)

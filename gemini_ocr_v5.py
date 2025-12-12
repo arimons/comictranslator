@@ -41,8 +41,8 @@ def main():
     # 결과를 output_json에 저장
     with open(output_json, 'w', encoding='utf-8') as f:
         json.dump(result, f, ensure_ascii=False, indent=2)
-    
-    print(f"✅ OCR 완료: {len(result.get('clusters', []))}개 클러스터")
+
+    print(f"✅ OCR 완료: {len(result.get('sentences', []))}개 문장")
     
 if __name__ == "__main__":
     main()

@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """
-CV OCR Clustering v5 Refactored
-- Stage 1: Block -> Line (Strict vertical/horizontal merging)
-- Stage 2: Furigana Filtering (Line level)
-- Stage 3: Line -> Cluster (Paragraph grouping)
+CV OCR Clustering v5 - 2-Pass Algorithm
+- Pass 1: Block -> Line (Y 방향 확장, BFS, Stage 1 only)
+- Furigana Filtering: Line level (60% width threshold)
+- Pass 2: Line -> Cluster (4-stage rule, BFS)
+- Bbox Expansion: Rightmost line width + 60%
 """
 import json
 import re
@@ -65,412 +66,298 @@ def calculate_bbox_union(bboxes: List[List[int]]) -> List[int]:
 
 
 # ==========================================
-# Stage 1: Block -> Line
+# Pass 1: Block -> Line
 # ==========================================
 
-def _is_same_line(block1: Dict, block2: Dict, avg_width: float) -> bool:
+def pass1_create_lines(blocks: List[Dict], avg_width: float, y_tolerance: float) -> List[Dict]:
     """
-    두 블록이 '같은 라인'에 속하는지 판단 (Strict)
-    """
-    x1, y1, w1, h1 = block1["bbox"]
-    x2, y2, w2, h2 = block2["bbox"]
-    
-    # 1. Vertical Line Check
-    # X 좌표가 거의 같아야 함
-    x_diff = abs(x1 - x2)
-    x_center_diff = abs((x1 + w1/2) - (x2 + w2/2))
-    
-    # Y Gap
-    y1_end = y1 + h1
-    y2_end = y2 + h2
-    y_gap = max(0, y2 - y1_end, y1 - y2_end)
-    
-    # Vertical 조건:
-    # - X 정렬이 잘 되어 있어야 함 (width의 50% 이내 오차)
-    # - Y Gap이 너무 크지 않아야 함 (글자 크기의 1.5배 이내?)
-    char_size = max(w1, w2, h1, h2) # 대략적인 글자 크기
-    
-    if x_center_diff <= avg_width * 0.5 and y_gap <= char_size * 1.5:
-        return True
-        
-    # 2. Horizontal Line Check
-    # Y 좌표가 거의 같아야 함
-    y_center_diff = abs((y1 + h1/2) - (y2 + h2/2))
-    x_gap = max(0, x2 - (x1 + w1), x1 - (x2 + w2))
-    
-    if y_center_diff <= h1 * 0.5 and x_gap <= char_size * 1.5:
-        # 가로쓰기 텍스트인 경우에만 허용
-        if is_horizontal_text(block1) or is_horizontal_text(block2):
-            return True
-            
-    return False
-
-
-def create_lines(blocks: List[Dict]) -> List[Dict]:
-    """
-    Blocks -> Lines (Region Growing)
-    Returns: List of Line Dicts
+    Pass 1: Block -> Line (BFS 방식)
+    같은 X 그룹에서 Y 축으로만 합침 (Stage 1 only)
     """
     if not blocks:
         return []
 
-    # avg_width 계산
-    widths = [b["bbox"][2] for b in blocks]
-    avg_width = float(np.percentile(widths, 75))
-    
-    # 정렬 (Y 우선)
-    sorted_blocks = sorted(blocks, key=lambda b: (b["bbox"][1], b["bbox"][0]))
-    
+    # Sort by X descending (right to left for vertical Japanese)
+    blocks_sorted = sorted(blocks, key=lambda b: -b["bbox"][0])
+
     visited = set()
     lines = []
-    
-    for seed_idx, seed_block in enumerate(sorted_blocks):
+
+    for seed_idx, seed_block in enumerate(blocks_sorted):
         if seed_idx in visited:
             continue
-            
+
+        # BFS
         queue = [seed_block]
         current_line_blocks = [seed_block]
         visited.add(seed_idx)
-        
+
         while queue:
             curr = queue.pop(0)
-            
-            for cand_idx, candidate in enumerate(sorted_blocks):
+            cx, cy, cw, ch = curr["bbox"]
+
+            # Check all unvisited blocks
+            for cand_idx, candidate in enumerate(blocks_sorted):
                 if cand_idx in visited:
                     continue
-                
-                if _is_same_line(curr, candidate, avg_width):
+
+                x, y, w, h = candidate["bbox"]
+                x_diff = abs(x - cx)
+                y_gap = max(0, y - (cy + ch), cy - (y + h))
+
+                # Stage 1 ONLY: X diff ≤ 10px AND Y gap ≤ tolerance
+                # 같은 X 그룹(세로줄)에서 Y 방향으로만 병합
+                if x_diff <= 10 and y_gap <= y_tolerance:
                     current_line_blocks.append(candidate)
                     queue.append(candidate)
                     visited.add(cand_idx)
-        
-        # Line 생성
-        line_bbox = calculate_bbox_union([b["bbox"] for b in current_line_blocks])
-        text = "".join([b["text"] for b in current_line_blocks]) # 순서 정렬 필요?
-        
-        # 블록 내부 정렬 (세로: Y, 가로: X)
-        w, h = line_bbox[2], line_bbox[3]
-        is_vertical = h > w * 1.2
-        
-        if is_vertical:
-            current_line_blocks.sort(key=lambda b: b["bbox"][1])
-        else:
-            current_line_blocks.sort(key=lambda b: b["bbox"][0])
-            
-        text = "".join([b["text"] for b in current_line_blocks])
-        
-        lines.append({
-            "bboxes": current_line_blocks, # Original blocks
-            "bbox": line_bbox,             # Line BBox
-            "text": text,
-            "orientation": "vertical" if is_vertical else "horizontal"
-        })
-        
+
+        # Create Line object
+        lines.append(create_line_object(current_line_blocks))
+
     return lines
 
 
+def create_line_object(blocks: List[Dict]) -> Dict:
+    """블록 리스트로부터 Line 객체 생성"""
+    # Calculate union bbox
+    all_x = []
+    all_y = []
+    for block in blocks:
+        x, y, w, h = block["bbox"]
+        all_x.extend([x, x + w])
+        all_y.extend([y, y + h])
+
+    min_x, max_x = min(all_x), max(all_x)
+    min_y, max_y = min(all_y), max(all_y)
+
+    line_bbox = [min_x, min_y, max_x - min_x, max_y - min_y]
+
+    # X 좌표로 그룹핑 (±5px 이내는 같은 그룹)
+    x_groups = []
+    blocks_by_x = sorted(blocks, key=lambda b: -b["bbox"][0])  # X 큰 순
+
+    for block in blocks_by_x:
+        x = block["bbox"][0]
+        # 기존 그룹에 속하는지 확인
+        added = False
+        for group in x_groups:
+            if abs(group['x'] - x) <= 5:  # ±5px 이내면 같은 그룹
+                group['blocks'].append(block)
+                added = True
+                break
+        if not added:
+            x_groups.append({'x': x, 'blocks': [block]})
+
+    # 각 그룹 내에서 Y 정렬 후 합치기
+    blocks_sorted = []
+    for group in x_groups:
+        # Y 작은 순 (위→아래)
+        group['blocks'].sort(key=lambda b: b["bbox"][1])
+        blocks_sorted.extend(group['blocks'])
+
+    text = "".join([b["text"] for b in blocks_sorted])
+
+    # Determine orientation
+    w, h = line_bbox[2], line_bbox[3]
+    is_vertical = h > w * 1.2
+
+    return {
+        "bboxes": blocks_sorted,  # Keep original blocks for reference
+        "bbox": line_bbox,
+        "text": text,
+        "orientation": "vertical" if is_vertical else "horizontal"
+    }
+
+
 # ==========================================
-# Stage 2: Furigana Filtering
+# Furigana Filtering
 # ==========================================
 
-def filter_furigana_lines(lines: List[Dict]) -> List[Dict]:
+def filter_furigana_lines(lines: List[Dict], avg_width: float) -> List[Dict]:
     """
-    Line 레벨 후리가나 필터링
+    후리가나 필터링 (Line 레벨)
+
+    조건:
+    1. 바로 왼쪽 Line의 Y 범위와 겹침 (overlap) - 완전 포함이 아닌 겹침으로 완화
+    2. Width가 왼쪽 Line의 60% 이하
+    3. X gap 무시 (인접 여부만 확인)
+    """
+    if not lines:
+        return lines
+
+    # Sort by X descending (right to left)
+    lines_sorted = sorted(lines, key=lambda l: -l["bbox"][0])
+
+    filtered = []
+    for i, line in enumerate(lines_sorted):
+        lx, ly, lw, lh = line["bbox"]
+        line_y_end = ly + lh
+
+        # 바로 왼쪽 Line 찾기 (X 좌표가 더 작은 첫 번째)
+        is_furigana = False
+        for j in range(i + 1, len(lines_sorted)):
+            left = lines_sorted[j]
+            left_x, left_y, left_w, left_h = left["bbox"]
+            left_y_end = left_y + left_h
+
+            # Y 범위 겹침 체크: 현재 Line이 왼쪽 Line과 Y 축에서 겹치는가?
+            y_overlap = not (line_y_end < left_y or ly > left_y_end)
+
+            if y_overlap:
+                # Width 체크 (60% 이하)
+                if lw <= left_w * 0.60:
+                    print(f"  ✂️ Furigana: '{line['text']}' (w={lw}, y={ly}~{line_y_end}) overlaps '{left['text']}' (w={left_w}, y={left_y}~{left_y_end})")
+                    is_furigana = True
+                    break
+
+            # 첫 번째 인접 Line만 체크 (X 좌표 차이가 크면 중단)
+            if left_x < lx - 100:  # 충분히 멀어지면 중단
+                break
+
+        if not is_furigana:
+            filtered.append(line)
+
+    print(f"  Furigana filter: {len(lines)} → {len(filtered)} lines")
+    return filtered
+
+
+# ==========================================
+# Pass 2: Line -> Cluster
+# ==========================================
+
+def pass2_create_clusters(lines: List[Dict], avg_width: float, y_tolerance: float) -> List[Dict]:
+    """
+    Pass 2: Line -> Cluster (BFS 방식)
+
+    후리가나 필터링 후 남은 Line들을 4-stage rule로 Clustering:
+    - Stage 1: X diff ≤ 10px → Y gap 체크
+    - Stage 2: 10 < X diff ≤ 55px → Y 시작점 유사하면 병합
+    - Stage 3: 55 < X diff ≤ dynamic_threshold → Y 시작점 유사하면 병합
+    - Stage 4: X diff > dynamic_threshold → 분리
     """
     if not lines:
         return []
-        
-    print(f"\n  === Furigana Filtering ===")
-    
-    # Vertical lines only for filtering
-    # But we need to keep horizontal lines too
-    
-    # Sort by X (Right to Left) for processing
-    # We need to preserve original indices or work on a copy
-    
-    # 인덱스 부여
-    for i, line in enumerate(lines):
-        line['_id'] = i
-        
-    vertical_lines = [l for l in lines if l['orientation'] == 'vertical']
-    vertical_lines.sort(key=lambda l: l['bbox'][0], reverse=True)
-    
-    to_remove_ids = set()
-    
-    for i, curr in enumerate(vertical_lines):
-        if curr['_id'] in to_remove_ids:
-            continue
-            
-        curr_x, curr_y, curr_w, curr_h = curr['bbox']
-        
-        # Check left neighbors
-        for j in range(i + 1, min(i + 10, len(vertical_lines))):
-            next_l = vertical_lines[j]
-            if next_l['_id'] in to_remove_ids:
-                continue
-                
-            next_x, next_y, next_w, next_h = next_l['bbox']
-            
-            # Gap check
-            # curr is Right, next is Left
-            # Gap = Right_X - (Left_X + Left_W)
-            # Wait, curr is Right (larger X), next is Left (smaller X)
-            # Gap = curr_x - (next_x + next_w)
-            
-            gap = curr_x - (next_x + next_w)
-            
-            # Y Overlap check
-            overlap_start = max(curr_y, next_y)
-            overlap_end = min(curr_y + curr_h, next_y + next_h)
-            overlap_h = overlap_end - overlap_start
-            
-            if overlap_h >= 10 and gap <= 20:
-                # Width check
-                if curr_w <= next_w * 0.55:
-                    print(f"  ✂️ Furigana detected: '{curr['text']}' (w={curr_w}) next to '{next_l['text']}' (w={next_w}), gap={gap}")
-                    to_remove_ids.add(curr['_id'])
-                else:
-                    # Not furigana, but close. Stop checking further left?
-                    # Maybe not, could be multiple columns
-                    pass
-            elif gap > 200: # Too far, stop checking this pair
-                pass
-                
-    filtered_lines = [l for l in lines if l['_id'] not in to_remove_ids]
-    print(f"  Removed {len(to_remove_ids)} furigana lines. Total lines: {len(lines)} -> {len(filtered_lines)}")
-    
-    return filtered_lines
 
+    dynamic_threshold = avg_width * 2.5  # Line 레벨에서는 더 넓게
 
-# ==========================================
-# Stage 3: Line -> Cluster
-# ==========================================
+    # Sort lines by X descending (right to left)
+    lines_sorted = sorted(lines, key=lambda l: -l["bbox"][0])
 
-def _is_same_cluster(line1: Dict, line2: Dict) -> bool:
-    """
-    두 라인이 같은 클러스터(문단)인지 판단
-    """
-    # Orientation이 다르면 병합 X
-    if line1['orientation'] != line2['orientation']:
-        return False
-        
-    l1_bbox = line1['bbox']
-    l2_bbox = line2['bbox']
-    
-    if line1['orientation'] == 'vertical':
-        # Vertical Lines: Group if adjacent horizontally
-        # X Gap should be small-ish (paragraph spacing)
-        # Y Overlap should be significant
-        
-        x1, y1, w1, h1 = l1_bbox
-        x2, y2, w2, h2 = l2_bbox
-        
-        # Gap calculation (assuming sorted or using min/max)
-        gap_x = max(0, x2 - (x1 + w1), x1 - (x2 + w2))
-        
-        # Y Overlap
-        overlap_start = max(y1, y2)
-        overlap_end = min(y1 + h1, y2 + h2)
-        overlap_h = overlap_end - overlap_start
-        
-        # Thresholds
-        # Gap: 1.5 * width? or fixed?
-        # Let's use a dynamic threshold based on width
-        avg_w = (w1 + w2) / 2
-        
-        # Reduced threshold from 2.0 to 1.5 to prevent merging separate bubbles
-        if gap_x <= avg_w * 1.5 and overlap_h > min(h1, h2) * 0.3:
-            return True
-            
-    else:
-        # Horizontal Lines: Group if adjacent vertically
-        x1, y1, w1, h1 = l1_bbox
-        x2, y2, w2, h2 = l2_bbox
-        
-        gap_y = max(0, y2 - (y1 + h1), y1 - (y2 + h2))
-        
-        # X Overlap
-        overlap_start = max(x1, x2)
-        overlap_end = min(x1 + w1, x2 + w2)
-        overlap_w = overlap_end - overlap_start
-        
-        avg_h = (h1 + h2) / 2
-        
-        if gap_y <= avg_h * 1.5 and overlap_w > min(w1, w2) * 0.3:
-            return True
-            
-    return False
-
-
-def create_clusters_from_lines(lines: List[Dict]) -> List[Dict]:
-    """
-    Lines -> Clusters
-    """
-    if not lines:
-        return []
-        
-    # Sort for processing
-    # Vertical: Right to Left
-    # Horizontal: Top to Bottom
-    # Mixed... let's just use a generic sort
-    sorted_lines = sorted(lines, key=lambda l: (l['bbox'][1], l['bbox'][0]))
-    
     visited = set()
     clusters = []
-    
-    for seed_idx, seed_line in enumerate(sorted_lines):
+
+    for seed_idx, seed_line in enumerate(lines_sorted):
         if seed_idx in visited:
             continue
-            
+
+        # BFS
         queue = [seed_line]
-        current_cluster_lines = [seed_line]
+        current_cluster = [seed_line]
         visited.add(seed_idx)
-        
+
         while queue:
             curr = queue.pop(0)
-            
-            for cand_idx, candidate in enumerate(sorted_lines):
+            cx, cy, cw, ch = curr["bbox"]
+
+            # Check all unvisited lines
+            for cand_idx, candidate in enumerate(lines_sorted):
                 if cand_idx in visited:
                     continue
-                
-                if _is_same_cluster(curr, candidate):
-                    current_cluster_lines.append(candidate)
-                    queue.append(candidate)
-                    visited.add(cand_idx)
-                    
-        # Cluster 생성
-        # Calculate Cluster BBox
-        cluster_bbox = calculate_bbox_union([l['bbox'] for l in current_cluster_lines])
-        
-        # Text
-        # Sort lines based on reading order
-        # Vertical: Right to Left
-        # Horizontal: Top to Bottom
-        orientation = current_cluster_lines[0]['orientation'] # Assume majority or seed
-        
-        if orientation == 'vertical':
-            current_cluster_lines.sort(key=lambda l: l['bbox'][0], reverse=True)
-        else:
-            current_cluster_lines.sort(key=lambda l: l['bbox'][1])
-            
-        full_text = "\n".join([l['text'] for l in current_cluster_lines])
-        
-        # Apply Width Expansion (Vertical only, ONLY to the rightmost line)
-        # User request: "맨 오른쪽 bbox 는 width 50% 확장하던 로직을 폐기하고 맨 오른쪽 인식된 CV가 후리가나일 경우 이 width 를 합치는 로직이 있었어. 그냥 다시 살아남은 최종 bbox 는 width 55% 확장으로 로직을 바꾸자."
-        # Clarification: "Cluster width의 55%가 아니고 최우측 lines width 의 55%야."
-        # Clarification 2: "expanded_bbox 개념을 잘못 이해하고 있어. 위 케이스는 ... 이것이 맨 오른쪽 bbox 이기 때문에 얘의 width 만 55% 확장해서 29 -> 45 로 확장."
-        
-        if orientation == 'vertical':
-            # Find rightmost line (max x)
-            # lines are already sorted by X descending (Right to Left) for vertical
-            # So lines[0] is the rightmost line
-            rightmost_line = current_cluster_lines[0]
-            
-            # Calculate expansion for the rightmost line
-            blocks = rightmost_line.get('bboxes', [])
-            if blocks:
-                # Use MAX width of blocks (Kanji width) for robust expansion
-                max_block_w = max(b['bbox'][2] for b in blocks)
-                expansion = int(max_block_w * 0.55) # Reverted to 55% as per user request
-                
-                # Expand line bbox
-                l_x, l_y, l_w, l_h = rightmost_line['bbox']
-                # Update the bbox directly? User said "expanded_bbox 개념을 잘못 이해하고 있어"
-                # But in the example: "bbox": [1184,179,29,187] ... "expanded_bbox": [1135,173,46,125] (Wait, example image shows expanded_bbox key)
-                # User said: "지금 결과 보니 명확하네 expanded_bbox 개념을 잘못 이해하고 있어."
-                # "얘의 width 만 55% 확장해서 29 -> 45 로 확장."
-                # So I should update the bbox of the rightmost line? Or keep original bbox and update cluster poly?
-                # User's desired JSON structure doesn't show 'expanded_bbox' in 'lines'.
-                # It shows 'lines' -> 'text', 'bbox'.
-                # And then 'bounding_poly' for the cluster.
-                # So the expansion should affect the CLUSTER's bounding_poly, but maybe not the line's bbox in the JSON?
-                # "Cluster를 외접하는 bounding poly 만 그렸는데 개별 line의 경계도 그려줘."
-                # If I expand the line bbox, the visualization will show the expanded box for the line.
-                # Let's update the line's bbox in memory to calculate the correct cluster poly, 
-                # but maybe keep the original bbox for 'lines' output if user wants "original line boundary".
-                # User said: "CV box -> region grow ... = CV line"
-                # "맨 오른쪽 bbox 는 width 50% 확장... 최종 bbox 는 width 55% 확장"
-                # I will store the expanded version in a temporary variable to calculate the cluster polygon,
-                # but I will NOT modify the 'bbox' field of the line in the output, unless requested.
-                # Wait, if I don't modify the line bbox, how does the user know it's expanded?
-                # The user complained about "expansion": 17 field.
-                # And said "expanded_bbox 개념을 잘못 이해하고 있어".
-                # Let's assume the expansion is ONLY for the Cluster's bounding_poly coverage.
-                # So:
-                # 1. Identify rightmost line.
-                # 2. Calculate expansion.
-                # 3. Adjust Cluster BBox (Poly) to include this expansion.
-                # 4. Do NOT change line['bbox'] in output.
-                
-                # But wait, "얘의 width 만 55% 확장해서 29 -> 45 로 확장."
-                # This implies the line itself is considered wider.
-                # Let's update the cluster polygon construction logic.
-                
-                pass # Logic handled below in bounding_poly calculation
-            else:
-                expansion = 0
-                max_block_w = 0
-        else:
-            expansion = 0
-            rightmost_line = None
 
-        # Calculate Cluster BBox and Poly
-        # We need to account for the expansion of the rightmost line in the cluster poly
-        
-        # Collect all line bboxes
-        all_bboxes = []
-        for line in current_cluster_lines:
-            lx, ly, lw, lh = line['bbox']
-            if line is rightmost_line:
-                # Expand this one for the purpose of Cluster Poly
-                # Expansion is to the RIGHT?
-                # "세로쓰기는 우->좌로 읽으므로, 후리가나는 보통 우측에 있음."
-                # Image coords: X increases to Right.
-                # So we need to increase Max X.
-                # bbox: [x, y, w, h]. x is left. x+w is right.
-                # So we add to w.
-                all_bboxes.append([lx, ly, lw + expansion, lh])
-                print(f"    Expanding Cluster Poly for Line '{line['text'][:5]}': +{expansion}px (55% of {max_block_w}px)")
-            else:
-                all_bboxes.append([lx, ly, lw, lh])
-        
-        cluster_bbox = calculate_bbox_union(all_bboxes)
-        cx, cy, cw, ch = cluster_bbox
-        
-        bounding_poly = [
-            [cx, cy],
-            [cx + cw, cy],
-            [cx + cw, cy + ch],
-            [cx, cy + ch]
-        ]
-        
-        # Clean up lines for output
-        output_lines = []
-        for line in current_cluster_lines:
-            # Remove internal keys
-            clean_line = {
-                "text": line['text'],
-                "bbox": line['bbox']
-            }
-            output_lines.append(clean_line)
+                lx, ly, lw, lh = candidate["bbox"]
+                x_diff = abs(lx - cx)
+                y_gap = max(0, ly - (cy + ch), cy - (ly + lh))
+                y_start_diff = abs(ly - cy)
 
-        # Reorder keys as requested: Cluster_id -> orientation -> lines -> bounding_poly
-        # Note: cluster_id is added later
-        clusters.append({
-            "orientation": orientation,
-            "lines": output_lines,
-            "bounding_poly": bounding_poly,
-            # Internal use for sorting/ID assignment
-            "bbox": cluster_bbox, 
-            "text": full_text 
-        })
-        
+                # Stage 1: X diff ≤ 10px (같은 세로줄)
+                if x_diff <= 10:
+                    if y_gap <= y_tolerance:
+                        current_cluster.append(candidate)
+                        queue.append(candidate)
+                        visited.add(cand_idx)
+                # Stage 2: 10 < X diff ≤ 55px
+                elif 10 < x_diff <= 55:
+                    if y_start_diff <= y_tolerance:
+                        current_cluster.append(candidate)
+                        queue.append(candidate)
+                        visited.add(cand_idx)
+                # Stage 3: 55 < X diff ≤ dynamic_threshold
+                elif 55 < x_diff <= dynamic_threshold:
+                    if y_start_diff <= y_tolerance:
+                        current_cluster.append(candidate)
+                        queue.append(candidate)
+                        visited.add(cand_idx)
+                # Stage 4: X diff > dynamic_threshold → separate
+
+        clusters.append(current_cluster)
+
     return clusters
+
+
+def format_clusters(clusters: List[List[Dict]]) -> List[Dict]:
+    """클러스터를 JSON 포맷으로 변환"""
+    result = []
+
+    for i, cluster in enumerate(clusters, start=1):
+        # Line 정렬: X 큰 순 (우→좌 읽기)
+        cluster_sorted = sorted(cluster, key=lambda l: -l["bbox"][0])
+
+        # Bounding poly 계산
+        # 맨 오른쪽 Line (cluster_sorted[0])의 width를 60% 확장
+        all_x = []
+        all_y = []
+
+        for j, line in enumerate(cluster_sorted):
+            x, y, w, h = line["bbox"]
+
+            # ✅ NEW: 마지막 글자가 'た' 또는 'だ'인 경우 height 5px 확장
+            line_text = line.get("text", "").strip()
+            if line_text and line_text.endswith(('た', 'だ', '?', '.', '！', '。')):
+                h += 5
+                print(f"  ✨ C{i} Line '{line_text}': Height expanded by 5px for '{line_text[-1]}'")
+
+            # 맨 오른쪽 Line (첫 번째)만 width 확장
+            if j == 0:
+                expansion = int(w * 0.6)
+                all_x.extend([x, x + w + expansion])  # 오른쪽으로 확장
+            else:
+                all_x.extend([x, x + w])
+
+            all_y.extend([y, y + h])
+
+        min_x, max_x = min(all_x), max(all_x)
+        min_y, max_y = min(all_y), max(all_y)
+
+        # bounding_rect: [x, y, w, h] 형식으로 통일
+        bounding_rect = [
+            min_x,
+            min_y,
+            max_x - min_x,  # width
+            max_y - min_y   # height
+        ]
+
+        # Lines (text와 bbox) - 정렬된 순서로 (원본 bbox 유지)
+        lines_output = []
+        for line in cluster_sorted:
+            lines_output.append({
+                "text": line["text"],
+                "bbox": line["bbox"]
+            })
+
+        result.append({
+            "cluster_id": i,
+            "orientation": "vertical",
+            "lines": lines_output,
+            "bounding_rect": bounding_rect
+        })
+
+    return result
 
 
 def format_json_output(clusters: List[Dict]) -> str:
     """
-    JSON 포맷팅: bbox와 bounding_poly를 한 줄로 표시
+    JSON 포맷팅: bbox와 bounding_rect를 한 줄로 표시
     """
     # Custom serialization to ensure bbox arrays are on single lines
     def format_cluster(cluster: Dict, indent: int = 2) -> str:
@@ -495,10 +382,10 @@ def format_json_output(clusters: List[Dict]) -> str:
             lines.append(f'{ind}    {{"text": "{text}", "bbox": {bbox_str}}}{comma}')
         lines.append(f'{ind}  ],')
         
-        # bounding_poly
-        poly = cluster["bounding_poly"]
-        poly_str = f'[[{poly[0][0]}, {poly[0][1]}], [{poly[1][0]}, {poly[1][1]}], [{poly[2][0]}, {poly[2][1]}], [{poly[3][0]}, {poly[3][1]}]]'
-        lines.append(f'{ind}  "bounding_poly": {poly_str}')
+        # bounding_rect: [x, y, w, h]
+        rect = cluster["bounding_rect"]
+        rect_str = f'[{rect[0]}, {rect[1]}, {rect[2]}, {rect[3]}]'
+        lines.append(f'{ind}  "bounding_rect": {rect_str}')
         
         lines.append(f'{ind}}}')
         return "\n".join(lines)
@@ -515,52 +402,49 @@ def format_json_output(clusters: List[Dict]) -> str:
 
 def sort_clusters_reading_order(clusters: List[Dict]) -> List[Dict]:
     def get_pos(c):
-        poly = c['bounding_poly']
-        return (-min(p[0] for p in poly), min(p[1] for p in poly))
+        rect = c['bounding_rect']
+        x, y, w, h = rect
+        return (-x, y)  # Right-to-left (vertical), top-to-bottom
     return sorted(clusters, key=get_pos)
 
 
-def process_cv_clusters(cv_path: str, output_path: str):
+def process_cv_clusters(cv_path: str, output_path: str, image_width: int = 1350, image_height: int = 1920):
     print(f"Loading {cv_path}...")
     cv_data = load_cv_json(cv_path)
-    
+
     # 1. Blocks
     blocks = create_text_blocks(cv_data)
-    
-    # 2. Lines
-    lines = create_lines(blocks)
-    print(f"  Created {len(lines)} lines")
-    
+
+    # Calculate parameters
+    widths = [b['bbox'][2] for b in blocks]
+    avg_width = np.percentile(widths, 75) if widths else 50.0
+    y_tolerance = image_height * 0.015  # 1.5% of image height (약 29px for 1920)
+
+    print(f"  Loaded {len(blocks)} blocks")
+    print(f"  Parameters: avg_width={avg_width:.1f}px, y_tolerance={y_tolerance:.1f}px")
+
+    # 2. Pass 1: Block -> Line
+    lines = pass1_create_lines(blocks, avg_width, y_tolerance)
+    print(f"  Pass 1: Created {len(lines)} lines")
+
     # 3. Furigana Filter
-    lines = filter_furigana_lines(lines)
-    
-    # 4. Clusters
-    clusters = create_clusters_from_lines(lines)
-    print(f"  Created {len(clusters)} clusters")
-    
-    # 5. Sort
-    clusters = sort_clusters_reading_order(clusters)
-    
-    # 6. ID & Reorder
-    for i, cluster in enumerate(clusters, start=1):
+    lines = filter_furigana_lines(lines, avg_width)
+
+    # 4. Pass 2: Line -> Cluster
+    clusters = pass2_create_clusters(lines, avg_width, y_tolerance)
+    print(f"  Pass 2: Created {len(clusters)} clusters")
+
+    # 5. Format clusters
+    result = format_clusters(clusters)
+
+    # 6. Sort by reading order (right to left, top to bottom)
+    result = sort_clusters_reading_order(result)
+
+    # 7. Reassign cluster IDs after sorting
+    for i, cluster in enumerate(result, start=1):
         cluster["cluster_id"] = i
-        
-        # Reorder keys
-        # User requested:
-        # "cluster_id": 1,
-        # "orientation" : "vertical"
-        # lines
-        # bounding_poly
-        
-        ordered_cluster = {
-            "cluster_id": cluster["cluster_id"],
-            "orientation": cluster["orientation"],
-            "lines": cluster["lines"],
-            "bounding_poly": cluster["bounding_poly"]
-        }
-        clusters[i-1] = ordered_cluster
-        
-    return clusters
+
+    return result
 
 
 def main():

@@ -411,8 +411,10 @@ def integrate_ocr_v3(cv_clusters_path: str, gemini_ocr_path: str, output_path: s
             cv_lines = cluster.get('lines', [])
             orientation = cluster.get('orientation', 'vertical')
 
-            # 각 매칭된 라인의 bbox 확장
-            all_expanded_bboxes = []
+            # ✅ cluster의 bounding_rect를 직접 사용 (이미 0.6 확장이 적용됨)
+            cluster_bounding_rect = cluster.get('bounding_rect', [0, 0, 0, 0])
+
+            # 라인별 상세 정보 수집 (디버깅/추적용)
             line_match_details = []
 
             for line_match in match_result['line_matches']:
@@ -421,15 +423,9 @@ def integrate_ocr_v3(cv_clusters_path: str, gemini_ocr_path: str, output_path: s
                 missing_chars = line_match['missing_chars']
 
                 cv_line = cv_lines[cv_line_idx]
-                cv_bbox = cv_line['bbox']
                 cv_text = cv_line['text']
+                cv_bbox = cv_line['bbox']
                 chunk_text = chunks[chunk_idx]
-
-                # Bbox 확장
-                expanded_bbox = expand_bbox_for_line(
-                    cv_bbox, chunk_text, cv_text, orientation
-                )
-                all_expanded_bboxes.append(expanded_bbox)
 
                 line_match_details.append({
                     'cv_line_idx': cv_line_idx,
@@ -437,11 +433,11 @@ def integrate_ocr_v3(cv_clusters_path: str, gemini_ocr_path: str, output_path: s
                     'chunk_idx': chunk_idx,
                     'chunk_text': chunk_text,
                     'missing_chars': missing_chars,
-                    'expanded_bbox': expanded_bbox
+                    'cv_bbox': cv_bbox  # 원본 CV bbox 기록
                 })
 
-            # 확장된 모든 bbox의 union rect 계산
-            bounding_rect = calculate_union_rect(all_expanded_bboxes)
+            # ✅ cluster의 bounding_rect를 최종 bbox로 사용
+            bounding_rect = cluster_bounding_rect
 
             # Location 판단
             if image_path and bounding_rect != [0, 0, 0, 0]:

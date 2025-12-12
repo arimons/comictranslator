@@ -1,0 +1,104 @@
+[
+{
+    "cluster_id": 1,
+    "orientation": "vertical",
+    "lines": [
+      {"text": "･･･いいや", "bbox": [1147, 1314, 31, 151]},
+      {"text": "待て待て", "bbox": [1084, 1314, 38, 153]}
+    ],
+    "bounding_rect": [1084, 1314, 112, 153]
+  },
+{
+    "cluster_id": 2,
+    "orientation": "vertical",
+    "lines": [
+      {"text": "だったのか…?", "bbox": [1050, 493, 23, 204]}
+    ],
+    "bounding_rect": [1050, 493, 36, 209]
+  },
+{
+    "cluster_id": 3,
+    "orientation": "vertical",
+    "lines": [
+      {"text": "騎士団への", "bbox": [1097, 880, 34, 177]},
+      {"text": "入団もそうだ", "bbox": [1044, 884, 35, 205]}
+    ],
+    "bounding_rect": [1044, 880, 107, 214]
+  },
+{
+    "cluster_id": 4,
+    "orientation": "vertical",
+    "lines": [
+      {"text": "まだそうと", "bbox": [1005, 1427, 29, 175]},
+      {"text": "決まった", "bbox": [945, 1426, 44, 144]},
+      {"text": "訳じゃない・・・", "bbox": [897, 1426, 41, 218]}
+    ],
+    "bounding_rect": [897, 1426, 154, 218]
+  },
+{
+    "cluster_id": 5,
+    "orientation": "vertical",
+    "lines": [
+      {"text": "瘴気の抗体薬･･･", "bbox": [843, 131, 39, 270]}
+    ],
+    "bounding_rect": [843, 131, 62, 270]
+  },
+{
+    "cluster_id": 6,
+    "orientation": "vertical",
+    "lines": [
+      {"text": "原作ハロルドが", "bbox": [911, 889, 29, 207]},
+      {"text": "入団した経緯と年齢は", "bbox": [866, 891, 29, 292]},
+      {"text": "明かされていなかった", "bbox": [823, 889, 27, 297]}
+    ],
+    "bounding_rect": [823, 889, 134, 302]
+  },
+{
+    "cluster_id": 7,
+    "orientation": "vertical",
+    "lines": [
+      {"text": "あくまで", "bbox": [510, 1498, 27, 129]},
+      {"text": "最悪の話だ", "bbox": [459, 1498, 31, 158]}
+    ],
+    "bounding_rect": [459, 1498, 94, 163]
+  },
+{
+    "cluster_id": 8,
+    "orientation": "vertical",
+    "lines": [
+      {"text": "ゲームでは", "bbox": [330, 166, 28, 162]},
+      {"text": "主人公の仲間が", "bbox": [279, 167, 31, 227]},
+      {"text": "開発した物で", "bbox": [222, 166, 43, 198]}
+    ],
+    "bounding_rect": [222, 166, 152, 228]
+  },
+{
+    "cluster_id": 9,
+    "orientation": "vertical",
+    "lines": [
+      {"text": "だがそれも", "bbox": [236, 961, 27, 157]},
+      {"text": "前倒しの要因に", "bbox": [186, 963, 30, 214]},
+      {"text": "なっていたら......", "bbox": [151, 963, 24, 248]}
+    ],
+    "bounding_rect": [151, 961, 128, 255]
+  },
+{
+    "cluster_id": 10,
+    "orientation": "vertical",
+    "lines": [
+      {"text": "のちにそれを", "bbox": [213, 398, 43, 201]},
+      {"text": "スメラギ家が改良し", "bbox": [164, 398, 32, 304]},
+      {"text": "自治領に普及させた", "bbox": [112, 394, 34, 306]}
+    ],
+    "bounding_rect": [112, 394, 169, 311]
+  },
+{
+    "cluster_id": 11,
+    "orientation": "vertical",
+    "lines": [
+      {"text": "の計画をアイツ", "bbox": [153, 1354, 43, 268]},
+      {"text": "確かめる必要はある・・・", "bbox": [101, 1352, 36, 387]}
+    ],
+    "bounding_rect": [101, 1352, 120, 387]
+  }
+]
