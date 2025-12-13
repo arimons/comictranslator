@@ -47,16 +47,34 @@ def normalize_text(text: str) -> str:
 
 def split_sentence_into_chunks(text: str) -> List[str]:
     """
-    Sentence를 개행 기준으로 청크(chunk)로 분리
+    Sentence를 개행 + 공백 기준으로 청크(chunk)로 분리
+
+    Gemini OCR이 반환하는 텍스트는:
+    - 개행으로 분리된 경우: "8글자\n8글자"
+    - 공백으로 분리된 경우: "8글자 8글자"
+
+    CV Cluster는 개별 라인으로 분리되어 있으므로,
+    Sentence도 동일하게 분리해야 매칭 가능
 
     Args:
-        text: "8글자\n8글자\n7글자" 형태의 텍스트
+        text: "8글자\n8글자" 또는 "8글자 8글자" 형태의 텍스트
 
     Returns:
-        ["8글자", "8글자", "7글자"] 형태의 청크 리스트
+        ["8글자", "8글자"] 형태의 청크 리스트
     """
-    # 개행으로 분리하되, 빈 청크는 제거
-    chunks = [chunk.strip() for chunk in text.split('\n') if chunk.strip()]
+    # 개행으로 먼저 분리
+    by_newline = text.split('\n')
+    chunks = []
+
+    for part in by_newline:
+        # 각 부분을 공백(일반 공백 및 전각 공백)으로 분리
+        # 공백으로 분리된 각 부분도 청크가 됨
+        sub_chunks = part.split(' ')
+        for chunk in sub_chunks:
+            chunk = chunk.strip()
+            if chunk:
+                chunks.append(chunk)
+
     return chunks
 
 
