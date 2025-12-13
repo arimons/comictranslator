@@ -449,16 +449,11 @@ def integrate_ocr_v3(cv_clusters_path: str, gemini_ocr_path: str, output_path: s
             integrated_item = {
                 'sentence_id': sentence_id,
                 'text': text,
-                'chunks': chunks,
                 'matched_cluster': cluster_id,
                 'bounding_rect': bounding_rect,
-                'match_score': round(match_score, 2),
-                'match_type': match_result['match_type'],
                 'text_type': text_type,
                 'location': location,
-                'orientation': orientation,
-                'line_details': line_match_details,
-                'missing_chars_summary': match_result['missing_chars_by_line']
+                'orientation': orientation
             }
 
         else:
@@ -468,16 +463,11 @@ def integrate_ocr_v3(cv_clusters_path: str, gemini_ocr_path: str, output_path: s
             integrated_item = {
                 'sentence_id': sentence_id,
                 'text': text,
-                'chunks': chunks,
                 'matched_cluster': None,
                 'bounding_rect': [0, 0, 0, 0],
-                'match_score': 0.0,
-                'match_type': 'none',
                 'text_type': text_type,
                 'location': 'unknown',
-                'orientation': 'unknown',
-                'line_details': [],
-                'missing_chars_summary': {}
+                'orientation': 'unknown'
             }
 
         integrated.append(integrated_item)
