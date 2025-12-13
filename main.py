@@ -23,9 +23,39 @@ from pathlib import Path
 from typing import List, Optional
 from dotenv import load_dotenv
 from concurrent.futures import ThreadPoolExecutor, as_completed
+import time
 
 # 환경 변수 로드
 load_dotenv()
+
+# ⏱️ 타이밍 추적 함수
+class TimingTracker:
+    """각 단계의 소요 시간을 추적"""
+    def __init__(self):
+        self.start_time = time.time()
+        self.last_time = self.start_time
+        self.timings = {}
+
+    def checkpoint(self, step_name: str) -> str:
+        """현재 시점까지의 소요 시간 기록"""
+        current_time = time.time()
+        elapsed = current_time - self.last_time
+        total_elapsed = current_time - self.start_time
+
+        self.timings[step_name] = elapsed
+        self.last_time = current_time
+
+        return f"⏱️ {step_name}: {elapsed:.1f}s (전체: {total_elapsed:.1f}s)"
+
+    def get_summary(self) -> str:
+        """전체 타이밍 요약"""
+        total = sum(self.timings.values())
+        summary = "\n📊 단계별 소요 시간:\n"
+        for step, elapsed in self.timings.items():
+            percentage = (elapsed / total * 100) if total > 0 else 0
+            summary += f"  {step}: {elapsed:.1f}s ({percentage:.1f}%)\n"
+        summary += f"  전체: {total:.1f}s"
+        return summary
 
 # 전역 변수
 temp_dir = Path("temp_output")  # 중간 파일 (JSON, masked)
@@ -287,26 +317,28 @@ def create_output_zip():
 def process_single_image(image_path: str, extra_prompt: str = "", force_reprocess: bool = False, font_path: str = None, font_size: int = 33, output_subfolder: str = None, skip_cv: bool = False) -> tuple:
     """
     단일 이미지 처리 (병렬 실행용)
-    
+
     Args:
         skip_cv: True면 Cloud Vision API 호출 생략 (이미 Grid로 처리된 경우)
-    
+
     Returns:
         (final_image_path, log_text)
     """
+    timing = TimingTracker()
+
     temp_dir = Path("temp_output")
     if output_subfolder:
         temp_dir = temp_dir / output_subfolder
         temp_dir.mkdir(parents=True, exist_ok=True)
     # output_dir = Path("output") # 전역 변수 사용
-    
+
     img_name = Path(image_path).stem
     log = []
-    log.append(f"📸 처리 중: {img_name}")
-    
+    log.append(f"📸 {img_name} 처리 시작")
+
     # 빈 이미지 플래그 (텍스트 없는 이미지)
     is_blank_image = False
-    
+
     try:
         # 출력 경로 설정
         # 중간 파일들은 temp_output에
@@ -385,7 +417,8 @@ def process_single_image(image_path: str, extra_prompt: str = "", force_reproces
             log.append("  ✅ 완료")
         else:
             log.append("  ✅ 캐시 사용")
-        
+        log.append(f"  {timing.checkpoint('Step 2: Clustering')}")
+
         # 시각화 (옵션)
         if not llm_viz.exists():
             viz_script = Path(__file__).parent / "visualize_clusters_v5.py"
@@ -393,11 +426,12 @@ def process_single_image(image_path: str, extra_prompt: str = "", force_reproces
                 ["python3", str(viz_script), image_path, str(cv_clusters), str(llm_viz)],
                 capture_output=True, text=True, timeout=30
             )
-        
+
         # 3. Gemini OCR
-        log.append("\n🤖 Step 3: Gemini OCR")
-        if not ocr_json.exists() or force_reprocess:
-            log.append("  📝 OCR 중...")
+        log.append("\n🤖 Step 3: Gemini OCR + Step 5: Translation (통합)")
+        if not integrated_translated.exists() or force_reprocess:
+            # ✅ OCR과 Translation을 한 번에 처리
+            log.append("  🤖 OCR 중...")
             ocr_script = Path(__file__).parent / "gemini_ocr_v5.py"
             result = subprocess.run(
                 ["python3", str(ocr_script), image_path, str(cv_clusters), str(ocr_json)],
@@ -405,15 +439,12 @@ def process_single_image(image_path: str, extra_prompt: str = "", force_reproces
             )
             if result.returncode != 0:
                 raise Exception(f"Gemini OCR 실패: {result.stderr}")
-            log.append("  ✅ 완료")
-        else:
-            log.append("  ✅ 캐시 사용")
-        
-        # 4. 텍스트 통합
-        log.append("\n🔗 Step 4: Integrating")
-        if not integrated.exists() or force_reprocess:
+            log.append("  ✅ OCR 완료")
+            log.append(f"  {timing.checkpoint('Step 3: Gemini OCR')}")
+
+            # 4. 텍스트 통합
+            log.append("\n🔗 Step 4: Integrating")
             log.append("  🔄 통합 중...")
-            # integrate_ocr_v3.py의 절대 경로
             integrate_script = Path(__file__).parent / "integrate_ocr_v3.py"
             result = subprocess.run(
                 ["python3", str(integrate_script), str(cv_clusters), str(ocr_json), str(integrated), image_path],
@@ -422,62 +453,45 @@ def process_single_image(image_path: str, extra_prompt: str = "", force_reproces
             if result.returncode != 0:
                 raise Exception(f"통합 실패: {result.stderr}")
             log.append("  ✅ 완료")
-            
-            # 시각화 (디버깅용)
-            try:
-                from visualize_utils import visualize_integrated_bboxes
-                vis_output = temp_dir / f"{img_name}_bbox_vis.jpg"
-                if visualize_integrated_bboxes(image_path, integrated, vis_output):
-                    log.append(f"  🎨 BBox 시각화: {vis_output.name}")
-            except Exception as e:
-                print(f"시각화 오류: {e}")
-        else:
-            log.append("  ✅ 캐시 사용")
-        
-        # 5. Gemini Translation (재시도 로직 포함)
-        log.append("\n🌐 Step 5: Translation")
-        if not integrated_translated.exists() or force_reprocess:
+            log.append(f"  {timing.checkpoint('Step 4: Integration')}")
+
+            # Translation
+            log.append("\n🌐 Step 5: Translation")
             log.append("  💬 번역 중...")
-            
-            max_retries = 5
+
+            max_retries = 3
             translation_success = False
-            
+
             for attempt in range(max_retries):
                 try:
                     if attempt > 0:
-                        log.append(f"     재시도 {attempt}/{max_retries-1}...")
-                        import time
-                        time.sleep(3)  # 3초 대기
-                    
+                        log.append(f"     재시도 {attempt}/{max_retries}...")
+                        time.sleep(2)
+
                     translate_script = Path(__file__).parent / "translate_integrated.py"
                     result = subprocess.run(
                         ["python3", str(translate_script), str(integrated), str(integrated_translated)],
                         capture_output=True, text=True, timeout=120
                     )
-                    
-                    if result.returncode == 0:
-                        # 파일이 실제로 생성되었는지 확인
-                        if integrated_translated.exists():
-                            translation_success = True
-                            log.append("  ✅ 완료")
-                            break
-                        else:
-                            log.append(f"     ⚠️  번역 파일 미생성, 재시도...")
+
+                    if result.returncode == 0 and integrated_translated.exists():
+                        translation_success = True
+                        log.append("  ✅ 완료")
+                        log.append(f"  {timing.checkpoint('Step 5: Translation')}")
+                        break
                     else:
-                        error_msg = result.stderr[:200] if result.stderr else "Unknown error"
-                        log.append(f"     ⚠️  번역 오류: {error_msg}")
-                        
+                        error_msg = result.stderr[:100] if result.stderr else "Unknown error"
+                        log.append(f"     ⚠️ {error_msg}")
+
                 except subprocess.TimeoutExpired:
-                    log.append(f"     ⚠️  번역 타임아웃 (120초)")
+                    log.append(f"     ⚠️ 타임아웃 (120초)")
                 except Exception as e:
-                    error_msg = str(e)
-                    log.append(f"     ⚠️  번역 예외: {error_msg[:100]}")
-            
+                    log.append(f"     ⚠️ {str(e)[:100]}")
+
             if not translation_success:
-                raise Exception(f"번역 실패 (3회 시도 후)")
+                raise Exception(f"번역 실패 (재시도 후)")
         else:
             log.append("  ✅ 캐시 사용")
-        
         
         # 6. White Masking
         log.append("\n🎨 Step 6: Masking")
@@ -493,7 +507,8 @@ def process_single_image(image_path: str, extra_prompt: str = "", force_reproces
             log.append("  ✅ 완료")
         else:
             log.append("  ✅ 캐시 사용")
-        
+        log.append(f"  {timing.checkpoint('Step 6: Masking')}")
+
         # 7. Text Overlay (항상 최종 결과는 재생성)
         log.append("\n✍️ Step 7: Text Overlay")
         log.append("  🖋️ 텍스트 렌더링 중...")
@@ -511,11 +526,14 @@ def process_single_image(image_path: str, extra_prompt: str = "", force_reproces
         if result.returncode != 0:
             raise Exception(f"Text Overlay 실패: {result.stderr}")
         log.append("  ✅ 완료")
-        
-        log.append(f"  ✅ 완료: {final_img.name}")
-        log.append(f"  📁 중간 파일: temp_output/")
-        log.append(f"  📁 최종 결과: output/")
-        
+        log.append(f"  {timing.checkpoint('Step 7: Text Overlay')}")
+
+        # 타이밍 요약 추가
+        log.append("\n" + timing.get_summary())
+
+        log.append(f"\n✅ 완료: {final_img.name}")
+        log.append(f"📁 최종 결과: {final_img}")
+
         return str(final_img), "\n".join(log)
         
     except Exception as e:
