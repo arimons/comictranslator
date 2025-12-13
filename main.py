@@ -397,10 +397,11 @@ def process_single_image(image_path: str, extra_prompt: str = "", force_reproces
             if not cv_data or len(cv_data) == 0:
                 is_blank_image = True
                 log.append("  ℹ️  텍스트 없는 이미지 - 원본 복사")
-                # 원본을 output으로 복사
+                # 원본을 output으로 복사 (output_subfolder 고려)
                 import shutil
-                final_output = output_dir / f"{img_name}_final.jpg"
+                final_output = target_dir / f"{img_name}_final.jpg"
                 shutil.copy(image_path, final_output)
+                log.append(f"  ✅ 원본 파일 복사 완료: {final_output.name}")
                 return str(final_output), "\n".join(log)
         
         # 2. 클러스터링 V5
