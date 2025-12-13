@@ -427,20 +427,30 @@ def process_single_image(image_path: str, extra_prompt: str = "", force_reproces
                 capture_output=True, text=True, timeout=30
             )
 
-        # 3. Gemini OCR
-        log.append("\n🤖 Step 3: Gemini OCR + Step 5: Translation (통합)")
+        # 3+5. Gemini OCR + Translation (통합 - 한 번의 API 호출)
+        log.append("\n🤖 Step 3+5: Gemini OCR + Translation (통합)")
         if not integrated_translated.exists() or force_reprocess:
-            # ✅ OCR과 Translation을 한 번에 처리
-            log.append("  🤖 OCR 중...")
-            ocr_script = Path(__file__).parent / "gemini_ocr_v5.py"
+            log.append("  🤖🌐 OCR + 번역 동시 처리 중...")
+
+            # ✅ 통합 스크립트 사용 (한 번의 Gemini API 호출)
+            unified_script = Path(__file__).parent / "gemini_ocr_translate_v5.py"
             result = subprocess.run(
-                ["python3", str(ocr_script), image_path, str(cv_clusters), str(ocr_json)],
-                capture_output=True, text=True, timeout=120
+                ["python3", str(unified_script), image_path, str(cv_clusters),
+                 str(ocr_json), str(integrated_translated), extra_prompt],
+                capture_output=True, text=True, timeout=180
             )
+
             if result.returncode != 0:
-                raise Exception(f"Gemini OCR 실패: {result.stderr}")
-            log.append("  ✅ OCR 완료")
-            log.append(f"  {timing.checkpoint('Step 3: Gemini OCR')}")
+                raise Exception(f"OCR+번역 실패: {result.stderr}")
+
+            log.append("  ✅ OCR + 번역 완료")
+            log.append(f"  {timing.checkpoint('Step 3+5: OCR+Translation')}")
+
+            # stdout에서 처리 정보 추출
+            if result.stdout:
+                for line in result.stdout.split('\n'):
+                    if '개 클러스터' in line or '개 번역' in line:
+                        log.append(f"  {line}")
 
             # 4. 텍스트 통합
             log.append("\n🔗 Step 4: Integrating")
@@ -454,42 +464,6 @@ def process_single_image(image_path: str, extra_prompt: str = "", force_reproces
                 raise Exception(f"통합 실패: {result.stderr}")
             log.append("  ✅ 완료")
             log.append(f"  {timing.checkpoint('Step 4: Integration')}")
-
-            # Translation
-            log.append("\n🌐 Step 5: Translation")
-            log.append("  💬 번역 중...")
-
-            max_retries = 3
-            translation_success = False
-
-            for attempt in range(max_retries):
-                try:
-                    if attempt > 0:
-                        log.append(f"     재시도 {attempt}/{max_retries}...")
-                        time.sleep(2)
-
-                    translate_script = Path(__file__).parent / "translate_integrated.py"
-                    result = subprocess.run(
-                        ["python3", str(translate_script), str(integrated), str(integrated_translated)],
-                        capture_output=True, text=True, timeout=120
-                    )
-
-                    if result.returncode == 0 and integrated_translated.exists():
-                        translation_success = True
-                        log.append("  ✅ 완료")
-                        log.append(f"  {timing.checkpoint('Step 5: Translation')}")
-                        break
-                    else:
-                        error_msg = result.stderr[:100] if result.stderr else "Unknown error"
-                        log.append(f"     ⚠️ {error_msg}")
-
-                except subprocess.TimeoutExpired:
-                    log.append(f"     ⚠️ 타임아웃 (120초)")
-                except Exception as e:
-                    log.append(f"     ⚠️ {str(e)[:100]}")
-
-            if not translation_success:
-                raise Exception(f"번역 실패 (재시도 후)")
         else:
             log.append("  ✅ 캐시 사용")
         
