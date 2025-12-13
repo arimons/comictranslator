@@ -32,66 +32,53 @@ genai.configure(api_key=GEMINI_API_KEY)
 
 def create_unified_prompt(cv_clusters: List[Dict], extra_prompt: str = "") -> str:
     """
-    OCR + 번역 통합 프롬프트 생성 (V2)
+    OCR + 번역 통합 프롬프트 생성 (V1)
 
-    개선사항:
-    - CV API 감지 텍스트를 프롬프트에 포함하지 않음 (양방향 영향 제거)
-    - Gemini가 이미지를 직접 분석하도록 유도
-    - 클러스터 위치 정보만 제공 (좌표 기준 가이드)
-
-    한 번의 API 호출로:
-    1. 이미지에서 직접 텍스트 인식
-    2. 제공된 클러스터 영역별로 그룹핑
-    3. 번역 제공
+    Cloud Vision API 결과를 기반으로 하되,
+    Gemini가 이미지 재확인을 통해 오류를 수정하도록 유도
     """
 
-    # 클러스터 위치 정보만 추출 (텍스트는 제외)
-    cluster_locations = []
+    # 클러스터 정보 추출
+    cluster_info = []
     for cluster in cv_clusters:
         cluster_id = cluster['cluster_id']
-        bbox = cluster.get('bounding_rect', [0, 0, 0, 0])
-        orientation = cluster.get('orientation', 'unknown')
-        line_count = len(cluster.get('lines', []))
-        cluster_locations.append(
-            f"Cluster {cluster_id}: 위치 ({bbox[0]}, {bbox[1]}), "
-            f"{orientation}, {line_count}개 텍스트"
-        )
+        lines = cluster.get('lines', [])
+        text = ' '.join([line['text'] for line in lines])
+        cluster_info.append(f"Cluster {cluster_id}: {text}")
 
-    locations_text = "\n".join(cluster_locations)
+    clusters_text = "\n".join(cluster_info)
 
     prompt = f"""당신은 만화 번역 전문가입니다.
 
-이 이미지의 텍스트를 분석해주세요.
+다음은 Cloud Vision API로 감지한 텍스트입니다:
 
-제공된 텍스트 영역 (좌표는 참고만, 이미지에서 직접 읽을 것):
-{locations_text}
+{clusters_text}
 
 작업:
-1. 이미지의 텍스트를 직접 읽으세요 (제공된 정보에만 의존하지 말 것)
-2. 각 텍스트를 정확하게 인식해주세요
-3. 한국어로 번역해주세요
-4. 결과를 JSON 형식으로 반환해주세요
+1. 각 클러스터의 텍스트를 검증하고 필요시 수정해주세요
+   - 이미지를 직접 확인하여 오류가 있으면 수정 (중요!)
+   - 제공된 정보만 믿지 말고 이미지 기반으로 판단
+2. 각 클러스터를 한국어로 번역해주세요
+3. 결과를 JSON 형식으로 반환해주세요
 
 출력 형식 (JSON만):
 {{
   "corrections": [
-    {{"cluster_id": 1, "original": "(읽은 텍스트)", "corrected": "(인식 완료)"}},
+    {{"cluster_id": 1, "original": "...", "corrected": "..."}},
     ...
   ],
   "translations": [
-    {{"cluster_id": 1, "korean": "번역"}},
+    {{"cluster_id": 1, "korean": "..."}},
     ...
   ]
 }}
 
 주의:
-- 이미지의 텍스트를 정확하게 읽을 것 (매우 중요!)
-- 글자 오류가 있으면 정정할 것 (예: 농→濃, エラー텍스트)
 - 존댓말은 존댓말로, 반말은 반말로 유지
 - 의성어/의태어는 적절한 한국 의성어로
 - 기술 용어나 고유명사는 원문 그대로 (괄호 안에 영문 표기)
-- 불명확한 텍스트는 "(불명확)" 표기
 - 정확도 > 자연스러움
+- 텍스트가 아닌 장식/마크는 제외 (예: 갑옷 부대마크, 패턴 등)
 
 {extra_prompt}"""
 
