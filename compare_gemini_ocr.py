@@ -110,8 +110,18 @@ def ocr_with_model(image_path: str, model_name: str) -> Tuple[Optional[List[Dict
         return None, 0
 
 
-def visualize_ocr_results(image_path: str, results: List[Dict], output_path: str, title: str = "") -> None:
-    """OCR 결과를 bbox로 시각화"""
+def visualize_ocr_results(image_path: str, results: List[Dict], output_path: str, title: str = "", scale_x: float = 1.0, scale_y: float = 1.0) -> None:
+    """
+    OCR 결과를 bbox로 시각화
+
+    Args:
+        image_path: 이미지 경로
+        results: OCR 결과 (bbox, text, confidence 포함)
+        output_path: 출력 이미지 경로
+        title: 제목
+        scale_x: X축 스케일 (기본값 1.0, Gemini는 1000x1000 기준이므로 1.35)
+        scale_y: Y축 스케일 (기본값 1.0, Gemini는 1000x1000 기준이므로 1.92)
+    """
 
     # 이미지 로드
     img = cv2.imread(image_path)
@@ -121,6 +131,8 @@ def visualize_ocr_results(image_path: str, results: List[Dict], output_path: str
 
     img_vis = img.copy()
     h, w = img_vis.shape[:2]
+
+    print(f"  📐 스케일 조정: X={scale_x:.2f}, Y={scale_y:.2f}")
 
     # 색상 팔레트 (각 텍스트마다 다른 색)
     colors = [
@@ -144,7 +156,11 @@ def visualize_ocr_results(image_path: str, results: List[Dict], output_path: str
         text = item.get('text', '')
         confidence = item.get('confidence', 0)
 
-        x, y, w_box, h_box = int(bbox[0]), int(bbox[1]), int(bbox[2]), int(bbox[3])
+        # 스케일 조정 (Gemini는 1000x1000 기준, 실제 이미지는 1350x1920)
+        x = int(bbox[0] * scale_x)
+        y = int(bbox[1] * scale_y)
+        w_box = int(bbox[2] * scale_x)
+        h_box = int(bbox[3] * scale_y)
 
         # bbox 범위 확인
         x = max(0, min(x, w - 1))
@@ -278,9 +294,10 @@ def main():
 
     print_results_table(results_25, "Gemini 2.5 Flash", time_25)
 
-    # 시각화 - 2.5 Flash
+    # 시각화 - 2.5 Flash (스케일 조정: 1000x1000 → 1350x1920)
+    print(f"\n  🎨 Gemini 2.5 Flash 시각화 중...")
     vis_25_path = output_dir / f"{img_path.stem}_gemini25_bbox.jpg"
-    visualize_ocr_results(image_path, results_25, str(vis_25_path), "Gemini 2.5 Flash")
+    visualize_ocr_results(image_path, results_25, str(vis_25_path), "Gemini 2.5 Flash", scale_x=1.35, scale_y=1.92)
 
     # Gemini 3 Pro
     print(f"\n2️⃣ Gemini 3 Pro 테스트")
@@ -292,9 +309,10 @@ def main():
 
     print_results_table(results_3pro, "Gemini 3 Pro", time_3pro)
 
-    # 시각화 - 3 Pro
+    # 시각화 - 3 Pro (스케일 조정: 1000x1000 → 1350x1920)
+    print(f"\n  🎨 Gemini 3 Pro 시각화 중...")
     vis_3pro_path = output_dir / f"{img_path.stem}_gemini3pro_bbox.jpg"
-    visualize_ocr_results(image_path, results_3pro, str(vis_3pro_path), "Gemini 3 Pro")
+    visualize_ocr_results(image_path, results_3pro, str(vis_3pro_path), "Gemini 3 Pro", scale_x=1.35, scale_y=1.92)
 
     # 비교
     compare_results(results_25, results_3pro)
