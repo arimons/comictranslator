@@ -189,6 +189,27 @@ def split_compound_word(word, max_chars):
     return [word]
 
 
+def count_chars_weighted(text):
+    """
+    가중 글자수 계산:
+    - 한글/영문: 1.0
+    - 마침표(.!?…): 0.3
+    - 띄어쓰기: 0.5
+
+    실제 레이아웃 너비를 더 정확히 반영
+    """
+    punct = '.!?…'
+    weight = 0
+    for c in text:
+        if c == ' ':
+            weight += 0.5  # 띄어쓰기는 한글의 약 절반
+        elif c in punct:
+            weight += 0.3  # 마침표는 한글의 약 3분의 1
+        else:
+            weight += 1.0  # 한글/영문
+    return weight
+
+
 def split_text_intelligently(text, max_chars=8, min_chars=3):
     """
     텍스트를 의미 단위로 줄바꿈
@@ -202,6 +223,14 @@ def split_text_intelligently(text, max_chars=8, min_chars=3):
     2. 띄어쓰기 기준 - 자연스러운 단어 경계
     3. 복합동사 분리 (긴 단어 처리)
     4. 최대 글자수 강제 적용 (타원형 고려)
+
+    ✨ 가중 글자수 처리:
+    - 마침표(.!?…): 0.3 (약 1/3 너비)
+    - 띄어쓰기: 0.5 (약 절반 너비)
+    - 한글/영문: 1.0
+
+    ✨ 편차 기반 재배열:
+    - 줄들의 가중 글자수 편차가 크면 단어 재배치
 
     Args:
         text: 원본 텍스트
@@ -243,7 +272,8 @@ def split_text_intelligently(text, max_chars=8, min_chars=3):
 
         for word_idx, word in enumerate(words):
             # 단어가 너무 긴 경우 복합동사 분리 시도
-            if len(word) > max_chars:
+            # 가중 글자수로 판단
+            if count_chars_weighted(word) > max_chars:
                 sub_words = split_compound_word(word, max_chars)
                 words[word_idx:word_idx+1] = sub_words  # 리스트에서 교체
 
@@ -270,8 +300,8 @@ def split_text_intelligently(text, max_chars=8, min_chars=3):
                 # 중간 줄: 여유 (1.4배)
                 effective_max = int(max_chars * 1.4)
 
-            # 1. 최대 글자수 초과 체크 (타원형 고려)
-            if len(test_line) > effective_max:
+            # 1. 최대 글자수 초과 체크 (가중 글자수 기준)
+            if count_chars_weighted(test_line) > effective_max:
                 # 현재 줄이 비어있지 않으면 현재 줄 완료
                 if current_line:
                     lines.append(current_line)
@@ -292,7 +322,49 @@ def split_text_intelligently(text, max_chars=8, min_chars=3):
     if current_line:
         lines.append(current_line)
 
+    # ✨ 편차 기반 재배열: 줄 간 글자수 편차가 크면 단어 이동
+    lines = _rebalance_lines_by_weight(lines, max_chars)
+
     return lines if lines else [text]
+
+
+def _rebalance_lines_by_weight(lines, max_chars):
+    """
+    줄들의 가중 글자수 편차가 크면 단어를 재배치해서 균형잡기
+
+    극단적으로 짧은 줄(1글자 정도)을 찾아서 앞줄에서 단어를 끌어오기
+
+    예: ['방어도 할', '수', '없겠어.']
+        → ['방어도', '할 수', '없겠어.']
+    """
+    if len(lines) <= 1:
+        return lines
+
+    # 각 줄의 가중 글자수 계산
+    weights = [count_chars_weighted(line) for line in lines]
+
+    # 극단적으로 짧은 줄 찾기 (< 1.5 가중수)
+    short_threshold = 1.5
+    for i, w in enumerate(weights):
+        if w < short_threshold and i > 0:
+            # 이 줄이 너무 짧으면 앞줄에서 단어 가져오기
+            prev_line_words = lines[i - 1].split()
+            curr_line_words = lines[i].split()
+
+            if len(prev_line_words) >= 2:
+                # 앞줄의 마지막 단어를 현재 줄 앞에 추가
+                moved_word = prev_line_words.pop()
+                curr_line_words.insert(0, moved_word)
+
+                # 새 줄 생성
+                new_lines = lines.copy()
+                new_lines[i - 1] = " ".join(prev_line_words)
+                new_lines[i] = " ".join(curr_line_words)
+
+                # 재귀적으로 다시 확인
+                return _rebalance_lines_by_weight(new_lines, max_chars)
+
+    return lines
 
 
 def calculate_font_size(bbox_width, bbox_height, text, base_font_size=33):
@@ -316,7 +388,7 @@ def calculate_font_size(bbox_width, bbox_height, text, base_font_size=33):
 
     # bbox_width 기반으로 최대 글자수 계산
     def calc_max_chars_for_font(font_size):
-        usable_width = bbox_width * 0.85
+        usable_width = bbox_width * 1.05
         avg_char_width = font_size * 0.9
         return max(3, int(usable_width / avg_char_width))
 
@@ -482,7 +554,13 @@ def apply_text_overlay(
     
     # Integrated JSON 로드
     with open(integrated_json_path, 'r', encoding='utf-8') as f:
-        clusters = json.load(f)
+        data = json.load(f)
+
+    # 새로운 구조 (clusters + unmatched_clusters) vs 기존 구조 호환성
+    if isinstance(data, dict) and 'clusters' in data:
+        clusters = data['clusters']
+    else:
+        clusters = data if isinstance(data, list) else []
     
     # CV Clusters 로드 (line 개수 확인용)
     with open(cv_clusters_path, 'r', encoding='utf-8') as f:
@@ -499,11 +577,13 @@ def apply_text_overlay(
     rendered_count = 0
     
     for cluster in clusters:
-        # V3 형식 지원: matched_cluster (int) 또는 V2 형식: cluster_id (int)
-        cluster_id = cluster.get('matched_cluster') or cluster.get('cluster_id', 0)
+        # V3 형식: matched_cluster는 [1, 2, 3] 리스트
+        matched_cluster_list = cluster.get('matched_cluster', [])
+        if not matched_cluster_list:
+            continue  # 매칭되지 않은 항목 스킵
 
-        # ✅ bounding_rect [x, y, w, h] 사용 (V3 형식)
-        rect = cluster.get('bounding_rect', [0, 0, 0, 0])
+        # ✅ union_bbox 우선 사용 (복수 cluster 통합), 없으면 bounding_rect_expanded 또는 bounding_rect 사용
+        rect = cluster.get('union_bbox') or cluster.get('bounding_rect_expanded') or cluster.get('bounding_rect', [0, 0, 0, 0])
 
         # [x, y, w, h]를 polygon 형식으로 변환
         poly = rect_to_polygon(rect)
@@ -514,27 +594,15 @@ def apply_text_overlay(
         if not translated_text:
             continue
 
-        # V3: matched_cluster (int) / V2: matched_clusters (string) 모두 지원
-        matched_cluster = cluster.get('matched_cluster')
-        if matched_cluster is not None:
-            # V3 형식: matched_cluster는 이미 int
-            cv_cluster_id = matched_cluster
-        else:
-            # V2 형식: matched_clusters에서 추출
-            matched_clusters = cluster.get('matched_clusters', '')
-            cluster_id_str = matched_clusters.replace('C', '').split('+')[0].strip() if matched_clusters else str(cluster_id)
-            try:
-                cv_cluster_id = int(cluster_id_str) if cluster_id_str else cluster_id
-            except:
-                cv_cluster_id = cluster_id
+        # ✅ 복수 cluster 매칭: 모든 cluster의 line 개수 합산
+        line_count = 0
+        for cv_cluster_id in matched_cluster_list:
+            cv_cluster = cv_cluster_map.get(cv_cluster_id)
+            if cv_cluster:
+                lines = cv_cluster.get('lines', [])
+                line_count += len(lines)
 
-        # CV cluster에서 line 정보 가져오기
-        cv_cluster = cv_cluster_map.get(cv_cluster_id)
-            
-        if cv_cluster:
-            lines = cv_cluster.get('lines', [])
-            line_count = len(lines)
-        else:
+        if line_count == 0:
             line_count = 1
         
         # 확장된 bbox 계산
@@ -575,7 +643,8 @@ def apply_text_overlay(
             font_size, max_chars = calculate_font_size(exp_w, exp_h, translated_text, base_font_size)
             lines = split_text_intelligently(translated_text, max_chars)
             short_text = len(translated_text.replace('?', '').replace('!', '').replace(' ', '')) <= 4 and len(lines) == 1
-            print(f"  C{cluster_id}: {line_count}줄 → '{translated_text[:20]}...'")
+            cluster_display = '+'.join(str(c) for c in matched_cluster_list)
+            print(f"  C{cluster_display}: {line_count}줄 → '{translated_text[:20]}...'")
             print(f"         BBox: {exp_w}x{exp_h}px, 최대 {max_chars}자/줄, 폰트: {font_size}px")
             print(f"         줄바꿈: {lines}")
             if short_text and orientation == 'vertical':
