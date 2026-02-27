@@ -90,32 +90,50 @@ def translate_cover(image_path: str, output_path: str):
             )
             
             # 성공 - 응답 처리
-            if not response or not response.text:
+            if not response:
                 if attempt < max_retries - 1:
                     print(f"     ⚠️  빈 응답, 재시도 중...")
                     continue
                 print("❌ Gemini 응답이 비어있습니다")
                 return False
-            
-            print(f"\n📝 Gemini 응답:")
-            print(response.text)
-            
-            # 생성된 이미지 확인
-            if hasattr(response, 'parts'):
+
+            # 응답에서 이미지 추출
+            image_found = False
+            if hasattr(response, 'parts') and response.parts:
                 for part in response.parts:
-                    if hasattr(part, 'inline_data'):
-                        image_data = part.inline_data.data
-                        with open(output_path, 'wb') as f:
-                            f.write(image_data)
-                        print(f"\n✅ 번역 완료: {output_path}")
-                        return True
-            
-            # 이미지 없음 - 텍스트만 반환
-            print("\n⚠️  생성된 이미지가 없습니다.")
-            guide_path = Path(output_path).with_suffix('.txt')
-            with open(guide_path, 'w', encoding='utf-8') as f:
-                f.write(response.text)
-            print(f"  📄 번역 가이드 저장: {guide_path}")
+                    try:
+                        # inline_data 확인 (이미지 데이터)
+                        if hasattr(part, 'inline_data'):
+                            # MIME type 확인
+                            mime_type = getattr(part.inline_data, 'mime_type', 'unknown')
+                            print(f"  ℹ️ 파트 타입: {mime_type}")
+
+                            # 이미지 데이터 추출
+                            if mime_type and 'image' in mime_type:
+                                image_data = part.inline_data.data
+                                if isinstance(image_data, bytes) and len(image_data) > 100:
+                                    with open(output_path, 'wb') as f:
+                                        f.write(image_data)
+                                    print(f"\n✅ 번역 완료: {output_path}")
+                                    return True
+                    except Exception as part_error:
+                        print(f"  ℹ️ 파트 처리 오류: {str(part_error)[:100]}")
+                        continue
+
+            # 텍스트 응답 확인
+            if hasattr(response, 'text') and response.text:
+                print(f"\n📝 Gemini 응답 (텍스트):")
+                print(response.text[:500])
+                # 텍스트만 반환된 경우
+                guide_path = Path(output_path).with_suffix('.txt')
+                with open(guide_path, 'w', encoding='utf-8') as f:
+                    f.write("표지 번역 결과:\n\n")
+                    f.write(response.text)
+                print(f"  📄 번역 가이드 저장: {guide_path}")
+                return False
+
+            # 이미지도 텍스트도 없음
+            print("\n⚠️  응답에 이미지나 텍스트가 없습니다.")
             return False
             
         except Exception as e:

@@ -5,11 +5,10 @@
 Grid 처리 + V5 파이프라인 통합:
 1. CV API (Grid 처리) → cv.json
 2. 클러스터링 V5 (병렬) → cv_cluster_v5.json
-3. Gemini OCR (병렬) → ocr_v5.json  
-4. 텍스트 통합 (병렬) → integrated.json
-5. Gemini Translation (병렬) → integrated_translated.json
-6. White Masking (병렬) → _masked.jpg
-7. Text Overlay (병렬) → _final.jpg
+3. Gemini OCR + 번역 + 통합 (병렬) → ocr_v5.json + integrated.json
+   (integrated.json에 text_translated 필드 포함)
+4. White Masking (병렬) → _masked.jpg
+5. Text Overlay (병렬) → _final.jpg
 """
 
 import os
@@ -138,7 +137,7 @@ def is_grayscale(image_path: str, threshold: int = 30) -> bool:
         return True # 에러 시 안전하게 흑백으로 처리
 
 
-def process_cover_image_wrapper(image_path: str, output_subfolder: str = None) -> tuple:
+def process_cover_image_wrapper(image_path: str, output_subfolder: str = None, force_reprocess: bool = False) -> tuple:
     """
     translate_cover를 process_single_image와 동일한 인터페이스로 래핑
     """
@@ -156,6 +155,12 @@ def process_cover_image_wrapper(image_path: str, output_subfolder: str = None) -
     log = []
     
     log.append(f"🎨 AI 표지 번역 (컬러 감지): {img_name}")
+    
+    # 캐시 확인
+    if output_path.exists() and not force_reprocess:
+        log.append(f"  ✅ 기존 파일 발견: {output_path.name}")
+        log.append(f"  ℹ️  force_reprocess=False이므로 기존 파일 사용 (스킵)")
+        return str(output_path), "\n".join(log)
     
     try:
         success = translate_cover(str(image_path), str(output_path))
@@ -185,114 +190,251 @@ def get_available_fonts() -> List[str]:
     return fonts if fonts else ["기본 폰트"]
 
 
-def translate_cover_batch(image_files, use_batch_api=True, progress=gr.Progress()):
+def translate_cover_batch(image_files, output_subfolder_input="", use_batch_api=True, selected_model="gemini-3-pro-image-preview", progress=gr.Progress()):
     """
-    Gemini 3 Pro Image Preview로 배치 번역
-    
+    만화책 이미지를 Gemini Image Preview 모델로 AI 번역 (Batch API 지원)
+
     Args:
         image_files: 업로드된 이미지 파일들
-        use_batch_api: True면 Batch API 사용 (50% 할인), False면 실시간 API
+        output_subfolder_input: 출력 폴더명 (예: "ai_translated")
+        use_batch_api: True면 Batch API 사용 (여러 이미지 동시), False면 개별 처리
+        selected_model: AI 번역에 사용할 모델명 (gemini-3-pro-image-preview 또는 gemini-3.1-flash-image-preview)
         progress: Gradio progress bar
-    
+
     Returns:
-        (results, log_text) 또는 (job_id, status_text) if Batch API
+        (results, log_text)
     """
     if not image_files:
         return [], "이미지를 업로드해주세요"
+
+    # 이미지 경로 추출
+    image_paths = [f.name if hasattr(f, 'name') else f for f in image_files]
+    n_images = len(image_paths)
+
+    # 캐시 확인: 생성된 파일이 있는지 미리 체크
+    # 입력값이 비어있을 경우, 첫 번째 업로드된 파일의 부모 폴더명을 기본값으로 사용
+    output_subfolder = output_subfolder_input if output_subfolder_input and output_subfolder_input.strip() else ""
+    if not output_subfolder and image_paths:
+        try:
+            # Gradio에서 넘어온 임시 경로나 실제 경로에서 상위 폴더 이름 추출 시도
+            # macOS에서 업로드 시, 브라우저가 제공하는 원본 경로 혹은 임시 폴더의 상위 폴더를 찾음
+            # 단, Gradio의 특성상 /private/var/folders/... 같은 임시 경로일 수 있어 완벽하지 않을 수 있음
+            first_path = Path(image_paths[0])
+            # 임시 파일 경로를 회피하고 원본의 디렉토리 구조를 알기 힘들 때를 대비해, 
+            # 단순히 fallback 으로 'auto_translated' 등을 줄 수도 있으나, 최대한 이름을 따옴
+            parent_name = first_path.parent.name
+            if parent_name and parent_name not in ('tmp', 'graido', '', '/'):
+                output_subfolder = parent_name
+            else:
+                output_subfolder = "ai_translated"
+        except:
+            output_subfolder = "ai_translated"
+
+    missing_images = []
+    cached_files = []
+
+    for img_path in image_paths:
+        img_name = Path(img_path).stem
+        target_dir = output_dir
+        if output_subfolder:
+            # 문자열로 변환 후 Path로 결합
+            target_dir = output_dir / str(output_subfolder)
+            target_dir.mkdir(parents=True, exist_ok=True) # 폴더가 없으면 에러가 날 수 있으니 미리 생성
+
+        # 결과물이 jpg 거나 png 일 수 있으므로 둘 다 확인
+        output_path_jpg = target_dir / f"{img_name}_ai.jpg"
+        output_path_png = target_dir / f"{img_name}_ai.png"
+
+        if output_path_jpg.exists():
+            cached_files.append((img_name, str(output_path_jpg)))
+        elif output_path_png.exists():
+            cached_files.append((img_name, str(output_path_png)))
+        else:
+            missing_images.append(img_path)
     
-    # Batch API 사용
-    if use_batch_api:
+    results = []
+    log = []
+    
+    # Batch API 사용 (여러 이미지를 한 번에 처리)
+    if use_batch_api and missing_images:
         from gemini_batch_api import GeminiBatchProcessor
         import os
-        import time
         
-        log = []
-        log.append("🚀 Batch API 모드 (50% 비용 절감)\n")
+        log.append("🚀 Batch API 모드 (여러 이미지 동시 처리)\n")
+        
+        # 캐시된 파일 정보
+        if cached_files:
+            log.append(f"✅ 캐시 파일: {len(cached_files)}개 (스킵)")
+            for img_name, output_path in cached_files:
+                results.append(output_path)
+                log.append(f"   - {img_name}")
+            log.append("")
         
         try:
             # API 키 확인
             api_key = os.getenv("GEMINI_API_KEY")
             if not api_key:
-                return [], "❌ GEMINI_API_KEY 환경변수가 설정되지 않았습니다."
+                return results, "\n".join(log) + "\n❌ GEMINI_API_KEY 환경변수가 설정되지 않았습니다."
             
-            # 이미지 경로 추출
-            image_paths = [f.name if hasattr(f, 'name') else f for f in image_files]
-            n_images = len(image_paths)
+            log.append(f"📦 새로운 이미지: {len(missing_images)}개")
+            log.append(f"💰 예상 비용: 50% 절감\n")
             
-            log.append(f"📦 이미지: {n_images}개")
-            log.append(f"💰 예상 비용: 실시간 대비 50% 절감\n")
-            
-            # 프롬프트 (translate_cover와 동일한 로직)
-            prompt = """이 만화 표지 이미지를 분석하고 한국어로 번역된 새로운 이미지를 생성해주세요.
+            # 모델 환경에 따른 Rate Limit 및 병렬 워커 설정
+            if selected_model == "gemini-3.1-flash-image-preview":
+                # Flash API는 더 여유롭고 빠르지만, 너무 한 번에 던지면 구글 서버에서 생성 시 504 Deadline 에러 발생.
+                # 사용자 요청에 의해 다시 8개로 테스트 (429 에러가 안나는 한계까지)
+                max_workers_count = 10
+                rpm_limit_val = 60
+                log.append(f"⚡ Flash 모델: {max_workers_count}워커, RPM {rpm_limit_val} 허용 (공격적 세팅)")
+            else:
+                # Pro Preview 모델 (엄격한 Quota 관리)
+                max_workers_count = 3
+                rpm_limit_val = 10
+                log.append(f"🛡️ Pro 프리뷰: {max_workers_count}워커, RPM {rpm_limit_val} 권장 제한")
 
-요구사항:
-1. 모든 텍스트를 한국어로 번역
-2. 원본 디자인과 레이아웃 유지
-3. 폰트 스타일과 색상 유지
-4. 배경과 이미지 요소 그대로 유지
-
-출력: 번역된 표지 이미지"""
-            
-            # Batch Processor 생성
-            progress(0.1, desc="배치 작업 생성 중...")
-            processor = GeminiBatchProcessor(api_key=api_key)
-            
-            # Batch Job 생성
-            job_name = processor.create_batch_job(
-                image_paths=image_paths,
-                prompt=prompt,
-                job_name=f"cover_translation_{int(time.time())}"
+            progress(0.1, desc="배치 처리 준비 중...")
+            processor = GeminiBatchProcessor(
+                api_key=api_key, 
+                max_workers=max_workers_count, 
+                rpm_limit=rpm_limit_val, 
+                model_name=selected_model
             )
             
-            log.append(f"✅ 배치 작업 생성 완료")
-            log.append(f"   Job ID: {job_name}\n")
-            log.append(f"⏳ 처리 중... (24시간 내 완료)")
-            log.append(f"   대부분 1-2시간 내 완료됩니다\n")
-            log.append(f"💡 다음 단계:")
-            log.append(f"   1. 이 페이지를 닫아도 됩니다")
-            log.append(f"   2. 나중에 '상태 확인' 버튼으로 진행 상황 확인")
-            log.append(f"   3. 완료 후 '결과 가져오기' 버튼으로 이미지 다운로드")
+            # 결과 저장 폴더 설정
+            save_dir = output_dir
+            if output_subfolder:
+                save_dir = output_dir / str(output_subfolder)
+            save_dir.mkdir(parents=True, exist_ok=True)
+
+            # 배치 작업 실행
+            batch_result = processor.create_batch_job(
+                image_paths=missing_images,
+                prompt="""이 일본 만화책 이미지를 한국어 가로쓰기로 번역된 새로운 이미지로 생성해주세요.
+
+요구사항:
+1. 모든 일본어 텍스트를 자연스러운 한국어로 번역
+   - 제목, 작가명, 출판사, 캐치프레이즈, 말풍선 등 모든 텍스트
+2. 세로쓰기 절대 금지 (가장 중요)
+   - 한글은 무조건 좌에서 우로 읽는 **가로쓰기**로만 배치하세요.
+   - 원본이 세로로 긴 2줄 이상의 문장이거나 세로로 좁고 긴 말풍선이더라도, 절대 세로쓰기를 유지하지 마세요.
+   - 세로로 긴 공간이라면, 글자 크기를 약간 줄이고 가로 길이에 맞춰 여러 줄로 줄바꿈(Word Wrap)하여 기입하세요.
+3. 원본의 보존 및 자연스런 어우러짐 
+   - 디자인, 레이아웃, 구성
+   - 폰트 스타일, 텍스트 색상 및 효과
+   - 텍스트 뒤의 배경 일러스트와 캐릭터 훼손 금지
+4. 고품질 출력 (원본과 동일한 해상도)
+
+번역된 이미지를 생성해주세요.""",
+                output_dir=str(save_dir),
+                job_name="ai_manga_translation_batch"
+            )
             
-            # Job ID를 파일로 저장 (나중에 확인용)
-            jobs_file = Path("batch_jobs.txt")
-            with open(jobs_file, "a") as f:
-                f.write(f"{job_name}\t{time.strftime('%Y-%m-%d %H:%M:%S')}\t{n_images}개 이미지\n")
-            
-            return [], "\n".join(log)
-            
+            if batch_result.get('success'):
+                # 디버깅: 저장 전 확인
+                batch_results = batch_result.get('results', [])
+                has_image_count = sum(1 for r in batch_results if r.get('has_image') and r.get('image_data'))
+                has_text_count = sum(1 for r in batch_results if r.get('text'))
+
+                log.append(f"\n📊 저장 전 확인:")
+                log.append(f"   총 결과: {len(batch_results)}개")
+                log.append(f"   - 이미지 데이터 포함: {has_image_count}개")
+                log.append(f"   - 텍스트만: {has_text_count}개")
+                log.append(f"   저장 경로: {save_dir}")
+
+                saved_files = processor.save_results(batch_result, str(save_dir))
+                results.extend(saved_files)
+
+                log.append(f"\n✅ Batch 처리 완료!")
+                log.append(f"   🖼️ {len(saved_files)}개 파일 저장됨")
+                log.append(f"   📁 저장 위치: {save_dir}")
+
+                # 재시도 가능한 이미지 정보
+                stats = batch_result.get('stats', {})
+                if stats.get('retryable', 0) > 0:
+                    log.append("")
+                    log.append(f"⏳ 재시도 가능한 이미지: {stats['retryable']}개")
+                    log.append("   (500 서버 오류, 429 Rate Limit, 503 서비스 불가 등)")
+                    log.append("   💡 체크박스를 해제하고 다시 시도하면 자동으로 재시도됩니다")
+
+                    # 재시도 가능한 이미지 목록
+                    retryable_images = [r for r in batch_result.get('results', [])
+                                       if r.get('retryable')]
+                    if retryable_images:
+                        log.append("")
+                        log.append("   재시도 가능 목록:")
+                        for img in retryable_images[:5]:  # 처음 5개만 표시
+                            log.append(f"     - {img['img_name']}: {img.get('error_code', 'Unknown')}")
+                        if len(retryable_images) > 5:
+                            log.append(f"     ... 외 {len(retryable_images) - 5}개")
+
+                progress(1.0, desc="완료!")
+            else:
+                log.append(f"❌ Batch 처리 실패: {batch_result.get('error')}")
+        
         except Exception as e:
-            log.append(f"\n❌ 오류 발생: {str(e)}")
-            log.append(f"\n💡 실시간 API로 재시도하려면 아래 옵션을 변경하세요")
-            return [], "\n".join(log)
+            log.append(f"❌ Batch API 오류: {str(e)}")
+            log.append(f"\n💡 개별 처리로 재시도하려면 체크박스를 해제하세요")
     
-    # 실시간 API 사용 (기존 로직)
-    else:
+    # 개별 처리 모드 (기존 방식)
+    elif missing_images:
         from translate_cover import translate_cover
         
-        results = []
-        log = []
-        log.append("🎨 AI 표지 번역 시작 (실시간 API)\n")
-        log.append("⚠️  비용: Batch API 대비 2배\n")
+        log.append("🎨 개별 처리 모드 (순차 처리)\n")
         
-        for idx, img_file in enumerate(image_files):
-            img_path = img_file.name if hasattr(img_file, 'name') else img_file
+        # 캐시된 파일 정보
+        if cached_files:
+            log.append(f"✅ 캐시 파일: {len(cached_files)}개 (스킵)")
+            for img_name, output_path in cached_files:
+                results.append(output_path)
+                log.append(f"   - {img_name}")
+            log.append("")
+        
+        log.append(f"📦 새로운 이미지: {len(missing_images)}개\n")
+        
+        # 병렬 처리 함수
+        def process_ai_single(img_path):
             img_name = Path(img_path).stem
-            output_path = output_dir / f"{img_name}_ai.jpg"
-            
-            progress((idx + 1) / len(image_files), 
-                    desc=f"처리 중 ({idx+1}/{len(image_files)})...")
-            
-            log.append(f"\n🎨 {img_name}")
-            success = translate_cover(str(img_path), str(output_path))
-            
-            if success:
-                results.append(str(output_path))
-                log.append("  ✅ 완료")
-            else:
-                log.append("  ⚠️ 텍스트 가이드 생성")
-        
-        log.append(f"\n\n✅ 완료: {len(results)}/{len(image_files)}개 성공")
-        return results, "\n".join(log)
+            target_dir = output_dir
+            if output_subfolder:
+                target_dir = output_dir / str(output_subfolder)
+                target_dir.mkdir(parents=True, exist_ok=True)
+
+            output_path = target_dir / f"{img_name}_ai.jpg"
+
+            try:
+                success = translate_cover(str(img_path), str(output_path))
+                return (img_name, success, str(output_path) if success else None)
+            except Exception as e:
+                return (img_name, False, None)
+
+        # 병렬 실행
+        completed_count = 0
+        max_workers = min(5, len(missing_images))
+
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            futures = [executor.submit(process_ai_single, img_path) for img_path in missing_images]
+
+            for future in as_completed(futures):
+                img_name, success, output_path = future.result()
+
+                log.append(f"🎨 {img_name}")
+                if success and output_path:
+                    results.append(output_path)
+                    log.append("  ✅ 완료")
+                else:
+                    log.append("  ⚠️ 실패 또는 텍스트 가이드 생성")
+
+                completed_count += 1
+                progress((len(cached_files) + completed_count) / n_images,
+                        desc=f"처리 중 ({len(cached_files) + completed_count}/{n_images})...")
+    
+    # 모든 이미지가 캐시된 경우
+    if not missing_images and cached_files:
+        log.append(f"✅ 모든 이미지가 이미 생성됨\n")
+        results = [output_path for _, output_path in cached_files]
+    
+    log.append(f"\n✅ 완료: {len(results)}/{n_images}개 (캐시 포함)")
+    return results, "\n".join(log)
 
 
 def create_output_zip():
@@ -348,7 +490,6 @@ def process_single_image(image_path: str, extra_prompt: str = "", force_reproces
         llm_viz = temp_dir / f"{img_name}_llm_viz.jpg"
         
         integrated = temp_dir / f"{img_name}_integrated.json"
-        integrated_translated = temp_dir / f"{img_name}_integrated_translated.json"
         masked_img = temp_dir / f"{img_name}_masked.jpg"
         
         # 최종 결과물은 output에 (하위 폴더 지원)
@@ -428,43 +569,41 @@ def process_single_image(image_path: str, extra_prompt: str = "", force_reproces
                 capture_output=True, text=True, timeout=30
             )
 
-        # 3+5. Gemini OCR + Translation (통합 - 한 번의 API 호출)
-        log.append("\n🤖 Step 3+5: Gemini OCR + Translation (통합)")
-        if not integrated_translated.exists() or force_reprocess:
-            log.append("  🤖🌐 OCR + 번역 동시 처리 중...")
-
-            # ✅ 통합 스크립트 사용 (한 번의 Gemini API 호출)
-            unified_script = Path(__file__).parent / "gemini_ocr_translate_v5.py"
+        # 3a. Gemini OCR + 번역 (ocr_v5.json 생성)
+        log.append("\n🤖 Step 3a: Gemini OCR + Translation")
+        if not ocr_json.exists() or force_reprocess:
+            log.append("  🤖 Gemini OCR + 번역 중...")
+            ocr_script = Path(__file__).parent / "gemini_ocr_translate_v5.py"
             result = subprocess.run(
-                ["python3", str(unified_script), image_path, str(cv_clusters),
-                 str(ocr_json), str(integrated_translated), extra_prompt],
+                ["python3", str(ocr_script), image_path, str(cv_clusters), str(ocr_json)],
                 capture_output=True, text=True, timeout=180
             )
-
             if result.returncode != 0:
-                raise Exception(f"OCR+번역 실패: {result.stderr}")
-
+                raise Exception(f"Gemini OCR 실패: {result.stderr}")
             log.append("  ✅ OCR + 번역 완료")
-            log.append(f"  {timing.checkpoint('Step 3+5: OCR+Translation')}")
+        else:
+            log.append("  ✅ 캐시 사용")
+        log.append(f"  {timing.checkpoint('Step 3a: Gemini OCR')}")
+
+        # 3b. 통합 (integrated.json 생성)
+        log.append("\n📊 Step 3b: Integration")
+        if not integrated.exists() or force_reprocess:
+            log.append("  🔗 통합 중...")
+            integrate_script = Path(__file__).parent / "integrate_ocr_v3.py"
+            result = subprocess.run(
+                ["python3", str(integrate_script), str(cv_clusters), str(ocr_json), str(integrated), image_path],
+                capture_output=True, text=True, timeout=180
+            )
+            if result.returncode != 0:
+                raise Exception(f"통합 실패: {result.stderr}")
+            log.append("  ✅ 통합 완료")
+            log.append(f"  {timing.checkpoint('Step 3b: Integration')}")
 
             # stdout에서 처리 정보 추출
             if result.stdout:
                 for line in result.stdout.split('\n'):
-                    if '개 클러스터' in line or '개 번역' in line:
+                    if '개 클러스터' in line or '개 번역' in line or 'Merged' in line:
                         log.append(f"  {line}")
-
-            # 4. 텍스트 통합
-            log.append("\n🔗 Step 4: Integrating")
-            log.append("  🔄 통합 중...")
-            integrate_script = Path(__file__).parent / "integrate_ocr_v3.py"
-            result = subprocess.run(
-                ["python3", str(integrate_script), str(cv_clusters), str(ocr_json), str(integrated), image_path],
-                capture_output=True, text=True, timeout=30
-            )
-            if result.returncode != 0:
-                raise Exception(f"통합 실패: {result.stderr}")
-            log.append("  ✅ 완료")
-            log.append(f"  {timing.checkpoint('Step 4: Integration')}")
         else:
             log.append("  ✅ 캐시 사용")
         
@@ -488,7 +627,7 @@ def process_single_image(image_path: str, extra_prompt: str = "", force_reproces
         log.append("\n✍️ Step 7: Text Overlay")
         log.append("  🖋️ 텍스트 렌더링 중...")
         render_script = Path(__file__).parent / "render_text_overlay.py"
-        cmd = ["python3", str(render_script), str(masked_img), str(integrated_translated), str(cv_clusters), str(final_img)]
+        cmd = ["python3", str(render_script), str(masked_img), str(integrated), str(cv_clusters), str(final_img)]
         if font_path:
             cmd.append(font_path)
         if font_size != 33:  # 기본값이 아니면 추가
@@ -699,84 +838,109 @@ def batch_translate_images(
         if standard_images:
             progress(0.05, desc="Cloud Vision Grid 처리 중...")
             log.append(f"\n🔍 Step 1: Cloud Vision Grid API (표준 이미지 {len(standard_images)}개)")
-            
-            # API 키 우선, 없으면 서비스 계정
-            api_key = os.getenv("CLOUD_VISION_API_KEY")
-            credentials_path = os.getenv("GOOGLE_APPLICATION_CREDENTIALS")
-            
-            if not api_key and not credentials_path:
-                raise Exception("CLOUD_VISION_API_KEY 또는 GOOGLE_APPLICATION_CREDENTIALS 환경변수 필요")
-            
-            from cloud_vision_api import CloudVisionAPI
-            cv_api = CloudVisionAPI(api_key=api_key, credentials_path=credentials_path)
-            
-            # 배치 분할 처리
-            n_std_images = len(standard_images)
-            avg_size_mb = sum(Path(p).stat().st_size for p in standard_images) / n_std_images / 1024 / 1024
-            max_images_per_batch = max(1, min(int(38 / avg_size_mb) if avg_size_mb > 0 else 16, 25))
-            
-            all_cv_results = []
-            if n_std_images > max_images_per_batch:
-                num_batches = int(np.ceil(n_std_images / max_images_per_batch))
-                log.append(f"  ⚠️  이미지가 많아 {num_batches}개 배치로 분할")
-                
-                from preprocess_for_cv import preprocess_image_for_ocr
-                
-                for batch_idx in range(num_batches):
-                    start_idx = batch_idx * max_images_per_batch
-                    end_idx = min((batch_idx + 1) * max_images_per_batch, n_std_images)
-                    batch_paths = standard_images[start_idx:end_idx]
-                    
-                    log.append(f"  📦 배치 {batch_idx+1}/{num_batches}: 이미지 {start_idx+1}~{end_idx}/{n_std_images}")
-                    
-                    # 전처리 (병렬)
-                    prep_paths = []
-                    with ThreadPoolExecutor(max_workers=min(10, len(batch_paths))) as executor:
-                        futures = []
-                        for p in batch_paths:
-                            futures.append(executor.submit(preprocess_image_for_ocr, p, current_temp_dir))
-                        
-                        for future in futures:
-                            prep_paths.append(future.result())
-                    
-                    # 전처리된 이미지로 CV 호출
-                    batch_results = cv_api.detect_text_grid(prep_paths)
-                    
-                    # 임시 전처리 파일 삭제 (선택 사항, 디버깅 위해 남겨둘 수도 있음)
-                    # for p in prep_paths:
-                    #     try: Path(p).unlink()
-                    #     except: pass
-                        
-                    if batch_results:
-                        all_cv_results.extend(batch_results)
-                
-                cv_results = all_cv_results
-            else:
-                # 단일 배치도 전처리
-                from preprocess_for_cv import preprocess_image_for_ocr
-                
-                prep_paths = []
-                with ThreadPoolExecutor(max_workers=min(10, len(standard_images))) as executor:
-                    futures = []
-                    for p in standard_images:
-                        futures.append(executor.submit(preprocess_image_for_ocr, p, current_temp_dir))
-                    
-                    for future in futures:
-                        prep_paths.append(future.result())
-                        
-                cv_results = cv_api.detect_text_grid(prep_paths)
-            
-            if not cv_results:
-                raise Exception("CV Grid 처리 실패")
-        
-            # 각 이미지별 CV JSON 저장
-            for idx, (img_path, cv_boxes) in enumerate(zip(standard_images, cv_results)):
+
+            # 캐시 체크: CV JSON이 없는 이미지만 필터링
+            missing_cv_images = []
+            cached_cv_data = {}
+
+            for img_path in standard_images:
                 img_name = Path(img_path).stem
                 cv_json_path = current_temp_dir / f"{img_name}_cv.json"
-                with open(cv_json_path, 'w', encoding='utf-8') as f:
-                    json.dump(cv_boxes, f, ensure_ascii=False, indent=2)
-            
-            log.append(f"  ✅ CV JSON 생성 완료")
+
+                if cv_json_path.exists() and not force_reprocess:
+                    # 캐시된 CV 데이터 로드
+                    try:
+                        with open(cv_json_path, 'r', encoding='utf-8') as f:
+                            cached_cv_data[img_path] = json.load(f)
+                    except:
+                        missing_cv_images.append(img_path)
+                else:
+                    missing_cv_images.append(img_path)
+
+            # 캐시된 이미지 수
+            cached_count = len(cached_cv_data)
+            missing_count = len(missing_cv_images)
+
+            if cached_count > 0:
+                log.append(f"  ✅ CV JSON 캐시 사용: {cached_count}개 이미지")
+
+            # 누락된 이미지만 API 호출
+            if missing_count > 0:
+                log.append(f"  🔍 CV API 호출: {missing_count}개 이미지")
+
+                api_key = os.getenv("CLOUD_VISION_API_KEY")
+                credentials_path = os.getenv("GOOGLE_APPLICATION_CREDENTIALS")
+
+                if not api_key and not credentials_path:
+                    raise Exception("CLOUD_VISION_API_KEY 또는 GOOGLE_APPLICATION_CREDENTIALS 환경변수 필요")
+
+                from cloud_vision_api import CloudVisionAPI
+                cv_api = CloudVisionAPI(api_key=api_key, credentials_path=credentials_path)
+
+                # 누락된 이미지 배치 분할 처리
+                n_missing = len(missing_cv_images)
+                avg_size_mb = sum(Path(p).stat().st_size for p in missing_cv_images) / n_missing / 1024 / 1024
+                max_images_per_batch = max(1, min(int(38 / avg_size_mb) if avg_size_mb > 0 else 16, 25))
+
+                all_cv_results = []
+                if n_missing > max_images_per_batch:
+                    num_batches = int(np.ceil(n_missing / max_images_per_batch))
+                    log.append(f"  ⚠️  누락된 이미지가 많아 {num_batches}개 배치로 분할")
+
+                    from preprocess_for_cv import preprocess_image_for_ocr
+
+                    for batch_idx in range(num_batches):
+                        start_idx = batch_idx * max_images_per_batch
+                        end_idx = min((batch_idx + 1) * max_images_per_batch, n_missing)
+                        batch_paths = missing_cv_images[start_idx:end_idx]
+
+                        log.append(f"  📦 배치 {batch_idx+1}/{num_batches}: 이미지 {start_idx+1}~{end_idx}/{n_missing}")
+
+                        # 전처리 (병렬)
+                        prep_paths = []
+                        with ThreadPoolExecutor(max_workers=min(10, len(batch_paths))) as executor:
+                            futures = []
+                            for p in batch_paths:
+                                futures.append(executor.submit(preprocess_image_for_ocr, p, current_temp_dir))
+
+                            for future in futures:
+                                prep_paths.append(future.result())
+
+                        # 전처리된 이미지로 CV 호출
+                        batch_results = cv_api.detect_text_grid(prep_paths)
+
+                        if batch_results:
+                            all_cv_results.extend(batch_results)
+
+                    cv_results = all_cv_results
+                else:
+                    # 단일 배치도 전처리
+                    from preprocess_for_cv import preprocess_image_for_ocr
+
+                    prep_paths = []
+                    with ThreadPoolExecutor(max_workers=min(10, len(missing_cv_images))) as executor:
+                        futures = []
+                        for p in missing_cv_images:
+                            futures.append(executor.submit(preprocess_image_for_ocr, p, current_temp_dir))
+
+                        for future in futures:
+                            prep_paths.append(future.result())
+
+                    cv_results = cv_api.detect_text_grid(prep_paths)
+
+                if not cv_results:
+                    raise Exception("CV Grid 처리 실패")
+
+                # 누락된 이미지별 CV JSON 저장
+                for img_path, cv_boxes in zip(missing_cv_images, cv_results):
+                    img_name = Path(img_path).stem
+                    cv_json_path = current_temp_dir / f"{img_name}_cv.json"
+                    with open(cv_json_path, 'w', encoding='utf-8') as f:
+                        json.dump(cv_boxes, f, ensure_ascii=False, indent=2)
+
+                log.append(f"  ✅ CV API 처리 완료")
+            else:
+                log.append(f"  ✅ 모든 이미지 캐시됨")
         
         # Step 2-7: 병렬 처리 (통합)
         progress(0.15, desc="파이프라인 병렬 처리 중...")
@@ -796,7 +960,7 @@ def batch_translate_images(
                 
             # 컬러 이미지 작업 제출
             for img_path in color_images:
-                future = executor.submit(process_cover_image_wrapper, img_path, output_subfolder)
+                future = executor.submit(process_cover_image_wrapper, img_path, output_subfolder, force_reprocess)
                 future_to_path[future] = img_path
             
             # 완료되는 순서대로 결과 수집
@@ -949,20 +1113,30 @@ with gr.Blocks(title="Comic Translator V5", theme=gr.themes.Soft()) as app:
         
         # 우측: AI 표지 번역
         with gr.Column():
-            gr.Markdown("### 🎨 AI 표지 번역 (Gemini 3 Pro)")
-            
+            gr.Markdown("### 🎨 AI 번역")
+
             cover_images = gr.File(
                 label="📤 이미지 업로드 (복수 가능)",
                 file_count="multiple",
                 file_types=["image"],
                 height=200
             )
-            
+
             # Batch API 옵션
             use_batch_api = gr.Checkbox(
-                label="🚀 Batch API 사용 (50% 비용 절감, 24시간 내 처리)",
+                label="🚀 Batch API 사용 (50% 비용 절감, 빠른 처리)",
                 value=True,
-                info="체크 해제 시 실시간 API 사용 (비용 2배, 즉시 처리)"
+                info="기본: Batch API (50% 절감, 높은 처리량). 체크 해제하면 실시간 API (즉시 처리)"
+            )
+            
+            ai_model_dropdown = gr.Dropdown(
+                choices=[
+                    "gemini-3.1-flash-image-preview",
+                    "gemini-3-pro-image-preview"
+                ],
+                label="🤖 AI 모델 선택",
+                value="gemini-3.1-flash-image-preview",
+                info="3.1-flash (나노바나나2) 모델은 속도가 빠르고 할당량이 넉넉합니다."
             )
             
             gr.Markdown("""
@@ -997,7 +1171,7 @@ with gr.Blocks(title="Comic Translator V5", theme=gr.themes.Soft()) as app:
     
     cover_btn.click(
         fn=translate_cover_batch,
-        inputs=[cover_images, use_batch_api],
+        inputs=[cover_images, output_subfolder_input, use_batch_api, ai_model_dropdown],
         outputs=[cover_gallery, cover_status]
     )
     

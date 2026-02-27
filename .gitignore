@@ -88,3 +88,19 @@ test_image/
 HYBRID_OCR_DOCUMENTATION.md
 VISUAL_OCR_README.md
 대화내용.md
+
+# Scratch and debug files
+list_*.py
+run_*.py
+check_*.py
+recover_*.py
+convert_*.py
+analyze_*.py
+detect_*.py
+batch_jobs.txt
+DEBUG_PROCESS.md
+CLAUDE.md
+BFS_CLUSTERING_GUIDE.md
+.claude/
+archive_docs/
+input/

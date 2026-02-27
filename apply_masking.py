@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """
-텍스트 오버레이 적용
+White Masking 적용
 
-확장된 bbox에 white masking 적용:
-- 원본 영역: 100% 불투명 흰색
-- 확장 영역: 50% 투명 흰색
+마스킹 로직:
+- outside_bubble: 50% 투명도 흰색 (말풍선 외부)
+- in_bubble: 중심~90% 100% 흰색 + 90~100% 경계 50% 투명도 (말풍선 침범 안전장치)
 """
 import json
 import sys
@@ -37,6 +37,145 @@ def rect_to_polygon(bounding_rect):
 
 
 
+
+def apply_distance_based_masking(
+    mask_layer,
+    poly,
+    mask_color,
+    inner_ratio=0.9
+):
+    """
+    중심으로부터 거리 기반 alpha 마스킹
+
+    Args:
+        mask_layer: RGBA 마스크 레이어 (높이, 너비, 4)
+        poly: polygon 좌표 [[x1,y1], ...]
+        mask_color: (B, G, R) 색상값
+        inner_ratio: 내부 영역 비율 (기본값 0.9 = 90%)
+    """
+    h, w = mask_layer.shape[:2]
+
+    # 임시 마스크 생성 (polygon 영역)
+    temp_mask = np.zeros((h, w), dtype=np.uint8)
+    cv2.fillPoly(temp_mask, [np.array(poly, dtype=np.int32)], 255)
+
+    # Distance transform (중심으로부터 거리 계산)
+    dist_transform = cv2.distanceTransform(temp_mask, cv2.DIST_L2, cv2.DIST_MASK_PRECISE)
+
+    # 최대 거리 찾기
+    max_dist = np.max(dist_transform)
+    if max_dist == 0:
+        return
+
+    # 거리값을 0~1로 정규화
+    dist_normalized = dist_transform / max_dist
+
+    # Alpha 결정: 중심~90% 영역은 255 (100% 불투명), 90~100% 경계는 128 (50% 투명)
+    alpha_map = np.where(dist_normalized <= inner_ratio, 255, 128).astype(np.uint8)
+
+    # 마스크 영역에만 적용
+    mask_area = temp_mask > 0
+
+    # 색상 적용
+    mask_layer[mask_area, 0] = mask_color[0]  # B
+    mask_layer[mask_area, 1] = mask_color[1]  # G
+    mask_layer[mask_area, 2] = mask_color[2]  # R
+    mask_layer[mask_area, 3] = alpha_map[mask_area]
+
+
+def apply_corner_fade_masking(
+    mask_layer,
+    bbox,
+    mask_color,
+    edge_width=20,
+    edge_height=15,
+    alpha=0.5
+):
+    """
+    우상단, 우하단 모서리만 대각선 Fade 마스킹
+    - 좌측 전체: 100% white (불투명)
+    - 우측 중앙: 100% white (모서리 위아래 제외)
+    - 우상단 모서리: 대각선 gradient fade
+    - 우하단 모서리: 대각선 gradient fade
+
+    Args:
+        mask_layer: RGBA 마스크 레이어 (높이, 너비, 4)
+        bbox: [x, y, w, h] 형식
+        mask_color: (B, G, R) 색상값
+        edge_width: 우측 모서리 가로 범위 (픽셀)
+        edge_height: 상단/하단 모서리 세로 범위 (픽셀)
+        alpha: 반투명도 (0~1, 모서리의 최대값)
+    """
+    h, w = mask_layer.shape[:2]
+    x, y, bw, bh = int(bbox[0]), int(bbox[1]), int(bbox[2]), int(bbox[3])
+
+    # 이미지 범위 내로 제한
+    y_start = max(0, y)
+    y_end = min(h, y + bh)
+    x_start = max(0, x)
+    x_end = min(w, x + bw)
+
+    # 1. 좌측 전체 (100% white)
+    for row in range(y_start, y_end):
+        for col in range(x_start, min(x + bw - edge_width, x_end)):
+            mask_layer[row, col, 0] = mask_color[0]  # B
+            mask_layer[row, col, 1] = mask_color[1]  # G
+            mask_layer[row, col, 2] = mask_color[2]  # R
+            mask_layer[row, col, 3] = 255  # 100% 불투명
+
+    # 2. 우측 중앙 (100% white, 모서리 위아래 제외)
+    for row in range(max(y_start, y + edge_height), min(y_end, y + bh - edge_height)):
+        for col in range(max(x_start, x + bw - edge_width), x_end):
+            mask_layer[row, col, 0] = mask_color[0]  # B
+            mask_layer[row, col, 1] = mask_color[1]  # G
+            mask_layer[row, col, 2] = mask_color[2]  # R
+            mask_layer[row, col, 3] = 255  # 100% 불투명
+
+    # 3. 우상단 모서리: 대각선 gradient (왼쪽 100% 불투명 → 오른쪽 50% 반투명)
+    if edge_width > 0 and edge_height > 0:
+        for row in range(y_start, min(y + edge_height, y_end)):
+            for col in range(max(x_start, x + bw - edge_width), x_end):
+                # 우상향 대각선 gradient (거리가 증가할수록 투명도 증가)
+                dist_from_left = col - (x + bw - edge_width)
+                dist_from_top = row - y
+
+                # 유클리드 거리 기반 gradient
+                max_dist = np.sqrt(edge_width**2 + edge_height**2)
+                dist = np.sqrt(dist_from_left**2 + dist_from_top**2)
+                # ✅ 방향 반대: dist=0일 때 불투명, dist=max_dist일 때 반투명
+                gradient = max(0.0, 1.0 - dist / max_dist)
+
+                # gradient=1.0일 때: 100% 불투명, gradient=0일 때: alpha(50%)로 반투명
+                current_alpha = int((gradient + (1.0 - gradient) * alpha) * 255)
+
+                mask_layer[row, col, 0] = mask_color[0]  # B
+                mask_layer[row, col, 1] = mask_color[1]  # G
+                mask_layer[row, col, 2] = mask_color[2]  # R
+                mask_layer[row, col, 3] = max(mask_layer[row, col, 3], current_alpha)
+
+    # 4. 우하단 모서리: 대각선 gradient (왼쪽 100% 불투명 → 오른쪽 50% 반투명)
+    if edge_width > 0 and edge_height > 0:
+        for row in range(max(y_start, y + bh - edge_height), y_end):
+            for col in range(max(x_start, x + bw - edge_width), x_end):
+                # 우하향 대각선 gradient (거리가 증가할수록 투명도 증가)
+                dist_from_left = col - (x + bw - edge_width)
+                dist_from_bottom = (y + bh) - row
+
+                # 유클리드 거리 기반 gradient
+                max_dist = np.sqrt(edge_width**2 + edge_height**2)
+                dist = np.sqrt(dist_from_left**2 + dist_from_bottom**2)
+                # ✅ 방향 반대: dist=0일 때 불투명, dist=max_dist일 때 반투명
+                gradient = max(0.0, 1.0 - dist / max_dist)
+
+                # gradient=1.0일 때: 100% 불투명, gradient=0일 때: alpha(50%)로 반투명
+                current_alpha = int((gradient + (1.0 - gradient) * alpha) * 255)
+
+                mask_layer[row, col, 0] = mask_color[0]  # B
+                mask_layer[row, col, 1] = mask_color[1]  # G
+                mask_layer[row, col, 2] = mask_color[2]  # R
+                mask_layer[row, col, 3] = max(mask_layer[row, col, 3], current_alpha)
+
+
 def apply_white_masking(
     image_path: str,
     integrated_json_path: str,
@@ -45,19 +184,26 @@ def apply_white_masking(
     debug_viz: bool = False
 ):
     """
-    White Masking 적용
+    White Masking 적용 (손글씨 제거)
+
+    마스킹 로직:
+    - in_bubble: 우상단, 우하단 모서리만 대각선 fade 마스킹
+      * 좌측 전체: 100% white (불투명)
+      * 우측 중앙: 100% white (모서리 위아래 제외)
+      * 우상단/우하단 모서리: 대각선 gradient fade (말풍선 침범 방지)
+    - outside_bubble: 모든 영역 50% 투명도 흰색 (말풍선 외부)
 
     Args:
         image_path: 원본 이미지 경로
         integrated_json_path: integrated.json 경로
         cv_clusters_path: cv_clusters_v5.json 경로
         output_path: 결과 저장 경로
-        debug_viz: True면 원본 bbox(Green) + 확장 bbox(Blue)를 시각화
+        debug_viz: True면 원본 bbox(Green)를 시각화
     """
     print(f"\n{'='*60}")
     print(f"🎨 White Masking 적용")
     if debug_viz:
-        print(f"🔍 [DEBUG MODE] CV bbox(Green) + 확장(Blue) 시각화")
+        print(f"🔍 [DEBUG MODE] bbox 시각화")
     print(f"{'='*60}")
 
     # 이미지 로드
@@ -71,7 +217,13 @@ def apply_white_masking(
 
     # Integrated JSON 로드
     with open(integrated_json_path, 'r', encoding='utf-8') as f:
-        clusters = json.load(f)
+        data = json.load(f)
+
+    # 새로운 구조 (clusters + unmatched_clusters) vs 기존 구조 호환성
+    if isinstance(data, dict) and 'clusters' in data:
+        clusters = data['clusters']
+    else:
+        clusters = data if isinstance(data, list) else []
 
     # CV Clusters 로드 (line 개수 및 CV 텍스트 확인용)
     with open(cv_clusters_path, 'r', encoding='utf-8') as f:
@@ -99,11 +251,8 @@ def apply_white_masking(
     masked_count = 0
 
     for sentence in clusters:
-        # ✅ bounding_rect [x, y, w, h] 사용 (V2, V3 모두 동일)
-        rect = sentence.get('bounding_rect', [0, 0, 0, 0])
-
-        # [x, y, w, h]를 polygon 형식으로 변환
-        poly = rect_to_polygon(rect)
+        # ✅ union_bbox 우선 사용 (복수 cluster 통합), 없으면 bounding_rect_expanded 또는 bounding_rect 사용
+        rect = sentence.get('union_bbox') or sentence.get('bounding_rect_expanded') or sentence.get('bounding_rect', [0, 0, 0, 0])
 
         # V3 형식 지원: text 또는 V2 형식: text_sentence
         text_sentence = sentence.get('text') or sentence.get('text_sentence', '')
@@ -128,18 +277,11 @@ def apply_white_masking(
             # CV cluster가 없으면 기본값
             cv_line_count = 1
 
-        # ✅ NEW: integrated.json에서 orientation 직접 읽기
-        orientation = sentence.get('orientation', 'vertical')
-
         if cv_line_count == 0 or not text_sentence:
             continue
 
-        # ✅ NEW: integrated.json의 bounding_rect를 그대로 사용 (확장 없음)
-        # poly는 이미 rect_to_polygon으로 변환된 상태
-        
-        # Debug visualization
-        if debug_viz and img_debug is not None:
-            cv2.polylines(img_debug, [np.array(poly, dtype=np.int32)], isClosed=True, color=(0, 255, 0), thickness=2)
+        # [x, y, w, h]를 polygon 형식으로 변환 (integrated.json 값 그대로 사용)
+        poly = rect_to_polygon(rect)
 
         # sentence_id 가져오기
         sentence_id = sentence.get('sentence_id', 0)
@@ -147,12 +289,56 @@ def apply_white_masking(
         # 마스킹 색상
         mask_color = (0, 255, 0) if debug_viz else (255, 255, 255)  # Green or White (BGR)
 
+        # Debug visualization (bbox와 마스킹 영역 표시)
+        if debug_viz and img_debug is not None:
+            if location == 'in_bubble':
+                # in_bubble: 초록색 전체 bbox + 빨강색 모서리 영역
+                cv2.polylines(img_debug, [np.array(poly, dtype=np.int32)], isClosed=True, color=(0, 255, 0), thickness=2)
+
+                # 우상단, 우하단 모서리 영역 표시 (빨강색)
+                x, y, w, h = int(rect[0]), int(rect[1]), int(rect[2]), int(rect[3])
+                edge_width, edge_height = 20, 15
+
+                # 우상단 모서리 (빨강)
+                pt1_top = (x + w - edge_width, y)
+                pt2_top = (x + w, y + edge_height)
+                cv2.rectangle(img_debug, pt1_top, pt2_top, (0, 0, 255), 2)
+
+                # 우하단 모서리 (빨강)
+                pt1_bottom = (x + w - edge_width, y + h - edge_height)
+                pt2_bottom = (x + w, y + h)
+                cv2.rectangle(img_debug, pt1_bottom, pt2_bottom, (0, 0, 255), 2)
+
+                # 우측 중앙 (100% white) 표시 (노란색)
+                pt1_middle = (x + w - edge_width, y + edge_height)
+                pt2_middle = (x + w, y + h - edge_height)
+                cv2.rectangle(img_debug, pt1_middle, pt2_middle, (0, 255, 255), 1)
+
+                # 좌측 전체 (100% white) 표시 (초록색)
+                pt1_left = (x, y)
+                pt2_left = (x + w - edge_width, y + h)
+                cv2.rectangle(img_debug, pt1_left, pt2_left, (0, 255, 0), 1)
+
+                # 텍스트 라벨
+                cv2.putText(img_debug, f"S{sentence_id}(in)", (x, y - 10),
+                           cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1)
+            else:
+                # outside_bubble: 파랑색 전체 bbox
+                cv2.polylines(img_debug, [np.array(poly, dtype=np.int32)], isClosed=True, color=(255, 0, 0), thickness=2)
+
+                # 텍스트 라벨
+                x, y = int(rect[0]), int(rect[1])
+                cv2.putText(img_debug, f"S{sentence_id}(out)", (x, y - 10),
+                           cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 0, 0), 1)
+
         # Location 기반 마스킹
         if location == 'in_bubble':
-            # in_bubble: 100% 불투명 흰색
-            cv2.fillPoly(height_expanded_mask, [np.array(poly, dtype=np.int32)], mask_color + (255,))
+            # in_bubble: 우상단, 우하단 모서리만 대각선 fade 마스킹
+            # 좌측 100% white, 우측 중앙 100% white, 우상단/우하단 gradient fade
+            apply_corner_fade_masking(height_expanded_mask, rect, mask_color[:3],
+                                     edge_width=20, edge_height=15, alpha=0.5)
         else:
-            # outside_bubble: 50% 투명도 흰색
+            # outside_bubble: 모든 영역 50% 투명도 흰색 (말풍선 외부)
             cv2.fillPoly(height_expanded_mask, [np.array(poly, dtype=np.int32)], mask_color + (128,))
 
         masked_count += 1
@@ -206,8 +392,7 @@ def apply_white_masking(
 
     if debug_viz:
         print(f"\nDebug 시각화 규칙:")
-        print(f"  🟩 초록색 Box: 원본 CV BBox")
-        print(f"  🟦 파란색 Box: 최종 확장 BBox")
+        print(f"  🟩 초록색 Box: Integrated.json BBox")
 
 
 if __name__ == "__main__":

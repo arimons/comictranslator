@@ -11,6 +11,10 @@ from typing import List, Dict, Optional
 from pathlib import Path
 from google.cloud import vision
 import io
+from dotenv import load_dotenv
+
+# 환경 변수 로드
+load_dotenv()
 
 
 class CloudVisionAPI:
@@ -22,9 +26,13 @@ class CloudVisionAPI:
             api_key: Cloud Vision API 키 (선택) - REST API 사용
             credentials_path: Service Account JSON 경로 (선택) - Python 클라이언트 사용
         """
+        # .env에서 API Key 로드 (우선순위)
+        if api_key is None:
+            api_key = os.getenv('CLOUD_VISION_API_KEY')
+
         self.api_key = api_key
         self.use_rest_api = bool(api_key)
-        
+
         if not self.use_rest_api:
             # Service Account 방식 우선
             if credentials_path:
@@ -358,38 +366,72 @@ def detect_text_cv(image_path: str) -> Optional[List[Dict]]:
 # 테스트 코드
 if __name__ == "__main__":
     import sys
+    import json
     from dotenv import load_dotenv
 
     load_dotenv()
 
-    # API 초기화
-    api_key = os.getenv("CLOUD_VISION_API_KEY")
-    credentials_path = os.getenv("GOOGLE_APPLICATION_CREDENTIALS")
+    # CLI 인자 처리
+    if len(sys.argv) >= 3:
+        # 명령형 호출: python3 cloud_vision_api.py <image_path> <output_path>
+        image_path = sys.argv[1]
+        output_path = sys.argv[2]
 
-    if not api_key and not credentials_path:
-        print("❌ CLOUD_VISION_API_KEY 또는 GOOGLE_APPLICATION_CREDENTIALS 환경 변수를 설정해주세요")
-        sys.exit(1)
+        if not Path(image_path).exists():
+            print(f"❌ 이미지를 찾을 수 없습니다: {image_path}")
+            sys.exit(1)
 
-    api = CloudVisionAPI(api_key=api_key, credentials_path=credentials_path)
+        # API 초기화
+        api_key = os.getenv("CLOUD_VISION_API_KEY")
+        credentials_path = os.getenv("GOOGLE_APPLICATION_CREDENTIALS")
 
-    # 테스트 이미지
-    test_image = "temp_output/00037.jpg"
-    if not Path(test_image).exists():
-        print(f"❌ 테스트 이미지를 찾을 수 없습니다: {test_image}")
-        sys.exit(1)
+        if not api_key and not credentials_path:
+            print("❌ CLOUD_VISION_API_KEY 또는 GOOGLE_APPLICATION_CREDENTIALS 환경 변수를 설정해주세요")
+            sys.exit(1)
 
-    # TEXT_DETECTION 테스트
-    print("\n📝 TEXT_DETECTION 테스트:")
-    results = api.detect_text(test_image)
-    if results:
-        print(f"감지된 텍스트 수: {len(results)}")
-        for i, item in enumerate(results[:5], 1):
-            print(f"  {i}. {item['label']} - bbox: {item['box_2d']}")
+        api = CloudVisionAPI(api_key=api_key, credentials_path=credentials_path)
 
-    # DOCUMENT_TEXT_DETECTION 테스트
-    print("\n📄 DOCUMENT_TEXT_DETECTION 테스트:")
-    doc_results = api.detect_document_text(test_image)
-    if doc_results:
-        print(f"감지된 텍스트 수: {len(doc_results)}")
-        for i, item in enumerate(doc_results[:5], 1):
-            print(f"  {i}. {item['label']} - bbox: {item['box_2d']}")
+        # TEXT_DETECTION 수행
+        results = api.detect_text(image_path)
+
+        # 결과를 JSON으로 저장
+        output_file = Path(output_path)
+        output_file.parent.mkdir(parents=True, exist_ok=True)
+
+        with open(output_file, 'w', encoding='utf-8') as f:
+            json.dump(results if results else [], f, ensure_ascii=False, indent=2)
+
+        print(f"✅ CV API 완료: {len(results) if results else 0}개 텍스트 감지")
+
+    else:
+        # 테스트 모드
+        api_key = os.getenv("CLOUD_VISION_API_KEY")
+        credentials_path = os.getenv("GOOGLE_APPLICATION_CREDENTIALS")
+
+        if not api_key and not credentials_path:
+            print("❌ CLOUD_VISION_API_KEY 또는 GOOGLE_APPLICATION_CREDENTIALS 환경 변수를 설정해주세요")
+            sys.exit(1)
+
+        api = CloudVisionAPI(api_key=api_key, credentials_path=credentials_path)
+
+        # 테스트 이미지
+        test_image = "temp_output/00037.jpg"
+        if not Path(test_image).exists():
+            print(f"❌ 테스트 이미지를 찾을 수 없습니다: {test_image}")
+            sys.exit(1)
+
+        # TEXT_DETECTION 테스트
+        print("\n📝 TEXT_DETECTION 테스트:")
+        results = api.detect_text(test_image)
+        if results:
+            print(f"감지된 텍스트 수: {len(results)}")
+            for i, item in enumerate(results[:5], 1):
+                print(f"  {i}. {item['label']} - bbox: {item['box_2d']}")
+
+        # DOCUMENT_TEXT_DETECTION 테스트
+        print("\n📄 DOCUMENT_TEXT_DETECTION 테스트:")
+        doc_results = api.detect_document_text(test_image)
+        if doc_results:
+            print(f"감지된 텍스트 수: {len(doc_results)}")
+            for i, item in enumerate(doc_results[:5], 1):
+                print(f"  {i}. {item['label']} - bbox: {item['box_2d']}")

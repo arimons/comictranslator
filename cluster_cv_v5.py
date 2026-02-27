@@ -201,13 +201,15 @@ def filter_furigana_lines(lines: List[Dict], avg_width: float) -> List[Dict]:
             left_x, left_y, left_w, left_h = left["bbox"]
             left_y_end = left_y + left_h
 
-            # Y 범위 겹침 체크: 현재 Line이 왼쪽 Line과 Y 축에서 겹치는가?
-            y_overlap = not (line_y_end < left_y or ly > left_y_end)
+            # Y 범위 겹침 체크: ±50px 허용 (한자 누락 대응)
+            # 완전 겹침이 아니어도 세로 방향으로 가까우면 후리가나로 간주
+            y_tolerance = 50
+            y_overlap = not (line_y_end < left_y - y_tolerance or ly > left_y_end + y_tolerance)
 
             if y_overlap:
                 # Width 체크 (60% 이하)
                 if lw <= left_w * 0.60:
-                    print(f"  ✂️ Furigana: '{line['text']}' (w={lw}, y={ly}~{line_y_end}) overlaps '{left['text']}' (w={left_w}, y={left_y}~{left_y_end})")
+                    print(f"  ✂️ Furigana: '{line['text']}' (w={lw}, y={ly}~{line_y_end}) near '{left['text']}' (w={left_w}, y={left_y}~{left_y_end})")
                     is_furigana = True
                     break
 
@@ -231,7 +233,7 @@ def pass2_create_clusters(lines: List[Dict], avg_width: float, y_tolerance: floa
     Pass 2: Line -> Cluster (BFS 방식)
 
     후리가나 필터링 후 남은 Line들을 4-stage rule로 Clustering:
-    - Stage 1: X diff ≤ 10px → Y gap 체크
+    - Stage 1: X diff ≤ 10px → Y gap 체크 (특수문자 뒤면 1.5배 완화)
     - Stage 2: 10 < X diff ≤ 55px → Y 시작점 유사하면 병합
     - Stage 3: 55 < X diff ≤ dynamic_threshold → Y 시작점 유사하면 병합
     - Stage 4: X diff > dynamic_threshold → 분리
@@ -259,6 +261,7 @@ def pass2_create_clusters(lines: List[Dict], avg_width: float, y_tolerance: floa
         while queue:
             curr = queue.pop(0)
             cx, cy, cw, ch = curr["bbox"]
+            curr_text = curr.get("text", "").strip()
 
             # Check all unvisited lines
             for cand_idx, candidate in enumerate(lines_sorted):
@@ -272,7 +275,15 @@ def pass2_create_clusters(lines: List[Dict], avg_width: float, y_tolerance: floa
 
                 # Stage 1: X diff ≤ 10px (같은 세로줄)
                 if x_diff <= 10:
-                    if y_gap <= y_tolerance:
+                    # ✨ NEW: 현재 line이 특수문자로 끝나면 y_tolerance 1.5배 완화
+                    # CV bbox 추정 오류(… 등) 보정
+                    effective_tolerance = y_tolerance
+                    if curr_text and curr_text[-1] in ('…', '!', '?', '！', '？', '。', 'っ', 'た', 'だ'):
+                        effective_tolerance = y_tolerance * 1.5
+                        if y_gap > y_tolerance and y_gap <= effective_tolerance:
+                            print(f"  🔄 Stage1 relaxed: '{curr_text}' (y_gap={y_gap:.1f}px > {y_tolerance:.1f}px) + '{candidate['text']}' [special_char_suffix]")
+
+                    if y_gap <= effective_tolerance:
                         current_cluster.append(candidate)
                         queue.append(candidate)
                         visited.add(cand_idx)
@@ -295,27 +306,104 @@ def pass2_create_clusters(lines: List[Dict], avg_width: float, y_tolerance: floa
     return clusters
 
 
-def format_clusters(clusters: List[List[Dict]]) -> List[Dict]:
+def merge_adjacent_lines(lines: List[Dict], y_tolerance: float) -> List[Dict]:
+    """
+    같은 X 좌표의 인접한 라인들을 병합
+
+    Y-gap이 y_tolerance 이내인 같은 X 좌표 라인들을 합침
+    텍스트: 위에서 아래 순서로 연결
+    bbox: 통합 (min_x, min_y, width, max_height)
+    """
+    if not lines:
+        return []
+
+    merged = []
+    current_group = [lines[0]]
+
+    for i in range(1, len(lines)):
+        curr_line = lines[i]
+        prev_line = current_group[-1]
+
+        cx, cy, cw, ch = curr_line["bbox"]
+        px, py, pw, ph = prev_line["bbox"]
+
+        x_diff = abs(cx - px)
+        y_gap = max(0, cy - (py + ph), py - (cy + ch))
+
+        # ✨ 같은 X 좌표 (±10px) + Y gap이 tolerance 이내면 병합 대상
+        if x_diff <= 10 and y_gap <= y_tolerance:
+            current_group.append(curr_line)
+        else:
+            # 현재 그룹 병합 후 result에 추가
+            if len(current_group) > 1:
+                merged.append(merge_line_group(current_group))
+                print(f"    🔗 Merged {len(current_group)} lines: {' + '.join([l['text'] for l in current_group])} → '{merged[-1]['text']}'")
+            else:
+                merged.append(current_group[0])
+            current_group = [curr_line]
+
+    # 마지막 그룹 처리
+    if current_group:
+        if len(current_group) > 1:
+            merged.append(merge_line_group(current_group))
+            print(f"    🔗 Merged {len(current_group)} lines: {' + '.join([l['text'] for l in current_group])} → '{merged[-1]['text']}'")
+        else:
+            merged.append(current_group[0])
+
+    return merged
+
+
+def merge_line_group(group: List[Dict]) -> Dict:
+    """라인 그룹을 하나의 라인으로 병합"""
+    if len(group) == 1:
+        return group[0]
+
+    # Y 좌표순 정렬 (위에서 아래)
+    group_sorted = sorted(group, key=lambda l: l["bbox"][1])
+
+    # 텍스트 병합
+    merged_text = ''.join([l["text"] for l in group_sorted])
+
+    # bbox 통합: [x, y, w, h]
+    all_x = []
+    all_y = []
+    for line in group_sorted:
+        x, y, w, h = line["bbox"]
+        all_x.extend([x, x + w])
+        all_y.extend([y, y + h])
+
+    min_x, max_x = min(all_x), max(all_x)
+    min_y, max_y = min(all_y), max(all_y)
+
+    return {
+        "text": merged_text,
+        "bbox": [min_x, min_y, max_x - min_x, max_y - min_y]
+    }
+
+
+def format_clusters(clusters: List[List[Dict]], avg_width: float) -> List[Dict]:
     """클러스터를 JSON 포맷으로 변환"""
     result = []
+    y_tolerance = avg_width * 1.5  # Line 병합 기준
 
     for i, cluster in enumerate(clusters, start=1):
         # Line 정렬: X 큰 순 (우→좌 읽기)
         cluster_sorted = sorted(cluster, key=lambda l: -l["bbox"][0])
 
+        # ✨ NEW: 같은 X 좌표의 인접한 라인들을 병합
+        merged_lines = merge_adjacent_lines(cluster_sorted, y_tolerance)
+
         # Bounding poly 계산
-        # 맨 오른쪽 Line (cluster_sorted[0])의 width를 60% 확장
         all_x = []
         all_y = []
 
-        for j, line in enumerate(cluster_sorted):
+        for j, line in enumerate(merged_lines):
             x, y, w, h = line["bbox"]
 
-            # ✅ NEW: 마지막 글자가 'た' 또는 'だ'인 경우 height 5px 확장
+            # ✅ 마지막 글자가 특수문자인 경우 height 5px 확장
             line_text = line.get("text", "").strip()
-            if line_text and line_text.endswith(('た', 'だ', '?', '.', '！', '。')):
+            if line_text and line_text.endswith(('た', 'だ', '?', '.', '！', '。', 'つ')):
                 h += 5
-                print(f"  ✨ C{i} Line '{line_text}': Height expanded by 5px for '{line_text[-1]}'")
 
             # 맨 오른쪽 Line (첫 번째)만 width 확장
             if j == 0:
@@ -329,17 +417,22 @@ def format_clusters(clusters: List[List[Dict]]) -> List[Dict]:
         min_x, max_x = min(all_x), max(all_x)
         min_y, max_y = min(all_y), max(all_y)
 
-        # bounding_rect: [x, y, w, h] 형식으로 통일
+        # Y축 패딩
+        y_padding = int(avg_width * 0.15)
+        adj_min_y = max(0, min_y - y_padding)
+        adj_max_y = max_y + y_padding
+
+        # bounding_rect
         bounding_rect = [
             min_x,
-            min_y,
-            max_x - min_x,  # width
-            max_y - min_y   # height
+            adj_min_y,
+            max_x - min_x,
+            adj_max_y - adj_min_y
         ]
 
-        # Lines (text와 bbox) - 정렬된 순서로 (원본 bbox 유지)
+        # Lines (병합된 라인들)
         lines_output = []
-        for line in cluster_sorted:
+        for line in merged_lines:
             lines_output.append({
                 "text": line["text"],
                 "bbox": line["bbox"]
@@ -435,7 +528,7 @@ def process_cv_clusters(cv_path: str, output_path: str, image_width: int = 1350,
     print(f"  Pass 2: Created {len(clusters)} clusters")
 
     # 5. Format clusters
-    result = format_clusters(clusters)
+    result = format_clusters(clusters, avg_width)
 
     # 6. Sort by reading order (right to left, top to bottom)
     result = sort_clusters_reading_order(result)

@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
 Gemini API 통합 모듈
-- gemini-2.5-flash: bbox + OCR 추출 (Hybrid with Cloud Vision)
-- gemini-2.5-flash: 번역
+# - gemini-3-flash-preview: bbox + OCR 추출 (Hybrid with Cloud Vision)
+# - gemini-3-flash-preview: 번역
 """
 
 import google.generativeai as genai
@@ -23,20 +23,20 @@ class GeminiAPI:
             api_key: Google AI Studio API 키
         """
         genai.configure(api_key=api_key)
-        # OCR/BBox 추출용 - Gemini 2.5 Flash
+        # OCR/BBox 추출용 - Gemini 3 Flash
         try:
-            self.ocr_model = genai.GenerativeModel('gemini-2.5-flash')
-            print("✅ OCR 모델: gemini-2.5-flash")
+            self.ocr_model = genai.GenerativeModel('gemini-3-flash-preview')
+            print("✅ OCR 모델: gemini-3-flash-preview")
         except:
-            print("⚠️ gemini-2.5-flash를 찾을 수 없어 gemini-1.5-flash로 대체합니다.")
-            self.ocr_model = genai.GenerativeModel('gemini-1.5-flash')
-        # 번역용 (Gemini 2.5 Flash)
+            print("⚠️ gemini-3-flash-preview를 찾을 수 없어 gemini-2.0-flash-exp로 대체합니다.")
+            self.ocr_model = genai.GenerativeModel('gemini-2.0-flash-exp')
+        # 번역용 (Gemini 3 Flash)
         try:
+            self.translation_model = genai.GenerativeModel('gemini-3-flash-preview')
+            print("✅ 번역 모델: gemini-3-flash-preview")
+        except:
+            print("⚠️ gemini-3-flash-preview를 찾을 수 없어 gemini-2.5-flash로 대체합니다.")
             self.translation_model = genai.GenerativeModel('gemini-2.5-flash')
-            print("✅ 번역 모델: gemini-2.5-flash")
-        except:
-            print("⚠️ gemini-2.5-flash를 찾을 수 없어 gemini-1.5-flash로 대체합니다.")
-            self.translation_model = genai.GenerativeModel('gemini-1.5-flash')
         
     def extract_text_bubbles(self, image_path: str, retry_count: int = 3, force_gemini: bool = False) -> Optional[List[Dict]]:
         """
@@ -632,14 +632,16 @@ class GeminiAPI:
    - CV에는 있지만 이미지에 없는 경우: CV 오류 (제외)
    - 이미지에는 있지만 CV에 없는 경우: CV가 놓친 문자 (반드시 포함!)
    - ⚠️ 특히 누락된 문자를 놓치지 마세요! (예: 軽率)
-4. **세로쓰기 줄바꿈 규칙:**
-   - 세로쓰기는 하나의 **연속된 문장**입니다 (여러 열로 나뉨)
-   - 각 **열(column)의 경계에서만** \\n을 넣으세요
+4. **세로쓰기 줄바꿈 규칙 (매우 중요!):**
+   - 세로쓰기는 여러 **열(column)**로 구성됨
+   - 각 **열의 경계에서만** newline character (\\n)을 넣으세요
    - ❌ 나쁜 예: "う\\nわ\\nっ\\n!?" (글자 하나마다 줄바꿈)
-   - ✅ 좋은 예: "うわっ!?" (하나의 열) 또는 "うわ\\nっ!?" (2개 열)
-5. **가로쓰기 줄바꿈 규칙:**
-   - 각 **행(row)의 경계에서만** \\n을 넣으세요
-   - 예: "첫 줄\\n둘째 줄\\n셋째 줄"
+   - ✅ 좋은 예: "うわっ!?" (1개 열) 또는 "うわ\\nっ!?" (2개 열)
+   - 실제 예: "刃を\\n合わせても\\n剣がすり抜けた" (세 개의 열)
+5. **가로쓰기 줄바꿈 규칙 (매우 중요!):**
+   - 가로쓰기는 여러 **행(row)**으로 구성됨
+   - 각 **행의 경계에서만** newline character (\\n)을 넣으세요
+   - 예: "これでは\\n防御も\\nできないだろう" (세 개의 행)
 6. 각 문장의 유형 분류 (dialogue/narration/sound_effect/other)
 7. 후리가나(furigana) 읽기는 절대 포함하지 마세요 (한자/히라가나/카타카나만)
 
