@@ -225,12 +225,17 @@ def apply_white_masking(
     else:
         clusters = data if isinstance(data, list) else []
 
-    # CV Clusters 로드 (line 개수 및 CV 텍스트 확인용)
-    with open(cv_clusters_path, 'r', encoding='utf-8') as f:
-        cv_clusters = json.load(f)
+    # CV Clusters 로드 (기존 호환성 또는 빈 배열)
+    try:
+        with open(cv_clusters_path, 'r', encoding='utf-8') as f:
+            cv_clusters = json.load(f)
+    except FileNotFoundError:
+        cv_clusters = []
+    except json.JSONDecodeError:
+        cv_clusters = []
 
     # CV cluster를 ID로 매핑 (cluster_id 문자열 기반)
-    cv_cluster_map = {str(c['cluster_id']): c for c in cv_clusters}
+    cv_cluster_map = {str(c['cluster_id']): c for c in cv_clusters} if cv_clusters else {}
 
     print(f"📦 {len(clusters)}개 Sentence 로드")
     
@@ -258,23 +263,27 @@ def apply_white_masking(
         text_sentence = sentence.get('text') or sentence.get('text_sentence', '')
         location = sentence.get('location', 'in_bubble')
 
-        # V3: matched_cluster (int) / V2: matched_clusters (string) 모두 지원
+        # integrated JSON: matched_cluster는 보통 cluster id 리스트다.
         matched_cluster = sentence.get('matched_cluster')
-        if matched_cluster is not None:
-            # V3 형식
-            cluster_id_str = str(matched_cluster)
+        if isinstance(matched_cluster, list):
+            matched_cluster_ids = [str(cluster_id) for cluster_id in matched_cluster]
+        elif matched_cluster is not None:
+            matched_cluster_ids = [str(matched_cluster)]
         else:
-            # V2 형식: matched_clusters 문자열에서 추출
             matched_clusters = sentence.get('matched_clusters', '')
-            cluster_id_str = matched_clusters.replace('C', '').split('+')[0].strip() if matched_clusters else ''
+            matched_cluster_ids = [
+                part.strip().replace('C', '')
+                for part in matched_clusters.split('+')
+                if part.strip()
+            ] if matched_clusters else []
 
-        # CV cluster에서 line 정보 가져오기
-        cv_cluster = cv_cluster_map.get(cluster_id_str)
-        if cv_cluster:
-            lines = cv_cluster.get('lines', [])
-            cv_line_count = len(lines)
-        else:
-            # CV cluster가 없으면 기본값
+        # CV cluster에서 line 정보 가져오기. 복수 cluster면 line 수를 합산한다.
+        cv_line_count = 0
+        for cluster_id in matched_cluster_ids:
+            cv_cluster = cv_cluster_map.get(cluster_id)
+            if cv_cluster:
+                cv_line_count += len(cv_cluster.get('lines', []))
+        if cv_line_count == 0:
             cv_line_count = 1
 
         if cv_line_count == 0 or not text_sentence:
@@ -344,7 +353,7 @@ def apply_white_masking(
         masked_count += 1
 
         if masked_count <= 5:
-            matched_display = f"C{cluster_id_str}" if cluster_id_str else "?"
+            matched_display = "C" + "+".join(matched_cluster_ids) if matched_cluster_ids else "?"
             print(f"  S{sentence_id}→{matched_display}: {text_sentence[:30]}")
             print(f"    위치: {location}, BBox: {rect}")
 

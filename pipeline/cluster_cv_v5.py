@@ -306,6 +306,76 @@ def pass2_create_clusters(lines: List[Dict], avg_width: float, y_tolerance: floa
     return clusters
 
 
+def _height_ratio_similar(a: List[int], b: List[int], min_ratio: float = 0.5) -> bool:
+    """두 line 높이가 과도하게 다르지 않은지 확인한다."""
+    ah = max(a[3], 1)
+    bh = max(b[3], 1)
+    return min(ah, bh) / max(ah, bh) >= min_ratio
+
+
+def _vertical_overlap_ratio(a: List[int], b: List[int]) -> float:
+    """두 bbox의 Y축 겹침 비율을 더 작은 높이 기준으로 계산한다."""
+    a_top, a_bottom = a[1], a[1] + a[3]
+    b_top, b_bottom = b[1], b[1] + b[3]
+    overlap = max(0, min(a_bottom, b_bottom) - max(a_top, b_top))
+    return overlap / max(min(a[3], b[3]), 1)
+
+
+def pass2_create_tight_text_groups(lines: List[Dict], avg_width: float, y_tolerance: float) -> List[Dict]:
+    """
+    Contour 탐색 anchor용 Tight Text Group 생성.
+
+    기존 loose cluster와 달리 멀리 떨어진 Stage 3 병합을 하지 않는다.
+    Stage 2도 X gap, Y 시작점, Y overlap, 높이 유사성을 모두 만족할 때만 병합한다.
+    """
+    if not lines:
+        return []
+
+    adjacent_x_threshold = min(55.0, avg_width * 1.2)
+    lines_sorted = sorted(lines, key=lambda l: -l["bbox"][0])
+
+    visited = set()
+    groups = []
+
+    for seed_idx, seed_line in enumerate(lines_sorted):
+        if seed_idx in visited:
+            continue
+
+        queue = [seed_line]
+        current_group = [seed_line]
+        visited.add(seed_idx)
+
+        while queue:
+            curr = queue.pop(0)
+            cx, cy, cw, ch = curr["bbox"]
+
+            for cand_idx, candidate in enumerate(lines_sorted):
+                if cand_idx in visited:
+                    continue
+
+                lx, ly, lw, lh = candidate["bbox"]
+                x_diff = abs(lx - cx)
+                y_gap = max(0, ly - (cy + ch), cy - (ly + lh))
+                y_start_diff = abs(ly - cy)
+
+                same_column = x_diff <= 10 and y_gap <= y_tolerance
+                adjacent_column = (
+                    10 < x_diff <= adjacent_x_threshold
+                    and y_start_diff <= y_tolerance
+                    and _vertical_overlap_ratio(curr["bbox"], candidate["bbox"]) >= 0.35
+                    and _height_ratio_similar(curr["bbox"], candidate["bbox"])
+                )
+
+                if same_column or adjacent_column:
+                    current_group.append(candidate)
+                    queue.append(candidate)
+                    visited.add(cand_idx)
+
+        groups.append(current_group)
+
+    return groups
+
+
 def merge_adjacent_lines(lines: List[Dict], y_tolerance: float) -> List[Dict]:
     """
     같은 X 좌표의 인접한 라인들을 병합
@@ -405,9 +475,9 @@ def format_clusters(clusters: List[List[Dict]], avg_width: float) -> List[Dict]:
             if line_text and line_text.endswith(('た', 'だ', '?', '.', '！', '。', 'つ')):
                 h += 5
 
-            # 맨 오른쪽 Line (첫 번째)만 width 확장
+            # 맨 오른쪽 Line (첫 번째)만 width 확장 (특수문자 누락 방지용이나, 과도한 시프트를 줄이기 위해 30%로 축소)
             if j == 0:
-                expansion = int(w * 0.6)
+                expansion = int(w * 0.3)
                 all_x.extend([x, x + w + expansion])  # 오른쪽으로 확장
             else:
                 all_x.extend([x, x + w])
@@ -443,6 +513,48 @@ def format_clusters(clusters: List[List[Dict]], avg_width: float) -> List[Dict]:
             "orientation": "vertical",
             "lines": lines_output,
             "bounding_rect": bounding_rect
+        })
+
+    return result
+
+
+def format_tight_text_groups(groups: List[List[Dict]]) -> List[Dict]:
+    """Tight Text Group을 bbox 확장 없이 JSON 포맷으로 변환한다."""
+    result = []
+
+    for i, group in enumerate(groups, start=1):
+        group_sorted = sorted(group, key=lambda l: -l["bbox"][0])
+        all_x = []
+        all_y = []
+        lines_output = []
+
+        for line in group_sorted:
+            x, y, w, h = line["bbox"]
+            all_x.extend([x, x + w])
+            all_y.extend([y, y + h])
+
+            fragments = []
+            for block in line.get("bboxes", []):
+                fragments.append({
+                    "text": block.get("text", ""),
+                    "bbox": block.get("bbox", [0, 0, 0, 0])
+                })
+
+            lines_output.append({
+                "text": line["text"],
+                "bbox": line["bbox"],
+                "fragments": fragments
+            })
+
+        min_x, max_x = min(all_x), max(all_x)
+        min_y, max_y = min(all_y), max(all_y)
+
+        result.append({
+            "text_group_id": i,
+            "orientation": "vertical",
+            "lines": lines_output,
+            "bounding_rect": [min_x, min_y, max_x - min_x, max_y - min_y],
+            "mode": "tight"
         })
 
     return result
@@ -540,26 +652,67 @@ def process_cv_clusters(cv_path: str, output_path: str, image_width: int = 1350,
     return result
 
 
+def process_cv_tight_text_groups(cv_path: str, output_path: str, image_width: int = 1350, image_height: int = 1920):
+    print(f"Loading {cv_path}...")
+    cv_data = load_cv_json(cv_path)
+
+    blocks = create_text_blocks(cv_data)
+    widths = [b['bbox'][2] for b in blocks]
+    avg_width = np.percentile(widths, 75) if widths else 50.0
+    y_tolerance = image_height * 0.015
+
+    print(f"  Loaded {len(blocks)} blocks")
+    print(f"  Tight parameters: avg_width={avg_width:.1f}px, y_tolerance={y_tolerance:.1f}px")
+
+    lines = pass1_create_lines(blocks, avg_width, y_tolerance)
+    print(f"  Pass 1: Created {len(lines)} lines")
+
+    lines = filter_furigana_lines(lines, avg_width)
+
+    groups = pass2_create_tight_text_groups(lines, avg_width, y_tolerance)
+    print(f"  Tight Pass 2: Created {len(groups)} text groups")
+
+    result = format_tight_text_groups(groups)
+    result = sorted(result, key=lambda c: (-c["bounding_rect"][0], c["bounding_rect"][1]))
+
+    for i, group in enumerate(result, start=1):
+        group["text_group_id"] = i
+
+    return result
+
+
 def main():
-    if len(sys.argv) != 3:
+    tight_mode = len(sys.argv) == 4 and sys.argv[1] == "--tight"
+    if len(sys.argv) != 3 and not tight_mode:
         print("Usage: python cluster_cv_v5.py <cv_json> <output_json>")
+        print("       python cluster_cv_v5.py --tight <cv_json> <output_json>")
         sys.exit(1)
-        
-    cv_path = sys.argv[1]
-    output_path = sys.argv[2]
+
+    if tight_mode:
+        cv_path = sys.argv[2]
+        output_path = sys.argv[3]
+    else:
+        cv_path = sys.argv[1]
+        output_path = sys.argv[2]
     
     if not Path(cv_path).exists():
         print(f"Error: {cv_path} not found")
         sys.exit(1)
-        
-    clusters = process_cv_clusters(cv_path, output_path)
-    
-    # Use custom formatter to ensure single-line bbox arrays
-    json_output = format_json_output(clusters)
-    with open(output_path, 'w', encoding='utf-8') as f:
-        f.write(json_output)
-        
-    print(f"✅ Saved {len(clusters)} clusters to {output_path}")
+
+    if tight_mode:
+        groups = process_cv_tight_text_groups(cv_path, output_path)
+        with open(output_path, 'w', encoding='utf-8') as f:
+            json.dump(groups, f, ensure_ascii=False, indent=2)
+        print(f"✅ Saved {len(groups)} tight text groups to {output_path}")
+    else:
+        clusters = process_cv_clusters(cv_path, output_path)
+
+        # Use custom formatter to ensure single-line bbox arrays
+        json_output = format_json_output(clusters)
+        with open(output_path, 'w', encoding='utf-8') as f:
+            f.write(json_output)
+
+        print(f"✅ Saved {len(clusters)} clusters to {output_path}")
 
 
 if __name__ == "__main__":

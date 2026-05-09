@@ -13,13 +13,14 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-def translate_cover(image_path: str, output_path: str):
+def translate_cover(image_path: str, output_path: str, model_name: str = 'gemini-3-pro-image-preview'):
     """
     표지 이미지를 Gemini AI로 번역
     
     Args:
         image_path: 원본 이미지 경로
         output_path: 결과 이미지 저장 경로
+        model_name: 사용할 Gemini 모델명
     """
     # API 키 설정
     api_key = os.getenv("GEMINI_API_KEY")
@@ -29,11 +30,11 @@ def translate_cover(image_path: str, output_path: str):
     
     genai.configure(api_key=api_key)
     
-    # Gemini 3 Pro Image Preview 모델 사용
-    model = genai.GenerativeModel('gemini-3-pro-image-preview')
+    # 선택된 모델 사용
+    model = genai.GenerativeModel(model_name)
     
     print(f"📖 표지 번역 시작: {Path(image_path).name}")
-    print(f"🤖 모델: gemini-3-pro-image-preview")
+    print(f"🤖 모델: {model_name}")
     
     # 이미지 업로드
     print(f"  📤 이미지 업로드 중...")
@@ -86,7 +87,7 @@ def translate_cover(image_path: str, output_path: str):
                     top_k=40,
                     max_output_tokens=8192,
                 ),
-                request_options={"timeout": 120}
+                request_options={"timeout": 300}
             )
             
             # 성공 - 응답 처리

@@ -111,22 +111,19 @@ python3 main.py
 
 ```bash
 # 1. Cloud Vision API
-python3 cloud_vision_api.py input.jpg output/image_cv.json
+python3 pipeline/cloud_vision_api.py input.jpg output/image_cv.json
 
 # 2. 클러스터링
-python3 cluster_cv_v5.py output/image_cv.json output/image_cv_clusters_v5.json
+python3 pipeline/cluster_cv_v5.py output/image_cv.json output/image_cv_clusters_v5.json
 
-# 3. Gemini OCR
-python3 gemini_ocr_translate_v5.py input.jpg output/image_cv_clusters_v5.json output/image_ocr_v5.json
+# 3. Gemini OCR + 번역 + integrated JSON 생성
+python3 pipeline/gemini_ocr_translate_v5.py input.jpg output/image_cv_clusters_v5.json output/image_integrated.json
 
-# 4. 텍스트 통합
-python3 integrate_ocr_v3.py output/image_cv_clusters_v5.json output/image_ocr_v5.json output/image_integrated.json
+# 4. White Masking
+python3 pipeline/apply_masking.py input.jpg output/image_integrated.json output/image_cv_clusters_v5.json output/image_masked.jpg
 
-# 5. White Masking
-python3 apply_masking.py input.jpg output/image_integrated.json output/image_cv_clusters_v5.json output/image_masked.jpg
-
-# 6. Text Overlay
-python3 render_text_overlay.py output/image_masked.jpg output/image_integrated.json output/image_cv_clusters_v5.json output/image_final.jpg
+# 5. Text Overlay
+python3 pipeline/render_text_overlay.py output/image_masked.jpg output/image_integrated.json output/image_cv_clusters_v5.json output/image_final.jpg
 ```
 
 ---
@@ -158,16 +155,13 @@ python3 render_text_overlay.py output/image_masked.jpg output/image_integrated.j
     ├─ Step 2: 클러스터링 V5 (2-Pass BFS)
     │         출력: *_cv_clusters_v5.json
     │
-    ├─ Step 3: Gemini OCR + 번역
-    │         출력: *_ocr_v5.json (원문 + 번역)
+    ├─ Step 3: Gemini OCR + 번역 + integrated JSON 생성
+    │         출력: *_integrated.json
     │
-    ├─ Step 4: 텍스트 통합 (청크 기반)
-    │         출력: *_integrated.json (번역 포함)
-    │
-    ├─ Step 5: White Masking (코너 페이드)
+    ├─ Step 4: White Masking (코너 페이드)
     │         출력: *_masked.jpg
     │
-    └─ Step 6: Text Overlay (가중 글자수)
+    └─ Step 5: Text Overlay (가중 글자수)
               출력: *_final.jpg (최종 결과)
          │
          ▼
@@ -242,80 +236,39 @@ Stage 4: 극단적 경우 (같은 말풍선)
 
 ---
 
-### Step 3: Gemini OCR + 번역
+### Step 3: Gemini OCR + 번역 + Integrated JSON 생성
 
-**목적**: 정확한 일본어 OCR, 문장 분리, 번역
+**목적**: 정확한 일본어 OCR, 문장 분리, 번역, cluster 매칭 결과를 한 번에 생성
 
 **처리 과정**:
 1. 전체 이미지 + cluster 좌표를 Gemini에 전달
-2. 각 cluster의 정확한 텍스트 추출
-3. 일본어 → 한국어 번역 (한 번의 API 호출)
-4. Text type 분류 (dialogue/narration/sound_effect)
-5. Location 감지 (in_bubble/outside_bubble)
-
-**출력 형식** (`*_ocr_v5.json`):
-```json
-[
-  {
-    "sentence_id": 1,
-    "text_original": "日本語",
-    "text_translated": "한국어",
-    "cv_cluster_list": [1, 2],
-    "text_type": "dialogue",
-    "location": "in_bubble",
-    "confidence": "high"
-  }
-]
-```
-
----
-
-### Step 4: 텍스트 통합 V3 (청크 기반 매칭)
-
-**목적**: Sentence 중심 청크 기반 라인 매칭으로 정확한 bbox 확장
-
-**매칭 알고리즘**:
-```
-Sentence: "うわっ!?" (개행 없음 = 1개 청크)
-         ↓
-청크 분리: ["うわっ!?"]  (공백 기준으로도 분리)
-         ↓
-CV Lines: ["うわ" (line 0), "!!" (line 1)]
-         ↓
-라인별 매칭:
-  - Line 0: "うわ" vs "うわっ!?" → overlap 0.5
-  - Line 1: "!!" vs "うわっ!?" → overlap 0.4
-         ↓
-최고 점수 매칭 선택 → Line 0 (overlap 0.5)
-         ↓
-Bbox 확장: CV width + (추가 글자 수 × 평균 글자 너비 × 1.1)
-```
-
-**다중 클러스터 처리**:
-- 같은 문장이 여러 클러스터에 매칭되는 경우:
-  - Union BBox 계산 (모든 클러스터 포함)
-  - Expansion ratio 동적 계산: `expand_ratio = 4 / (line_count + 1)`
+2. 시각적으로 한 문장인 텍스트 조각을 병합
+3. 일본어 → 한국어 번역
+4. 문장별 `matched_cluster` 목록 생성
+5. `union_bbox`와 `matched_cluster_details`를 포함한 integrated JSON 저장
 
 **출력 형식** (`*_integrated.json`):
 ```json
 {
   "clusters": [
     {
-      "cluster_id": 1,
-      "matched_sentence_id": 1,
-      "text_original": "日本語",
+      "sentence_id": 1,
+      "text": "日本語",
       "text_translated": "한국어",
-      "union_bbox": [x, y, width, height],
-      "match_score": 0.9,
-      "line_count": 2
+      "matched_cluster": [1, 2],
+      "matched_cluster_details": [],
+      "union_bbox": [100, 120, 80, 240],
+      "bounding_rect": [100, 120, 80, 240],
+      "location": "in_bubble"
     }
-  ]
+  ],
+  "unmatched_clusters": []
 }
 ```
 
 ---
 
-### Step 5: White Masking (코너 페이드)
+### Step 4: White Masking (코너 페이드)
 
 **목적**: 원본 텍스트 영역을 마스킹
 
@@ -339,7 +292,7 @@ gradient = max(0.0, 1.0 - dist / max_dist)
 
 ---
 
-### Step 6: Text Overlay (텍스트 렌더링)
+### Step 5: Text Overlay (텍스트 렌더링)
 
 **목적**: 번역된 한국어 텍스트를 이미지에 자연스럽게 렌더링
 
@@ -590,16 +543,17 @@ for i, w in enumerate(weights):
 ```
 NEW_COMIC_TRANSLATOR/
 ├── main.py                          # Gradio UI (메인 진입점)
-├── cloud_vision_api.py              # Cloud Vision API
-├── cluster_cv_v5.py                 # V5 클러스터링 (2-Pass BFS)
-├── integrate_ocr_v3.py              # 청크 기반 통합
-├── gemini_api.py                    # Gemini API 래퍼
-├── gemini_ocr_translate_v5.py       # OCR + 번역 통합
-├── apply_masking.py                 # White Masking (코너 페이드)
-├── render_text_overlay.py           # Text Overlay (가중 글자수)
-├── bbox_utils.py                    # BBox 유틸리티
-├── debug_cv_pipeline.py             # CV 클러스터링 디버그 도구
-├── ALGORITHM_GUIDE.md               # 알고리즘 가이드
+├── run_debug_pipeline.py            # Debug 실행 wrapper
+├── run_test_pipeline.py             # Test 실행 wrapper
+├── visualize_debug.py               # bbox 시각화
+├── pipeline/
+│   ├── cloud_vision_api.py          # Cloud Vision API
+│   ├── cluster_cv_v5.py             # V5 클러스터링 (2-Pass BFS)
+│   ├── gemini_ocr_translate_v5.py   # OCR + 번역 + integrated JSON 생성
+│   ├── apply_masking.py             # White Masking (코너 페이드)
+│   ├── render_text_overlay.py       # Text Overlay (가중 글자수)
+│   └── translate_cover.py           # 컬러 표지 번역
+├── batch/                           # Gemini Batch API 보존 영역
 ├── Fonts/                           # 폰트 파일
 │   └── Freesentation-4Regular.ttf
 ├── requirements.txt                 # Python 패키지
@@ -628,9 +582,9 @@ NEW_COMIC_TRANSLATOR/
    - Union BBox 계산
    - 동적 Expansion ratio
 
-5. **청크 기반 매칭**
-   - integrate_ocr_v3.py 완전 재작성
-   - 렙비슈타인 거리 기반 정확 매칭
+5. **Gemini integrated JSON 직접 사용**
+   - `matched_cluster`, `matched_cluster_details`, `union_bbox` 기준 렌더링
+   - 별도 integration 단계 없이 masking/overlay로 전달
 
 ---
 
@@ -654,4 +608,3 @@ MIT License
 - Google Gemini API
 - Freesentation Font
 - OpenCV, Pillow, Gradio
-

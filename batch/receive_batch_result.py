@@ -70,21 +70,25 @@ def main():
 
     # 2. 구글에 작업 상태 물어보기 (Polling)
     print("\n🚨 1. 구글 서버에 현재 택배(작업) 상태를 물어보는 중...")
-    url = f"https://generativelanguage.googleapis.com/v1beta/{target_batch_id}?key={API_KEY}"
+    url = f"https://generativelanguage.googleapis.com/v1beta/{target_batch_id}"
     
     try:
-        response = requests.get(url, headers={"Content-Type": "application/json"})
+        response = requests.get(url, params={"key": API_KEY}, headers={"Content-Type": "application/json"})
         if response.status_code != 200:
             print(f"❌ 구글 측 조회 오류: HTTP {response.status_code}")
             print(response.text)
             return
             
         job_data = response.json()
-        state = job_data.get("state", "알 수 없음")
-        request_count = job_data.get("requestCount", 0)
-        completed_count = job_data.get("completedCount", 0)
-        failed_count = job_data.get("failedCount", 0)
-        output_uri = job_data.get("outputFile")
+        metadata = job_data.get("metadata", job_data)
+        state = metadata.get("state", "알 수 없음")
+        batch_stats = metadata.get("batchStats", {})
+        request_count = int(batch_stats.get("requestCount", 0))
+        completed_count = int(batch_stats.get("successfulRequestCount", 0))
+        failed_count = int(batch_stats.get("failedRequestCount", 0))
+        # 결과물의 경로는 output.outputFile 에 보통 저장됩니다 (또는 metadata 안에 output.responsesFile 등) 
+        output_info = metadata.get("output", {})
+        output_uri = output_info.get("responsesFile") or metadata.get("outputFile")
         
     except Exception as e:
         print(f"❌ 상태 조회 중 네트워크 통신 오류 발생: {e}")
@@ -133,11 +137,11 @@ def main():
         print(f"⚠️ 맵핑 파일을 찾을 수 없습니다! 결과물이 폴더 트리 없이 일괄 다운로드 될 수 있습니다.")
 
     # 5. Output 파일(JSONL 덩어리) 다운로드
-    output_download_url = f"{output_uri}?key={API_KEY}&alt=media"
+    output_download_url = output_uri
     print(f"\n🚨 2. 결과물 덩어리(Output file)를 다운로드합니다...")
     
     try:
-        download_res = requests.get(output_download_url)
+        download_res = requests.get(output_download_url, params={"key": API_KEY, "alt": "media"})
         if download_res.status_code != 200:
             print(f"❌ 다운로드 실패! HTTP {download_res.status_code}")
             return

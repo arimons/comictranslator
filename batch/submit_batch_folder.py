@@ -142,7 +142,7 @@ def main():
     # 5. REST 쏴주기
     print("\n🚨 5. ✨진짜 Batch API (최대 50% 할인)✨ 발송 시작!")
     # model: batchGenerateContent endpoint
-    url = f"https://generativelanguage.googleapis.com/v1beta/{MODEL_NAME}:batchGenerateContent?key={API_KEY}"
+    url = f"https://generativelanguage.googleapis.com/v1beta/{MODEL_NAME}:batchGenerateContent"
     headers = {"Content-Type": "application/json"}
     
     payload = {
@@ -156,7 +156,7 @@ def main():
     }
     
     try:
-        res = requests.post(url, headers=headers, json=payload)
+        res = requests.post(url, params={"key": API_KEY}, headers=headers, json=payload)
         
         print("\n================ [Google 접수 응답 결과] ================")
         if res.status_code == 200:

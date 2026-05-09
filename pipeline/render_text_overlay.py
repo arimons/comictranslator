@@ -533,7 +533,7 @@ def apply_text_overlay(
     
     Args:
         masked_image_path: White masking이 적용된 이미지 경로
-        integrated_json_path: integrated_translated.json 경로
+        integrated_json_path: integrated.json 경로
         cv_clusters_path: cv_clusters_v5.json 경로 (line 개수 확인용)
         output_path: 결과 저장 경로
         font_path: 한글 폰트 파일 경로
@@ -562,12 +562,17 @@ def apply_text_overlay(
     else:
         clusters = data if isinstance(data, list) else []
     
-    # CV Clusters 로드 (line 개수 확인용)
-    with open(cv_clusters_path, 'r', encoding='utf-8') as f:
-        cv_clusters = json.load(f)
+    # CV Clusters 로드 (기존 호환성 또는 빈 배열)
+    try:
+        with open(cv_clusters_path, 'r', encoding='utf-8') as f:
+            cv_clusters = json.load(f)
+    except FileNotFoundError:
+        cv_clusters = []
+    except json.JSONDecodeError:
+        cv_clusters = []
     
     # CV cluster를 ID로 매핑
-    cv_cluster_map = {c['cluster_id']: c for c in cv_clusters}
+    cv_cluster_map = {str(c['cluster_id']): c for c in cv_clusters} if cv_clusters else {}
     
     print(f"📦 {len(clusters)}개 Cluster 로드")
     print(f"\n{'='*60}")
@@ -594,13 +599,12 @@ def apply_text_overlay(
         if not translated_text:
             continue
 
-        # ✅ 복수 cluster 매칭: 모든 cluster의 line 개수 합산
+        # ✅ 복수 cluster 매칭: 모든 cluster의 line 개수 합산 (없으면 기본 1)
         line_count = 0
         for cv_cluster_id in matched_cluster_list:
-            cv_cluster = cv_cluster_map.get(cv_cluster_id)
+            cv_cluster = cv_cluster_map.get(str(cv_cluster_id))
             if cv_cluster:
-                lines = cv_cluster.get('lines', [])
-                line_count += len(lines)
+                line_count += len(cv_cluster.get('lines', ['dummy']))
 
         if line_count == 0:
             line_count = 1
@@ -678,15 +682,15 @@ def apply_text_overlay(
 
 if __name__ == "__main__":
     if len(sys.argv) < 4:
-        print("Usage: python render_text_overlay.py <masked_image> <integrated_translated.json> <cv_clusters_v5.json> [output.jpg] [font.ttf]")
+        print("Usage: python render_text_overlay.py <masked_image> <integrated.json> <cv_clusters_v5.json> [output.jpg] [font.ttf]")
         print("\nExample:")
-        print("  python render_text_overlay.py temp_output/00038_masked.jpg temp_output/00038_integrated_translated.json temp_output/00038_cv_clusters_v5.json")
+        print("  python render_text_overlay.py temp_output/00038_masked.jpg temp_output/00038_integrated.json temp_output/00038_cv_clusters_v5.json")
         sys.exit(1)
     
     masked_image = sys.argv[1]
     integrated_json = sys.argv[2]
     cv_clusters_json = sys.argv[3]
     output_path = sys.argv[4] if len(sys.argv) > 4 else None
-    font_path = sys.argv[5] if len(sys.argv) > 5 else "fonts/Freesentation-5Medium.ttf"
+    font_path = sys.argv[5] if len(sys.argv) > 5 else "Fonts/Freesentation-5Medium.ttf"
     
     apply_text_overlay(masked_image, integrated_json, cv_clusters_json, output_path, font_path)
