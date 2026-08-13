@@ -1,0 +1,19 @@
+{
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/Users/changhyunpark/Developer/NEW_COMIC_TRANSLATOR/.venv/bin/python",
+            "args": [
+              "/Users/changhyunpark/Developer/NEW_COMIC_TRANSLATOR/.claude/hooks/check_docs_sync.py"
+            ],
+            "timeout": 60,
+            "statusMessage": "문서 동기화 검사 중..."
+          }
+        ]
+      }
+    ]
+  }
+}

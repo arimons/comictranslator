@@ -101,7 +101,10 @@ BFS_CLUSTERING_GUIDE.md
 !DEBUG_PROCESS.md
 !CLAUDE.md
 !BFS_CLUSTERING_GUIDE.md
-.claude/
+# .claude/ 는 기본 제외하되, 문서 동기화 하네스는 프로젝트 자산이라 추적한다.
+.claude/*
+!.claude/settings.json
+!.claude/hooks/
 archive_docs/
 input/
 
