@@ -50,7 +50,7 @@ compact_y_range가 tall line을 제외해 범위가 축소되면 실제로는 �
 
 ## v2 (2026-05-20) — 정식 승격 (초기)
 
-**파일**: `pipeline/text_group_builder.py` (experiment/src/text_group_builder_v2.py 에서 승격)
+**파일**: `pipeline/text_group_builder_v2.py` (`archive/experiment/src/text_group_builder_v2.py`에서 승격)
 
 ### 추가된 기능
 

@@ -28,7 +28,7 @@ NEW_COMIC_TRANSLATOR/
 ├── run_floodfill_batch.py      # FloodFill 배치 실행 wrapper
 ├── visualize_debug.py          # Debug bbox 시각화
 ├── proof/                      # 검증용 스크립트 및 출력물
-│   └── run_masked_batch.py     # FloodFill+Masking 배치 검증
+│   └── run_ocr_hint_experiments.py  # OCR 힌트 변형 비교 실험
 ├── batch/                      # Gemini Batch API 보존 영역 (레퍼런스)
 │   ├── submit_batch_folder.py
 │   ├── receive_batch_result.py
@@ -177,12 +177,12 @@ proof/
   NNNNN_merge.jpg    최종 검증용 (flood_vis 좌 / text_overlay 우)
 ```
 
-### `proof/src/visualize_inflection_candidates.py` — shared flood split 후보 시각화 wrapper
+### `pipeline/vis/visualize_inflection_candidates.py` — shared flood split 후보 시각화
 
 실제 구현은 `pipeline/vis/visualize_inflection_candidates.py`에 있다.
 `proof/src` 파일은 기존 실행 경로를 보존하는 얇은 wrapper다.
 
-### `proof/src/run_inpaint_candidate.py` — inpaint 후보 검증 wrapper
+### inpaint 후보 검증 (현재 리포지토리에 wrapper 없음)
 
 실제 구현은 `pipeline/experimental/inpaint_candidate.py`에 있다.
 `proof/src` 파일은 검증 실행 진입점만 담당한다.
@@ -281,7 +281,7 @@ region_type 분류 (`visualize_anchor_floodfill` 기준): `in_bubble`, `narratio
 `pipeline.flood_split.collect_inflection_candidates()`를 사용해 shared flood split 후보를 시각화한다.
 
 - 출력: `proof/overlay-branch/_debug/inflection_lines/`
-- 기존 실행 호환 wrapper: `proof/src/visualize_inflection_candidates.py`
+- 기존 proof/src wrapper는 제거됐고 이 모듈을 직접 사용한다.
 
 ### `pipeline/experimental/inpaint_candidate.py`
 
@@ -289,8 +289,8 @@ flood 실패 후보에 TELEA inpaint를 적용하는 승격 후보 실험 모듈
 
 - 입력: `proof/json/{num}_flood_vis.json`, `test_image/{num}.jpg`
 - 출력: `proof/inpaint/`
-- 기존 archive의 `run_inpaint_test.py`는 이 모듈로 이동했다.
-- 검증 실행 wrapper: `proof/src/run_inpaint_candidate.py`
+- 기존 inpaint 실험 스크립트는 이 모듈로 흡수됐다.
+- 검증 실행 wrapper는 현재 없다. 모듈을 직접 호출한다.
 
 ### `pipeline/gemini_ocr_translate_v5.py`
 

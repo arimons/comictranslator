@@ -1313,7 +1313,7 @@ python3 run_pipeline.py \
     <tr>
       <td><code>_union_rect()</code> 로컬 복사</td>
       <td><code>bubble_detector</code>, <code>dialogue_extractor</code>, <code>render_text_overlay</code>, <code>flood_split</code>, <code>text_group_builder</code> 등 5개 파일에 개별 정의.</td>
-      <td><code>pipeline/utils.py</code>에 단일 정의 후 import로 통일 (선택적 정리).</td>
+      <td>이미 있는 <code>pipeline/geometry.py</code>의 <code>union_rect()</code>로 통일 검토. 단, 남은 사본 중 일부는 빈 rect 포함 여부가 달라 동작이 바뀔 수 있으므로 기계적 병합 금지.</td>
     </tr>
     <tr>
       <td><code>_jp_text_len</code> / <code>_japanese_text_len</code></td>

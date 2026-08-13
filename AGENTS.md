@@ -111,21 +111,17 @@ proof/{name}_final.jpg
 
 | 스크립트 | 역할 |
 |----------|------|
-| `proof/src/run_full_batch.py` | 레거시 전체 배치 검증. 메인 실행은 `run_pipeline.py` 우선 |
-| `proof/src/run_masked_batch.py` | FloodFill + masking 단독 검증 |
-| `proof/src/run_gemini_ocr.py` | OCR sheet 기반 Gemini 검증. 현재 흐름은 메인 파이프라인으로 승격됨 |
-| `proof/src/run_inpaint_test.py` | inpaint 실험 보존용. 현재 표준 masking 흐름에서는 기본 사용하지 않음 |
-| `proof/src/visualize_inflection_candidates.py` | 변곡점 후보 시각화 디버그 |
-| `proof/src/render_overlay_branch.py` | overlay branch 승격 전 검증 스크립트. 현재는 보존용 |
+| `proof/src/run_anchorless_bubble_rescue_experiment.py` | anchor 없는 말풍선 구제 실험 |
+| `proof/src/run_ocr_hint_experiments.py` | OCR 힌트 변형 비교 실험 |
+| `proof/src/visualize_anchor_contour_rescue.py` | anchor contour 구제 시각화 |
+| `proof/src/visualize_interior_rescue_candidates.py` | 내부 구제 후보 시각화 |
 
-`run_inpaint_test.py` 흐름:
+메인 실행은 `run_pipeline.py`를 우선한다.
 
-```text
-anchor bbox ROI 추출 (BBOX_PAD=24px)
-  → grayscale threshold(160) → 텍스트 획 마스크
-  → dilate 3px → cv2.inpaint(TELEA, radius=7)
-  → proof/inpaint/{name}_A{id}_{method}_inpaint.jpg 저장
-```
+이전에 이 표에 있던 `run_full_batch.py`, `run_masked_batch.py`, `run_gemini_ocr.py`,
+`run_inpaint_test.py`는 현재 리포지토리에 없다. 변곡점 시각화는
+`pipeline/vis/visualize_inflection_candidates.py`로, overlay branch 검증은
+`archive/render_overlay_branch.py`로 이동했다.
 
 ---
 

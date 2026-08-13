@@ -94,7 +94,8 @@ FloodFill 상세는 [FLOODFILL_MASKING_PROGRESS.md](FLOODFILL_MASKING_PROGRESS.m
 ### 표준 경로
 
 - [ ] `visualize_anchor_floodfill()`에 동일 필터 반영 — flood_vis 색칠 기준이 `create_floodfill_fallback_outputs()`와 일부 불일치.
-- [ ] `proof/run_full_batch.py` Cloud Vision 호출을 `detect_text_grid`(9장 묶음)로 교체.
+- [ ] proof 배치 검증 경로의 Cloud Vision 호출을 `detect_text_grid`(9장 묶음)로 교체.
+      (구 `run_full_batch.py`는 제거됨. 현재 배치 경로는 `run_pipeline.py`)
 - [ ] 새 overlay 엔진 폰트 크기 전반 검토 — `page_font_band` 중앙값 기준, 전체적으로 너무 작다는 피드백 있음.
 
 ### 미해결 케이스
