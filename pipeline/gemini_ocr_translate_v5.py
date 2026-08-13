@@ -146,11 +146,7 @@ region_id는 반드시 "R숫자" 또는 "U숫자"의 숫자 부분만 사용합�
 1. ocr_text: 이미지에 보이는 일본어 원문 그대로. 줄바꿈은 \\n으로 유지하세요.
 2. text_translated: 자연스러운 한국어 번역. 한국어는 가로쓰기 기준으로 작성하세요.
 3. orientation: "vertical" 또는 "horizontal"
-4. text_scale_class: 같은 sheet 안의 다른 region들과 비교해 원문 글자 획의 시각적 크기를 평가하세요.
-   - crop 크기가 아니라 실제 글자 획의 시각적 크기 기준입니다.
-   - "small" / "normal" / "large" / "xlarge" 중 하나를 고르세요.
-   - 판단이 애매하면 "normal"로 두세요.
-5. render_hint: 원문 crop 안의 일본어 글자 형태만 보고 아래 6종 중 하나를 약한 렌더링 힌트로 고르세요.
+4. render_hint: 원문 crop 안의 일본어 글자 형태만 보고 아래 6종 중 하나를 약한 렌더링 힌트로 고르세요.
    이 값은 신뢰도가 낮은 1차 hint_raw로만 사용되고, 후처리에서 CV 기반 분석으로 다시 보정됩니다.
    확신이 낮으면 반드시 "normal"로 두세요.
    대사 내용, 감정, 번역문, 글자 크기, 말풍선 크기는 render_hint 판단 근거로 쓰지 마세요.
@@ -177,7 +173,7 @@ region_id는 반드시 "R숫자" 또는 "U숫자"의 숫자 부분만 사용합�
 - text_translated에 원문 일본어에 없는 문장부호를 절대 임의로 추가하지 마세요. 특히 쉼표(,)는 원문에 존재하지 않으면 번역문에도 절대 넣지 마세요. 원문의 줄바꿈이나 공백으로 표현된 리듬을 쉼표로 대체하는 것도 금지입니다.
 
 반드시 순수 JSON으로만 응답하세요. Markdown 백틱은 쓰지 마세요.
-{{"regions": [{{"region_id": 1, "ocr_text": "...", "text_translated": "...", "orientation": "vertical", "text_scale_class": "normal", "render_hint": "normal", "segments": [{{"matched_tg_ids": [1], "ocr_text": "...", "text_translated": "...", "orientation": "vertical", "text_scale_class": "normal", "render_hint": "normal"}}]}}]}}
+{{"regions": [{{"region_id": 1, "ocr_text": "...", "text_translated": "...", "orientation": "vertical", "render_hint": "normal", "segments": [{{"matched_tg_ids": [1], "ocr_text": "...", "text_translated": "...", "orientation": "vertical", "render_hint": "normal"}}]}}]}}
 """
 
 
