@@ -118,3 +118,6 @@ proof/
 test_image1/
 .pytest_cache/
 frontend/node_modules/
+
+# 로컬 환경 변수 (API 키)
+.env
