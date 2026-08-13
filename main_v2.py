@@ -147,6 +147,7 @@ class RunFinalRequest(BaseModel):
     overlay_guidance: dict[str, Any] | None = None
     max_workers: int = 1
     force: bool = False
+    ocr_model: str | None = None
 
 
 class OverlayRequest(BaseModel):
@@ -1447,6 +1448,7 @@ def run_final_for_item(
     overlay_guidance: dict[str, Any] | None = None,
     force: bool = False,
     log_callback=None,
+    ocr_model: str | None = None,
 ) -> dict[str, Any]:
     record = image_record(session_id, Path(item["input_path"]), item.get("image_sha256"))
     clusters = current_clusters_path(record, record["id"])
@@ -1483,6 +1485,7 @@ def run_final_for_item(
         record["regions_json"],
         "--extra-prompt",
         extra_prompt,
+        *(["--model", ocr_model] if ocr_model else []),
     ]
     if log_callback is None:
         run_subprocess(ocr_cmd, timeout=360)
@@ -1523,6 +1526,7 @@ def stream_run_final(req: RunFinalRequest):
                 req.overlay_guidance if req.image_id != "all" else None,
                 force=req.force,
                 log_callback=log_emit,
+                ocr_model=req.ocr_model,
             )
             skip_detail = integrated_skip_detail(refreshed.get("integrated"))
             if skip_detail:
@@ -2024,6 +2028,7 @@ def create_app() -> FastAPI:
                 req.tracking_offset,
                 req.overlay_guidance,
                 req.force,
+                ocr_model=req.ocr_model,
             )
         except Exception as exc:
             record = image_record(req.session_id, Path(source["input_path"]), source.get("image_sha256"))
@@ -2066,6 +2071,13 @@ def create_app() -> FastAPI:
         if not resolved.exists():
             raise HTTPException(status_code=404, detail="File not found")
         return FileResponse(resolved)
+
+    @app.get("/api/ocr-models")
+    def list_ocr_models() -> dict[str, Any]:
+        """Step 4에서 선택 가능한 OCR/번역 모델 목록."""
+        from pipeline.gemini_ocr_translate_v5 import MODEL_NAME, SUPPORTED_OCR_MODELS
+
+        return {"default": MODEL_NAME, "models": SUPPORTED_OCR_MODELS}
 
     @app.get("/api/fonts")
     def list_fonts() -> dict[str, Any]:

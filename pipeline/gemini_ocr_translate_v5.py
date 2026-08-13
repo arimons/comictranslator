@@ -75,6 +75,26 @@ OCR_SHEET_SOFT_MAX_REGIONS = 6
 GEMINI_CALL_TIMEOUT_SECONDS = 35
 
 
+# UI에 노출할 모델 목록. 근거는 docs/OCR_MODEL_COMPARISON.md 참고.
+SUPPORTED_OCR_MODELS = [
+    {
+        "id": "gemini-3-flash-preview",
+        "label": "Gemini 3 Flash (기본)",
+        "note": "품질 동등하면서 가장 빠름",
+    },
+    {
+        "id": "gpt-5.6-terra",
+        "label": "GPT-5.6 Terra",
+        "note": "동등 품질 대안. 약 1.8배 느림",
+    },
+    {
+        "id": "gpt-5.6-luna",
+        "label": "GPT-5.6 Luna",
+        "note": "저가. 번역문 문장부호 잔존과 문맥 오역이 관측됨",
+    },
+]
+
+
 def resolve_provider(model_name: str) -> str:
     """모델명으로 provider를 판별한다."""
     if model_name.startswith("gemini"):
