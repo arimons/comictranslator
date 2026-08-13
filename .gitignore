@@ -41,10 +41,6 @@ temp_output/
 *.bak
 google-credentials.json
 
-# Test files
-test_*.py
-*_test.py
-
 # Archive and reference
 archive/
 ref/
@@ -67,11 +63,10 @@ claudedocs/
 *_integrated.json
 *_translated.json
 
-# Old versions (except main pipeline files)
-*_v2.py
-*_v4.py
+# Old versions
+# 주의: *_v2.py 패턴은 쓰지 않는다. main_v2.py, text_group_builder_v2.py 등
+# 현재 파이프라인의 핵심 파일이 이 이름을 쓴다.
 cluster_cv.py
-# integrate_ocr_v3.py는 활성 버전이므로 git에 추적됨
 
 # Fonts (user should add their own)
 Fonts/*.ttf
@@ -90,15 +85,12 @@ VISUAL_OCR_README.md
 대화내용.md
 
 # Scratch and debug files
+# 주의: run_*.py 패턴은 쓰지 않는다. run_pipeline.py가 CLI 진입점이다.
 list_*.py
-run_*.py
-check_*.py
 recover_*.py
 convert_*.py
 analyze_*.py
 detect_*.py
-!run_debug_pipeline.py
-!run_test_pipeline.py
 !batch/check_all_batches.py
 !batch/run_batch.sh
 !batch/run_batch_auto.sh
