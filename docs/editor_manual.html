@@ -1,0 +1,564 @@
+<!-- MangaScript Pro 편집기 사용자 가이드 문서 -->
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>MangaScript Pro Editor Manual</title>
+<style>
+  :root {
+    --bg: #f5f7fb;
+    --paper: #ffffff;
+    --ink: #172033;
+    --muted: #647084;
+    --line: #dbe1ea;
+    --soft: #eef3f9;
+    --blue: #2563eb;
+    --cyan: #0891b2;
+    --gold: #b7791f;
+    --red: #dc2626;
+    --green: #15803d;
+    --shadow: 0 18px 50px rgba(20, 30, 50, 0.08);
+  }
+
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--ink);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Pretendard", "Noto Sans KR", sans-serif;
+    line-height: 1.65;
+    font-size: 15px;
+  }
+
+  a { color: var(--blue); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+
+  .shell {
+    display: grid;
+    grid-template-columns: 260px minmax(0, 1fr);
+    min-height: 100vh;
+  }
+
+  nav {
+    position: sticky;
+    top: 0;
+    height: 100vh;
+    padding: 28px 20px;
+    border-right: 1px solid var(--line);
+    background: rgba(255, 255, 255, 0.82);
+    backdrop-filter: blur(18px);
+    overflow: auto;
+  }
+
+  nav .brand {
+    font-size: 18px;
+    font-weight: 800;
+    letter-spacing: 0.02em;
+    margin-bottom: 4px;
+  }
+
+  nav .sub {
+    color: var(--muted);
+    font-size: 12px;
+    margin-bottom: 24px;
+  }
+
+  nav a {
+    display: block;
+    color: var(--muted);
+    padding: 7px 10px;
+    border-radius: 7px;
+    font-size: 13px;
+  }
+
+  nav a:hover {
+    background: var(--soft);
+    color: var(--ink);
+    text-decoration: none;
+  }
+
+  main {
+    max-width: 1120px;
+    padding: 48px 56px 92px;
+  }
+
+  .hero {
+    padding: 34px 38px;
+    background: var(--paper);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    box-shadow: var(--shadow);
+  }
+
+  .eyebrow {
+    color: var(--blue);
+    font-size: 12px;
+    font-weight: 800;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    margin-bottom: 8px;
+  }
+
+  h1 {
+    margin: 0;
+    font-size: 36px;
+    line-height: 1.18;
+    letter-spacing: 0;
+  }
+
+  .lead {
+    color: var(--muted);
+    max-width: 820px;
+    font-size: 16px;
+    margin: 14px 0 0;
+  }
+
+  h2 {
+    margin: 56px 0 18px;
+    font-size: 24px;
+    letter-spacing: 0;
+  }
+
+  h3 {
+    margin: 28px 0 10px;
+    font-size: 17px;
+  }
+
+  p { margin: 8px 0; }
+  ul, ol { margin: 8px 0; padding-left: 22px; }
+  li { margin: 5px 0; }
+
+  code, kbd {
+    font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+    font-size: 0.86em;
+    border: 1px solid var(--line);
+    background: #f8fafc;
+    border-radius: 5px;
+    padding: 1px 6px;
+  }
+
+  kbd {
+    color: #111827;
+    font-weight: 700;
+    box-shadow: inset 0 -1px 0 rgba(0, 0, 0, 0.12);
+  }
+
+  .grid {
+    display: grid;
+    gap: 14px;
+  }
+
+  .cols-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .cols-2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+
+  .card {
+    background: var(--paper);
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    padding: 18px 20px;
+  }
+
+  .card h3 {
+    margin-top: 0;
+  }
+
+  .tag {
+    display: inline-flex;
+    align-items: center;
+    min-height: 22px;
+    padding: 2px 8px;
+    border-radius: 999px;
+    background: var(--soft);
+    color: var(--muted);
+    font-size: 12px;
+    font-weight: 700;
+  }
+
+  .note {
+    border-left: 4px solid var(--blue);
+    background: #eff6ff;
+    padding: 14px 16px;
+    border-radius: 8px;
+    color: #1e3a8a;
+  }
+
+  .warning {
+    border-left-color: var(--gold);
+    background: #fffbeb;
+    color: #78350f;
+  }
+
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    overflow: hidden;
+    background: var(--paper);
+    border: 1px solid var(--line);
+    border-radius: 8px;
+  }
+
+  th, td {
+    text-align: left;
+    vertical-align: top;
+    border-bottom: 1px solid var(--line);
+    padding: 10px 12px;
+  }
+
+  th {
+    background: #f8fafc;
+    color: #475569;
+    font-size: 12px;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+  }
+
+  tr:last-child td { border-bottom: 0; }
+
+  .workflow {
+    counter-reset: step;
+  }
+
+  .step {
+    position: relative;
+    padding-left: 52px;
+  }
+
+  .step::before {
+    counter-increment: step;
+    content: counter(step);
+    position: absolute;
+    left: 18px;
+    top: 18px;
+    width: 24px;
+    height: 24px;
+    border-radius: 50%;
+    background: var(--blue);
+    color: white;
+    display: grid;
+    place-items: center;
+    font-size: 13px;
+    font-weight: 800;
+  }
+
+  .swatch {
+    display: inline-block;
+    width: 11px;
+    height: 11px;
+    border-radius: 3px;
+    margin-right: 6px;
+    vertical-align: -1px;
+  }
+
+  .red { background: var(--red); }
+  .gold { background: #f59e0b; }
+  .cyan { background: var(--cyan); }
+  .blue { background: var(--blue); }
+
+  .product-list strong {
+    display: inline-block;
+    min-width: 150px;
+  }
+
+  footer {
+    color: var(--muted);
+    border-top: 1px solid var(--line);
+    margin-top: 56px;
+    padding-top: 20px;
+    font-size: 13px;
+  }
+
+  @media (max-width: 900px) {
+    .shell { grid-template-columns: 1fr; }
+    nav {
+      position: static;
+      height: auto;
+      border-right: 0;
+      border-bottom: 1px solid var(--line);
+    }
+    main { padding: 28px 18px 60px; }
+    .hero { padding: 26px 22px; }
+    .cols-3, .cols-2 { grid-template-columns: 1fr; }
+  }
+</style>
+</head>
+<body>
+<div class="shell">
+  <nav>
+    <div class="brand">MangaScript Pro</div>
+    <div class="sub">Editor User Guide</div>
+    <a href="#overview">개요</a>
+    <a href="#workflow">기본 흐름</a>
+    <a href="#guidance">Guidance Editor</a>
+    <a href="#overlay">Overlay Result Editor</a>
+    <a href="#shortcuts">단축키</a>
+    <a href="#tips">작업 팁</a>
+    <a href="#names">제품명 아이디어</a>
+  </nav>
+
+  <main>
+    <section class="hero" id="overview">
+      <div class="eyebrow">Comic Translator editing workflow</div>
+      <h1>MangaScript Pro 편집기 매뉴얼</h1>
+      <p class="lead">
+        이 문서는 만화 번역 파이프라인의 수동 보정 화면을 위한 사용자 가이드입니다.
+        Guidance 단계에서는 말풍선과 영역 인식을 보정하고, Overlay 단계에서는 최종 텍스트 배치와 폰트, 지우개 보정을 다룹니다.
+      </p>
+    </section>
+
+    <section id="workflow">
+      <h2>기본 흐름</h2>
+      <div class="grid cols-3 workflow">
+        <article class="card step">
+          <h3>Guidance</h3>
+          <p>OCR과 floodfill이 헷갈리는 부분에 힌트를 줍니다. 텍스트 그룹 분리, edge wall, bubble, unboxed 영역을 직접 지정합니다.</p>
+        </article>
+        <article class="card step">
+          <h3>OCR / Translation</h3>
+          <p>Guidance를 반영해 OCR sheet와 번역 결과를 갱신합니다. 이 단계는 자동 파이프라인의 결과를 확인하는 중간 점검 구간입니다.</p>
+        </article>
+        <article class="card step">
+          <h3>Overlay</h3>
+          <p>최종 렌더 결과 위에서 텍스트 박스, 폰트, 쓰기 방향, 줄바꿈, 수동 지우개를 조정합니다.</p>
+        </article>
+      </div>
+      <p class="note">
+        탭 이동은 <kbd>Ctrl</kbd> + <kbd>1</kbd>, <kbd>Ctrl</kbd> + <kbd>2</kbd>, <kbd>Ctrl</kbd> + <kbd>3</kbd>으로 가능합니다.
+        각 탭의 단축키는 현재 탭에서만 동작합니다.
+      </p>
+    </section>
+
+    <section id="guidance">
+      <h2>Guidance Editor</h2>
+      <p>
+        Guidance Editor는 원본 분석이 잘못된 지점을 알려주는 화면입니다.
+        여기서 만든 가이드는 floodfill, split, masking, OCR sheet 생성에 영향을 줍니다.
+      </p>
+
+      <div class="grid cols-2">
+        <article class="card">
+          <h3>Text Group Off</h3>
+          <p>번역 대상이 아니거나 잘못 묶인 텍스트 그룹을 끕니다. 잘못 끈 항목은 undo로 되돌릴 수 있습니다.</p>
+          <p><span class="tag">Guidance only</span> <kbd>D</kbd> 또는 <kbd>Delete</kbd></p>
+        </article>
+        <article class="card">
+          <h3>Text Group Split</h3>
+          <p>하나의 텍스트 그룹이 여러 대사로 붙었을 때 분리 기준선을 긋습니다.</p>
+          <p><span class="tag">Guidance only</span> <kbd>T</kbd></p>
+        </article>
+        <article class="card">
+          <h3>Edge Wall</h3>
+          <p>수동 edge는 사용자가 지정하는 가상의 벽입니다. 지정한 box가 상하좌우 경계가 되며, 인접 edge와 직접 overlap이 없으면 서로 독립적으로 취급되어야 합니다.</p>
+          <p><span class="tag">Guidance only</span> <kbd>E</kbd></p>
+        </article>
+        <article class="card">
+          <h3>Bubble / Ubox</h3>
+          <p>말풍선 영역은 Bubble로, 말풍선 밖 일반 대사는 Ubox로 지정합니다. 작은 클릭은 seed point, 드래그는 box guide가 됩니다.</p>
+          <p><span class="tag">Guidance only</span> <kbd>S</kbd>, <kbd>U</kbd></p>
+        </article>
+      </div>
+
+      <h3>Guidance 시각화 색상</h3>
+      <table>
+        <thead>
+          <tr><th>표시</th><th>의미</th><th>사용 기준</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><span class="swatch blue"></span>파란 rect</td>
+            <td>자동 인식된 region 또는 선택된 분석 대상입니다.</td>
+            <td>결과가 맞으면 그대로 둡니다.</td>
+          </tr>
+          <tr>
+            <td><span class="swatch red"></span>빨간 edge</td>
+            <td>사용자가 직접 지정한 가상의 경계입니다.</td>
+            <td>말풍선 경계가 열려 있거나 flood가 새는 경우 사용합니다.</td>
+          </tr>
+          <tr>
+            <td><span class="swatch gold"></span>주황 split</td>
+            <td>분리 기준선입니다.</td>
+            <td>같은 bubble 안에서 대사가 두 개 이상으로 갈라질 때 사용합니다.</td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section id="overlay">
+      <h2>Overlay Result Editor</h2>
+      <p>
+        Overlay 단계는 최종 결과를 보며 실제 텍스트 배치를 수정하는 화면입니다.
+        왼쪽에는 원본 이미지가 유지되고, 오른쪽에서 overlay 결과와 safe rect를 조정합니다.
+      </p>
+
+      <h3>safe rect 편집</h3>
+      <table>
+        <thead>
+          <tr><th>동작</th><th>결과</th><th>메모</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>박스 첫 클릭</td>
+            <td>region을 선택합니다.</td>
+            <td>첫 클릭만으로 resize가 시작되지 않습니다.</td>
+          </tr>
+          <tr>
+            <td>선택된 박스 내부 드래그</td>
+            <td>safe rect 위치를 이동합니다.</td>
+            <td>마우스로 대략 이동한 뒤 방향키로 미세 조정합니다.</td>
+          </tr>
+          <tr>
+            <td>선택된 박스 edge 드래그</td>
+            <td>한쪽 방향으로 크기를 조절합니다.</td>
+            <td>좌우상하 border가 resize 핸들처럼 동작합니다.</td>
+          </tr>
+          <tr>
+            <td>선택된 박스 corner 드래그</td>
+            <td>대각선 방향으로 크기를 조절합니다.</td>
+            <td>드래그 중 빨간 preview rect가 즉시 따라옵니다.</td>
+          </tr>
+          <tr>
+            <td>빈 영역 클릭</td>
+            <td>선택과 highlight를 해제합니다.</td>
+            <td>렌더 결과 확인을 방해하는 빨간 테두리를 숨길 때 사용합니다.</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <h3>텍스트와 폰트</h3>
+      <div class="grid cols-2">
+        <article class="card">
+          <h3>Floating Text Editor</h3>
+          <p>safe rect를 더블클릭하면 대사 편집 팝업이 열립니다. 여러 줄 대사를 직접 입력하고 <kbd>Ctrl</kbd> + <kbd>Enter</kbd> 또는 Apply로 반영합니다.</p>
+        </article>
+        <article class="card">
+          <h3>Font Style</h3>
+          <p>Normal, Bold, Impact, Serif, Serif Emphasis, Handwritten, Etc를 선택할 수 있습니다. Etc는 직접 폰트 파일을 지정하는 용도입니다.</p>
+        </article>
+        <article class="card">
+          <h3>Writing Mode</h3>
+          <p>가로쓰기와 세로쓰기는 동시에 켜지지 않는 선택값입니다. 자동 추정이 틀렸다면 <kbd>H</kbd> 또는 <kbd>V</kbd>로 강제 지정합니다.</p>
+        </article>
+        <article class="card">
+          <h3>Font Size Offset</h3>
+          <p><kbd>+</kbd>와 <kbd>-</kbd>는 3 step 단위로 조정합니다. 작은 버튼은 1 step 단위의 세밀한 조정에 사용합니다.</p>
+        </article>
+      </div>
+
+      <h3>수동 지우개</h3>
+      <p>
+        <kbd>D</kbd>를 누르고 있는 동안 지우개 모드가 켜집니다.
+        그 상태로 드래그하면 흰색 eraser rect가 생성되고, 다음 overlay render에서 텍스트를 다시 얹기 전에 해당 영역을 흰색으로 채웁니다.
+      </p>
+      <p class="note warning">
+        지우개는 최종 레이아웃 보정용입니다. 안 지워진 원문 흔적이나 작은 잔상을 정리하는 데 쓰고, 큰 마스킹 실패는 Guidance 단계에서 region이나 edge를 다시 잡는 편이 좋습니다.
+      </p>
+    </section>
+
+    <section id="shortcuts">
+      <h2>단축키</h2>
+      <h3>공통</h3>
+      <table>
+        <thead><tr><th>키</th><th>기능</th><th>범위</th></tr></thead>
+        <tbody>
+          <tr><td><kbd>Ctrl</kbd> + <kbd>1</kbd></td><td>Guidance 탭으로 이동</td><td>공통</td></tr>
+          <tr><td><kbd>Ctrl</kbd> + <kbd>2</kbd></td><td>OCR / Translation 탭으로 이동</td><td>공통</td></tr>
+          <tr><td><kbd>Ctrl</kbd> + <kbd>3</kbd></td><td>Overlay 탭으로 이동</td><td>공통</td></tr>
+          <tr><td><kbd>←</kbd>, <kbd>→</kbd></td><td>이미지 이동</td><td>Guidance, OCR</td></tr>
+        </tbody>
+      </table>
+
+      <h3>Guidance 탭</h3>
+      <table>
+        <thead><tr><th>키</th><th>기능</th></tr></thead>
+        <tbody>
+          <tr><td><kbd>V</kbd></td><td>Select</td></tr>
+          <tr><td><kbd>D</kbd>, <kbd>Delete</kbd></td><td>Text Group Off</td></tr>
+          <tr><td><kbd>T</kbd></td><td>Text Group Split</td></tr>
+          <tr><td><kbd>E</kbd></td><td>Edge Wall</td></tr>
+          <tr><td><kbd>L</kbd></td><td>Region Split</td></tr>
+          <tr><td><kbd>U</kbd></td><td>Ubox</td></tr>
+          <tr><td><kbd>S</kbd>, <kbd>B</kbd></td><td>Bubble</td></tr>
+          <tr><td><kbd>X</kbd></td><td>Region Off</td></tr>
+          <tr><td><kbd>Ctrl</kbd> + <kbd>Z</kbd></td><td>Guidance undo</td></tr>
+          <tr><td><kbd>Ctrl</kbd> + <kbd>Shift</kbd> + <kbd>Z</kbd></td><td>Guidance redo</td></tr>
+        </tbody>
+      </table>
+
+      <h3>Overlay 탭</h3>
+      <table>
+        <thead><tr><th>키</th><th>기능</th></tr></thead>
+        <tbody>
+          <tr><td><kbd>1</kbd>, <kbd>N</kbd></td><td>Normal style</td></tr>
+          <tr><td><kbd>2</kbd>, <kbd>B</kbd></td><td>Bold style</td></tr>
+          <tr><td><kbd>3</kbd>, <kbd>I</kbd></td><td>Impact style</td></tr>
+          <tr><td><kbd>4</kbd>, <kbd>R</kbd></td><td>Serif style</td></tr>
+          <tr><td><kbd>5</kbd>, <kbd>E</kbd>, <kbd>S</kbd></td><td>Serif Emphasis style</td></tr>
+          <tr><td><kbd>6</kbd></td><td>Handwritten style</td></tr>
+          <tr><td><kbd>7</kbd></td><td>Etc style</td></tr>
+          <tr><td><kbd>H</kbd></td><td>Horizontal writing</td></tr>
+          <tr><td><kbd>V</kbd></td><td>Vertical writing</td></tr>
+          <tr><td><kbd>+</kbd>, <kbd>-</kbd></td><td>Font size offset 3 step 조정</td></tr>
+          <tr><td><kbd>Shift</kbd> + <kbd>+</kbd>, <kbd>Shift</kbd> + <kbd>-</kbd></td><td>Font size offset 1 step 조정</td></tr>
+          <tr><td><kbd>↑</kbd>, <kbd>↓</kbd>, <kbd>←</kbd>, <kbd>→</kbd></td><td>선택된 safe rect 1 px 이동</td></tr>
+          <tr><td><kbd>Shift</kbd> + 방향키</td><td>선택된 safe rect 10 px 이동</td></tr>
+          <tr><td><kbd>D</kbd> hold</td><td>수동 지우개 모드</td></tr>
+          <tr><td><kbd>Enter</kbd></td><td>Overlay render 적용</td></tr>
+          <tr><td><kbd>Ctrl</kbd> + <kbd>Enter</kbd></td><td>Floating editor 적용 또는 overlay render 적용</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section id="tips">
+      <h2>작업 팁</h2>
+      <div class="grid cols-2">
+        <article class="card">
+          <h3>Edge가 기대와 다르게 새는 경우</h3>
+          <p>Edge는 실제 벽처럼 작동해야 합니다. 그래도 rescue가 실패하면 팝업의 실패 이유와 rect 정보를 보고 edge box가 너무 작거나 TG와 overlap이 없는지 확인합니다.</p>
+        </article>
+        <article class="card">
+          <h3>split bubble의 인접 region 영향</h3>
+          <p>수동 폰트, safe rect, 세로쓰기, 텍스트 override가 들어간 region은 자동 split sibling 보정에서 격리됩니다. 한 region 수정이 이웃 font를 바꾸면 버그로 보면 됩니다.</p>
+        </article>
+        <article class="card">
+          <h3>줄바꿈이 중요한 대사</h3>
+          <p>Floating editor에서 직접 줄바꿈을 넣으면 renderer가 그 줄바꿈을 우선 보존합니다. 너무 좁은 rect에서는 font size를 조금 낮추거나 safe rect 폭을 늘립니다.</p>
+        </article>
+        <article class="card">
+          <h3>최종 확인 순서</h3>
+          <p>원본 이미지에서 폰트 분위기를 보고, 오른쪽 overlay 결과에서 safe rect와 줄바꿈을 조정한 뒤, 지우개로 잔상만 마지막에 정리합니다.</p>
+        </article>
+      </div>
+    </section>
+
+    <section id="names">
+      <h2>제품명 아이디어</h2>
+      <p>
+        현재 이름인 MangaScript Pro는 기능을 꽤 잘 설명합니다.
+        다만 “Pro”가 붙으면 범용 상용 툴 느낌이 강하고, 프로젝트의 개성인 말풍선 편집과 번역 조판 감각은 조금 덜 드러납니다.
+      </p>
+      <div class="card product-list">
+        <p><strong>MangaScript Pro</strong> 안정적인 상용 툴 느낌입니다. 그대로 써도 무난합니다.</p>
+        <p><strong>BubbleScript</strong> 말풍선 중심 편집기를 가장 직관적으로 드러냅니다.</p>
+        <p><strong>PanelScribe</strong> 만화 컷과 대사 조판을 함께 다루는 느낌이 좋습니다.</p>
+        <p><strong>LetterBubble</strong> 귀엽고 실무적인 이름입니다. 번역문을 말풍선에 넣는 용도가 바로 보입니다.</p>
+        <p><strong>ComiTypeset</strong> 번역보다 조판 품질을 강조합니다.</p>
+        <p><strong>FrameLetter</strong> 컷 단위 편집과 텍스트 배치를 차분하게 표현합니다.</p>
+        <p><strong>BubbleForge</strong> 수동 보정과 제작 도구 느낌이 강합니다.</p>
+        <p><strong>ScriptLayer</strong> overlay와 대사 레이어 개념에 잘 맞습니다.</p>
+        <p><strong>MangaLetter Lab</strong> 연구와 제작을 겸하는 내부 툴 감성이 있습니다.</p>
+        <p><strong>Comic Translator Studio</strong> 프로젝트명과 제품 성격을 가장 명확하게 연결합니다.</p>
+      </div>
+      <p class="note">
+        개인적으로는 외부 공개용이면 <strong>PanelScribe</strong>나 <strong>BubbleScript</strong>가 좋고, 현재 프로젝트 정체성을 유지하려면 <strong>Comic Translator Studio</strong>가 가장 덜 흔들립니다.
+        MangaScript Pro는 상단 브랜드명으로 두고, 문서나 저장소 설명에는 Comic Translator를 병기하는 방식도 괜찮습니다.
+      </p>
+    </section>
+
+    <footer>
+      이 문서는 현재 UI 기준으로 작성되었습니다. 세부 단축키나 렌더 정책이 바뀌면 Overlay와 Guidance 섹션을 함께 갱신하세요.
+    </footer>
+  </main>
+</div>
+</body>
+</html>

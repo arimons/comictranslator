@@ -112,3 +112,9 @@ BFS_CLUSTERING_GUIDE.md
 .claude/
 archive_docs/
 input/
+
+# 검증 산출물 / 테스트 데이터 (git 추적 제외)
+proof/
+test_image1/
+.pytest_cache/
+frontend/node_modules/
