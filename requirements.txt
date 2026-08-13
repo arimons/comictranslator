@@ -1,15 +1,18 @@
 # Comic Translator Requirements
 
 # Core dependencies
-gradio>=4.0.0
 fastapi>=0.115.0
 uvicorn[standard]>=0.30.0
 python-multipart>=0.0.9
 openai>=2.0.0
-google-generativeai>=0.3.0
 google-genai>=2.4.0
 google-cloud-vision>=3.0.0
 python-dotenv>=1.0.0
+requests>=2.31.0
+
+# 구형 SDK. run_floodfill_batch.py와 batch/submit_batch_folder.py가 아직 사용한다.
+# 두 파일을 google-genai로 옮기면 제거한다.
+google-generativeai>=0.3.0
 
 # Image processing
 opencv-python>=4.8.0
@@ -17,5 +20,5 @@ Pillow>=9.5.0,<10.0.0  # simple-lama-inpainting 제약
 numpy>=1.24.0,<2.0.0   # simple-lama-inpainting 제약
 simple-lama-inpainting>=0.1.2
 
-# Utilities
-pathlib
+# Dev
+pytest>=8.0.0
