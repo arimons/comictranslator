@@ -113,3 +113,78 @@ def test_retired_references_are_actually_absent() -> None:
         f"RETIRED_REFERENCES에 등록됐지만 실제 경로에 되살아난 파일이 있습니다: {revived}\n"
         f"해당 항목을 목록에서 제거하세요."
     )
+
+
+# ---------------------------------------------------------------------------
+# 2단계: 코드가 바뀌었는데 문서가 따라오지 않은 경우 검사
+# ---------------------------------------------------------------------------
+
+DOC_SOURCES_PATH = ROOT / "docs" / "DOC_SOURCES.json"
+
+
+def _load_doc_sources() -> dict:
+    import json
+
+    return json.loads(DOC_SOURCES_PATH.read_text(encoding="utf-8"))["docs"]
+
+
+def _last_commit_epoch(rel_path: str) -> int | None:
+    """해당 경로를 마지막으로 수정한 커밋 시각. 이력이 없으면 None."""
+    import subprocess
+
+    result = subprocess.run(
+        ["git", "log", "-1", "--format=%ct", "--", rel_path],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+    )
+    out = result.stdout.strip()
+    return int(out) if out else None
+
+
+def test_doc_sources_manifest_paths_exist() -> None:
+    """매니페스트에 적힌 문서와 소스가 모두 실재해야 한다."""
+    missing = []
+    for doc, meta in _load_doc_sources().items():
+        if not (ROOT / doc).exists():
+            missing.append(f"문서 없음: {doc}")
+        for source in meta.get("sources", []):
+            if not (ROOT / source).exists():
+                missing.append(f"소스 없음: {doc} → {source}")
+    assert not missing, "docs/DOC_SOURCES.json이 실재하지 않는 경로를 가리킵니다:\n  " + "\n  ".join(missing)
+
+
+def test_every_doc_is_declared_in_manifest() -> None:
+    """docs/의 모든 문서가 매니페스트에 등록돼 있어야 한다."""
+    declared = set(_load_doc_sources())
+    actual = {
+        str(p.relative_to(ROOT))
+        for p in [*ROOT.glob("docs/*.md"), *ROOT.glob("docs/*.html")]
+        if p.name != "DOC_SOURCES.json"
+    }
+    undeclared = sorted(actual - declared)
+    assert not undeclared, (
+        f"docs/DOC_SOURCES.json에 등록되지 않은 문서가 있습니다: {undeclared}\n"
+        f"role과 sources를 정해 등록하세요."
+    )
+
+
+def test_canonical_docs_are_not_stale() -> None:
+    """정본 문서는 선언한 소스보다 오래되면 안 된다."""
+    stale = []
+    for doc, meta in _load_doc_sources().items():
+        if meta.get("role") != "canonical":
+            continue
+        doc_epoch = _last_commit_epoch(doc)
+        if doc_epoch is None:
+            continue  # 아직 커밋되지 않은 문서는 검사 대상이 아니다
+        for source in meta.get("sources", []):
+            source_epoch = _last_commit_epoch(source)
+            if source_epoch is not None and source_epoch > doc_epoch:
+                stale.append(f"{doc} ← {source}")
+    assert not stale, (
+        "소스가 문서보다 나중에 바뀌었습니다. 문서를 갱신하세요:\n  "
+        + "\n  ".join(stale)
+        + "\n\n문서 내용에 영향이 없는 변경이었다면, 문서를 함께 커밋해 시각을 맞추거나 "
+        "docs/DOC_SOURCES.json의 sources에서 해당 파일을 빼세요."
+    )

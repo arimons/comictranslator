@@ -868,10 +868,20 @@ python3 run_pipeline.py \
       <div class="io-label">출력</div>
       <ul>
         <li><code>*_integrated.json</code> — clusters 배열</li>
-        <li>각 cluster: OCR 원문, 번역, orientation, text_scale_class, render_hint_raw/final, style_features</li>
+        <li>각 cluster: OCR 원문, 번역, orientation, render_hint_raw/final, style_features</li>
       </ul>
     </div>
   </div>
+
+  <h3>모델 선택</h3>
+  <p>Step 4의 OCR/번역 모델은 교체할 수 있습니다. 모델명 접두사로 provider가 결정됩니다
+  (<code>gemini-*</code> → Gemini, <code>gpt-*</code> → OpenAI Responses API).</p>
+  <ul>
+    <li>CLI: <code>run_pipeline.py --ocr-model gpt-5.6-terra</code></li>
+    <li>편집기 API: <code>POST /api/run-final</code>의 <code>ocr_model</code> 필드. 선택지는 <code>GET /api/ocr-models</code></li>
+    <li>미지정 시 <code>MODEL_NAME</code> 기본값(<code>gemini-3-flash-preview</code>)을 사용합니다</li>
+  </ul>
+  <p>모델별 품질 비교와 기본값 결정 근거는 <code>docs/OCR_MODEL_COMPARISON.md</code>에 있습니다.</p>
 
   <h3>OCR 청크 분할 전략</h3>
   <p>한 페이지에 region이 많으면 Gemini 한 번에 보내는 대신 여러 청크로 나눠 전송합니다.</p>
@@ -893,7 +903,6 @@ python3 run_pipeline.py \
     <tr><td><code>ocr_text</code></td><td>일본어 원문 (줄바꿈 \n 유지)</td><td>"行くぞ！"</td></tr>
     <tr><td><code>text_translated</code></td><td>한국어 번역 (가로쓰기)</td><td>"가자!"</td></tr>
     <tr><td><code>orientation</code></td><td>원문 쓰기 방향</td><td>vertical / horizontal</td></tr>
-    <tr><td><code>text_scale_class</code></td><td>같은 sheet 내 원문 글자 시각 크기 비교</td><td>small / normal / large / xlarge</td></tr>
     <tr><td><code>render_hint</code></td><td>글자 형태 기반 약한 렌더링 힌트 (후처리에서 CV로 보정)</td><td>normal / semibold / bold / impact / serif_emphasis</td></tr>
     <tr><td><code>segments</code></td><td>같은 bubble 내 시각적으로 분리된 텍스트 블록 (선택)</td><td>matched_tg_ids, ocr_text, text_translated …</td></tr>
   </table>
@@ -974,7 +983,6 @@ python3 run_pipeline.py \
       <span class="st">"text"</span>: <span class="st">"一緒に行こう"</span>,
       <span class="st">"text_translated"</span>: <span class="st">"같이 가자"</span>,
       <span class="st">"orientation"</span>: <span class="st">"vertical"</span>,
-      <span class="st">"text_scale_class"</span>: <span class="st">"normal"</span>,
       <span class="st">"render_hint_raw"</span>: <span class="st">"normal"</span>,       <span class="cm">// Gemini가 반환한 원본 힌트</span>
       <span class="st">"render_hint_final"</span>: <span class="st">"bold"</span>,      <span class="cm">// CV 재계산 후 최종 값</span>
       <span class="st">"render_hint"</span>: <span class="st">"bold"</span>,           <span class="cm">// render_hint_final과 동일 (fallback용)</span>
@@ -1072,8 +1080,7 @@ python3 run_pipeline.py \
       <div class="sub-step-num">5</div>
       <div class="sub-step-body">
         <strong>페이지 폰트 밴드 조화 (page_font_band)</strong>
-        <p>한 페이지 모든 cluster raw layout 계산 후, 폰트 크기 median 기준 <code>[median-7, median+5]</code> 밴드로 조정. <code>text_scale_class</code>별 bias: small -2, large +2, xlarge +4. 페이지 격차 14px 초과 시 leveling 한 번 더 적용합니다.</p>
-        <p>small은 하한을 MIN_FIT(16px)으로 완화해 잘림 방지. large/xlarge + 충분한 버블이면 하한 상향해 폰트 극대화.</p>
+        <p>한 페이지 모든 cluster raw layout 계산 후, 폰트 크기 median 기준 <code>[median-7, median+5]</code> 밴드로 조정. 페이지 격차 14px 초과 시 leveling 한 번 더 적용합니다.</p>
       </div>
     </div>
     <div class="sub-step">
@@ -1244,63 +1251,17 @@ python3 run_pipeline.py \
 
   <!-- ─── Dead Code Report ──────────────────────── -->
   <h2 id="dead-code">Dead Code / 중복 코드 보고</h2>
-  <p>코드베이스 전체 분석(2025-05) 기준. 아래 항목은 현재 파이프라인 실행 경로에서 호출되지 않거나 중복 정의된 코드입니다.
-  정리 전 반드시 영향 범위를 확인하십시오.</p>
+  <p>2026-08-14 재검증 기준. 2026-05 보고의 10건 중 6건은 이미 정리 완료됐고, 나머지는 아래와 같다. 정리 전 반드시 영향 범위를 확인하십시오.</p>
 
   <h3>삭제 안전 (Dead Code)</h3>
   <table>
-    <tr><th>위치</th><th>대상</th><th>사유</th></tr>
-    <tr>
-      <td><code>bubble_detector.py</code></td>
-      <td><code>apply_floodfill_white_mask()</code></td>
-      <td>파이프라인에서 호출 없음. 구 masking 방식 잔여물.</td>
-    </tr>
-    <tr>
-      <td><code>bubble_detector.py</code></td>
-      <td><code>create_packed_ocr_sheet()</code></td>
-      <td>indexed sheet 조립이 <code>dialogue_extractor</code>로 이전 후 미사용.</td>
-    </tr>
-    <tr>
-      <td><code>bubble_detector.py</code></td>
-      <td><code>RegionSheetConfig</code> dataclass</td>
-      <td><code>create_packed_ocr_sheet()</code>의 설정용. 함께 제거 가능.</td>
-    </tr>
-    <tr>
-      <td><code>cloud_vision_api.py</code></td>
-      <td><code>detect_text_cv()</code></td>
-      <td><code>detect_text_grid()</code>의 구 래퍼. 파이프라인에서 직접 호출 없음.</td>
-    </tr>
-    <tr>
-      <td><code>difficulty_scorer.py</code></td>
-      <td><code>score_label()</code></td>
-      <td>모듈 내 호출 없음.</td>
-    </tr>
-    <tr>
-      <td><code>difficulty_scorer.py</code></td>
-      <td>모듈 전체</td>
-      <td><code>pipeline_runner.py</code>에서 import/호출 없음. 파이프라인과 완전 분리. 보존이 필요하면 <code>pipeline/archive/</code>로 이전 권장.</td>
-    </tr>
-    <tr>
-      <td><code>unboxed_text_detector.py</code></td>
-      <td><code>extract_text_erasure_candidate</code> alias</td>
-      <td>구 이름 alias. 새 이름 함수만 사용됨.</td>
-    </tr>
-    <tr>
-      <td><code>unboxed_text_detector.py</code></td>
-      <td><code>write_text_erasure_debug</code> alias</td>
-      <td>동일 이유.</td>
-    </tr>
-    <tr>
-      <td><code>gemini_image_redraw.py</code></td>
-      <td>모듈 전체</td>
-      <td>파이프라인 미연결 독립 스크립트. 모델명 <code>gemini-3-pro-image-preview</code>도 유효하지 않을 가능성 있음. 보존 여부 결정 필요.</td>
-    </tr>
-    <tr>
-      <td><code>gemini_ocr_translate_v5.py</code></td>
-      <td><code>_process_single_ocr()</code></td>
-      <td>파이프라인이 항상 OCR sheet 경로를 전달하므로 실질적 dead. 단, 이론적 fallback으로 보존 가능.</td>
-    </tr>
-  </table>
+    <tr><th>위치</th><th>대상</th><th>상태</th></tr>
+    <tr><td><code>difficulty_scorer.py</code></td><td>모듈 전체</td><td>✅ 2026-08-14 <code>pipeline/archive/</code>로 이전 완료</td></tr>
+    <tr><td><code>main.py</code></td><td>Gradio UI 전체</td><td>✅ 2026-08-14 <code>archive/retired_gradio_ui/</code>로 폐기. <code>main_v2.py</code>가 표준 진입점</td></tr>
+    <tr><td><code>gemini_image_redraw.py</code></td><td>모듈 전체</td><td>✅ main.py 전용이었으므로 함께 폐기. main_v2는 <code>openai_image_redraw</code> 사용</td></tr>
+    <tr><td><code>gemini_ocr_translate_v5.py</code></td><td><code>_process_single_ocr()</code></td><td>⚠️ 파이프라인은 항상 OCR sheet 경로를 쓰므로 실질 dead. 이론적 fallback으로 보존 중</td></tr>
+    <tr><td colspan="3">아래 6건은 이미 제거 완료: <code>apply_floodfill_white_mask()</code>, <code>create_packed_ocr_sheet()</code>, <code>RegionSheetConfig</code>, <code>detect_text_cv()</code>, <code>extract_text_erasure_candidate</code> alias, <code>write_text_erasure_debug</code> alias</td></tr>
+    </table>
 
   <h3>중복 정의</h3>
   <table>

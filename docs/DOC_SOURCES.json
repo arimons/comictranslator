@@ -1,0 +1,103 @@
+{
+  "_comment": [
+    "문서-코드 대응 선언. tests/test_docs_sync.py가 이 파일을 읽어 검사한다.",
+    "role: 'canonical'은 그 주제의 정본, 'hub'는 링크 허브, 'record'는 시점 기록이다.",
+    "sources: 그 문서가 서술하는 코드. 여기 적힌 파일이 바뀌면 문서 갱신이 필요하다.",
+    "record 문서는 특정 시점의 관찰 기록이라 staleness 검사에서 제외한다."
+  ],
+  "docs": {
+    "docs/pipeline_guide.html": {
+      "role": "canonical",
+      "topic": "파이프라인 구조와 각 단계 내부 로직",
+      "sources": [
+        "run_pipeline.py",
+        "pipeline/pipeline_runner.py",
+        "pipeline/cloud_vision_api.py",
+        "pipeline/text_group_builder_v2.py",
+        "pipeline/dialogue_extractor.py",
+        "pipeline/bubble_detector.py",
+        "pipeline/flood_split.py",
+        "pipeline/gemini_ocr_translate_v5.py",
+        "pipeline/render_text_overlay.py",
+        "pipeline/font_style_analyzer.py",
+        "pipeline/unboxed_text_detector.py"
+      ]
+    },
+    "docs/editor_manual.html": {
+      "role": "canonical",
+      "topic": "MangaScript Pro 편집기 사용법",
+      "sources": [
+        "main_v2.py",
+        "ui_v2/index.html",
+        "pipeline/manual_guidance.py"
+      ]
+    },
+    "docs/CODEBASE_FILE_MAP.md": {
+      "role": "canonical",
+      "topic": "파일별 역할",
+      "sources": [
+        "run_pipeline.py",
+        "main_v2.py",
+        "pipeline/pipeline_runner.py"
+      ]
+    },
+    "docs/AGENT_WORKSPACE_RULES.md": {
+      "role": "canonical",
+      "topic": "작업 폴더 규칙",
+      "sources": [
+        "run_pipeline.py",
+        "pipeline/pipeline_runner.py"
+      ]
+    },
+    "AGENTS.md": {
+      "role": "hub",
+      "topic": "에이전트 진입 가이드. 상세는 docs/ 정본으로 링크",
+      "sources": []
+    },
+    "CLAUDE.md": {
+      "role": "hub",
+      "topic": "용어집과 링크 허브",
+      "sources": []
+    },
+    "docs/PIPELINE_STATUS.md": {
+      "role": "record",
+      "topic": "단계별 연결 상태와 미해결 이슈",
+      "sources": []
+    },
+    "docs/OCR_MODEL_COMPARISON.md": {
+      "role": "record",
+      "topic": "Step 4 모델 비교 측정 결과",
+      "sources": []
+    },
+    "docs/TEXT_ERASE_METHODS_RESEARCH.md": {
+      "role": "record",
+      "topic": "글자 지우기 방법론 조사",
+      "sources": []
+    },
+    "docs/FLOODFILL_MASKING_PROGRESS.md": {
+      "role": "record",
+      "topic": "FloodFill 마스킹 작업 이력",
+      "sources": []
+    },
+    "docs/TEXT_GROUP_BUILDER_HISTORY.md": {
+      "role": "record",
+      "topic": "TextGroupBuilder 변경 이력",
+      "sources": []
+    },
+    "docs/FONT_STYLE_TODO.md": {
+      "role": "record",
+      "topic": "폰트 스타일 작업 목록",
+      "sources": []
+    },
+    "docs/render_overlay_review_todo.md": {
+      "role": "record",
+      "topic": "overlay 렌더 검토 목록",
+      "sources": []
+    },
+    "docs/flood_leak_experiment_results.md": {
+      "role": "record",
+      "topic": "flood leak 실험 결과",
+      "sources": []
+    }
+  }
+}
