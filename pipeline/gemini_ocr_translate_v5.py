@@ -60,14 +60,42 @@ except ImportError:
 
 load_dotenv()
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
-if not GEMINI_API_KEY:
-    print("❌ GEMINI_API_KEY 환경 변수가 설정되어 있지 않습니다")
-    sys.exit(1)
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 
+# Step 4 기본 모델. --model 인자로 교체할 수 있다.
 MODEL_NAME = "gemini-3-flash-preview"
+
+# Gemini thinking budget. 문맥 번역은 품질이 필요하므로 0이 아닌 값을 쓴다.
+GEMINI_THINKING_BUDGET = 1024
+# OpenAI reasoning effort. none / low / medium / high / xhigh / max
+OPENAI_REASONING_EFFORT = "low"
+
 OCR_SHEET_TARGET_REGIONS = 5
 OCR_SHEET_SOFT_MAX_REGIONS = 6
 GEMINI_CALL_TIMEOUT_SECONDS = 35
+
+
+def resolve_provider(model_name: str) -> str:
+    """모델명으로 provider를 판별한다."""
+    if model_name.startswith("gemini"):
+        return "gemini"
+    if model_name.startswith("gpt"):
+        return "openai"
+    raise ValueError(
+        f"지원하지 않는 모델입니다: {model_name}. "
+        f"'gemini-' 또는 'gpt-'로 시작하는 모델명을 사용하세요."
+    )
+
+
+def _require_api_key(provider: str) -> str:
+    """provider에 필요한 API 키를 반환한다. 없으면 그 시점에 실패한다."""
+    if provider == "gemini":
+        if not GEMINI_API_KEY:
+            raise RuntimeError("GEMINI_API_KEY 환경 변수가 설정되어 있지 않습니다")
+        return GEMINI_API_KEY
+    if not OPENAI_API_KEY:
+        raise RuntimeError("OPENAI_API_KEY 환경 변수가 설정되어 있지 않습니다")
+    return OPENAI_API_KEY
 
 
 def _normalize_text_for_rendering(text: Any) -> str:
@@ -197,18 +225,95 @@ def _extract_json_response(response_text: str) -> Dict[str, Any]:
         raise
 
 
+def _run_openai_json(
+    image_path: str | list[str],
+    prompt: str,
+    temperature: float,
+    model_name: str,
+    max_retries: int = 4,
+) -> tuple[Dict[str, Any], float]:
+    """OpenAI Responses API로 OCR sheet를 처리한다.
+
+    temperature는 받지만 사용하지 않는다. GPT-5.6 계열은 reasoning effort로
+    출력 성향을 제어하고 temperature를 지원하지 않는다.
+    """
+    import base64
+
+    from openai import OpenAI
+
+    client = OpenAI(api_key=_require_api_key("openai"))
+    image_paths = image_path if isinstance(image_path, list) else [image_path]
+
+    content: list[dict[str, Any]] = [{"type": "input_text", "text": prompt}]
+    for path in image_paths:
+        with open(path, "rb") as image_file:
+            encoded = base64.b64encode(image_file.read()).decode("ascii")
+        content.append(
+            {
+                "type": "input_image",
+                "image_url": f"data:{_mime_type(path)};base64,{encoded}",
+            }
+        )
+
+    started_at = time.time()
+    last_exc: Exception | None = None
+    for attempt in range(max_retries):
+        if attempt > 0:
+            wait = 2 ** attempt
+            print(f"  ⏳ OpenAI 재시도 {attempt}/{max_retries - 1} ({wait}s 대기)...")
+            time.sleep(wait)
+        try:
+            response = client.responses.create(
+                model=model_name,
+                input=[{"role": "user", "content": content}],
+                reasoning={"effort": OPENAI_REASONING_EFFORT},
+                text={"format": {"type": "json_object"}},
+            )
+            elapsed = time.time() - started_at
+            return _extract_json_response(response.output_text.strip()), elapsed
+        except Exception as exc:
+            last_exc = exc
+            err_str = str(exc)
+            if any(code in err_str for code in ("503", "429", "rate_limit", "overloaded")):
+                continue
+            raise
+    raise RuntimeError(f"OpenAI API {max_retries}회 재시도 실패: {last_exc}") from last_exc
+
+
+def _run_model_json(
+    image_path: str | list[str],
+    prompt: str,
+    temperature: float,
+    model_name: str | None = None,
+    max_retries: int = 4,
+) -> tuple[Dict[str, Any], float]:
+    """모델명에 맞는 provider로 분기해 JSON 응답을 받는다."""
+    model = model_name or MODEL_NAME
+    if resolve_provider(model) == "openai":
+        return _run_openai_json(image_path, prompt, temperature, model, max_retries)
+    return _run_gemini_json(image_path, prompt, temperature, max_retries, model)
+
+
 def _run_gemini_json(
     image_path: str | list[str],
     prompt: str,
     temperature: float,
     max_retries: int = 4,
+    model_name: str | None = None,
 ) -> tuple[Dict[str, Any], float]:
-    client = genai.Client(api_key=GEMINI_API_KEY)
+    model = model_name or MODEL_NAME
+    client = genai.Client(api_key=_require_api_key("gemini"))
     image_paths = image_path if isinstance(image_path, list) else [image_path]
     image_parts = []
     for path in image_paths:
         with open(path, "rb") as image_file:
             image_parts.append(types.Part.from_bytes(data=image_file.read(), mime_type=_mime_type(path)))
+
+    generate_config = types.GenerateContentConfig(
+        response_mime_type="application/json",
+        temperature=temperature,
+        thinking_config=types.ThinkingConfig(thinking_budget=GEMINI_THINKING_BUDGET),
+    )
 
     started_at = time.time()
     last_exc: Exception | None = None
@@ -226,24 +331,18 @@ def _run_gemini_json(
                 signal.alarm(GEMINI_CALL_TIMEOUT_SECONDS)
                 try:
                     response = client.models.generate_content(
-                        model=MODEL_NAME,
+                        model=model,
                         contents=[prompt, *image_parts],
-                        config=types.GenerateContentConfig(
-                            response_mime_type="application/json",
-                            temperature=temperature,
-                        ),
+                        config=generate_config,
                     )
                 finally:
                     signal.alarm(0)
                     signal.signal(signal.SIGALRM, previous_handler)
             else:
                 response = client.models.generate_content(
-                    model=MODEL_NAME,
+                    model=model,
                     contents=[prompt, *image_parts],
-                    config=types.GenerateContentConfig(
-                        response_mime_type="application/json",
-                        temperature=temperature,
-                    ),
+                    config=generate_config,
                 )
             elapsed = time.time() - started_at
             return _extract_json_response(response.text.strip()), elapsed
@@ -820,7 +919,7 @@ def _process_sheet_ocr(
             final_retry_reason = ""
             for attempt in range(1, max_content_retries + 1):
                 try:
-                    result, elapsed = _run_gemini_json(input_images, prompt, temperature=0.25)
+                    result, elapsed = _run_model_json(input_images, prompt, temperature=0.25)
                     _returned = result.get("regions", [])
 
                     _retry, _reason = validate_gemini_ocr_regions(_returned, chunk_expected_ids)
@@ -910,7 +1009,7 @@ def _process_single_ocr(
         with open(cv_clusters_path, "r", encoding="utf-8") as f:
             cv_clusters = json.load(f)
 
-        result, elapsed = _run_gemini_json(
+        result, elapsed = _run_model_json(
             image_path,
             create_unified_prompt(cv_clusters, extra_prompt),
             temperature=0.2,
@@ -921,7 +1020,7 @@ def _process_single_ocr(
         if not gemini_clusters and cv_clusters:
             print(f"  ⚠️ Gemini OCR 응답 비어있음 — 재시도...")
             time.sleep(2)
-            result, elapsed = _run_gemini_json(
+            result, elapsed = _run_model_json(
                 image_path,
                 create_unified_prompt(cv_clusters, extra_prompt),
                 temperature=0.2,
@@ -1071,6 +1170,9 @@ def process_ocr_and_translation(
 
 
 def main() -> None:
+    # 모델을 모듈 전역으로 반영한다. integrated.json의 model 필드도 이 값을 따른다.
+    global MODEL_NAME
+
     parser = argparse.ArgumentParser(description="Gemini OCR + Translation + Integrated JSON 생성")
     parser.add_argument("image_path", help="원본 이미지 경로")
     parser.add_argument("cv_clusters_json", help="cv_clusters JSON 경로")
@@ -1079,7 +1181,19 @@ def main() -> None:
     parser.add_argument("--extra-prompt", default="", help="추가 번역 지시")
     parser.add_argument("--ocr-sheet-image", default=None, help="indexed OCR sheet 이미지 경로")
     parser.add_argument("--ocr-sheet-json", default=None, help="flood regions sheet JSON 경로")
+    parser.add_argument(
+        "--model",
+        default=MODEL_NAME,
+        help=f"OCR/번역 모델. gemini-* 또는 gpt-* (기본값: {MODEL_NAME})",
+    )
     args = parser.parse_args()
+
+    try:
+        resolve_provider(args.model)
+    except ValueError as exc:
+        print(f"❌ {exc}")
+        sys.exit(1)
+    MODEL_NAME = args.model
 
     extra_prompt = args.extra_prompt or args.legacy_extra_prompt
     if args.ocr_sheet_image and args.ocr_sheet_json:

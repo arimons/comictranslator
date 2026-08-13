@@ -56,6 +56,7 @@ def process_folder(
     stop_after: str,
     split_landscape: bool,
     landscape_split_ratio: float,
+    ocr_model: str | None = None,
 ):
     images = sorted(p for p in input_dir.iterdir() if p.suffix.lower() in IMAGE_EXTS)
     if not images:
@@ -85,6 +86,7 @@ def process_folder(
         extra_prompt=prompt, force=force, font_path=font_path, max_workers=workers,
         log_callback=emit_log,
         stop_after=stop_after,
+        ocr_model=ocr_model,
     )
 
     success = 0
@@ -111,6 +113,7 @@ def main():
     parser.add_argument("--keep-cache", action="store_true", help="처리 후 중간 파일 유지")
     parser.add_argument("--workers", type=int, default=4, help="폴더 처리 시 병렬 워커 수")
     parser.add_argument("--stop-after", choices=["extract", "overlay"], default="overlay", help="extract면 Gemini OCR 직전까지만 실행")
+    parser.add_argument("--ocr-model", default=None, help="Step 4 OCR/번역 모델. gemini-* 또는 gpt-* (미지정 시 파이프라인 기본값)")
     parser.add_argument("--pre-ocr", action="store_true", help="Gemini OCR/번역 직전 Step 3까지만 실행")
     parser.add_argument("--no-split-landscape", action="store_true", help="landscape 2-page spread 자동 분할을 끕니다")
     parser.add_argument("--landscape-split-ratio", type=float, default=1.25, help="이 가로/세로 비율 이상이면 center split합니다")
@@ -140,6 +143,7 @@ def main():
             stop_after,
             split_landscape,
             args.landscape_split_ratio,
+            args.ocr_model,
         )
     else:
         # 단일 이미지도 동일한 batch runner를 사용한다.
@@ -158,6 +162,7 @@ def main():
             prepared_images, work_dir, out_dir,
             extra_prompt=args.prompt, force=args.force, font_path=font_path, max_workers=1,
             log_callback=lambda message: print(message, flush=True),
+            ocr_model=args.ocr_model,
             stop_after=stop_after,
         )
         ok = all(item[0] for item in batch_results)

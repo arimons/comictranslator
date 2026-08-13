@@ -237,6 +237,7 @@ def run_single_image(
     tracking_offset: int | None = None,
     log_callback: LogCallback | None = None,
     stop_after: str = "overlay",
+    ocr_model: str | None = None,
 ) -> tuple[bool, str]:
     image_path = Path(image_path)
     work_dir = Path(work_dir)
@@ -368,6 +369,7 @@ def run_single_image(
                     "--ocr-sheet-image", str(indexed_sheet_jpg),
                     "--ocr-sheet-json", str(regions_json),
                     "--extra-prompt", extra_prompt,
+                    *(["--model", ocr_model] if ocr_model else []),
                 ],
                 STEP_TIMEOUT["gemini"], "Gemini OCR", log_callback,
             )
@@ -429,6 +431,7 @@ def run_batch_images(
     tracking_offset: int | None = None,
     log_callback: LogCallback | None = None,
     stop_after: str = "overlay",
+    ocr_model: str | None = None,
 ) -> list[tuple[bool, str, Path]]:
     work_dir.mkdir(parents=True, exist_ok=True)
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -449,6 +452,7 @@ def run_batch_images(
                 tracking_offset,
                 log_callback,
                 stop_after,
+                ocr_model,
             ): img
             for img in image_paths
         }
