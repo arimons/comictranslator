@@ -9,6 +9,8 @@
 - 디렉터리가 명시된 참조(`proof/src/foo.py`)는 정확히 그 경로에 있어야 한다.
 - 파일명만 있는 참조(`foo.py`)는 리포지토리 어디에든 있으면 통과한다.
 - 의도적으로 남긴 과거 참조는 RETIRED_REFERENCES에 사유와 함께 등록한다.
+- 단, '현재 구조' 트리(`├──`/`└──` 줄)의 파일 항목은 RETIRED_REFERENCES 예외 없이
+  archive 밖에 실재해야 한다. 트리는 지금 구조를 선언하는 자리이기 때문이다.
 """
 from __future__ import annotations
 
@@ -98,6 +100,44 @@ def test_doc_references_exist(doc_path: Path) -> None:
     )
 
 
+# 현재 구조 트리를 담은 문서. 트리 줄의 파일 항목은 RETIRED_REFERENCES로 면제하지 않는다.
+TREE_DOCS = [ROOT / "docs" / "CODEBASE_FILE_MAP.md", ROOT / "AGENTS.md"]
+TREE_ENTRY_PATTERN = re.compile(r"[├└]──\s*([^\s#]+)")
+# 파일 이름을 모을 때 건너뛰는 폴더. archive는 '현재 구조'가 아니고, 나머지는 의존성·생성물이다.
+TREE_SKIP_DIRS = {"archive", ".git", ".venv", "node_modules", "__pycache__", "temp_output", "output"}
+
+
+def _live_file_names() -> set[str]:
+    """archive와 의존성·생성물 폴더를 뺀 리포지토리 파일 이름 집합."""
+    import os
+
+    names: set[str] = set()
+    for _dirpath, dirnames, filenames in os.walk(ROOT):
+        dirnames[:] = [d for d in dirnames if d not in TREE_SKIP_DIRS]
+        names.update(filenames)
+    return names
+
+
+@pytest.mark.parametrize("doc_path", [p for p in TREE_DOCS if p.exists()], ids=lambda p: p.name)
+def test_structure_tree_entries_exist(doc_path: Path) -> None:
+    """'현재 구조' 트리에 적힌 파일은 archive 밖에 실재해야 한다(디렉터리·archive 항목 제외)."""
+    live_names = _live_file_names()
+    missing = []
+    for line in doc_path.read_text(encoding="utf-8").splitlines():
+        match = TREE_ENTRY_PATTERN.search(line)
+        if not match:
+            continue
+        entry = match.group(1).rstrip(",")
+        if entry.endswith("/") or "archive" in entry or not Path(entry).suffix:
+            continue
+        if Path(entry).name not in live_names:
+            missing.append(entry)
+    assert not missing, (
+        f"{doc_path.relative_to(ROOT)}의 구조 트리에 현재 없는 파일이 있습니다: {missing}\n"
+        f"폐기·보관된 파일은 트리에서 빼고, 필요하면 본문에 '보관됨'으로 적으세요."
+    )
+
+
 def test_retired_references_are_actually_absent() -> None:
     """RETIRED_REFERENCES 목록이 낡지 않도록, 되살아난 항목을 잡는다."""
     revived = [
@@ -106,7 +146,8 @@ def test_retired_references_are_actually_absent() -> None:
         if any(
             candidate
             for candidate in ROOT.glob(f"**/{name}")
-            if "archive" not in candidate.parts and ".venv" not in candidate.parts
+            if "archive" not in candidate.parts
+            and not any(part.startswith(".venv") for part in candidate.parts)  # .venv-flux 등 가상환경 포함
         )
     ]
     assert not revived, (

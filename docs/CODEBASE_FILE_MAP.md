@@ -1,20 +1,20 @@
 # 코드베이스 파일 맵
 
-> 마지막 확인: 2026-08-14. Gradio `main.py` 폐기, Step 4 모델 선택 추가 반영.
+> 마지막 확인: 2026-10-06. 현재 구조 트리와 pipeline 파일 섹션을 실제 모듈 기준으로 정리하고, main_v2 안전성 보강(파일 서빙 제한, subprocess 공유, atomic JSON 쓰기 등)을 반영했다.
 > 표준 진입점은 `main_v2.py`(편집기)와 `run_pipeline.py`(CLI)다.
 
-작성일: 2026-05-05 / 최종 갱신: 2026-07-03
+작성일: 2026-05-05 / 최종 갱신: 2026-10-06
 
 `archive/`, 출력물, 이미지, 가상환경은 제외하고 현재 실행 경로의 소스만 정리했다.
 
 현재 연결 상태와 다음 작업은 [PIPELINE_STATUS.md](PIPELINE_STATUS.md) 참고.
+단계별 내부 로직은 [pipeline_guide.html](pipeline_guide.html) 참고.
 FloodFill 필터 체계 상세는 [FLOODFILL_MASKING_PROGRESS.md](FLOODFILL_MASKING_PROGRESS.md) 참고.
 
 ## 현재 구조
 
 ```text
 NEW_COMIC_TRANSLATOR/
-├── main.py                    # (Deprecated) Gradio UI — main_v2.py로 대체됨
 ├── main_v2.py                  # FastAPI 기반 리뷰 UI (현재 메인 UI)
 ├── ui_v2/                      # main_v2.py 정적 자산 (index.html, styles.css, app.bundle.js)
 ├── frontend/                    # ui_v2 프론트엔드 소스 + esbuild 빌드 설정
@@ -23,71 +23,82 @@ NEW_COMIC_TRANSLATOR/
 │       ├── main.jsx            # React 엔트리포인트
 │       ├── App.jsx              # 세션/이미지 목록/워크플로우 탭 전체 상태
 │       ├── EditorCanvas.jsx      # Step 3 말풍선 분석 캔버스 (Konva)
-│       ├── OverlayCanvas.jsx     # Step 6 텍스트 오버레이 편집 캔버스 (Konva)
+│       ├── OverlayCanvas.jsx     # Step 5 텍스트 오버레이 편집 캔버스 (Konva)
 │       └── lib.js                # 공용 순수 헬퍼 함수 + 상수
 ├── run_pipeline.py             # CLI 진입점
 ├── run_debug_pipeline.py       # Debug 이미지 일괄 실행 wrapper
-├── run_test_pipeline.py        # test_image 범위 실행 wrapper
-├── run_floodfill_batch.py      # FloodFill 배치 실행 wrapper
+├── run_floodfill_batch.py      # 구 FloodFill 배치 wrapper (폐기 모듈 import로 현재 실행 불가)
 ├── visualize_debug.py          # Debug bbox 시각화
+├── pytest.ini                  # pytest 수집 경로를 tests/로 고정
+├── tests/                      # pytest 테스트 (문서 동기화 검사 포함)
 ├── proof/                      # 검증용 스크립트 및 출력물
-│   └── run_ocr_hint_experiments.py  # OCR 힌트 변형 비교 실험
+│   └── src/                    # 검증 보조 스크립트 (삭제 금지)
 ├── batch/                      # Gemini Batch API 보존 영역 (레퍼런스)
 │   ├── submit_batch_folder.py
 │   ├── receive_batch_result.py
 │   └── check_all_batches.py
+├── archive/                    # 현재 실행 경로 아님 (retired_gradio_ui/ 등)
 └── pipeline/
-    ├── pipeline_runner.py      # 6단계 파이프라인 실행 엔진
-    ├── cloud_vision_api.py
-    ├── text_group_builder.py
-    ├── floodfill_anchor_probe.py
+    ├── pipeline_runner.py      # 5단계 파이프라인 실행 엔진 + stream_subprocess()
+    ├── input_preprocessor.py   # 입력 정리 (가로 2페이지 spread 자동 분할)
+    ├── cloud_vision_api.py     # Step 1
+    ├── text_group_builder_v2.py  # Step 2
+    ├── dialogue_extractor.py   # Step 3 진입점 (말풍선 검출 + unboxed LaMa + OCR sheet)
+    ├── bubble_detector.py      # 말풍선 FloodFill 검출 코어 (구 floodfill_anchor_probe.py)
     ├── flood_split.py          # shared flood region split 후보 평가
-    ├── gemini_ocr_translate_v5.py
-    ├── apply_masking.py
-    ├── render_text_overlay.py
-    ├── difficulty_scorer.py    # flood_vis.json → 난이도 점수 (0.0~1.0)
-    ├── gemini_image_redraw.py  # 컬러 표지/일러스트 Gemini 재생성
-    ├── bubble_detector.py
+    ├── edge_barrier_flood_rescue.py  # 열린 말풍선 edge barrier 구제
+    ├── bubble_text_filters.py  # 말풍선 후보 텍스트 필터 정책
+    ├── unboxed_text_detector.py  # 말풍선 밖 텍스트 후보 local mask 검증
+    ├── unboxed_grouping.py     # 말풍선 밖 TG 선별·인접 TG 묶기
+    ├── text_style_metrics.py   # TextFragment 기준 글꼴 스타일 지표
+    ├── run_masked_vis.py       # unboxed 추출·통합 마스킹 시각화 (dialogue_extractor가 import)
+    ├── bubble_candidate_visualizer.py  # 말풍선 후보 검토 시각화 (*_bubble_vis.jpg)
+    ├── manual_guidance.py      # 편집기 guidance → 유효 TG 생성, atomic JSON 쓰기
+    ├── geometry.py             # 사각형 좌표 유틸
+    ├── gemini_ocr_translate_v5.py  # Step 4 (Gemini 기본, gpt-* 선택 가능)
+    ├── font_style_analyzer.py  # Step 4 직후 render_hint CV 보정
+    ├── render_text_overlay.py  # Step 5
+    ├── openai_image_redraw.py  # 렌더 생략 페이지 OpenAI 이미지 재생성 (main_v2 export)
     ├── vis/                    # pipeline 진단 시각화 도구
     ├── experimental/           # pipeline 승격 후보 실험 모듈
+    ├── ocr_reference/          # 글꼴 스타일 참고 이미지
+    ├── archive/                # 폐기 모듈 보관 (floodfill_anchor_probe.py, apply_masking.py 등)
     └── __init__.py
 ```
 
 ## 표준 파이프라인
 
 ```text
-입력 이미지
+입력 이미지 (CLI는 input_preprocessor로 가로 2페이지 spread를 자동 분할)
   ↓
-Step 1: Cloud Vision API (3x3 grid, languageHints=["ja","en"])
-  → {work_dir}/{name}_cv.json
+Step 1: Cloud Vision API (이미지 단위 호출, upscale2x_clahe 전처리, languageHints=["ja","en"])
+  → {work_dir}/json/{name}_cv.json
   ↓
-Step 2: Cluster CV V5
-  → {work_dir}/{name}_text_groups.json
+Step 2: Text Grouping (text_group_builder_v2)
+  → {work_dir}/json/{name}_text_groups.json
   ↓
-Step 3: FloodFill (소프트 — 실패해도 계속)
-  → {work_dir}/{name}_flood_vis.json
+Step 3: 대사 추출 (dialogue_extractor — 말풍선 검출 + unboxed LaMa + OCR sheet)
+  → {work_dir}/json/{name}_regions.json
+  → {work_dir}/masked/{name}_masked.jpg
+  → {work_dir}/sheets/{name}_indexed_sheet.jpg
+  → {work_dir}/vis/{name}_bubble_vis.jpg
   ↓
-Step 4: Gemini OCR + 번역 + integrated JSON 생성
-  → {work_dir}/{name}_integrated.json
+Step 4: OCR + 번역 + integrated JSON 생성 (gemini_ocr_translate_v5)
+  → {work_dir}/json/{name}_integrated.json
   ↓
-Step 5: White Masking
-  → {work_dir}/{name}_masked.jpg
-  ↓
-Step 6: Text Overlay (flood_vis.json 있으면 bbox 선택에 활용)
-  → output/{subfolder}/{name}_final.jpg
+Step 5: Text Overlay (regions.json으로 bbox·safe rect 결정)
+  → {output_dir}/final/{name}_final.jpg
 ```
 
-예전 `integrate_ocr_v3.py` 단계는 메인 파이프라인에서 제거됐다. 현재는 `pipeline/gemini_ocr_translate_v5.py`가 Gemini 응답을 바로 masking/overlay가 읽는 integrated JSON 구조로 저장한다.
+각 단계는 별도 subprocess로 실행되며, 어느 단계든 실패하면 그 이미지는 실패로 끝난다. 예전 Step 5 White Masking(`apply_masking.py`)은 없어졌고 마스킹은 Step 3이 직접 만든다.
+
+예전 `integrate_ocr_v3.py` 단계는 메인 파이프라인에서 제거됐다. 현재는 `pipeline/gemini_ocr_translate_v5.py`가 Gemini 응답을 바로 overlay가 읽는 integrated JSON 구조로 저장한다.
 
 ## Root Wrapper
 
-### `main.py` — **Deprecated**
+### `main.py`, `run_test_pipeline.py` — 폐기됨
 
-Gradio UI. `pipeline_runner.run_batch_images()`를 사용한다. `main_v2.py` 리뷰 UI로 대체되어 더 이상 사용하지 않는다. 아래 `main_v2.py` 항목 참고.
-
-- 단일/폴더 이미지 업로드 → `run_batch_images()`로 6단계 파이프라인 실행
-- 결과 갤러리에 `difficulty_scorer.score_label()`로 난이도 캡션 표시
-- 컬러 이미지 감지 시 `gemini_image_redraw.redraw_image()` 경로 사용
+Gradio UI(`main.py`)와 test_image 범위 실행 wrapper(`run_test_pipeline.py`)는 2026-08-14에 `archive/retired_gradio_ui/`로 옮겼다. UI는 `main_v2.py`, CLI는 `run_pipeline.py`를 쓴다. `main.py` 전용이던 `difficulty_scorer.py`, `gemini_image_redraw.py`도 함께 `pipeline/archive/`로 옮겼다.
 
 ### `main_v2.py` (현재 메인 UI)
 
@@ -114,20 +125,35 @@ guidance(수동 보정)가 있는 이미지는 `guidance_digest`(guidance 내용
 
 | 엔드포인트 | 역할 |
 | --- | --- |
+| `GET /api/session/{id}` | 세션 메타 + 페이지 **요약** 목록(URL, 상태 플래그, `detail_rev`)과 `hydration_pending`. 정상 상태에서는 파일을 쓰지 않는다 |
+| `GET /api/session/{id}/page/{image_id}` | 선택한 페이지 하나의 전체 레코드(`regions`, `integrated`, `text_groups`, guidance 등). 읽기 전용 |
 | `POST /api/import-path`, `/api/upload` | 이미지 폴더/파일을 세션에 추가 |
 | `POST /api/analyze(-stream)` | Step 1~3 실행 (pre_ocr까지), 캐시 우선 재사용 |
 | `POST /api/guidance`, `/api/guidance/clear` | 수동 보정(TG 삭제/split, edge barrier, manual region 등) 반영 후 Step 3 재실행 |
-| `POST /api/run-final(-stream)` | Step 4(Gemini OCR/번역) + Step 6(오버레이) 실행 |
+| `POST /api/run-final(-stream)` | Step 4(OCR/번역) + Step 5(오버레이) 실행. body의 `ocr_model`로 모델 지정 |
+| `GET /api/ocr-models` | OCR/번역 모델 목록(`id`, `label`, `note`)과 기본값 |
 | `POST /api/overlay/apply` | 오버레이 위치/폰트만 다시 렌더링 (OCR 재실행 없음) |
 | `GET /api/session/{id}/export`, `POST /api/export/generate-missing` | 결과 ZIP 내보내기, 실패 이미지 OpenAI 이미지 생성 fallback |
+| `GET /api/file` | 세션·입력 캐시·분석 캐시 폴더 아래 이미지 파일 서빙 |
+
+**동작 메모**
+
+- 세션 목록 GET은 캐시 연결(hydrate)을 멱등으로 한다. 이미 같은 캐시 파일에 연결돼 있으면 아무것도 쓰지 않는다. guidance 재적용(Step 3 재실행)이 필요한 페이지는 GET에서 돌리지 않고 백그라운드 hydration으로 넘기며, 끝날 때까지 `hydration_pending`이 true다. 프론트는 이 값이 true인 동안만 요약 목록을 다시 받고, 선택 페이지 상세는 `detail_rev`가 바뀔 때만 다시 받는다.
+- `/api/file`은 `SESSION_ROOT`, `INPUT_CACHE_DIR`, `ANALYSIS_CACHE_DIR` 아래의 이미지 확장자 파일만 내려준다. 그 밖의 경로는 403이다. 예전처럼 저장소 루트 전체를 열면 `.env`나 인증서 파일까지 읽힌다.
+- UI 정적 자산(`ui_v2/`)은 `Cache-Control: no-cache`로 내려준다(`RevalidatingStaticFiles`). `index.html`이 버전 없는 `/app.bundle.js`를 참조하므로, 번들을 다시 빌드하면 새로고침만으로 반영된다.
+- 업로드·폴더 import는 `allocate_input_path()`로 세션 `input/`에서 이미지 id(stem)와 파일이 모두 겹치지 않는 이름을 고른다. input 파일은 전역 입력 캐시를 가리키는 symlink라서, 기존 경로에 덮어쓰면 다른 이미지(다른 세션 포함)의 원본이 바뀌기 때문이다. `/api/upload`는 `"xb"` 모드로 써서 기존 파일을 따라가 덮어쓰지 않는다.
+- `/api/analyze-stream`은 한 장이 실패해도 나머지를 끝까지 처리한다. 실패한 이미지는 `image_id`가 붙은 `error` 이벤트로 알리고, 마지막 `complete` 이벤트를 `ok: false`로 보낸다.
+- subprocess 실행(`run_subprocess`, `run_subprocess_stream`)은 `pipeline_runner.stream_subprocess()`를 공유한다. 아래 `pipeline_runner.py` 항목 참고.
+- JSON 저장은 `manual_guidance.write_json()`을 쓴다. 임시 파일에 다 쓴 뒤 `os.replace`로 교체하므로 쓰는 도중 중단돼도 기존 JSON이 잘린 채 남지 않는다.
+- Step 4 모델은 편집기 OCR 탭의 선택 상자에서 고른다. 서버 기본값과 같으면 프론트가 `ocr_model: null`을 보내 `--model` 인자를 생략한다. 추가 프롬프트는 `--extra-prompt=값` 형식으로 넘겨 `-`로 시작하는 프롬프트도 옵션으로 오인되지 않는다.
 
 **프론트엔드** — `ui_v2/index.html`이 로드하는 `ui_v2/app.bundle.js`는 `frontend/src/`를 esbuild로 번들링한 결과물이다. 소스는 다음처럼 나뉜다.
 
 | 파일 | 역할 |
 | --- | --- |
-| `frontend/src/lib.js` | `api()`/`apiStream()` fetch 헬퍼, TG·region·guidance·overlay 관련 순수 함수와 상수 |
+| `frontend/src/lib.js` | `api()`/`apiStream()` fetch 헬퍼, TG·region·guidance·overlay 관련 순수 함수와 상수, 세션별 OCR 설정(추가 프롬프트·모델) localStorage 저장 |
 | `frontend/src/EditorCanvas.jsx` | Step 3 캔버스 — TG on/off, edge barrier, manual bubble/ubox, bubble seed 등 guidance 편집 |
-| `frontend/src/OverlayCanvas.jsx` | Step 6 캔버스 — 오버레이 안전 영역 이동/리사이즈/회전, eraser rect 편집 |
+| `frontend/src/OverlayCanvas.jsx` | Step 5 캔버스 — 오버레이 안전 영역 이동/리사이즈/회전, eraser rect 편집. 화면 기준 3px 이상 끌었을 때만 수동 위치로 저장 |
 | `frontend/src/App.jsx` | 세션 관리, 이미지 목록, 워크플로우 탭(분석/OCR/오버레이/내보내기) 전체 상태 |
 | `frontend/src/main.jsx` | React 엔트리포인트 |
 
@@ -138,57 +164,52 @@ guidance(수동 보정)가 있는 이미지는 `guidance_digest`(guidance 내용
 CLI 진입점. 단일 이미지 또는 폴더 배치 처리.
 
 ```bash
-python run_pipeline.py --input image.jpg --output output/ [--force] [--workers 4]
+python run_pipeline.py --input image.jpg --output output/ [--force] [--workers 4] [--ocr-model gpt-5.6-terra] [--pre-ocr]
 ```
+
+- 입력은 `input_preprocessor.prepare_pipeline_inputs()`로 정리한다(가로 2페이지 spread는 `{work_dir}/split_input/`에 분할).
+- 단일 이미지도 폴더와 같은 `run_batch_images()` 경로를 쓴다. 최종 결과는 `{output}/final/`에 저장된다.
+- `--keep-cache` 없이 끝나면 중간 파일을 지운다. `--pre-ocr`(Step 3까지)일 때는 유지한다.
 
 ### `run_debug_pipeline.py`
 
 Debug 이미지를 `pipeline_runner.run_single_image()`로 처리한다.
 
 - 최종 결과와 중간 파일을 모두 `proof/Debug/`에 모은다.
-- 처리 후 `visualize_debug.py`를 호출해 `{번호}_debug.jpg`를 만든다.
-
-### `run_test_pipeline.py`
-
-`test_image/00020.jpg`부터 `00035.jpg`까지를 현재 메인 파이프라인으로 처리한다.
-
-- 예전 CV Grid → cluster → OCR → integration 개별 subprocess 테스트 경로는 제거했다.
-- 출력은 `proof/test_pipeline/`에 모은다.
+- 처리 후 tight TG 생성과 `visualize_debug.py` 시각화를 시도하지만, 둘 다 구 경로·구 파일명(`pipeline/cluster_cv_v5.py`, `{번호}_cv.json` 루트 배치)을 기대해 현재 산출물 구조에서는 경고만 남긴다.
 
 ### `visualize_debug.py`
 
 Debug 산출물 시각화 도구다.
 
-- 입력: 원본 이미지, `{번호}_text_groups.json`, `{번호}_integrated.json`
-- 출력: `proof/Debug/{번호}_debug.jpg`
+- 입력: `temp_output/Debug/`의 `{번호}_cv_clusters_v5.json`, `{번호}_integrated.json` (구 파일명 기준)
+- 출력: `temp_output/Debug/{번호}_debug.jpg`
 - 빨간색: sentence/union bbox
 - 파란색: matched cluster bbox
 - 초록색: line bbox
 
 ## Proof 영역
 
-proof/ 폴더는 파이프라인 검증 전용 임시 실행 영역이다.
+proof/ 폴더는 파이프라인 검증 전용 임시 실행 영역이다. `--work-dir proof/ --output proof/`로 실행하면 다음처럼 쌓인다. 예전 실험이 남긴 `flood_vis/`, `ocr_sheets/` 같은 폴더가 함께 있을 수 있다.
 
 ```text
 proof/
-  json/              *_cv.json, *_text_groups.json, *_flood_vis.json,
-                     *_fallback_sheet.json, *_flood_ocr.json, *_flood_integrated.json
-  flood_vis/         *_flood_vis.jpg
+  json/              *_cv.json, *_text_groups.json, *_regions.json, *_integrated.json
   masked/            *_masked.jpg
-  ocr_sheets/        *_fallback_sheet.jpg, *_fallback_sheet_indexed.jpg, *_text_overlay.jpg
-  misc/              *_regions_only.jpg
-  NNNNN_merge.jpg    최종 검증용 (flood_vis 좌 / text_overlay 우)
+  sheets/            *_indexed_sheet.jpg
+  vis/               *_bubble_vis.jpg
+  merge/             *_merge.jpg (bubble_vis 좌 / final 우)
+  final/             *_final.jpg
+  src/               검증 보조 스크립트 (삭제 금지)
 ```
 
 ### `pipeline/vis/visualize_inflection_candidates.py` — shared flood split 후보 시각화
 
-실제 구현은 `pipeline/vis/visualize_inflection_candidates.py`에 있다.
-`proof/src` 파일은 기존 실행 경로를 보존하는 얇은 wrapper다.
+실제 구현은 `pipeline/vis/visualize_inflection_candidates.py`에 있다. `proof/src` wrapper는 제거됐다.
 
 ### inpaint 후보 검증 (현재 리포지토리에 wrapper 없음)
 
-실제 구현은 `pipeline/experimental/inpaint_candidate.py`에 있다.
-`proof/src` 파일은 검증 실행 진입점만 담당한다.
+실제 구현은 `pipeline/experimental/inpaint_candidate.py`에 있다. 모듈을 직접 호출한다.
 
 ## Batch 영역
 
@@ -200,74 +221,88 @@ proof/
 
 ### `pipeline/cloud_vision_api.py`
 
-Google Cloud Vision OCR wrapper다.
+Google Cloud Vision OCR wrapper다. REST API(API Key, `CLOUD_VISION_API_KEY`) 방식으로 단일화됐다.
 
-- `CloudVisionAPI`가 credential과 `vision.ImageAnnotatorClient`를 관리한다.
-- `detect_text_grid()`: 입력 이미지를 3x3 고정 chunk로 분할해 1회 호출한다. 9장 초과 시 9장씩 반복.
-- languageHints `["ja", "en"]`이 REST/client 양쪽에 적용된다.
-- 출력은 이후 `text_group_builder.py`가 읽는 Vision JSON이다.
+- 파이프라인은 CLI(`cloud_vision_api.py <image> <out_json>`)로 이미지마다 1회 호출한다. 예전 3x3 그리드 묶음 호출(`detect_text_grid()`)은 없어졌다.
+- `CloudVisionAPI.detect_document_text(preprocess="upscale2x_clahe")`: 2배 확대 + CLAHE 전처리 후 `DOCUMENT_TEXT_DETECTION`으로 단어 단위 bbox + confidence를 얻고, 좌표를 원본 크기로 되돌린다.
+- languageHints `["ja", "en"]`을 요청에 넣는다.
+- API 호출이 실패하면 CLI는 결과 파일을 쓰지 않고 exit 1로 끝난다. 빈 배열을 저장하면 이후 단계와 main_v2 CV 캐시가 "텍스트 0개"를 성공으로 굳히기 때문이다. 연결 오류 메시지에 섞인 API 키는 `***`로 가린다.
+- 출력은 이후 `text_group_builder_v2.py`가 읽는 Vision JSON이다.
 
 **OCR 타입 변경 이력**: `TEXT_DETECTION` → `DOCUMENT_TEXT_DETECTION` 으로 전환했다.
-그리드 내부(`_detect_text_grid_chunk`)와 단일 이미지 fallback 모두 `DOCUMENT_TEXT_DETECTION`을 사용한다.
+파이프라인 경로(`detect_document_text`)는 `DOCUMENT_TEXT_DETECTION`을 사용한다. `detect_text()`(`TEXT_DETECTION`)는 남아 있지만 파이프라인에서 호출하지 않는다.
 `TEXT_DETECTION`은 짧은 텍스트 조각에 유리하지만 세로쓰기 만화 말풍선처럼 문맥이 있는 레이아웃에서는 `DOCUMENT_TEXT_DETECTION`이 행/단 구분 정확도가 높아 clustering 품질이 개선됐다. 특히 큰 말풍선의 텍스트 블록 인식률이 향상됐다.
 
-### `pipeline/text_group_builder.py`
+### `pipeline/text_group_builder_v2.py`
 
-Cloud Vision OCR 결과를 Text Fragment → Text Line → Text Group 3단계로 병합한다.
+Cloud Vision OCR 결과를 Text Fragment → Text Line → Text Group 3단계로 병합한다. 구 `text_group_builder.py`는 이 파일로 통합됐다(사본은 `archive/experiment/src/`).
 
 > 파일명/변수명의 `cluster`는 개념상 **Text Group**에 해당한다. 실제 파일명(`_text_groups.json`)과 코드 내 변수명은 유지한다.
 
+- `build_text_groups_v2()`: 진입점. CLI는 `python -m pipeline.text_group_builder_v2 <cv_json> <out_json> [image_height]`
 - `pass1_create_lines()`: Text Fragment → Text Line, 같은 세로줄 기준 BFS 병합
+- `repair_line_fragments()`: Pass 1.5. 같은 열이 조각난 Text Line을 가드 조건 안에서 재병합 (기본 ON)
 - `filter_furigana_lines()`: 후리가나로 보이는 작은 Text Line 제거
 - `pass2_create_clusters()`: Text Line → Text Group, 4-stage rule 병합
-- `sort_clusters_reading_order()`: 일본어 세로쓰기 기준 오른쪽→왼쪽, 위→아래 정렬
+- `expand_x_adjacent()`: Pass 2.5. 인접 열만 보수적으로 묶음 (기본 ON)
+- `consolidate_clusters()`: Pass 3. 공격적 재병합 (기본 OFF)
+- `_format_text_groups()`: 일본어 세로쓰기 기준 오른쪽→왼쪽, 위→아래(`-x, y`)로 정렬하고 `text_group_id`를 1부터 부여
 
 Text Group이 FloodFill의 **Anchor Text Group** seed 후보로 사용된다.
 
-### `pipeline/floodfill_anchor_probe.py`
+### `pipeline/dialogue_extractor.py`
 
-Anchor Text Group 중심점 기반 FloodFill로 말풍선 내부 영역을 검출한다.
+Step 3 진입점이다. `pipeline_runner`가 `python -m pipeline.dialogue_extractor <image> <text_groups> <masked> <regions> <indexed_sheet> --output-vis-path <bubble_vis>`로 호출하고, `main_v2.py`는 guidance 재적용 때 `build_dialogue_sheet()`를 직접 import한다.
+
+- `build_dialogue_sheet()`: ① `bubble_detector.build_ocr_region_sheet()`로 말풍선 검출·흰색 마스킹 → ② 말풍선 밖 텍스트를 LaMa(`simple_lama_inpainting`)로 지움 → ③ 두 종류 crop을 읽기 순서로 모아 indexed OCR sheet + `regions.json` 저장
+- 편집기 guidance(`manual_regions`, `manual_seed_points`, `virtual_walls`, `split_guides`, suppressed region)를 인자로 받아 반영한다.
+- region별 `safe_text_rect`(`_compute_safe_text_rect`)와 `mask_centroid`(`_compute_mask_centroid`)를 계산해 `regions.json`에 기록한다. Step 5 배치의 기준값이다.
+
+### `pipeline/bubble_detector.py`
+
+말풍선 검출 코어다. 구 `floodfill_anchor_probe.py`를 Probe → Validation → Rescue → Finalize 4단계 구조로 고도화한 모듈이다(구 파일은 `pipeline/archive/`에 보존).
 
 **공개 함수:**
 
-- `visualize_anchor_floodfill()`: flood 결과 및 region_type 분류 시각화 → `flood_vis.json`, `flood_debug.jpg` (Step 3-A)
-- `apply_floodfill_white_mask()`: flood mask 기반 흰색 마스킹 (단독 사용, 현재 표준 경로 미사용)
-- `create_floodfill_fallback_outputs()`: flood 판정 + OCR sheet + 마스킹 통합 생성 → `flood_pre_masked.jpg`, `flood_sheet.jpg`, `flood_regions.json` (Step 3-B)
-- `create_packed_ocr_sheet()`: flood region crop만 모아 OCR sheet 생성 (단독 레거시 경로)
+- `build_ocr_region_sheet()`: 표준 경로. flood 판정 + split + 흰색 마스킹 + region 메타 생성. `dialogue_extractor`와 `run_masked_vis`가 호출한다.
+- `visualize_anchor_floodfill()`: flood 결과와 region_type 분류 디버그 시각화 (CLI 4인자 모드 전용)
 
 **내부 주요 함수:**
 
-- `_find_side_white_seed(gray, rect)`: 세로쓰기 anchor 좌우 바깥에서 먼저 흰 시드 탐색
-- `_flood_with_fallback(image, gray, center, rect)`: 3단계 시드 탐색 — 좌우 바깥 → 중심 근처 → bbox 가장자리 4방향
-- `_auto_split_flood_mask(mask, anchor_ids, anchor_centers)`: 단일/다중 anchor flood region에 inflection split 시도 (CV 미인식 버블 포함 목적)
-- `_compute_flood_bimodality(mask, gray)`: flood mask 내부 흑/백 bimodality 계산 (0~1, 0.85 미만 → 획 파고들기 판정)
+- `_flood_with_fallback()`: 3단계 시드 탐색 — 좌우 바깥 여백 → 중심 근처 → bbox 가장자리 4방향
+- `_auto_split_flood_mask()`: 단일/다중 anchor flood region에 inflection split 시도 (CV 미인식 버블 포함 목적)
+- `_compute_flood_bimodality(mask, gray)`: flood mask 내부 흑/백 bimodality 계산 (0-1)
 - `_is_bubble_shaped(mask, min_solidity)`: flood inner mask solidity로 말풍선 형태 판별
-- `_is_dark_bg_text(gray, rect, threshold)`: bbox crop 평균 밝기로 검은 배경 흰 글자 판별
-- `_classify_anchor_region(cluster, flood_rect, inner_area, touches_border, safe)`: region_type + quality_flags 반환
+- `_is_dark_bg_text(gray, rect, threshold, expand)`: bbox 주변 평균 밝기로 검은 배경 흰 글자 판별
+- `_classify_anchor_region()`: region_type + quality_flags 반환
 
-**`create_floodfill_fallback_outputs` 판정 흐름:**
+**판정 흐름 요약** (상세 수치는 모듈 docstring과 [pipeline_guide.html](pipeline_guide.html) 참고):
 
 ```
-dark_bg_text 제외 → symbol_only/short_non_jp_noise pre-skip
-  → flood 시도 (_flood_with_fallback)
-  → 수락 조건: flood_area_ratio ≤ 0.12 AND 1.0 ≤ ratio ≤ 12.0 AND center_inside_flood_rect
-    → text_noise AND not bubble_shaped → noise_like_skip
-    → bimodality < 0.85 → low_bimodal_flood skip
-    → 수락: method=flood
-  → ratio > 12 AND area OK AND solidity ≥ 0.65 AND bimodality ≥ 0.85 → high_ratio_bubble_rescued
-  → 나머지 ratio 초과: cluster_actual_flood_rect 기록 (cross-split/combined-rescue용)
-  → union_bbox_fallback: 비활성화 (diagnostics만 기록, OCR sheet 제외)
-  ↓ (전체 loop 후)
-cross-split: ratio 초과 anchor가 flood 성공 anchor와 동일 flood_rect 공유 → flood group 합류
-combined_anchor_rescue: ratio 초과 anchor 2개 이상이 동일 flood_rect 공유 + 합산 ratio 통과 → flood group 승격
-  ↓
-split: 2개 이상 anchor 공유 → inflection line (1차) → erosion CC (2차, disjoint bbox 조건)
+Probe      TG 주변 흰 seed에서 FloodFill (magic-wand 방식)
+Validation bimodality·형태 점수로 bubble_region 승격 판정. 탈락은 삭제하지 않고 bbox_fallback으로 강등
+Rescue     비율 초과 anchor 합류, Edge Barrier(edge_barrier_flood_rescue.py) 등으로 탈락 후보 구제
+Finalize   is_valid 확정 후에만 region_type 부여. 남은 bbox_fallback은 unboxed 후처리 대상
+split      2개 이상 anchor 공유 → inflection line (1차) → erosion CC (2차, disjoint bbox 조건)
 ```
 
-region_type 분류 (`visualize_anchor_floodfill` 기준): `in_bubble`, `narration_like`, `noise_like`, `dark_bg_text`, `unsafe_flood`
+region_type 분류 (`_classify_anchor_region`): `bubble`, `narration_like`, `noise_like`, `failed_candidate`. `dark_bg_text`, `symbol_only`, `metadata` 후보는 flood 전에 걸러진다.
 
 > 필터 체계 상세 → [FLOODFILL_MASKING_PROGRESS.md](FLOODFILL_MASKING_PROGRESS.md)
 > 표준 경로 연결 상태 → [PIPELINE_STATUS.md](PIPELINE_STATUS.md)
+
+### Step 3 보조 모듈
+
+| 파일 | 역할 |
+| --- | --- |
+| `pipeline/edge_barrier_flood_rescue.py` | 열린 말풍선 경계를 edge barrier 기반 flood로 구제 (`run_edge_barrier_rescue_auto()`). 수동 edge guidance도 이 경로를 탄다 |
+| `pipeline/unboxed_text_detector.py` | 말풍선 밖 배경 텍스트 후보를 TextGroup 기반 local mask로 검증 (`extract_unboxed_text_candidate()`) |
+| `pipeline/unboxed_grouping.py` | 말풍선 밖 TG 선별(효과음·noise 판정)과 인접 TG 묶기 (`cluster_adjacent_text_groups()`) |
+| `pipeline/bubble_text_filters.py` | 말풍선 후보 판정용 텍스트 필터 (금지 문자열, symbol-only, 단독 효과음 등) |
+| `pipeline/text_style_metrics.py` | TextFragment 기준 글꼴 스타일 지표와 페이지 기준선 계산 |
+| `pipeline/run_masked_vis.py` | flood + unboxed 통합 마스킹 시각화. `dialogue_extractor`가 unboxed 추출 헬퍼(`_extract_with_lane_retry` 등)를 import한다 |
+| `pipeline/bubble_candidate_visualizer.py` | 말풍선 후보 검토 시각화 `*_bubble_vis.jpg` 생성 (`render_candidate_review_vis()`) |
+| `pipeline/geometry.py` | `as_rect()`, `union_rect()` 사각형 좌표 유틸 |
 
 ### `pipeline/flood_split.py`
 
@@ -297,69 +332,80 @@ flood 실패 후보에 TELEA inpaint를 적용하는 승격 후보 실험 모듈
 
 ### `pipeline/gemini_ocr_translate_v5.py`
 
-Gemini 한 번의 호출로 OCR, 번역, 문장 단위 Text Group 매칭을 수행하고 integrated JSON을 생성한다.
+OCR, 번역, Text Group 매칭을 한 번에 수행하고 integrated JSON을 생성한다.
 
-- 입력: 원본 이미지 + `*_text_groups.json`
+- 표준 입력: `--ocr-sheet-image`(indexed OCR sheet) + `--ocr-sheet-json`(`*_regions.json`) + `*_text_groups.json`. OCR sheet가 없을 때만 원본 이미지 + CV cluster 힌트 경로로 fallback한다.
+- `--model`로 모델을 고른다. `gemini-*`는 Gemini, `gpt-*`는 OpenAI로 보낸다. UI 노출 목록은 `SUPPORTED_OCR_MODELS`, 기본값은 `MODEL_NAME`이다.
+- OCR 직후 `font_style_analyzer.update_integrated_render_hints()`로 render_hint를 보정한다.
 - 출력: `*_integrated.json`
-- 출력 구조: `clusters`(=Text Group), `unmatched_clusters`, `model`
-- 각 항목은 `sentence_id`, `text`, `text_translated`, `matched_cluster`, `matched_cluster_details`, `union_bbox`, `bounding_rect`, `location`을 포함한다.
+- 출력 구조: `clusters`(=Text Group), `unmatched_clusters`, `model`, `ocr_source`
+- 각 항목은 `sentence_id`, `text`, `text_translated`, `matched_cluster`, `matched_cluster_details`, `bounding_rect`, `location`, `source_region_id`, render_hint 관련 필드를 포함한다.
 
-### `pipeline/apply_masking.py`
+### `pipeline/font_style_analyzer.py`
 
-`*_integrated.json`의 bbox를 기준으로 원문 텍스트 영역을 흰색 마스킹한다.
-
-- `union_bbox` 또는 `bounding_rect`를 사용한다.
-- `location == "in_bubble"`이면 corner fade 마스킹을 적용한다.
-- 그 외에는 반투명 흰색 마스킹을 적용한다.
+indexed sheet crop의 획두께·ink density를 재서 Gemini가 준 `render_hint_raw`를 `render_hint_final`로 보정한다. 진입점은 `update_integrated_render_hints()`이고, 단독 CLI로 OCR 없이 render_hint만 다시 계산할 수 있다.
 
 ### `pipeline/pipeline_runner.py`
 
-6단계 파이프라인 실행 엔진이다.
+5단계 파이프라인 실행 엔진이다.
 
-- `run_single_image()`: 1장 처리. 각 단계를 subprocess로 순차 실행하며 중간 파일 캐시 활용.
-- `run_batch_images()`: Step 1(CV)을 그리드로 일괄 처리 후 Steps 2-6을 ThreadPoolExecutor 병렬 실행.
-- Step 3(FloodFill) 실패 시 경고만 출력하고 계속 진행.
-- Step 6에서 `flood_vis.json` 존재 시 `--flood_vis_json` 인자로 전달.
+- `run_single_image()`: 1장 처리. 각 단계를 `python -m pipeline.*` subprocess로 순차 실행하며 중간 파일 캐시를 활용한다. `stop_after="extract"`/`"pre_ocr"`면 Step 3에서 멈추고, 이때는 final 이미지가 있어도 Step 1-3 산출물을 다시 확인한다.
+- `run_batch_images()`: 이미지별 `run_single_image()`를 ThreadPoolExecutor로 병렬 실행한다. Step 1도 이미지 단위로 호출한다.
+- 어느 단계든 subprocess가 실패하면(`PipelineError`) 그 이미지는 실패로 끝난다.
+- Step 4는 Step 3 산출물(`regions.json`, indexed sheet, `text_groups.json`)이 `integrated.json`보다 새로우면 다시 만든다.
+- Step 5에는 `--regions_json`과 `--original_image`를 넘긴다.
+- `stream_subprocess(cmd, timeout, on_line)`: 출력을 reader thread로 줄 단위로 읽어 `on_line`에 넘기고 `(returncode, 출력 줄)`을 반환한다. 출력이 멈춰도 timeout이 지켜지며, 넘기면 프로세스를 종료하고 `subprocess.TimeoutExpired`를 던진다. 자식 환경에는 `PYTHONUNBUFFERED=1`, `PYTHONIOENCODING=utf-8`, 저장소 루트를 앞에 둔 `PYTHONPATH`를 넣는다(`_subprocess_env()`). `main_v2.py`도 이 함수를 쓴다.
 
-### `pipeline/difficulty_scorer.py`
+### `pipeline/manual_guidance.py`
 
-`*_flood_vis.json`의 `results[].region_type_guess`를 분석해 0.0~1.0 난이도 점수를 반환한다.
+편집기 guidance(TG off/split 등)를 원본 TG에 적용해 Step 3용 유효 TG를 만든다(`build_effective_text_groups()`). 원본 OCR/TG 산출물은 건드리지 않는다. `write_json()`은 임시 파일에 쓴 뒤 `os.replace`로 교체하는 atomic 쓰기이고, Windows에서 교체가 잠시 거부되면 몇 번 재시도한다.
 
-- `noise_like`, `symbol_only`, `None` 비율로 점수 계산
-- `score_label()`: 점수 + 레이블 문자열 반환 (🔴/🟡/🟢)
-- `flood_vis.json` 없으면 -1.0
+### `pipeline/input_preprocessor.py`
 
-### `pipeline/gemini_image_redraw.py`
+`run_pipeline.py`가 실행 전에 입력을 정리한다. `prepare_pipeline_inputs()`가 가로/세로 비율이 기준(기본 1.25) 이상인 2페이지 spread를 오른쪽→왼쪽 읽기 순서로 나눈다(`split_landscape_page()`).
 
-컬러 표지/일러스트를 Gemini image model로 직접 번역 이미지 생성하는 별도 경로다.
+### `pipeline/openai_image_redraw.py`
 
-- `redraw_image()`: `google.genai` SDK 기반 구현
+렌더링을 건너뛴 페이지(표지·컬러 일러스트 등)를 OpenAI 이미지 모델로 번역 이미지로 다시 만든다(`redraw_image_with_openai()`). `main_v2.py`의 export 단계 "generate missing" 경로에서 쓴다.
 
 ### `pipeline/render_text_overlay.py`
 
 마스킹된 이미지 위에 한국어 번역문을 렌더링한다.
 
-- DP 기반 최적 줄바꿈(`wrap_tokens`)으로 토큰 단위 분배
+- DP 기반 최적 줄바꿈(`wrap_tokens`)으로 토큰 단위 분배. 같은 시작점에서 줄 폭이 한도를 넘으면 더 긴 후보는 재지 않는다.
+- 토큰화(`tokenize`)는 단일 dash도 토큰으로 남기고, 공백 없이 붙은 dash는 앞 단어에 붙인다.
 - aspect-ratio 3단계(tall/wide/square) 기반 inner padding(`inner_rect_for`)
-- 페이지 단위 폰트 크기 조화(`page_font_band`): 전체 클러스터 폰트 중앙값 ±7px 밴드
-- `flood_vis.json`이 있으면 `build_flood_info_by_anchor`, `build_shared_flood_groups`로 flood_rect 기반 bbox 선택
+- split 버블 폰트 균일화: 같은 flood region에서 나뉜 버블은 그룹 최솟값의 120%를 상한으로 맞춘다(`prepare_page_layouts` 2nd pass)
+- 표준 경로는 `--regions_json`을 `build_flood_info_from_regions_json`, `build_shared_flood_groups_from_regions_json`으로 읽어 bbox·safe rect를 고른다. `--flood_vis_json`(`build_flood_info_by_anchor`, `build_shared_flood_groups`)은 선택 입력으로 남아 있다.
 - 구버전: `archive/render_text_overlay_legacy.py`
+
+### 보관·폐기된 pipeline 모듈
+
+| 구 파일 | 현재 위치 | 대체 |
+| --- | --- | --- |
+| `floodfill_anchor_probe.py` | `pipeline/archive/` | `bubble_detector.py` |
+| `apply_masking.py` | `pipeline/archive/` | 마스킹은 Step 3 `dialogue_extractor.py`가 `*_masked.jpg`로 직접 만든다 |
+| `difficulty_scorer.py` | `pipeline/archive/` | 없음 (파이프라인 미연결, `main.py` 전용) |
+| `gemini_image_redraw.py` | `pipeline/archive/` | `openai_image_redraw.py` |
+| `text_group_builder.py` | `archive/experiment/src/` | `text_group_builder_v2.py` |
+| `cluster_cv_v5.py` | `archive/` | `text_group_builder_v2.py` |
 
 ## Box 병합 책임 구분
 
 | 문제 유형 | 우선 확인 파일 |
 | --- | --- |
-| Text Fragment가 Text Line으로 잘못 묶임 | `pipeline/text_group_builder.py` |
-| 여러 Text Line이 Text Group으로 잘못 묶임 | `pipeline/text_group_builder.py` |
+| Text Fragment가 Text Line으로 잘못 묶임 | `pipeline/text_group_builder_v2.py` |
+| 여러 Text Line이 Text Group으로 잘못 묶임 | `pipeline/text_group_builder_v2.py` |
 | Gemini가 Text Group id를 잘못 매칭함 | `pipeline/gemini_ocr_translate_v5.py` |
 | union bbox가 너무 크거나 작음 | `pipeline/gemini_ocr_translate_v5.py`, `pipeline/render_text_overlay.py` |
-| 마스킹이 말풍선 경계를 침범함 | `pipeline/apply_masking.py` |
-| 번역 텍스트가 영역에 맞지 않음 | `pipeline/render_text_overlay.py` |
-| flood가 배경으로 샘 / region 분류 오류 | `pipeline/floodfill_anchor_probe.py` |
+| 마스킹이 말풍선 경계를 침범함 | `pipeline/dialogue_extractor.py`, `pipeline/bubble_detector.py` |
+| 말풍선 밖 텍스트 지우기가 이상함 | `pipeline/dialogue_extractor.py`, `pipeline/unboxed_text_detector.py` |
+| 번역 텍스트가 영역에 맞지 않음 | `pipeline/render_text_overlay.py` (safe rect는 `pipeline/dialogue_extractor.py`) |
+| flood가 배경으로 샘 / region 분류 오류 | `pipeline/bubble_detector.py`, `pipeline/edge_barrier_flood_rescue.py` |
 
 ## 검증 명령
 
 ```bash
-. .venv/bin/activate
-python3 -m compileall main.py run_debug_pipeline.py run_test_pipeline.py visualize_debug.py pipeline batch
+.venv/bin/python -m compileall -q main_v2.py run_pipeline.py run_debug_pipeline.py visualize_debug.py pipeline batch
+.venv/bin/python -m pytest -q    # pytest.ini가 tests/만 수집한다
 ```

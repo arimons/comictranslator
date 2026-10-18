@@ -501,10 +501,18 @@ python3 run_pipeline.py \
   <p>실행 엔진입니다. <code>run_single_image()</code>와 <code>run_batch_images()</code> 두 함수로 구성됩니다.</p>
 
   <div class="info-box info-tip">
-    <strong>배치 최적화 포인트</strong>
-    <code>run_batch_images()</code>는 Step 1(Cloud Vision)을 <strong>그리드 모드</strong>로 일괄 처리한 뒤,
-    Step 2~5는 <code>ThreadPoolExecutor</code>로 이미지별 병렬 처리합니다.
-    Cloud Vision API 호출 비용을 이미지당 1회에서 최대 9장 묶음으로 줄이는 핵심 최적화입니다.
+    <strong>배치 처리</strong>
+    <code>run_batch_images()</code>는 이미지마다 <code>run_single_image()</code>를 <code>ThreadPoolExecutor</code>로 병렬 실행합니다.
+    Step 1(Cloud Vision)도 각 worker에서 이미지 단위로 호출합니다. 예전처럼 최대 9장을 한 장으로 붙여 호출하던 그리드 모드는 없어졌습니다.
+  </div>
+
+  <div class="info-box info-note">
+    <strong>단계 실행 방식 (stream_subprocess)</strong>
+    각 단계는 <code>python -m pipeline.*</code> 형태의 별도 subprocess로 실행합니다.
+    <code>stream_subprocess()</code>가 출력을 reader thread로 줄 단위로 읽어 로그 콜백에 넘기므로, 출력이 멈춰도 단계별 timeout이 지켜지고 넘기면 프로세스를 종료합니다.
+    자식 환경에는 <code>PYTHONUNBUFFERED=1</code>(출력 즉시 전달), <code>PYTHONIOENCODING=utf-8</code>(OS 기본 인코딩과 무관하게 UTF-8), 저장소 루트를 앞에 둔 <code>PYTHONPATH</code>(cwd와 무관하게 <code>pipeline.*</code> import)를 넣습니다.
+    어느 단계든 0이 아닌 코드로 끝나면 그 이미지는 실패로 처리합니다. <code>main_v2.py</code>도 같은 함수를 씁니다.
+    추가 프롬프트는 <code>--extra-prompt=값</code> 형식으로 넘겨 <code>-</code>로 시작하는 프롬프트도 옵션으로 오인되지 않게 합니다.
   </div>
 
   <!-- 작업 폴더 구조 -->
@@ -537,7 +545,7 @@ python3 run_pipeline.py \
     <div class="step-badge badge-1">Step 1</div>
     <div class="step-title">이미지 → 단어 bbox 감지</div>
     <p>Google Cloud Vision API의 <code>DOCUMENT_TEXT_DETECTION</code>으로 이미지에서 단어 단위 bounding box와 confidence를 추출합니다.
-    (단일 이미지 경로의 <code>detect_text()</code>는 <code>TEXT_DETECTION</code>이지만, 파이프라인이 실제로 사용하는 그리드 배치 경로의 <code>detect_text_grid()</code> → <code>detect_document_text()</code>는 <code>DOCUMENT_TEXT_DETECTION</code>입니다.)</p>
+    (<code>detect_text()</code>는 <code>TEXT_DETECTION</code>이지만 파이프라인에서 쓰지 않습니다. 파이프라인은 <code>cloud_vision_api.py</code> CLI로 이미지마다 <code>detect_document_text()</code>를 호출합니다.)</p>
   </div>
 
   <div class="io-grid">
@@ -557,31 +565,37 @@ python3 run_pipeline.py \
     </div>
   </div>
 
-  <h3>그리드 배치 처리 (핵심 최적화)</h3>
-  <p>폴더 배치 실행 시 <code>detect_text_grid()</code>가 작동합니다.</p>
+  <h3>이미지 단위 호출</h3>
+  <p>CLI(<code>cloud_vision_api.py &lt;image&gt; &lt;out_json&gt;</code>)는 <code>detect_document_text(preprocess="upscale2x_clahe")</code>를 한 번 호출합니다.</p>
 
   <div class="sub-steps">
     <div class="sub-step">
       <div class="sub-step-num">1</div>
       <div class="sub-step-body">
-        <strong>이미지를 1행 가로 스트립으로 합성</strong>
-        <p>최대 9장(API 한도 10MB 기준 자동 계산)을 흰 캔버스에 나란히 붙이고, 셀 경계에 10px 검정 세로선을 삽입합니다.</p>
+        <strong>2배 확대 + CLAHE 전처리</strong>
+        <p>이미지를 2배로 키우고 그레이스케일 CLAHE로 대비를 보정한 임시 파일을 만들어 API에 보냅니다. 임시 파일은 호출 뒤 지웁니다.</p>
       </div>
     </div>
     <div class="sub-step">
       <div class="sub-step-num">2</div>
       <div class="sub-step-body">
-        <strong>단일 API 호출로 전체 스트립 OCR</strong>
-        <p>합성 이미지 하나로 API를 호출해 비용과 레이턴시를 최대 9배 절감합니다.</p>
+        <strong>REST API 호출</strong>
+        <p><code>CLOUD_VISION_API_KEY</code>로 <code>DOCUMENT_TEXT_DETECTION</code>을 요청합니다. <code>languageHints</code>는 <code>["ja", "en"]</code>입니다.</p>
       </div>
     </div>
     <div class="sub-step">
       <div class="sub-step-num">3</div>
       <div class="sub-step-body">
         <strong>bbox를 원본 이미지 좌표로 역변환</strong>
-        <p>각 bbox의 x좌표를 오프셋으로 빼서 원본 이미지별 좌표계로 복원 후 <code>*_cv.json</code>에 개별 저장합니다.</p>
+        <p>확대 배율로 나눠 원본 좌표계로 되돌린 뒤 <code>*_cv.json</code>에 저장합니다.</p>
       </div>
     </div>
+  </div>
+
+  <div class="info-box info-warn">
+    <strong>호출 실패 시 결과 파일을 쓰지 않음</strong>
+    API 호출이 실패하면 CLI는 <code>*_cv.json</code>을 쓰지 않고 exit 1로 끝납니다. 예전처럼 빈 배열을 저장하면 "텍스트 0개"로 보여서,
+    이후 단계와 main_v2의 전역 CV 캐시가 일시적인 실패를 성공으로 굳혀 버립니다. 연결 오류 메시지에 섞인 API 키는 <code>***</code>로 가립니다.
   </div>
 
   <hr class="sep">
@@ -878,7 +892,7 @@ python3 run_pipeline.py \
   (<code>gemini-*</code> → Gemini, <code>gpt-*</code> → OpenAI Responses API).</p>
   <ul>
     <li>CLI: <code>run_pipeline.py --ocr-model gpt-5.6-terra</code></li>
-    <li>편집기 API: <code>POST /api/run-final</code>의 <code>ocr_model</code> 필드. 선택지는 <code>GET /api/ocr-models</code></li>
+    <li>편집기: OCR 탭의 모델 선택 상자. 고른 값은 <code>POST /api/run-final(-stream)</code>의 <code>ocr_model</code> 필드로 전달되고, 서버 기본값과 같으면 <code>null</code>을 보내 <code>--model</code>을 생략합니다. 선택지는 <code>GET /api/ocr-models</code></li>
     <li>미지정 시 <code>MODEL_NAME</code> 기본값(<code>gemini-3-flash-preview</code>)을 사용합니다</li>
   </ul>
   <p>모델별 품질 비교와 기본값 결정 근거는 <code>docs/OCR_MODEL_COMPARISON.md</code>에 있습니다.</p>
@@ -1073,6 +1087,8 @@ python3 run_pipeline.py \
       <div class="sub-step-body">
         <strong>DP 줄바꿈 (wrap_tokens)</strong>
         <p>전체 토큰을 라인별로 쪼개는 최적 분할을 DP로 찾습니다. 라인별 weighted length 편차를 최소화하고, 단독으로 서면 어색한 어절("이", "안", "수는 " 등)에 큰 패널티를 부여합니다.</p>
+        <p>줄 후보의 폭은 같은 시작 토큰에서 한 토큰씩 늘려 가며 잽니다. 폭이 한도를 넘으면 토큰을 더 붙인 후보는 더 넓어지므로 거기서 멈춥니다. 줄바꿈 기준은 그대로 두고 측정 횟수만 줄이는 최적화입니다.</p>
+        <p><strong>토큰화 (tokenize)</strong>: 단일 dash(<code>-</code>, <code>—</code>, <code>―</code>)도 토큰으로 남깁니다. 공백 없이 붙은 dash는 앞 토큰에 붙여서, 줄 끝 dash가 단어와 다른 줄로 떨어지지 않게 합니다.</p>
         <p><strong>66% 줄 채움률 강제 보정</strong>: target_lines ≥ 3인데 실제 줄 수 / target &lt; 0.66이면 폰트 상한을 70%로 낮춰 재시도해 버블을 더 꽉 채웁니다.</p>
       </div>
     </div>
@@ -1103,15 +1119,22 @@ python3 run_pipeline.py \
     <tr><td><code>serif_emphasis</code></td><td><code>a트랙터.ttf</code> (serif 강조체)</td></tr>
   </table>
 
+  <h4>dash 선과 점 run 그리기</h4>
+  <p>대사 앞이나 뒤에 붙은 dash run(단일 <code>-</code> 포함)은 글리프 대신 최소 0.9em 길이의 가로선으로 그립니다.
+  <code>text_size()</code>도 같은 규칙(<code>horizontal_rule_width()</code>, <code>decorative_line_text_width()</code>)으로 폭을 재기 때문에, 줄바꿈 판단에 쓴 폭과 실제로 그려진 폭이 어긋나지 않습니다.</p>
+  <p>글자와 섞인 점 run(<code>･･･</code>, <code>・・</code>, <code>..</code>)은 가로쓰기에서도 항상 <code>…</code>로 바꿔 그립니다(점 3개마다 <code>…</code> 1개, 남는 점은 올림).
+  Freesentation 폰트에는 U+FF65·U+30FB 글리프가 없어서 그대로 그리면 점이 보이지 않기 때문입니다. 점만 있는 텍스트나 세로쓰기 줄 끝 점 run은 기존처럼 합성 점으로 직접 그립니다.</p>
+
   <h4>unboxed 렌더링 및 원본 보존</h4>
   <p>unboxed 영역은 배경 alpha에 따라 구분합니다. LaMa 적용 unboxed는 50%, bbox_fallback unboxed는 50%, dark_background/dark_flood는 <code>UNBOXED_DARK_BG_ALPHA=230</code> (약 90%) 불투명 검은 배경 + 흰 글씨. bubble은 50% alpha.</p>
   <p><strong>원본 보존 처리</strong>: 다음 케이스는 번역 렌더링을 건너뛰고 원본 이미지 픽셀을 복원합니다.
-  (<code>_should_preserve_original_cluster()</code>의 3가지 판정 조건)</p>
+  (<code>_should_preserve_original_cluster()</code>의 판정 조건)</p>
   <ul>
-    <li>짧은 unboxed 라벨 (5자 이하 일본어, 작은 bbox)</li>
-    <li>단독 U region 효과음/noise (bbox_fallback, 짧은 가나)</li>
+    <li>cluster에 <code>preserve_original: true</code>가 지정된 경우</li>
     <li>bubble이라도 원문/번역이 동일한 영문·기호만으로 이뤄진 텍스트 (타이틀 등)</li>
+    <li>dark flood 검증에 실패한 뒤 edge rescue로 잡힌 컬러 라벨 bubble</li>
   </ul>
+  <p>unboxed 보존 판정(<code>_should_preserve_original_unboxed_cluster()</code>)은 현재 항상 False라서, 짧은 unboxed 라벨이나 단독 U region 효과음도 번역 렌더 대상입니다. 이전의 단독 U region 효과음 판정 함수는 호출되지 않아 제거됐습니다.</p>
   <p><strong>미번역 region 복원</strong>: <code>restore_untranslated_regions()</code>으로 integrated.json에서 누락된 region을 원본 이미지로 복원해 마스킹 흰 박스가 남지 않도록 합니다.</p>
 
   <h4>기타 주요 헬퍼 함수 (render_text_overlay.py)</h4>

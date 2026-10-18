@@ -1,7 +1,7 @@
 <!-- 에이전트 공용 작업 폴더 규칙 문서 -->
 # Agent Workspace Rules
 
-> 마지막 확인: 2026-08-14. `run_pipeline.py`에 `--ocr-model`이 추가됐으나 폴더 규칙에는 영향이 없다.
+> 마지막 확인: 2026-10-06. `pytest.ini` 추가에 따라 테스트 위치 규칙을 덧붙였다. 같은 날 바뀐 `pipeline_runner`의 subprocess 실행 방식은 폴더 규칙에 영향이 없다.
 
 
 이 문서는 Codex, Claude 등 에이전트가 공통으로 따라야 하는 작업 폴더 규칙을 정의한다.
@@ -77,6 +77,7 @@ output_dir/{name}_final.jpg
 
 검증 보조 스크립트는 `proof/src/`에 둔다.
 메인 파이프라인으로 승격된 흐름은 `run_pipeline.py`를 우선 사용한다.
+pytest 테스트는 `tests/`에 둔다. `pytest.ini`가 `testpaths = tests`로 고정돼 있어 `proof/`, `archive/` 아래의 `test_*.py`는 그냥 `pytest`를 실행해도 수집되지 않는다.
 
 보존 대상은 다음 소스 스크립트다.
 
