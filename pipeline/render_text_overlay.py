@@ -533,6 +533,8 @@ def load_font(font_path: Path, font_size: int, font_weight: int | None = None) -
         font.set_variation_by_axes(values)
     except Exception:
         return font
+    # 측정 캐시는 (path, size)의 기본 weight 인스턴스로 재므로, weight를 적용한 폰트는 캐시에서 빼도록 표시한다.
+    font._overlay_variation_weight = weight
     return font
 
 
@@ -637,7 +639,8 @@ def token_weight(token: str) -> float:
 def tokenize(text: str) -> list[str]:
     text = re.sub(r"\s+", " ", text.strip())
     # 닫힌 따옴표/괄호 類(」』)）)를 별도 그룹으로 분리 → 앞 토큰에 suffix로 합침
-    pattern = r"\s+|[—―-]{2,}|\.{2,}[?!?]*|…+[?!?]*|[!?]+|[.,。．、，·]+|[」』)）]+|[^\s.…!?.,。．、，·」』)）—―-]+"
+    # 단일 dash도 별도 그룹으로 잡아야 findall에서 누락되지 않는다.
+    pattern = r"\s+|[—―-]{2,}|\.{2,}[?!?]*|…+[?!?]*|[!?]+|[.,。．、，·]+|[」』)）]+|[—―-]|[^\s.…!?.,。．、，·」』)）—―-]+"
     raw_tokens = re.findall(pattern, text.strip())
     if not raw_tokens:
         return [text.strip()] if text.strip() else []
@@ -651,6 +654,10 @@ def tokenize(text: str) -> list[str]:
         if re.fullmatch(r"[.,!?。．、，·…」』)）]+", token) and tokens:
             tokens[-1] = tokens[-1].rstrip() + token
             pending_space = False
+            continue
+        # 공백 없이 붙은 단일 dash는 앞 토큰에 붙여 줄 끝 dash가 단어와 같은 줄에 남게 한다.
+        if token in {"-", "—", "―"} and tokens and not pending_space:
+            tokens[-1] += token
             continue
         if pending_space and token[0] not in set(".,!?…。．、，·」』)）") and tokens:
             tokens.append(" " + token)
@@ -817,14 +824,6 @@ def is_vertical_rotated_glyph(text: str) -> bool:
     return text.strip() in VERTICAL_ROTATED_GLYPHS
 
 
-def has_synthetic_vertical_dot(text: str) -> bool:
-    return any(ch in VERTICAL_DOT_CHARS for ch in str(text or ""))
-
-
-def has_non_dot_text(text: str) -> bool:
-    return any((not ch.isspace()) and ch not in VERTICAL_DOT_CHARS for ch in str(text or ""))
-
-
 def normalize_inline_dot_ellipsis(text: str) -> str:
     """글자와 섞인 halfwidth 점 run은 폰트 baseline을 타는 말줄임표로 바꾼다."""
     def replace(match: re.Match) -> str:
@@ -977,6 +976,9 @@ def draw_synthetic_vertical_ellipsis(
 
 
 def font_cache_key(font: ImageFont.FreeTypeFont) -> tuple[str, int] | None:
+    # variable weight를 적용한 폰트는 (path, size) 캐시로 재면 기본 weight로 측정되므로 캐시하지 않는다.
+    if getattr(font, "_overlay_variation_weight", None) is not None:
+        return None
     path = getattr(font, "path", None)
     size = getattr(font, "size", None)
     if not path or not size:
@@ -1080,15 +1082,21 @@ def text_size(
         return rotated_vertical_glyph_size(draw, font, text)
     if has_dot_ellipsis_run(text):
         text = normalize_inline_dot_ellipsis(text)
+    # 앞/뒤 dash run은 draw_tracked_text가 최소 0.9em 선으로 그리므로 폭도 같은 방식으로 잰다.
+    decorative_width = decorative_line_text_width(draw, font, text, vertical_dot_run=vertical_dot_run)
     if vertical_dot_run and any(is_synthetic_vertical_ellipsis(ch) for ch in text):
         tracking = tracking_for_font(font)
         widths = [text_size(draw, font, ch, vertical_dot_run=vertical_dot_run)[0] for ch in text]
         heights = [text_size(draw, font, ch, vertical_dot_run=vertical_dot_run)[1] for ch in text]
         width = sum(widths) + tracking * max(0, len(text) - 1)
+        if decorative_width is not None:
+            width = decorative_width
         return max(0, int(round(width))), max(heights, default=0)
     box = font_text_bbox(draw, font, text)
     tracking = tracking_for_font(font)
     width = box[2] - box[0] + tracking * max(0, len(text) - 1)
+    if decorative_width is not None:
+        width = decorative_width
     return max(0, int(round(width))), box[3] - box[1]
 
 
@@ -1295,11 +1303,16 @@ def layout_from_manual_lines_with_font_size(
     )
 
 
+@lru_cache(maxsize=256)
+def _font_tracking_base(font_path: str) -> int:
+    # 글자마다 불리므로 Path(...).stem 계산을 폰트 경로별로 한 번만 한다.
+    return _FONT_TRACKING.get(Path(font_path).stem, 0)  # 예: 'Freesentation-5Medium'
+
+
 def tracking_for_font(font: ImageFont.FreeTypeFont) -> int:
     """폰트 이름에서 stem을 추출해 tracking 오프셋(px) 반환."""
     try:
-        name = Path(font.path).stem  # 예: 'Freesentation-5Medium'
-        return _FONT_TRACKING.get(name, 0) + _GLOBAL_TRACKING_OFFSET
+        return _font_tracking_base(font.path) + _GLOBAL_TRACKING_OFFSET
     except Exception:
         return _GLOBAL_TRACKING_OFFSET
 
@@ -1415,16 +1428,15 @@ def draw_tracked_text(
             font=font,
         )
         return
-    if vertical_dot_run and has_dot_ellipsis_run(text):
+    # text_size와 같은 조건으로 점 run을 말줄임표로 바꾼다.
+    # Freesentation에는 U+FF65/U+30FB 글리프가 없어 그대로 그리면 점이 보이지 않는다.
+    if has_dot_ellipsis_run(text):
         text = normalize_inline_dot_ellipsis(text)
     tracking = tracking_for_font(font)
     leading_line = split_leading_horizontal_decorative_line(text)
     if leading_line:
         prefix, suffix = leading_line
-        prefix_w = max(
-            int(round(getattr(font, "size", MIN_FIT_FONT_SIZE) * 0.9)),
-            text_size(draw, font, prefix)[0],
-        )
+        prefix_w = horizontal_rule_width(draw, font, prefix)
         line_width = max(2, int(round(getattr(font, "size", MIN_FIT_FONT_SIZE) * 0.08)))
         mid_y = int(round(y + getattr(font, "size", MIN_FIT_FONT_SIZE) * 0.55))
         draw.line((int(round(x)), mid_y, int(round(x + prefix_w)), mid_y), fill=fill, width=line_width)
@@ -1438,10 +1450,7 @@ def draw_tracked_text(
         if prefix:
             draw_tracked_text(draw, (x, y), prefix, font, fill, stroke_width, stroke_fill, vertical_dot_run=vertical_dot_run)
             x += text_size(draw, font, prefix, vertical_dot_run=vertical_dot_run)[0] + max(tracking, 0)
-        suffix_w = max(
-            int(round(getattr(font, "size", MIN_FIT_FONT_SIZE) * 0.9)),
-            text_size(draw, font, suffix)[0],
-        )
+        suffix_w = horizontal_rule_width(draw, font, suffix)
         line_width = max(2, int(round(getattr(font, "size", MIN_FIT_FONT_SIZE) * 0.08)))
         mid_y = int(round(y + getattr(font, "size", MIN_FIT_FONT_SIZE) * 0.55))
         draw.line((int(round(x)), mid_y, int(round(x + suffix_w)), mid_y), fill=fill, width=line_width)
@@ -1542,6 +1551,38 @@ def split_leading_horizontal_decorative_line(text: str) -> tuple[str, str] | Non
     if len(head) < 1:
         return None
     return "".join(head), suffix
+
+
+def horizontal_rule_width(draw: ImageDraw.ImageDraw, font: ImageFont.FreeTypeFont, dash_run: str) -> int:
+    """앞/뒤 dash run을 가로 선으로 그릴 때의 폭. 최소 0.9em을 보장한다."""
+    box = font_text_bbox(draw, font, dash_run)
+    glyph_w = max(0, int(round(box[2] - box[0] + tracking_for_font(font) * max(0, len(dash_run) - 1))))
+    return max(int(round(getattr(font, "size", MIN_FIT_FONT_SIZE) * 0.9)), glyph_w)
+
+
+def decorative_line_text_width(
+    draw: ImageDraw.ImageDraw,
+    font: ImageFont.FreeTypeFont,
+    text: str,
+    vertical_dot_run: bool = True,
+) -> int | None:
+    """draw_tracked_text의 앞/뒤 dash 선 분기와 같은 방식으로 그려지는 폭을 잰다. 해당 없으면 None."""
+    tracking = tracking_for_font(font)
+    leading_line = split_leading_horizontal_decorative_line(text)
+    if leading_line:
+        prefix, suffix = leading_line
+        width = horizontal_rule_width(draw, font, prefix)
+        if suffix:
+            width += max(tracking, 0) + text_size(draw, font, suffix, vertical_dot_run=vertical_dot_run)[0]
+        return width
+    trailing_line = split_trailing_horizontal_decorative_line(text)
+    if trailing_line:
+        prefix, suffix = trailing_line
+        width = 0
+        if prefix:
+            width += text_size(draw, font, prefix, vertical_dot_run=vertical_dot_run)[0] + max(tracking, 0)
+        return width + horizontal_rule_width(draw, font, suffix)
+    return None
 
 
 def decorative_line_kind(lines: list[str]) -> str | None:
@@ -2009,8 +2050,10 @@ def wrap_tokens(
             line = join_tokens(tokens[i:j])
             # 가로 줄바꿈 판단은 실제 가로 렌더 폭으로 측정한다(세로 점 run 측정 금지).
             width, _ = text_size(draw, font, line, vertical_dot_run=False)
-            if width <= line_limit:
-                line_cache[(i, j)] = (line, width)
+            if width > line_limit:
+                # 같은 시작점에서 토큰을 더 붙인 줄은 더 넓어지므로 더 볼 필요가 없다.
+                break
+            line_cache[(i, j)] = (line, width)
 
     if not line_cache:
         return None
@@ -2771,6 +2814,44 @@ def draw_text_block(
     text_align: str = "center",
 ) -> tuple[np.ndarray, Layout]:
     pil = Image.fromarray(cv2.cvtColor(image, cv2.COLOR_BGR2RGB))
+    pil, layout = draw_text_block_pil(
+        pil,
+        text,
+        bbox,
+        font_path,
+        layout=layout,
+        edge_anchor=edge_anchor,
+        is_unboxed=is_unboxed,
+        bg_alpha=bg_alpha,
+        text_fill=text_fill,
+        bg_color=bg_color,
+        text_stroke_width=text_stroke_width,
+        text_stroke_fill=text_stroke_fill,
+        rotation_deg=rotation_deg,
+        font_weight=font_weight,
+        text_align=text_align,
+    )
+    return cv2.cvtColor(np.array(pil), cv2.COLOR_RGB2BGR), layout
+
+
+def draw_text_block_pil(
+    pil: Image.Image,
+    text: str,
+    bbox: list[int],
+    font_path: Path,
+    layout: Layout | None = None,
+    edge_anchor: dict | None = None,
+    is_unboxed: bool = False,
+    bg_alpha: int = 128,
+    text_fill: tuple[int, int, int] = (0, 0, 0),
+    bg_color: tuple[int, int, int] = (255, 255, 255),
+    text_stroke_width: int = 0,
+    text_stroke_fill: tuple[int, int, int] | None = None,
+    rotation_deg: float = 0.0,
+    font_weight: int | None = None,
+    text_align: str = "center",
+) -> tuple[Image.Image, Layout]:
+    """draw_text_block의 PIL(RGB) 버전. 페이지를 블록마다 numpy↔PIL로 바꾸지 않도록 PIL 이미지를 그대로 넘긴다."""
     draw = ImageDraw.Draw(pil)
     img_w, img_h = pil.size
     if layout is None:
@@ -2833,7 +2914,7 @@ def draw_text_block(
             cy = float(bbox[1]) + float(bbox[3]) / 2.0
             rotated = render_layer.rotate(-rotation_deg, resample=Image.Resampling.BICUBIC, center=(cx, cy))
             pil = Image.alpha_composite(base_rgba, rotated).convert("RGB")
-        return cv2.cvtColor(np.array(pil), cv2.COLOR_RGB2BGR), layout
+        return pil, layout
 
     offsets = (
         vertical_line_offsets(layout.lines, layout.line_height, layout.font_size)
@@ -2909,7 +2990,7 @@ def draw_text_block(
         rotated = render_layer.rotate(-rotation_deg, resample=Image.Resampling.BICUBIC, center=(cx, cy))
         pil = Image.alpha_composite(base_rgba, rotated).convert("RGB")
 
-    return cv2.cvtColor(np.array(pil), cv2.COLOR_RGB2BGR), layout
+    return pil, layout
 
 
 def cluster_line_count(cluster: dict) -> int:
@@ -3468,41 +3549,6 @@ def overlay_rect_from_split_regions(
     return union, "split_flood_region_union"
 
 
-def anchor_union_rect(matched_anchor_ids: list[int], flood_info_by_anchor: dict[int, dict]) -> list[int] | None:
-    rects = []
-    for anchor_id in matched_anchor_ids:
-        rect = flood_info_by_anchor.get(anchor_id, {}).get("anchor_bbox")
-        if rect and len(rect) == 4:
-            rects.append([int(v) for v in rect])
-    if not rects:
-        return None
-    xs = [r[0] for r in rects]
-    ys = [r[1] for r in rects]
-    x2s = [r[0] + r[2] for r in rects]
-    y2s = [r[1] + r[3] for r in rects]
-    min_x, min_y = min(xs), min(ys)
-    return [min_x, min_y, max(x2s) - min_x, max(y2s) - min_y]
-
-
-def narrow_wide_split_rect(split_rect: list[int], anchor_rect: list[int] | None) -> list[int] | None:
-    if not anchor_rect:
-        return None
-    fx, fy, fw, fh = [int(v) for v in split_rect]
-    ax, ay, aw, ah = [int(v) for v in anchor_rect]
-    if fw <= 0 or fh <= 0 or aw <= 0 or ah <= 0:
-        return None
-    if fw < aw * 2.2 or fh > ah * 1.55:
-        return None
-    if fh / max(fw, 1) > 0.85:
-        return None
-
-    target_w = int(round(min(fw, max(aw * 2.2, fh * 1.05))))
-    anchor_cx = ax + aw / 2
-    nx = int(round(anchor_cx - target_w / 2))
-    nx = int(clamp(nx, fx, fx + fw - target_w))
-    return [nx, fy, target_w, fh]
-
-
 def edge_split_tg_anchored_rect(cluster: dict, flood_info: dict) -> list[int] | None:
     """방사형 누수로 split child가 길게 잡힌 edge rescue는 TG 주변으로 overlay rect를 당긴다."""
     if not flood_info.get("is_valid") or flood_info.get("region_type_guess") != "bubble":
@@ -3625,8 +3671,9 @@ def shared_group_is_spatially_separated(
     bx, by, bw, bh = [int(v) for v in bubble_rect]
     bubble_aspect = bh / max(bw, 1)
     round_score = _parse_round_score(info.get("quality_flags", []))
-    cx = info.get("mask_centroid", [sx + sw / 2, sy + sh / 2])[0]
-    cy = info.get("mask_centroid", [sx + sw / 2, sy + sh / 2])[1]
+    # mask_centroid 키가 None으로 들어 있어도 safe rect 중심으로 대체한다.
+    centroid = info.get("mask_centroid") or [sx + sw / 2, sy + sh / 2]
+    cx, cy = centroid[0], centroid[1]
 
     centers = [(r[0] + r[2] / 2, r[1] + r[3] / 2) for r in text_rects]
     min_x = min(x for x, _ in centers)
@@ -4452,39 +4499,6 @@ def _is_likely_unboxed_dialogue_text(cluster: dict, source_text: str, rect: list
     )
 
 
-def _is_standalone_unboxed_efx_noise_cluster(cluster: dict) -> bool:
-    """단독 U region 효과음/noise는 번역 렌더 대신 원본을 보존한다."""
-    if cluster.get("location") != "unboxed":
-        return False
-    if cluster.get("source_method") != "bbox_fallback":
-        return False
-    if len(cluster.get("matched_cluster") or []) != 1:
-        return False
-
-    details = cluster.get("matched_cluster_details") or []
-    if len(details) != 1:
-        return False
-
-    source_text = re.sub(r"\s+", "", str(details[0].get("text", "")))
-    if not 1 <= len(source_text) <= 5:
-        return False
-    jp = sum(1 for ch in source_text if "぀" <= ch <= "ヿ" or "一" <= ch <= "鿿")
-    if jp == 0:
-        return False
-
-    lines = details[0].get("lines") or []
-    if len(lines) != 1:
-        return False
-
-    rect = details[0].get("bounding_rect") or lines[0].get("bbox")
-    if not rect or len(rect) != 4:
-        return False
-    if _is_likely_unboxed_dialogue_text(cluster, source_text, rect):
-        return False
-    _x, _y, w, h = [int(v) for v in rect[:4]]
-    return w > 0 and h > 0
-
-
 def _should_preserve_original_unboxed_cluster(cluster: dict) -> bool:
     """원본 보존으로 처리할 unboxed 클러스터인지 판단한다."""
     return False
@@ -4496,10 +4510,6 @@ def _compact_letters_and_digits(text: str) -> str:
 
 def _has_japanese_or_korean(text: str) -> bool:
     return bool(re.search(r"[가-힣ぁ-ゟァ-ヿ一-鿿]", text or ""))
-
-
-def _has_korean(text: str) -> bool:
-    return bool(re.search(r"[가-힣]", text or ""))
 
 
 def _is_symbol_english_text(text: str) -> bool:
@@ -4648,6 +4658,8 @@ def apply_text_overlay(
     rendered_count = 0
     preserved_original_count = 0
     overlay_overrides = overlay_region_overrides(overlay_guidance or {})
+    # 텍스트 블록은 PIL(RGB) 페이지 하나에 이어서 그린다. numpy(BGR)가 필요한 원본 복원 때만 되돌린다.
+    page_pil: Image.Image | None = None
     for cluster, text, bbox, bbox_source, layout, _src_lc, cluster_font_path, _is_split_rect, _split_order, *_ in prepared:
         override = overlay_override_for_cluster(cluster, flood_info, overlay_overrides)
         if (
@@ -4656,6 +4668,9 @@ def apply_text_overlay(
         ):
             restore_rect = restore_rect_for_preserved_cluster(cluster, bbox)
             if original_image is not None and len(restore_rect) == 4:
+                if page_pil is not None:
+                    image = cv2.cvtColor(np.array(page_pil), cv2.COLOR_RGB2BGR)
+                    page_pil = None
                 image = restore_original_pixels(image, original_image, restore_rect)
                 preserved_original_count += 1
             continue
@@ -4688,8 +4703,10 @@ def apply_text_overlay(
         rotation_deg = overlay_override_rotation_deg(override)
         font_weight = overlay_override_font_weight(override)
         text_align = overlay_override_text_align(override)
-        image, layout = draw_text_block(
-            image, text, bbox, cluster_font_path, layout=layout,
+        if page_pil is None:
+            page_pil = Image.fromarray(cv2.cvtColor(image, cv2.COLOR_BGR2RGB))
+        page_pil, layout = draw_text_block_pil(
+            page_pil, text, bbox, cluster_font_path, layout=layout,
             is_unboxed=is_unboxed, bg_alpha=bg_alpha, text_fill=text_fill, bg_color=bg_color,
             text_stroke_width=text_stroke_width, text_stroke_fill=text_stroke_fill,
             rotation_deg=rotation_deg,
@@ -4697,6 +4714,8 @@ def apply_text_overlay(
             text_align=text_align,
         )
         rendered_count += 1
+    if page_pil is not None:
+        image = cv2.cvtColor(np.array(page_pil), cv2.COLOR_RGB2BGR)
 
     cv2.imwrite(str(output_path), image)
     if restored_untranslated:

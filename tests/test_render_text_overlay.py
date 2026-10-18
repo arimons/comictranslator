@@ -18,6 +18,8 @@ from pipeline.render_text_overlay import (
     chunk_korean_text,
     decorative_line_kind,
     draw_text_block,
+    draw_tracked_text,
+    join_tokens,
     edge_split_tg_anchored_rect,
     expand_vertical_ellipsis_to_periods,
     explode_long_tokens,
@@ -729,6 +731,26 @@ class RenderTextOverlayTest(unittest.TestCase):
 
     def test_dash_run_is_breakable_token(self) -> None:
         self.assertEqual(tokenize("구해――"), ["구해", "――"])
+
+    def test_single_dash_is_kept_and_attached_to_previous_word(self) -> None:
+        self.assertEqual(tokenize("그-그게 아니라"), ["그-", "그게", " 아니라"])
+        self.assertEqual(tokenize("A - B"), ["A", " -", " B"])
+        for text in ["몇 시간 뒤―", "150-8510", "해롤드 님-", "-아"]:
+            self.assertEqual(join_tokens(tokenize(text)), text)
+
+    def test_text_size_matches_drawn_width_of_edge_dash_rule(self) -> None:
+        if not Path(FONT_PATH).exists():
+            self.skipTest(f"font not found: {FONT_PATH}")
+
+        font = load_font(Path(FONT_PATH), 40)
+        for text in ["그-", "-아", "몇 시간 뒤—"]:
+            image = Image.new("L", (600, 100), 0)
+            draw = ImageDraw.Draw(image)
+            draw_tracked_text(draw, (50, 20), text, font, 255, vertical_dot_run=False)
+            cols = np.where((np.array(image) > 0).any(axis=0))[0]
+            drawn_width = int(cols.max() + 1 - cols.min())
+            measured_width = text_size(draw, font, text, vertical_dot_run=False)[0]
+            self.assertLessEqual(abs(drawn_width - measured_width), 2, text)
 
     def test_vertical_dash_run_collapses_to_single_bar(self) -> None:
         if not Path(FONT_PATH).exists():

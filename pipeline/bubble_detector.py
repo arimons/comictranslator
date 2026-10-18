@@ -371,15 +371,13 @@ def _profile_step_signal(mask: np.ndarray, axis: str) -> Dict[str, float]:
     spans = np.zeros(scan_len, dtype=np.float32)
     centers = np.full(scan_len, np.nan, dtype=np.float32)
 
-    for idx in range(scan_len):
-        line = binary[idx, :] if axis == "vertical" else binary[:, idx]
-        filled = np.where(line > 0)[0]
-        if len(filled) == 0:
-            continue
-        left = int(filled.min())
-        right = int(filled.max())
-        spans[idx] = float(right - left + 1)
-        centers[idx] = float((left + right) / 2.0)
+    # scan line별 첫/마지막 채움 위치를 한 번에 구한다(빈 line은 span 0, center NaN 유지).
+    lines = binary if axis == "vertical" else binary.T
+    has_fill = lines.any(axis=1)
+    left = lines.argmax(axis=1)
+    right = lines.shape[1] - 1 - lines[:, ::-1].argmax(axis=1)
+    spans[has_fill] = (right - left + 1)[has_fill]
+    centers[has_fill] = ((left + right) / 2.0)[has_fill]
 
     valid = np.where(spans > 0)[0]
     if len(valid) < 24:
@@ -699,13 +697,24 @@ def _max_false_gap_fraction(hit_flags: List[bool]) -> float:
     return min(best, n) / max(1, n)
 
 
+def _black_contour_binary(gray: np.ndarray) -> np.ndarray:
+    """black contour probe가 ray hit 판정에 쓰는 페이지 단위 검은 선 mask."""
+    blurred = cv2.GaussianBlur(gray, (3, 3), 0)
+    black = np.where(blurred < 145, 255, 0).astype(np.uint8)
+    return cv2.dilate(black, np.ones((3, 3), dtype=np.uint8), iterations=1)
+
+
 def _black_contour_probe(
     gray: np.ndarray,
     rect: List[int],
     mask: Optional[np.ndarray] = None,
     ray_count: int = 72,
+    black: Optional[np.ndarray] = None,
 ) -> Dict[str, Any]:
-    """후보 중심에서 방사형으로 검은 외곽선 hit의 폐곡선성을 추정한다."""
+    """후보 중심에서 방사형으로 검은 외곽선 hit의 폐곡선성을 추정한다.
+
+    black: 같은 gray로 미리 만든 _black_contour_binary 결과. 없으면 여기서 계산한다.
+    """
     x, y, w, h = _unpack_rect(rect)
     img_h, img_w = gray.shape[:2]
     if w <= 0 or h <= 0 or ray_count <= 0:
@@ -721,9 +730,8 @@ def _black_contour_probe(
     cx, cy = _mask_or_rect_centroid(mask, rect)
     cx = int(np.clip(cx, 0, img_w - 1))
     cy = int(np.clip(cy, 0, img_h - 1))
-    blurred = cv2.GaussianBlur(gray, (3, 3), 0)
-    black = np.where(blurred < 145, 255, 0).astype(np.uint8)
-    black = cv2.dilate(black, np.ones((3, 3), dtype=np.uint8), iterations=1)
+    if black is None:
+        black = _black_contour_binary(gray)
 
     hit_flags: List[bool] = []
     hit_ratios: List[float] = []
@@ -1037,6 +1045,8 @@ def _split_single_tg_bubble(
     candidates = result.get("candidates", [])
     best = None
     best_score = -1.0
+    # mask 무게중심은 후보와 무관하므로 처음 필요할 때 한 번만 구한다. (None: 아직 안 구함, (): 빈 mask)
+    mask_centroid: Optional[Tuple[int, ...]] = None
 
     for c in candidates:
         if not c.get("bboxes_clear", True):
@@ -1078,11 +1088,12 @@ def _split_single_tg_bubble(
                 continue
 
         # centroid 근접도 기반 점수
-        h, w = mask.shape[:2]
-        ys, xs = np.where(mask > 0)
-        if len(xs) == 0:
+        if mask_centroid is None:
+            ys, xs = np.where(mask > 0)
+            mask_centroid = (int(xs.mean()), int(ys.mean())) if len(xs) else ()
+        if not mask_centroid:
             continue
-        cx_r, cy_r = int(xs.mean()), int(ys.mean())
+        cx_r, cy_r = mask_centroid
         dist_centroid = abs((-dy) * (cx_r - p1[0]) + dx * (cy_r - p1[1])) / dist
         centroid_score = 1.0 / (1.0 + dist_centroid / 50.0)
         score = sum(depths) * 0.01 + c.get("area_balance", 0) * 0.5 + centroid_score * 0.5
@@ -1686,6 +1697,14 @@ def build_ocr_region_sheet(
     skipped: List[Dict[str, Any]] = []
     noise_like_anchors: List[Dict[str, Any]] = []
 
+    # black contour probe용 페이지 mask는 이 호출 안에서 한 번만 만든다(호출 간 공유 없음).
+    page_black_contour: List[np.ndarray] = []
+
+    def _page_black_contour() -> np.ndarray:
+        if not page_black_contour:
+            page_black_contour.append(_black_contour_binary(gray))
+        return page_black_contour[0]
+
     def _extract_quality_float(flags: List[str], name: str) -> Optional[float]:
         prefix = f"{name}="
         for flag in flags:
@@ -1788,7 +1807,7 @@ def build_ocr_region_sheet(
             and raw_round < 0.06
             and edge_ratio < 2.5
         ):
-            contour_probe = _black_contour_probe(gray, rescue_rect, rescue.get("mask"))
+            contour_probe = _black_contour_probe(gray, rescue_rect, rescue.get("mask"), black=_page_black_contour())
             weak_evidence_count = sum([
                 contour_probe.get("status") != "closed",
                 boundary_sides < 4,
@@ -2307,6 +2326,7 @@ def build_ocr_region_sheet(
                     gray,
                     list(candidate_rect[:4]),
                     filled_mask,
+                    black=_page_black_contour(),
                 )
                 closed_boundary_like = (
                     closed_contour_probe.get("status") == "closed"
@@ -2451,7 +2471,8 @@ def build_ocr_region_sheet(
             "bubble_page_ratio": round(float(bubble_page_ratio), 5),
             "bubble_tg_ratio": round(float(bubble_tg_ratio), 2),
             "touches_border": touches_border,
-            "quality_flags": quality_flags
+            # 이후 grouped region에 붙는 flag가 진단 기록으로 새지 않도록 복사본을 둔다.
+            "quality_flags": list(quality_flags)
         })
 
         fail_tag = "failed"
@@ -2480,7 +2501,7 @@ def build_ocr_region_sheet(
                 "reason": "failed_candidate",
                 "method": method,
                 "region_type": region_type,
-                "quality_flags": quality_flags
+                "quality_flags": list(quality_flags)
             })
             # fallback to bbox crop for OCR
             rect_key = [int(v) for v in bubble_rect[:4]]
@@ -3062,7 +3083,8 @@ def build_ocr_region_sheet(
                         br[2] + _RESCUE_PROXIMITY_PAD * 2,
                         br[3] + _RESCUE_PROXIMITY_PAD * 2,
                     ]
-                    ri["quality_flags"].append(f"rescue_proximity_merged:A{aid2}")
+                    # 병합을 일으킨 rj의 anchor를 기록한다(aid2는 위 루프의 마지막 값이라 다를 수 있다).
+                    ri["quality_flags"].append(f"rescue_proximity_merged:A{aid}")
                     _merged_into[kj] = ki
                     break
     # 병합된 region 제거
@@ -3117,6 +3139,7 @@ def build_ocr_region_sheet(
             gray,
             [int(v) for v in region.get("bubble_rect", [0, 0, 0, 0])[:4]],
             region.get("mask"),
+            black=_page_black_contour(),
         )
         region["black_contour_probe"] = probe
         region.setdefault("quality_flags", []).append(

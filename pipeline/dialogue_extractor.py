@@ -3,15 +3,14 @@
 
 import cv2
 import json
+import threading
 import numpy as np
 from pathlib import Path
 from typing import Any, Dict, List, Tuple
 from PIL import Image
 
-try:
-    from simple_lama_inpainting import SimpleLama
-except ModuleNotFoundError:
-    SimpleLama = None
+# simple_lama_inpainting은 torch를 끌어온다. LaMa가 실제로 필요한 페이지에서만 import한다(_get_lama).
+SimpleLama: Any | None = None
 
 try:
     from pipeline.bubble_detector import build_ocr_region_sheet, _load_json, _is_dark_bg_text, _is_horizontal_text_group, _fill_mask_holes
@@ -55,6 +54,7 @@ except ImportError:
     from flood_split import collect_inflection_candidates, split_mask_by_erosion_components, split_mask_by_inflection_line
 
 _lama: Any | None = None
+_lama_lock = threading.Lock()
 
 
 def _compute_mask_centroid(mask: "np.ndarray | None") -> "list[int] | None":
@@ -498,17 +498,6 @@ def _wall_groups_touching_rect(
             continue
         local.extend(walls)
     return local
-
-
-def _group_touches_walls(group: Dict[str, Any], walls: List[Dict[str, Any]], pad: int = 36) -> bool:
-    group_rect = _group_rect(group)
-    if group_rect[2] <= 0 or group_rect[3] <= 0:
-        return False
-    for wall in walls:
-        points = _line_points(wall)
-        if points and _line_touches_rect(points[0], points[1], group_rect, pad=pad):
-            return True
-    return False
 
 
 def _manual_edge_barrier_regions(
@@ -1891,12 +1880,28 @@ def _invalidate_containing_bubbles(regions: List[Dict[str, Any]]) -> None:
             r["region_type_guess"] = "bbox_fallback"  # unboxed 경로로 재처리
 
 
-def _get_lama() -> Any:
+def _load_simple_lama_class() -> Any | None:
+    global SimpleLama
     if SimpleLama is None:
-        raise RuntimeError("simple_lama_inpainting is not installed. Install requirements.txt in .venv.")
+        try:
+            from simple_lama_inpainting import SimpleLama as simple_lama_class
+        except ModuleNotFoundError:
+            return None
+        SimpleLama = simple_lama_class
+    return SimpleLama
+
+
+def _get_lama() -> Any:
+    """LaMa 모델을 처음 필요할 때 한 번만 올린다. 여러 스레드가 동시에 불러도 한 번만 로드한다."""
     global _lama
-    if _lama is None:
-        _lama = SimpleLama()
+    if _lama is not None:
+        return _lama
+    with _lama_lock:
+        if _lama is None:
+            lama_class = _load_simple_lama_class()
+            if lama_class is None:
+                raise RuntimeError("simple_lama_inpainting is not installed. Install requirements.txt in .venv.")
+            _lama = lama_class()
     return _lama
 
 

@@ -7,10 +7,10 @@ import numpy as np
 
 try:
     from pipeline.bubble_text_filters import is_forbidden_text
-    from pipeline.geometry import as_rect, union_rect
+    from pipeline.geometry import as_rect
 except ImportError:
     from bubble_text_filters import is_forbidden_text
-    from geometry import as_rect, union_rect
+    from geometry import as_rect
 
 
 def text_group_id(group: dict[str, Any], fallback: int) -> int:
@@ -70,11 +70,6 @@ def is_large_single_sfx_like(group: dict[str, Any]) -> bool:
     return bool(line_texts) and all(1 <= len(text) <= 4 for text in line_texts)
 
 
-def is_single_char_text_group(group: dict[str, Any]) -> bool:
-    """단일 글자 TG는 unboxed inpaint 대상에서 제외한다."""
-    return text_group_stats(group)["chars"] <= 1
-
-
 def is_short_handwritten_label_like(group: dict[str, Any]) -> bool:
     """작고 짧은 단일 라인 TG는 손글씨/라벨로 보고 unboxed OCR에서 제외한다."""
     stats = text_group_stats(group)
@@ -85,12 +80,6 @@ def is_short_handwritten_label_like(group: dict[str, Any]) -> bool:
     if w <= 0 or h <= 0:
         return False
     return w * h <= 4500 and max(w, h) <= 120
-
-
-def merged_text_group(cluster: list[tuple[int, dict[str, Any]]]) -> dict[str, Any]:
-    """클러스터 전체 외접 bbox를 단일 lane_mask로 사용하기 위한 synthetic group."""
-    rects = [as_rect(group.get("tight_rect", group.get("bounding_rect", [0, 0, 0, 0]))) for _, group in cluster]
-    return {"tight_rect": union_rect(rects), "lines": [{"bbox": union_rect(rects), "fragments": []}]}
 
 
 def cluster_adjacent_text_groups(

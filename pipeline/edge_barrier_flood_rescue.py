@@ -138,12 +138,15 @@ def _rect_intersection_area(a: List[int], b: List[int]) -> int:
 
 
 def _mask_rect(mask: np.ndarray) -> List[int]:
-    ys, xs = np.where(mask > 0)
-    if len(xs) == 0:
+    """mask > 0 픽셀의 외접 rect [x, y, w, h]. 빈 mask는 [0, 0, 0, 0]."""
+    if mask.size == 0:
         return [0, 0, 0, 0]
-    x1, y1 = int(xs.min()), int(ys.min())
-    x2, y2 = int(xs.max()) + 1, int(ys.max()) + 1
-    return [x1, y1, x2 - x1, y2 - y1]
+    binary = mask if mask.dtype == np.uint8 else (mask > 0).astype(np.uint8)
+    points = cv2.findNonZero(binary)
+    if points is None:
+        return [0, 0, 0, 0]
+    x, y, w, h = cv2.boundingRect(points)
+    return [int(x), int(y), int(w), int(h)]
 
 
 def _mask_coverage(mask: np.ndarray, rect: List[int], pad: int = 0) -> float:
@@ -245,8 +248,11 @@ def _score_rescue(
     guard_mode: str = "none",
     guard_margin: int = 80,
     touches_clip: bool = False,
+    rect: Optional[List[int]] = None,
 ) -> Dict[str, float]:
-    rect = _mask_rect(mask)
+    # 호출자가 이미 구한 mask rect가 있으면 재사용한다.
+    if rect is None:
+        rect = _mask_rect(mask)
     mask_area = int(np.count_nonzero(mask))
     rect_area = max(1, _rect_area(rect))
     anchor_area = max(1, _rect_area(anchor_rect))
@@ -367,13 +373,6 @@ def _touches_rect_border(mask: np.ndarray, rect: List[int], tolerance: int = 2) 
         or np.any(roi[:, :tolerance] > 0)
         or np.any(roi[:, -tolerance:] > 0)
     )
-
-
-def _clip_to_rect(mask: np.ndarray, rect: List[int]) -> np.ndarray:
-    clipped = np.zeros_like(mask)
-    x, y, w, h = _as_rect(rect)
-    clipped[y:y + h, x:x + w] = mask[y:y + h, x:x + w]
-    return clipped
 
 
 def _seed_for_rect(image: np.ndarray, gray: np.ndarray, rect: List[int]) -> Optional[Point]:
@@ -584,6 +583,7 @@ def run_edge_barrier_rescue(
         inner = _connected_component_at_seed(inner, seed_local_pt, center_local)
 
         touches_clip = _touches_rect_border(inner, clip_local)
+        local_rescue_rect = _mask_rect(inner)
         score = _score_rescue(
             inner,
             anchor_local,
@@ -594,6 +594,7 @@ def run_edge_barrier_rescue(
             guard_mode=guard_mode,
             guard_margin=guard_margin,
             touches_clip=touches_clip,
+            rect=local_rescue_rect,
         )
         if manual_guided:
             ok = (
@@ -609,21 +610,14 @@ def run_edge_barrier_rescue(
             )
 
         # 로컬 rescue_rect를 full-image 좌표로 복원
-        local_rescue_rect = _mask_rect(inner)
         rescue_rect_full = [
             local_rescue_rect[0] + cx,
             local_rescue_rect[1] + cy,
             local_rescue_rect[2],
             local_rescue_rect[3],
         ]
-        # 마스크를 full-image 크기로 복원
-        full_mask = np.zeros((img_h, img_w), dtype=np.uint8)
-        if cw > 0 and ch > 0:
-            full_mask[cy:cy + ch, cx:cx + cw] = inner
-        full_edges = np.zeros((img_h, img_w), dtype=np.uint8)
-        if cw > 0 and ch > 0:
-            full_edges[cy:cy + ch, cx:cx + cw] = edges
 
+        # mask/edges는 ROI 로컬 배열로 들고 있다가, 최종 best만 full-image 크기로 복원한다.
         attempt = {
             "label": cfg["label"],
             "ok": ok,
@@ -634,8 +628,8 @@ def run_edge_barrier_rescue(
             "score": score,
             "touches_clip": touches_clip,
             "manual_guided": manual_guided,
-            "mask": full_mask,
-            "edges": full_edges,
+            "mask": inner,
+            "edges": edges,
         }
         attempts.append(attempt)
         if ok and (best is None or score["rank_score"] > best["score"]["rank_score"]):
@@ -646,6 +640,11 @@ def run_edge_barrier_rescue(
             attempts,
             key=lambda item: item["score"]["rank_score"],
         ) if attempts else None
+
+    def _to_full_image(local: np.ndarray) -> np.ndarray:
+        full = np.zeros((img_h, img_w), dtype=np.uint8)
+        full[cy:cy + ch, cx:cx + cw] = local
+        return full
 
     return {
         "success": bool(best and best["ok"]),
@@ -667,8 +666,8 @@ def run_edge_barrier_rescue(
             {k: v for k, v in attempt.items() if k not in {"mask", "edges"}}
             for attempt in attempts
         ],
-        "mask": best["mask"] if best else np.zeros(image.shape[:2], dtype=np.uint8),
-        "edges": best["edges"] if best else np.zeros(image.shape[:2], dtype=np.uint8),
+        "mask": _to_full_image(best["mask"]) if best else np.zeros(image.shape[:2], dtype=np.uint8),
+        "edges": _to_full_image(best["edges"]) if best else np.zeros(image.shape[:2], dtype=np.uint8),
     }
 
 

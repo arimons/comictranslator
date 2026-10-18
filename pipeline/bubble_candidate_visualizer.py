@@ -190,37 +190,6 @@ def _draw_overlay_clues(vis_img: np.ndarray, crops: List[Dict[str, Any]]) -> Non
             cv2.circle(vis_img, (cx, cy), 7, (255, 0, 0), -1, cv2.LINE_AA)
 
 
-def _label_for_region(region: Dict[str, Any]) -> str:
-    if region.get("method") == "dark_flood":
-        return "dark"
-    if _is_rescued_region(region):
-        return "RB"
-    if region.get("is_valid"):
-        return "bubble"
-    return str(region.get("fail_tag") or "fail")
-
-
-def _short_review_tags(region: Dict[str, Any]) -> List[str]:
-    tags = [str(tag) for tag in region.get("review_tags", [])]
-    mapping = {
-        "edge_no_safe_mask": "E:NO_SAFE",
-        "edge_rejected_low_solidity": "E:LOW_SOL",
-        "edge_rejected_simple_mid_round": "E:SIMPLE",
-        "edge_rejected_split_too_large": "E:BIG_SPLIT",
-        "edge_rejected_sfx_like": "E:SFX",
-        "edge_rejected_unboxed_like": "E:UNBOX",
-        "edge_rejected_narration_like": "E:NL",
-        "edge_rejected_low_anchor_coverage": "E:LOW_COV",
-        "contour_probe_closed_candidate": "BC:CLOSE",
-        "contour_probe_partial_candidate": "BC:PART",
-        "unboxed_text_candidate": "UT",
-        "image_gen_review_candidate": "GEN?",
-        "handwrite_or_sfx_candidate": "HW/SFX",
-    }
-    short = [mapping.get(tag, tag) for tag in tags]
-    return short[:4]
-
-
 def _is_rescued_region(region: Dict[str, Any]) -> bool:
     method = str(region.get("method", ""))
     return "edge_barrier" in method
@@ -240,37 +209,6 @@ def _is_edge_barrier_failed_region(region: Dict[str, Any]) -> bool:
         or "edge_reject_" in flags
         or "edge_" in tags
     )
-
-
-def _draw_label(vis_img: np.ndarray, item: Dict[str, Any], color: tuple[int, int, int]) -> None:
-    region = item["region"]
-    rect = region.get("bubble_rect")
-    if rect is None:
-        return
-
-    x, y, _, _ = _as_rect(rect)
-    text = f"R{item['region_id']}"
-    review_text = ""
-    font = cv2.FONT_HERSHEY_SIMPLEX
-    scale = 0.7
-    thick = 2
-    (tw, th), bl = cv2.getTextSize(text, font, scale, thick)
-    review_scale = 0.46
-    review_thick = 1
-    rtw = rth = rbl = 0
-    if review_text:
-        (rtw, rth), rbl = cv2.getTextSize(review_text, font, review_scale, review_thick)
-    tx = x
-    ty = max(th + 5, y - 10)
-    box_w = max(tw, rtw)
-    box_h = th + bl
-    if review_text:
-        box_h += rth + rbl + 5
-
-    cv2.rectangle(vis_img, (tx - 2, ty - th - 5), (tx + box_w + 2, ty - th - 5 + box_h + 7), LABEL_BG, -1)
-    cv2.putText(vis_img, text, (tx, ty), font, scale, color, thick, cv2.LINE_AA)
-    if review_text:
-        cv2.putText(vis_img, review_text, (tx, ty + rth + 7), font, review_scale, color, review_thick, cv2.LINE_AA)
 
 
 def _draw_legend(vis_img: np.ndarray) -> None:
