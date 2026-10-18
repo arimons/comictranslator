@@ -68,13 +68,6 @@ export const TOOL_CODE_HOTKEYS = {
   KeyX: "region-off",
 };
 
-export const PREVIEW_TABS = [
-  ["analysis", "Analysis", "bubble_vis_url"],
-  ["sheet", "OCR Sheet", "indexed_sheet_url"],
-  ["masked", "Masked", "masked_url"],
-  ["final", "Final", "final_url"],
-];
-
 export const WORKFLOW_TABS = [
   ["guidance", "말풍선 분석", "1"],
   ["ocr", "글자인식/번역", "2"],
@@ -179,19 +172,62 @@ export async function apiStream(path, options, onEvent) {
   const reader = res.body.getReader();
   const decoder = new TextDecoder();
   let buffer = "";
-  while (true) {
-    const { value, done } = await reader.read();
-    if (done) break;
-    buffer += decoder.decode(value, { stream: true });
-    const lines = buffer.split("\n");
-    buffer = lines.pop() || "";
-    for (const line of lines) {
-      if (!line.trim()) continue;
-      onEvent(JSON.parse(line));
+  let finished = false;
+  try {
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) {
+        finished = true;
+        break;
+      }
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split("\n");
+      buffer = lines.pop() || "";
+      for (const line of lines) {
+        if (!line.trim()) continue;
+        onEvent(JSON.parse(line));
+      }
     }
+    buffer += decoder.decode();
+    if (buffer.trim()) onEvent(JSON.parse(buffer));
+  } finally {
+    // onEvent가 throw해 중간에 빠져나오면 스트림 연결을 닫는다.
+    if (!finished) reader.cancel().catch(() => {});
   }
-  buffer += decoder.decode();
-  if (buffer.trim()) onEvent(JSON.parse(buffer));
+}
+
+// 세션별 OCR 설정(추가 프롬프트, 모델)을 localStorage에 보관한다. 접근 불가 환경에서는 조용히 무시한다.
+function sessionSettingsKey(sessionId) {
+  return `comic-translator.session-settings.${sessionId}`;
+}
+
+export function readSessionSettings(sessionId) {
+  if (!sessionId) return {};
+  try {
+    const parsed = JSON.parse(window.localStorage.getItem(sessionSettingsKey(sessionId)) || "{}");
+    return parsed && typeof parsed === "object" ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+export function writeSessionSettings(sessionId, patch) {
+  if (!sessionId) return;
+  try {
+    const next = { ...readSessionSettings(sessionId), ...patch };
+    window.localStorage.setItem(sessionSettingsKey(sessionId), JSON.stringify(next));
+  } catch {
+    // 저장 실패는 무시
+  }
+}
+
+export function removeSessionSettings(sessionId) {
+  if (!sessionId) return;
+  try {
+    window.localStorage.removeItem(sessionSettingsKey(sessionId));
+  } catch {
+    // 삭제 실패는 무시
+  }
 }
 
 export function rectOf(group) {
@@ -493,13 +529,37 @@ export function integratedClusters(image) {
 export function canRenderOverlayImage(image) {
   return Boolean(
     image?.has_integrated_json
+    && !image?.integrated_skipped
     && !image?.integrated?.skipped
     && image?.ocr_status?.status !== "skipped"
   );
 }
 
+// 세션 목록은 요약(summary)만 담고, 선택한 페이지의 큰 JSON은 /api/session/{id}/page/{image}로 받는다.
+export const PAGE_DETAIL_FIELDS = [
+  "text_groups",
+  "effective_text_groups",
+  "regions",
+  "guidance",
+  "guidance_report",
+  "overlay_guidance",
+  "overlay_layout",
+  "integrated",
+];
+
+export function imageSummaryOf(record) {
+  if (!record) return record;
+  const summary = { ...record };
+  PAGE_DETAIL_FIELDS.forEach((key) => {
+    delete summary[key];
+  });
+  summary.detail_loaded = false;
+  return summary;
+}
+
 export function hasAnalysisResult(image) {
-  return Array.isArray(image?.regions?.regions);
+  if (Array.isArray(image?.regions?.regions)) return true;
+  return Boolean(image?.has_analysis);
 }
 
 export function imageNeedsAnalysis(image) {

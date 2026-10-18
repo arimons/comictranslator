@@ -9,13 +9,14 @@ replacing it.
 from __future__ import annotations
 
 import argparse
+import base64
 import datetime as dt
+import filecmp
 import hashlib
 import json
 import queue
 import re
 import shutil
-import select
 import subprocess
 import sys
 import threading
@@ -36,7 +37,7 @@ from pydantic import BaseModel
 
 from pipeline.manual_guidance import build_effective_text_groups, load_json, write_json
 from pipeline.openai_image_redraw import redraw_image_with_openai
-from pipeline.pipeline_runner import DEFAULT_FONT, run_single_image
+from pipeline.pipeline_runner import DEFAULT_FONT, run_single_image, stream_subprocess
 from pipeline.render_text_overlay import apply_text_overlay
 
 load_dotenv()
@@ -458,7 +459,8 @@ def _unlink_symlinked_analysis_outputs(record: dict[str, Any]) -> None:
         _unlink_if_symlink(Path(record[key]))
     mask_dir = Path(record["work_dir"]) / "masks"
     if mask_dir.exists():
-        for mask_path in mask_dir.glob("*.png"):
+        # masks/는 세션 전체 페이지가 같이 쓴다. 이 페이지 mask만 지워야 다른 페이지 mask_ref가 깨지지 않는다.
+        for mask_path in mask_dir.glob(f"{Path(record['input_path']).stem}_R*_mask.png"):
             _unlink_if_symlink(mask_path)
 
 
@@ -474,7 +476,10 @@ def _normalize_empty_region_visual(record: dict[str, Any]) -> bool:
     if not isinstance(regions, list) or regions:
         return False
     try:
-        if bubble_vis_path.exists() and input_path.samefile(bubble_vis_path):
+        # 복사본은 samefile이 아니므로 내용(stat 서명)까지 비교해야 GET마다 다시 복사하지 않는다.
+        if bubble_vis_path.exists() and (
+            input_path.samefile(bubble_vis_path) or filecmp.cmp(input_path, bubble_vis_path, shallow=True)
+        ):
             return False
     except OSError:
         pass
@@ -536,10 +541,71 @@ def _rewrite_region_mask_refs(regions_path: Path, cache_dir: Path, target_masks_
             continue
         target = target_masks_dir / mask_name
         _link_or_copy_file(cached_mask, target)
-        region["mask_ref"] = str(target)
-        changed = True
+        # 이미 같은 경로를 가리키면 다시 쓰지 않는다(GET 반복 시 쓰기 0회).
+        if region.get("mask_ref") != str(target):
+            region["mask_ref"] = str(target)
+            changed = True
     if changed:
         write_json(regions_path, data)
+
+
+def _same_file(left: Path, right: Path) -> bool:
+    try:
+        return left.exists() and right.exists() and left.samefile(right)
+    except OSError:
+        return False
+
+
+def _visual_matches_input(record: dict[str, Any]) -> bool:
+    """_normalize_empty_region_visual이 이미 원본으로 맞춰 둔 상태인지."""
+    input_path = Path(record["input_path"])
+    bubble_vis_path = Path(record["bubble_vis_jpg"])
+    try:
+        return bubble_vis_path.exists() and (
+            input_path.samefile(bubble_vis_path) or filecmp.cmp(input_path, bubble_vis_path, shallow=True)
+        )
+    except OSError:
+        return False
+
+
+def _guidance_outputs_in_place(record: dict[str, Any], cache_dir: Path) -> bool:
+    """guidance 산출물 캐시가 이미 세션에 그대로 연결돼 있으면 True. 이때 hydrate는 아무것도 쓰지 않는다."""
+    expected_regions = load_json(cache_dir / GUIDANCE_OUTPUT_ARTIFACTS["regions_json"], default=None)
+    if not isinstance(expected_regions, dict):
+        return False
+    target_masks_dir = Path(record["work_dir"]) / "masks"
+    for region in expected_regions.get("regions", []):
+        mask_ref = region.get("mask_ref") if isinstance(region, dict) else None
+        if not mask_ref:
+            continue
+        mask_name = Path(mask_ref).name
+        cached_mask = cache_dir / "masks" / mask_name
+        if not cached_mask.exists():
+            continue
+        target = target_masks_dir / mask_name
+        if not _same_file(cached_mask, target):
+            return False
+        region["mask_ref"] = str(target)
+    if load_json(record["regions_json"], default=None) != expected_regions:
+        return False
+    regions_empty = expected_regions.get("regions") == []
+    for key, name in GUIDANCE_OUTPUT_ARTIFACTS.items():
+        if key == "regions_json":
+            continue
+        src = cache_dir / name
+        dest = Path(record[key])
+        if key in ANALYSIS_CACHE_LINK_ARTIFACTS:
+            if key == "bubble_vis_jpg" and regions_empty and not dest.is_symlink() and _visual_matches_input(record):
+                continue
+            if not dest.is_symlink() or not _same_file(src, dest):
+                return False
+        else:
+            try:
+                if dest.is_symlink() or not filecmp.cmp(src, dest, shallow=False):
+                    return False
+            except OSError:
+                return False
+    return True
 
 
 def backfill_analysis_cache_from_sessions(image_hash: str) -> bool:
@@ -702,6 +768,9 @@ def hydrate_guidance_output_cache(record: dict[str, Any], image_hash: str, guida
         return False
     if not all((cache_dir / GUIDANCE_OUTPUT_ARTIFACTS[key]).exists() for key in GUIDANCE_OUTPUT_REQUIRED):
         return False
+    if _guidance_outputs_in_place(record, cache_dir):
+        log_callback("  ✍️ guidance 산출물 캐시 사용")
+        return True
 
     _unlink_symlinked_analysis_outputs(record)
     for key, name in GUIDANCE_OUTPUT_ARTIFACTS.items():
@@ -834,6 +903,24 @@ def safe_filename(name: str) -> str:
     return f"{clean[:80] or 'image'}{suffix}"
 
 
+def allocate_input_path(input_dir: Path, base_name: str, index: int, taken_ids: set[str]) -> Path:
+    """세션 input 폴더에서 이미지 id(stem)와 파일이 모두 겹치지 않는 경로를 고른다.
+
+    input 파일은 전역 input cache를 가리키는 symlink라서, 기존 경로에 덮어쓰면
+    다른 이미지(다른 세션 포함)의 원본이 바뀐다. 고른 stem은 taken_ids에 추가한다.
+    """
+    stem_names = [base_name, f"{index:03d}_{base_name}"]
+    attempt = 2
+    while True:
+        for name in stem_names:
+            candidate = input_dir / name
+            if candidate.stem not in taken_ids and not candidate.exists() and not candidate.is_symlink():
+                taken_ids.add(candidate.stem)
+                return candidate
+        stem_names = [f"{index:03d}_{attempt}_{base_name}"]
+        attempt += 1
+
+
 def export_zip_filename(project_name: str, session_id: str) -> str:
     raw_name = (project_name or "").strip() or session_id
     clean = "".join(ch if ch.isalnum() or ch in {" ", "_", "-", "."} else "_" for ch in raw_name)
@@ -849,7 +936,13 @@ def image_record(
     image_hash: str | None = None,
     manifest_item: dict[str, Any] | None = None,
     probe_image: bool = True,
+    include_detail: bool = True,
 ) -> dict[str, Any]:
+    """페이지 레코드를 만든다.
+
+    include_detail=False면 text_groups/regions/integrated 같은 큰 JSON을 읽지 않는 가벼운 레코드다.
+    목록(세션 요약)에는 가벼운 레코드를, 선택한 페이지에는 전체 레코드를 쓴다.
+    """
     stem = path.stem
     spread_metadata = spread_candidate_from_manifest(manifest_item or {})
     if spread_metadata is None:
@@ -869,7 +962,7 @@ def image_record(
     export_recovery_path = json_dir / f"{stem}_export_recovery.json"
     export_recovery = load_json(export_recovery_path, default={})
     has_image_generation_fallback = isinstance(export_recovery, dict) and export_recovery.get("status") == "generated"
-    return {
+    record = {
         "id": stem,
         "name": path.name,
         "image_sha256": image_hash,
@@ -898,20 +991,139 @@ def image_record(
         "indexed_sheet_url": file_url(sheets_dir / f"{stem}_indexed_sheet.jpg"),
         "masked_url": file_url(masked_dir / f"{stem}_masked.jpg"),
         "final_url": file_url(final_path),
-        "text_groups": load_json(json_dir / f"{stem}_text_groups.json", default=[]),
-        "effective_text_groups": load_json(json_dir / f"{stem}_text_groups_effective.json", default=[]),
         "has_effective_text_groups": (json_dir / f"{stem}_text_groups_effective.json").exists(),
-        "regions": load_json(json_dir / f"{stem}_regions.json", default={}),
-        "guidance": load_json(json_dir / f"{stem}_manual_guidance.json", default={}),
-        "guidance_report": load_json(json_dir / f"{stem}_manual_guidance_report.json", default={}),
-        "overlay_guidance": load_json(json_dir / f"{stem}_overlay_guidance.json", default={}),
-        "overlay_layout": load_json(json_dir / f"{stem}_overlay_layout.json", default={}),
-        "integrated": load_json(json_dir / f"{stem}_integrated.json", default=[]),
         "has_integrated_json": (json_dir / f"{stem}_integrated.json").exists(),
         "ocr_status": load_json(json_dir / f"{stem}_ocr_status.json", default={}),
         "export_recovery": export_recovery,
         "has_image_generation_fallback": has_image_generation_fallback,
+        "detail_rev": page_detail_rev(json_dir, stem),
+        "detail_loaded": include_detail,
     }
+    if include_detail:
+        regions = load_json(json_dir / f"{stem}_regions.json", default={})
+        integrated = load_json(json_dir / f"{stem}_integrated.json", default=[])
+        record.update({
+            "text_groups": load_json(json_dir / f"{stem}_text_groups.json", default=[]),
+            "effective_text_groups": load_json(json_dir / f"{stem}_text_groups_effective.json", default=[]),
+            "regions": regions,
+            "guidance": load_json(json_dir / f"{stem}_manual_guidance.json", default={}),
+            "guidance_report": load_json(json_dir / f"{stem}_manual_guidance_report.json", default={}),
+            "overlay_guidance": load_json(json_dir / f"{stem}_overlay_guidance.json", default={}),
+            "overlay_layout": load_json(json_dir / f"{stem}_overlay_layout.json", default={}),
+            "integrated": integrated,
+        })
+        record.update(_regions_flags(regions))
+        record.update(_integrated_flags(integrated))
+    else:
+        record.update(_cached_json_flags(json_dir / f"{stem}_regions.json", _regions_flags, default={}))
+        record.update(_cached_json_flags(json_dir / f"{stem}_integrated.json", _integrated_flags, default=[]))
+    return record
+
+
+# 세션 요약 목록에 들어가는 키. 전체 레코드도 같은 키를 같은 의미로 가진다(프론트에서 병합).
+IMAGE_SUMMARY_KEYS = (
+    "id",
+    "name",
+    "image_sha256",
+    "input_path",
+    "input_url",
+    "width",
+    "height",
+    "aspect_ratio",
+    "wide_spread_candidate",
+    "left_margin_ratio",
+    "right_margin_ratio",
+    "spread_layout",
+    "parent_id",
+    "parent_name",
+    "parent_input_path",
+    "source_image_sha256",
+    "crop_rect",
+    "page_side",
+    "reading_order",
+    "split_policy",
+    "split_x_ratio",
+    "integrated_json",
+    "overlay_guidance_json",
+    "bubble_vis_url",
+    "indexed_sheet_url",
+    "masked_url",
+    "final_url",
+    "has_effective_text_groups",
+    "has_integrated_json",
+    "has_analysis",
+    "ocr_region_count",
+    "integrated_skipped",
+    "integrated_message",
+    "ocr_status",
+    "export_recovery",
+    "has_image_generation_fallback",
+    "detail_rev",
+)
+PAGE_DETAIL_FILES = (
+    "text_groups",
+    "text_groups_effective",
+    "regions",
+    "manual_guidance",
+    "manual_guidance_report",
+    "overlay_guidance",
+    "overlay_layout",
+    "integrated",
+)
+_JSON_FLAGS_CACHE: dict[tuple[str, str], tuple[tuple[int, int], dict[str, Any]]] = {}
+_JSON_FLAGS_LOCK = threading.Lock()
+
+
+def page_detail_rev(json_dir: Path, stem: str) -> str:
+    """페이지 상세 JSON들의 (mtime, size) 서명. 바뀌면 프론트가 상세를 다시 받는다."""
+    parts = []
+    for name in PAGE_DETAIL_FILES:
+        try:
+            st = (json_dir / f"{stem}_{name}.json").stat()
+            parts.append(f"{st.st_mtime_ns:x}.{st.st_size:x}")
+        except OSError:
+            parts.append("-")
+    return hashlib.sha1("|".join(parts).encode("ascii")).hexdigest()[:16]
+
+
+def _regions_flags(data: Any) -> dict[str, Any]:
+    regions = data.get("regions") if isinstance(data, dict) else None
+    has_analysis = isinstance(regions, list)
+    return {"has_analysis": has_analysis, "ocr_region_count": len(regions) if has_analysis else None}
+
+
+def _integrated_flags(data: Any) -> dict[str, Any]:
+    skipped = bool(isinstance(data, dict) and data.get("skipped"))
+    return {
+        "integrated_skipped": skipped,
+        "integrated_message": (data.get("message") or "") if skipped else "",
+    }
+
+
+def _cached_json_flags(path: Path, flags_fn, default: Any) -> dict[str, Any]:
+    """큰 JSON에서 뽑는 요약 플래그를 (mtime, size) 기준으로 캐시한다. 요약 목록이 매번 전체 JSON을 파싱하지 않게."""
+    try:
+        st = path.stat()
+        signature = (st.st_mtime_ns, st.st_size)
+    except OSError:
+        return flags_fn(default)
+    key = (str(path), flags_fn.__name__)
+    with _JSON_FLAGS_LOCK:
+        cached = _JSON_FLAGS_CACHE.get(key)
+    if cached and cached[0] == signature:
+        return dict(cached[1])
+    flags = flags_fn(load_json(path, default=default))
+    with _JSON_FLAGS_LOCK:
+        if len(_JSON_FLAGS_CACHE) > 20000:
+            _JSON_FLAGS_CACHE.clear()
+        _JSON_FLAGS_CACHE[key] = (signature, flags)
+    return dict(flags)
+
+
+def image_summary(record: dict[str, Any]) -> dict[str, Any]:
+    summary = {key: record[key] for key in IMAGE_SUMMARY_KEYS if key in record}
+    summary["detail_loaded"] = False
+    return summary
 
 
 def write_export_recovery_generated(record: dict[str, Any], req: GenerateMissingFinalRequest) -> None:
@@ -1092,14 +1304,10 @@ def copy_images_into_session(paths: list[Path], session_id: str) -> list[dict[st
     for index, src in enumerate(sorted(paths, key=lambda path: natural_name_key(path.name)), start=1):
         if src.suffix.lower() not in IMAGE_EXTS or not src.exists():
             continue
-        base_name = safe_filename(src.name)
-        candidate = input_dir / base_name
-        if candidate.stem in existing_ids or candidate.exists():
-            candidate = input_dir / f"{index:03d}_{base_name}"
+        candidate = allocate_input_path(input_dir, safe_filename(src.name), index, existing_ids)
         image_hash, _cache_path = link_cached_input(src, candidate)
         record = image_manifest_item(candidate, image_hash)
         data.setdefault("images", []).append(record)
-        existing_ids.add(candidate.stem)
         records.append(record)
     save_session(data)
     hydrate_load_cache_for_records(session_id, records, sync_limit=IMPORT_CACHE_SYNC_LIMIT)
@@ -1118,31 +1326,82 @@ def scan_images(path: Path, recursive: bool) -> list[Path]:
     )
 
 
-def session_images(session_id: str) -> list[dict[str, Any]]:
+def session_images(session_id: str, include_detail: bool = True) -> list[dict[str, Any]]:
+    """세션 페이지 목록을 만든다. include_detail=False면 목록용 요약만 돌려준다.
+
+    캐시 연결(hydrate)은 멱등이라 이미 연결된 정상 상태에서는 아무것도 쓰지 않는다.
+    guidance 재적용(Step 3 재실행)이 필요한 페이지는 여기서 돌리지 않고 백그라운드 hydration으로 넘긴다.
+    """
     data = ensure_session(session_id)
     changed = False
     images = []
+    pending_reapply: list[dict[str, Any]] = []
+
+    def noop(_message: str) -> None:
+        return None
+
     for item in sorted_image_records(data.get("images", [])):
         if not item.get("image_sha256"):
             ensure_record_hash(item)
             changed = True
-        record = merge_manifest_metadata(image_record(session_id, Path(item["input_path"]), item.get("image_sha256"), item, probe_image=False), item)
-        if item.get("image_sha256") and hydrate_analysis_cache(record, item["image_sha256"], False, lambda _message: None, allow_backfill=False):
-            record = merge_manifest_metadata(image_record(session_id, Path(item["input_path"]), item.get("image_sha256"), item, probe_image=False), item)
-        if item.get("image_sha256") and hydrate_guidance_cache(record, item["image_sha256"], lambda _message: None, allow_backfill=False):
-            record = merge_manifest_metadata(image_record(session_id, Path(item["input_path"]), item.get("image_sha256"), item, probe_image=False), item)
-        if guidance_has_edits(record.get("guidance", {})):
-            if item.get("image_sha256") and hydrate_guidance_output_cache(record, item["image_sha256"], record["guidance"], lambda _message: None):
-                record = merge_manifest_metadata(image_record(session_id, Path(item["input_path"]), item.get("image_sha256"), item, probe_image=False), item)
-            elif analysis_outputs_are_cache_links(record):
-                record = reapply_guidance_if_present(session_id, record, lambda _message: None) or record
-        if _normalize_empty_region_visual(record):
-            record = merge_manifest_metadata(image_record(session_id, Path(item["input_path"]), item.get("image_sha256"), item, probe_image=False), item)
-        record = merge_manifest_metadata(record, item)
-        images.append(record)
+        image_hash = item.get("image_sha256")
+        input_path = Path(item["input_path"])
+        # hydrate 함수들은 경로만 쓰므로 큰 JSON을 읽지 않는 가벼운 레코드로 충분하다.
+        record = image_record(session_id, input_path, image_hash, item, probe_image=False, include_detail=False)
+        if image_hash:
+            hydrate_analysis_cache(record, image_hash, False, noop, allow_backfill=False)
+            hydrate_guidance_cache(record, image_hash, noop, allow_backfill=False)
+        guidance = load_json(record["guidance_json"], default={})
+        if guidance_has_edits(guidance):
+            output_ready = bool(image_hash) and hydrate_guidance_output_cache(record, image_hash, guidance, noop)
+            if not output_ready and analysis_outputs_are_cache_links(record) and _claim_guidance_reapply(session_id, record):
+                pending_reapply.append(item)
+        _normalize_empty_region_visual(record)
+        record = merge_manifest_metadata(
+            image_record(session_id, input_path, image_hash, item, probe_image=False, include_detail=include_detail),
+            item,
+        )
+        images.append(record if include_detail else image_summary(record))
     if changed:
         save_session(data)
+    if pending_reapply:
+        start_background_load_cache_hydration(session_id, pending_reapply)
     return images
+
+
+def session_image_summaries(session_id: str) -> list[dict[str, Any]]:
+    return session_images(session_id, include_detail=False)
+
+
+_GUIDANCE_REAPPLY_CLAIMED: set[tuple[str, str, int]] = set()
+
+
+def _claim_guidance_reapply(session_id: str, record: dict[str, Any]) -> bool:
+    """같은 guidance 파일 상태로는 프로세스당 한 번만 백그라운드 재적용을 건다(목록 폴링 때 반복 실행 방지)."""
+    try:
+        guidance_mtime = Path(record["guidance_json"]).stat().st_mtime_ns
+    except OSError:
+        guidance_mtime = 0
+    key = (session_id, record["id"], guidance_mtime)
+    with _LOAD_HYDRATE_LOCK:
+        if key in _GUIDANCE_REAPPLY_CLAIMED:
+            return False
+        _GUIDANCE_REAPPLY_CLAIMED.add(key)
+    return True
+
+
+def load_hydration_pending(session_id: str) -> bool:
+    with _LOAD_HYDRATE_LOCK:
+        return any(key[0] == session_id for key in _LOAD_HYDRATE_RUNNING)
+
+
+def page_record(session_id: str, image_id: str) -> dict[str, Any]:
+    """선택한 페이지 하나의 전체 레코드. 읽기 전용."""
+    item = get_image(session_id, image_id)
+    return merge_manifest_metadata(
+        image_record(session_id, Path(item["input_path"]), item.get("image_sha256"), item, probe_image=False),
+        item,
+    )
 
 
 def analyze_one_image(session_id: str, item: dict[str, Any], index: int, total: int, force: bool, emit) -> bool:
@@ -1233,10 +1492,12 @@ def stream_analyze(req: AnalyzeRequest):
                     executor.submit(analyze_one_image, req.session_id, item, index, total, req.force, emit): item
                     for index, item in enumerate(targets, start=1)
                 }
+                # 한 장이 실패해도 나머지는 계속 처리되므로, 끝까지 기다린 뒤 complete로 결과를 알린다.
+                ok = True
                 for future in as_completed(futures):
                     if not future.result():
-                        return
-            emit({"type": "complete", "ok": True, "images": session_images(req.session_id)})
+                        ok = False
+            emit({"type": "complete", "ok": ok, "images": session_image_summaries(req.session_id)})
         except Exception as exc:
             emit({"type": "error", "message": str(exc)})
         finally:
@@ -1275,7 +1536,7 @@ def remove_session_image(session_id: str, image_id: str) -> list[dict[str, Any]]
         resolved_parent = input_path.parent
     if input_path.exists() and (input_path.parent.resolve() == session_input or resolved_parent == session_input):
         input_path.unlink()
-    return session_images(session_id)
+    return session_image_summaries(session_id)
 
 
 def current_clusters_path(record: dict[str, Any], image_id: str) -> Path:
@@ -1483,8 +1744,8 @@ def run_final_for_item(
         record["indexed_sheet_jpg"],
         "--ocr-sheet-json",
         record["regions_json"],
-        "--extra-prompt",
-        extra_prompt,
+        # '-반말로'처럼 '-'로 시작하는 프롬프트도 값으로 넘어가도록 '=' 형식을 쓴다.
+        f"--extra-prompt={extra_prompt}",
         *(["--model", ocr_model] if ocr_model else []),
     ]
     if log_callback is None:
@@ -1585,7 +1846,7 @@ def stream_run_final(req: RunFinalRequest):
                 total = len(targets)
             if total == 0:
                 emit({"type": "log", "message": "OCR/번역할 이미지가 없습니다."})
-                emit({"type": "complete", "ok": True, "images": session_images(req.session_id)})
+                emit({"type": "complete", "ok": True, "images": session_image_summaries(req.session_id)})
                 return
             workers = max(1, min(req.max_workers, total))
             emit({"type": "log", "message": f"OCR/Translation worker {workers}개로 실행"})
@@ -1599,7 +1860,7 @@ def stream_run_final(req: RunFinalRequest):
                 }
                 for future in as_completed(futures):
                     ok = future.result() and ok
-            emit({"type": "complete", "ok": ok, "images": session_images(req.session_id)})
+            emit({"type": "complete", "ok": ok, "images": session_image_summaries(req.session_id)})
         except Exception as exc:
             emit({"type": "error", "message": str(exc)})
         finally:
@@ -1740,7 +2001,7 @@ def generate_missing_finals_with_openai(req: GenerateMissingFinalRequest) -> dic
         "generated": generated,
         "failed": failed,
         "logs": "\n".join(logs),
-        "images": session_images(req.session_id),
+        "images": session_image_summaries(req.session_id),
     }
 
 
@@ -1763,7 +2024,7 @@ def stream_generate_missing_finals(req: GenerateMissingFinalRequest):
             total = len(targets)
             if total == 0:
                 emit({"type": "log", "message": "이미지 생성 대상이 없습니다."})
-                emit({"type": "complete", "ok": True, "generated": [], "failed": [], "images": session_images(req.session_id)})
+                emit({"type": "complete", "ok": True, "generated": [], "failed": [], "images": session_image_summaries(req.session_id)})
                 return
 
             emit({"type": "log", "message": f"이미지 생성 후보 {total}개 처리 시작"})
@@ -1814,7 +2075,7 @@ def stream_generate_missing_finals(req: GenerateMissingFinalRequest):
                 "ok": not failed,
                 "generated": generated,
                 "failed": failed,
-                "images": session_images(req.session_id),
+                "images": session_image_summaries(req.session_id),
             })
         except Exception as exc:
             emit({"type": "error", "message": str(exc)})
@@ -1831,67 +2092,35 @@ def stream_generate_missing_finals(req: GenerateMissingFinalRequest):
 
 
 def run_subprocess(cmd: list[str], timeout: int = 300) -> str:
-    proc = subprocess.run(
-        cmd,
-        cwd=str(ROOT),
-        text=True,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-        timeout=timeout,
-        check=False,
-    )
-    if proc.returncode != 0:
-        raise HTTPException(status_code=500, detail=proc.stdout)
-    return proc.stdout
+    return run_subprocess_stream(cmd, timeout=timeout)
 
 
 def run_subprocess_stream(cmd: list[str], timeout: int = 300, log_callback=None) -> str:
-    proc = subprocess.Popen(
-        cmd,
-        cwd=str(ROOT),
-        text=True,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-        bufsize=1,
-    )
-    output: list[str] = []
-    start = time.monotonic()
-    stdout = proc.stdout
-    if stdout is None:
-        raise HTTPException(status_code=500, detail="subprocess stdout pipe is unavailable")
+    # pipeline_runner와 같은 reader-thread 방식이라 Windows에서도 동작하고 timeout이 지켜진다.
+    def on_line(line: str) -> None:
+        message = line.rstrip()
+        if message and log_callback is not None:
+            log_callback(message)
 
     try:
-        while proc.poll() is None:
-            if time.monotonic() - start > timeout:
-                proc.kill()
-                raise HTTPException(status_code=500, detail=f"subprocess timeout after {timeout}s")
-            ready, _, _ = select.select([stdout], [], [], 0.2)
-            if not ready:
-                continue
-            line = stdout.readline()
-            if not line:
-                continue
-            output.append(line)
-            message = line.rstrip()
-            if message and log_callback is not None:
-                log_callback(message)
-
-        rest = stdout.read()
-        if rest:
-            output.append(rest)
-            if log_callback is not None:
-                for line in rest.splitlines():
-                    if line.strip():
-                        log_callback(line.rstrip())
-    finally:
-        if proc.poll() is None:
-            proc.kill()
-
-    proc.wait()
-    combined = "".join(output)
-    if proc.returncode != 0:
+        returncode, lines = stream_subprocess(cmd, timeout, on_line)
+    except subprocess.TimeoutExpired:
+        raise HTTPException(status_code=500, detail=f"subprocess timeout after {timeout}s")
+    combined = "\n".join(lines)
+    if returncode != 0:
         raise HTTPException(status_code=500, detail=combined)
     return combined
+class RevalidatingStaticFiles(StaticFiles):
+    """UI 자산은 매 요청마다 재검증한다(바뀌지 않았으면 304).
+
+    index.html이 버전 없는 /app.bundle.js를 참조하므로, 기본 휴리스틱 캐시를 두면
+    번들을 다시 빌드한 뒤에도 브라우저가 옛 JS를 계속 실행한다.
+    """
+
+    def file_response(self, *args: Any, **kwargs: Any):
+        response = super().file_response(*args, **kwargs)
+        response.headers["Cache-Control"] = "no-cache"
+        return response
 
 
 def create_app() -> FastAPI:
@@ -1908,9 +2137,14 @@ def create_app() -> FastAPI:
 
     @app.get("/api/session/{session_id}")
     def read_session(session_id: str) -> dict[str, Any]:
+        # 목록용 요약만 돌려준다. 페이지 상세(regions, integrated 등)는 /page/{image_id}로 받는다.
         data = ensure_session(session_id)
-        images = session_images(session_id)
-        return {"session": data, "images": images}
+        images = session_image_summaries(session_id)
+        return {"session": data, "images": images, "hydration_pending": load_hydration_pending(session_id)}
+
+    @app.get("/api/session/{session_id}/page/{image_id}")
+    def read_session_page(session_id: str, image_id: str) -> dict[str, Any]:
+        return {"image": page_record(session_id, image_id)}
 
     @app.post("/api/session/meta")
     def update_session_meta(req: SessionMetaRequest) -> dict[str, Any]:
@@ -1933,19 +2167,21 @@ def create_app() -> FastAPI:
         return {"session_id": data["session_id"], "imported": len(records), "images": records}
 
     @app.post("/api/upload")
-    async def upload_files(session_id: str | None = None, files: list[UploadFile] = File(...)) -> dict[str, Any]:
+    def upload_files(session_id: str | None = None, files: list[UploadFile] = File(...)) -> dict[str, Any]:
+        # 동기 함수로 둬서 해시·이미지 처리 동안 이벤트 루프를 막지 않고 threadpool에서 실행되게 한다.
         data = ensure_session(session_id)
         input_dir = session_dir(data["session_id"]) / "input"
+        input_dir.mkdir(parents=True, exist_ok=True)
+        taken_ids = {item["id"] for item in data.get("images", [])}
         copied: list[Path] = []
         sorted_uploads = sorted(files, key=lambda upload: natural_name_key(upload.filename or ""))
         for index, upload in enumerate(sorted_uploads, start=1):
             name = safe_filename(upload.filename or f"upload_{index}.jpg")
             if Path(name).suffix.lower() not in IMAGE_EXTS:
                 continue
-            target = input_dir / name
-            if target.exists():
-                target = input_dir / f"{index:03d}_{name}"
-            with target.open("wb") as f:
+            target = allocate_input_path(input_dir, name, index, taken_ids)
+            # "xb": 기존 파일이나 symlink를 따라가 덮어쓰지 않는다.
+            with target.open("xb") as f:
                 shutil.copyfileobj(upload.file, f)
             copied.append(target)
         records = []
@@ -1995,7 +2231,7 @@ def create_app() -> FastAPI:
             clear_guidance_cleared_marker(record)
             reapply_guidance_if_present(req.session_id, record, logs.append)
         save_session(data)
-        images = session_images(req.session_id)
+        images = session_image_summaries(req.session_id)
         return {"ok": True, "logs": "\n\n".join(logs), "images": images}
 
     @app.post("/api/analyze-stream")
@@ -2043,11 +2279,12 @@ def create_app() -> FastAPI:
     @app.post("/api/overlay/apply")
     def apply_overlay(req: OverlayRequest) -> dict[str, Any]:
         source = get_image(req.session_id, req.image_id)
-        record = image_record(req.session_id, Path(source["input_path"]))
+        # 렌더에는 경로만 필요하다. 원본 전체를 여는 여백 probe는 하지 않고 manifest 크기 정보를 쓴다.
+        record = image_record(req.session_id, Path(source["input_path"]), source.get("image_sha256"), source, probe_image=False, include_detail=False)
         existing_overlay_guidance = load_json(Path(record["overlay_guidance_json"]), default={})
         write_json(Path(record["overlay_guidance_json"]), merge_overlay_guidance(existing_overlay_guidance, req.overlay_guidance))
         render_overlay_for_record(record, req.font_path, req.tracking_offset)
-        return {"ok": True, "image": image_record(req.session_id, Path(source["input_path"]))}
+        return {"ok": True, "image": page_record(req.session_id, req.image_id)}
 
     @app.get("/api/session/{session_id}/export")
     def export_session(session_id: str) -> FileResponse:
@@ -2064,9 +2301,12 @@ def create_app() -> FastAPI:
 
     @app.get("/api/file")
     def get_file(path: str) -> FileResponse:
+        # 세션·캐시 폴더 아래의 이미지만 내려준다. 저장소 루트 전체를 열면 .env나 인증서 파일까지 읽힌다.
         resolved = Path(path).resolve()
-        root = ROOT.resolve()
-        if not str(resolved).startswith(str(root)):
+        servable_roots = (SESSION_ROOT, INPUT_CACHE_DIR, ANALYSIS_CACHE_DIR)
+        if resolved.suffix.lower() not in IMAGE_EXTS or not any(
+            resolved.is_relative_to(root.resolve()) for root in servable_roots
+        ):
             raise HTTPException(status_code=403, detail="File outside workspace is not served")
         if not resolved.exists():
             raise HTTPException(status_code=404, detail="File not found")
@@ -2091,7 +2331,7 @@ def create_app() -> FastAPI:
     fonts_dir = ROOT / "Fonts"
     if fonts_dir.exists():
         app.mount("/fonts", StaticFiles(directory=str(fonts_dir)), name="fonts")
-    app.mount("/", StaticFiles(directory=str(UI_DIR), html=True), name="ui")
+    app.mount("/", RevalidatingStaticFiles(directory=str(UI_DIR), html=True), name="ui")
     return app
 
 

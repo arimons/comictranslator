@@ -164,6 +164,10 @@ textarea {
   grid-template-columns: minmax(0, 1fr) clamp(420px, 36vw, 560px);
 }
 
+.app.workspace-mode.overlay-mode.tools-collapsed {
+  grid-template-columns: minmax(0, 1fr) 48px;
+}
+
 .app.workspace-mode .sidebar {
   display: none;
 }
@@ -1795,6 +1799,12 @@ button.wide {
   padding: 10px;
   display: grid;
   gap: 8px;
+}
+
+.ocr-prompt-panel .ocr-model-field {
+  grid-template-columns: max-content minmax(0, 320px);
+  align-items: center;
+  gap: 10px;
 }
 
 .ocr-prompt-panel textarea {

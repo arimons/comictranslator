@@ -9,6 +9,7 @@ OCR sheet가 없을 때만 기존 원본 이미지 + CV cluster 힌트 경로로
 import argparse
 import json
 import os
+import re
 import signal
 import sys
 import threading
@@ -239,9 +240,10 @@ def _extract_json_response(response_text: str) -> Dict[str, Any]:
     try:
         return json.loads(response_text)
     except json.JSONDecodeError:
-        if "```" in response_text:
-            clean_text = response_text.split("```json")[-1].split("```")[0].strip()
-            return json.loads(clean_text)
+        # ```json ... ``` 뿐 아니라 언어 태그 없는 ``` ... ``` 펜스도 벗긴다.
+        fenced = re.search(r"```(?:json)?\s*(.*?)```", response_text, re.S)
+        if fenced:
+            return json.loads(fenced.group(1).strip())
         raise
 
 

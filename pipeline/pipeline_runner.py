@@ -2,6 +2,7 @@
 #!/usr/bin/env python3
 
 import json
+import os
 import queue
 import subprocess
 import sys
@@ -170,12 +171,50 @@ def _run_step(
     if log_callback is not None:
         log_callback(f"  ▶ {step_name} subprocess 시작")
 
+    on_line = (lambda line: log_callback(f"    {line}")) if log_callback is not None else None
+    returncode, lines = stream_subprocess(cmd, timeout, on_line)
+    stdout = "\n".join(lines)
+    if returncode != 0:
+        raise PipelineError(
+            f"{step_name} 실패 (exit {returncode}):\n{stdout}"
+        )
+    if log_callback is not None:
+        log_callback(f"  ◀ {step_name} subprocess 종료 ({time.time() - started:.1f}s)")
+    return stdout
+
+
+def _subprocess_env() -> dict[str, str]:
+    # 자식 출력이 블록 버퍼링되지 않고, OS 기본 인코딩(cp949 등)과 무관하게 UTF-8로 오가게 한다.
+    # `-m pipeline.*` 실행이 cwd에 의존하지 않도록 저장소 루트를 PYTHONPATH 앞에 둔다.
+    env = dict(os.environ)
+    env["PYTHONUNBUFFERED"] = "1"
+    env["PYTHONIOENCODING"] = "utf-8"
+    env["PYTHONPATH"] = os.pathsep.join(
+        path for path in (str(PIPELINE_DIR.parent), env.get("PYTHONPATH")) if path
+    )
+    return env
+
+
+def stream_subprocess(
+    cmd: list,
+    timeout: float,
+    on_line: Callable[[str], None] | None = None,
+) -> tuple[int, list[str]]:
+    """subprocess를 실행하고 출력을 줄 단위로 on_line에 넘긴다. (returncode, 출력 줄) 반환.
+
+    pipe 읽기를 별도 스레드에 맡겨 Windows에서도 동작하고, 출력이 멈춰도 timeout이 지켜진다.
+    시간을 넘기면 프로세스를 종료하고 subprocess.TimeoutExpired를 던진다.
+    """
+    started = time.time()
     process = subprocess.Popen(
         cmd,
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
         text=True,
+        encoding="utf-8",
+        errors="replace",
         bufsize=1,
+        env=_subprocess_env(),
     )
     output_queue: queue.Queue[str | None] = queue.Queue()
 
@@ -208,21 +247,15 @@ def _run_step(
                 stream_done = True
             else:
                 lines.append(line)
-                if log_callback is not None:
-                    log_callback(f"    {line}")
+                if on_line is not None:
+                    on_line(line)
 
         returncode = process.poll()
         if returncode is not None and stream_done:
             break
 
     reader.join(timeout=1)
-    stdout = "\n".join(lines)
-    if process.returncode != 0:
-        raise PipelineError(
-            f"{step_name} 실패 (exit {process.returncode}):\n{stdout}"
-        )
-    if log_callback is not None:
-        log_callback(f"  ◀ {step_name} subprocess 종료 ({time.time() - started:.1f}s)")
+    return process.returncode, lines
     return stdout
 
 
@@ -264,7 +297,9 @@ def run_single_image(
 
     _append_log(log, f"📸 {name} 처리 시작", log_callback)
 
-    if not force and output_path.exists():
+    # 분석만 요청한 경우(pre_ocr/extract)는 final이 있어도 Step 1-3 산출물을 확인해야 한다.
+    # final만 있고 regions가 없는 이미지(이미지 생성 fallback 등)가 분석 완료로 보이는 것을 막는다.
+    if not force and stop_after not in {"extract", "pre_ocr"} and output_path.exists():
         _append_log(log, f"  ✅ 캐시: {output_path.name}", log_callback)
         return True, "\n".join(log)
 
@@ -368,7 +403,8 @@ def run_single_image(
                     str(image_path), str(clusters_json), str(integrated_json),
                     "--ocr-sheet-image", str(indexed_sheet_jpg),
                     "--ocr-sheet-json", str(regions_json),
-                    "--extra-prompt", extra_prompt,
+                    # '-반말로'처럼 '-'로 시작하는 프롬프트도 값으로 넘어가도록 '=' 형식을 쓴다.
+                    f"--extra-prompt={extra_prompt}",
                     *(["--model", ocr_model] if ocr_model else []),
                 ],
                 STEP_TIMEOUT["gemini"], "Gemini OCR", log_callback,

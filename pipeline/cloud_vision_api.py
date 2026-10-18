@@ -96,11 +96,15 @@ def _prepare_request_image(
 
 
 def _post(api_key: str, body: dict) -> dict:
-    resp = requests.post(
-        f"{_VISION_ENDPOINT}?key={api_key}",
-        json=body,
-        timeout=60,
-    )
+    try:
+        resp = requests.post(
+            f"{_VISION_ENDPOINT}?key={api_key}",
+            json=body,
+            timeout=60,
+        )
+    except requests.RequestException as exc:
+        # 연결 오류 메시지에는 요청 URL(키 포함)이 그대로 들어가 UI 로그로 흘러간다.
+        raise RuntimeError(str(exc).replace(api_key, "***")) from None
     if resp.status_code != 200:
         raise RuntimeError(f"Cloud Vision HTTP {resp.status_code}: {resp.text[:200]}")
     return resp.json()
@@ -225,6 +229,10 @@ if __name__ == "__main__":
             sys.exit(1)
 
         results = api.detect_document_text(image_path, preprocess="upscale2x_clahe")
+        if results is None:
+            # 호출 실패를 "텍스트 0개"로 저장하면 이후 단계와 전역 CV 캐시가 빈 결과를 성공으로 굳힌다.
+            print("❌ CV API 호출 실패: 결과 파일을 쓰지 않습니다.")
+            sys.exit(1)
         out = Path(output_path)
         out.parent.mkdir(parents=True, exist_ok=True)
         with open(out, "w", encoding="utf-8") as f:

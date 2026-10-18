@@ -11,6 +11,9 @@ from __future__ import annotations
 import copy
 import json
 import math
+import os
+import threading
+import time
 from pathlib import Path
 from typing import Any
 
@@ -31,10 +34,24 @@ def load_json(path: str | Path, default: Any = None) -> Any:
 
 
 def write_json(path: str | Path, data: Any) -> None:
+    # 임시 파일에 다 쓴 뒤 교체한다. 쓰는 도중 중단돼도 기존 JSON이 잘린 채 남지 않는다.
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
+    tmp = path.with_name(f".{path.name}.{os.getpid()}.{threading.get_ident()}.tmp")
+    try:
+        with tmp.open("w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+        for attempt in range(5):
+            try:
+                os.replace(tmp, path)
+                break
+            except PermissionError:
+                # Windows에서는 다른 스레드가 대상 파일을 읽는 중이면 교체가 잠시 거부된다.
+                if attempt == 4:
+                    raise
+                time.sleep(0.05)
+    finally:
+        tmp.unlink(missing_ok=True)
 
 
 def text_group_id(group: dict[str, Any], fallback: int) -> int:

@@ -8,7 +8,6 @@ import {
   OVERLAY_MIN_RECT_SIZE,
   TOOL_HOTKEYS,
   TOOL_CODE_HOTKEYS,
-  PREVIEW_TABS,
   WORKFLOW_TABS,
   FONT_STYLES,
   FONT_STYLE_IDS,
@@ -31,6 +30,7 @@ import {
   overlayControlItems,
   canRenderOverlayImage,
   imageNeedsAnalysis,
+  imageSummaryOf,
   regionSegmentSiblingCount,
   baseRegionText,
   inferredRegionFontStyle,
@@ -39,12 +39,17 @@ import {
   overlayItemFontSize,
   overlayRegionValue,
   overlayRegionBaseKey,
+  readSessionSettings,
+  writeSessionSettings,
+  removeSessionSettings,
 } from "./lib.js";
 
 export default function App() {
   const [sessionId, setSessionId] = useState("");
   const [projectName, setProjectName] = useState("");
   const [images, setImages] = useState([]);
+  // 선택한 페이지의 전체 레코드(regions, integrated 등). 목록(images)은 요약만 담는다.
+  const [pageDetail, setPageDetail] = useState(null);
   const [recentSessions, setRecentSessions] = useState([]);
   const [selectedId, setSelectedId] = useState("");
   const [folderPath, setFolderPath] = useState("");
@@ -63,13 +68,14 @@ export default function App() {
   const [overlayGuidance, setOverlayGuidance] = useState(defaultOverlayGuidance(null));
   const [layers, setLayers] = useState({ tg: true, regions: true, guidance: true });
   const [extraPrompt, setExtraPrompt] = useState("");
+  const [ocrModels, setOcrModels] = useState([]);
+  const [ocrDefaultModel, setOcrDefaultModel] = useState("");
+  const [ocrModel, setOcrModel] = useState("");
   const [fonts, setFonts] = useState([]);
   const [fontPath, setFontPath] = useState("");
   const [analyzeWorkers, setAnalyzeWorkers] = useState(4);
   const [imageStatuses, setImageStatuses] = useState({});
-  const [previewMode, setPreviewMode] = useState("analysis");
   const [guidanceCompareMode, setGuidanceCompareMode] = useState("masked");
-  const [overlayViewMode, setOverlayViewMode] = useState("edit");
   const [autoOverlayPreview, setAutoOverlayPreview] = useState(true);
   const [exportImageModel, setExportImageModel] = useState("gpt-image-2");
   const [exportTextModel, setExportTextModel] = useState("gpt-5.4-mini");
@@ -82,12 +88,14 @@ export default function App() {
   const [exportGenerateIds, setExportGenerateIds] = useState([]);
   const [exportFocusedId, setExportFocusedId] = useState("");
   const [overlayEditVersion, setOverlayEditVersion] = useState(0);
+  const [overlayApplyRequest, setOverlayApplyRequest] = useState(0);
   const [toolsOpen, setToolsOpen] = useState(true);
   const [guidanceUndoStack, setGuidanceUndoStack] = useState([]);
   const [guidanceRedoStack, setGuidanceRedoStack] = useState([]);
   const [guidanceNotice, setGuidanceNotice] = useState(null);
   const [recentMenuId, setRecentMenuId] = useState("");
   const fileRef = useRef(null);
+  const sessionIdRef = useRef(sessionId);
   const selectedIdRef = useRef(selectedId);
   const imagesRef = useRef(images);
   const currentGuidanceRef = useRef(guidance);
@@ -97,13 +105,31 @@ export default function App() {
   const overlayBootstrapRenderRef = useRef("");
   const overlayEditVersionRef = useRef(0);
   const overlayAppliedVersionRef = useRef(0);
+  const handledOverlayApplyRequestRef = useRef(0);
   const selectedRegionIdRef = useRef(null);
   const projectNameDirtyRef = useRef(false);
   const autoAnalysisRequestedRef = useRef(new Set());
+  const pageDetailRequestRef = useRef(0);
+  const hydrationPendingRef = useRef(false);
 
-  const selected = useMemo(() => images.find((img) => img.id === selectedId) || images[0] || null, [images, selectedId]);
-  const previewTab = PREVIEW_TABS.find(([id]) => id === previewMode) || PREVIEW_TABS[0];
-  const previewUrl = selected?.[previewTab[2]] || (previewMode === "analysis" ? selected?.input_url : null);
+  const baseSelected = useMemo(() => images.find((img) => img.id === selectedId) || images[0] || null, [images, selectedId]);
+  // 목록 요약 위에 선택 페이지 상세를 얹는다. 요약 필드가 더 최신이므로 요약이 이긴다.
+  const selected = useMemo(() => {
+    if (!baseSelected) return null;
+    if (
+      pageDetail
+      && pageDetail.id === baseSelected.id
+      && (pageDetail.input_path || "") === (baseSelected.input_path || "")
+    ) {
+      return { ...pageDetail, ...baseSelected, detail_loaded: true };
+    }
+    return baseSelected;
+  }, [baseSelected, pageDetail]);
+  // id는 파일명 stem이라 세션이 달라도 겹칠 수 있다. 세션별 input_path로 페이지를 구분한다.
+  const selectedKey = selected ? (selected.input_path || selected.id) : "";
+  // 페이지 전환 직후 요약만 있을 때와 상세가 도착했을 때를 구분해, 상세 도착 시 편집 상태를 다시 초기화한다.
+  const selectedDetailKey = selected ? `${selectedKey}|${selected.detail_loaded ? "detail" : "summary"}` : "";
+  const effectiveOcrModel = ocrModels.some((model) => model.id === ocrModel) ? ocrModel : ocrDefaultModel;
   const guidanceEditorUrl = selected?.input_url || null;
   const guidanceCompareTabs = [
     ["masked", "Masked", selected?.masked_url],
@@ -180,6 +206,33 @@ export default function App() {
       ]
     : overlayRegions;
   const forceDropLabel = ocrBusy ? "OCR 실행 중에는 드롭할 수 없습니다." : "여기로 드롭하면 해당 파일만 강제 재실행합니다.";
+
+  // 비동기 응답이 어느 세션 것인지 판별하려면 세션 id를 ref에도 즉시 반영해야 한다.
+  function setSessionTracked(nextSessionId) {
+    const sid = nextSessionId || "";
+    sessionIdRef.current = sid;
+    setSessionId(sid);
+    pageDetailRequestRef.current += 1;
+    setPageDetail(null);
+    const saved = readSessionSettings(sid);
+    setExtraPrompt(typeof saved.extraPrompt === "string" ? saved.extraPrompt : "");
+    setOcrModel(typeof saved.ocrModel === "string" ? saved.ocrModel : "");
+  }
+
+  function updateExtraPrompt(value) {
+    setExtraPrompt(value);
+    writeSessionSettings(sessionIdRef.current, { extraPrompt: value });
+  }
+
+  function updateOcrModel(value) {
+    setOcrModel(value);
+    writeSessionSettings(sessionIdRef.current, { ocrModel: value });
+  }
+
+  // 서버 기본값과 같으면 null을 보내 백엔드 기본 동작(--model 생략)을 유지한다.
+  function ocrModelForRequest() {
+    return effectiveOcrModel && effectiveOcrModel !== ocrDefaultModel ? effectiveOcrModel : null;
+  }
 
   function selectedRegionRefValue() {
     return selectedRegionId || selectedRegionIdRef.current || null;
@@ -527,13 +580,16 @@ export default function App() {
     return true;
   }
 
-  async function refresh(sid = sessionId) {
+  async function refresh(sid = sessionIdRef.current) {
     if (!sid) return;
     const data = await api(`/api/session/${sid}`);
+    // 요청 사이에 다른 세션을 열었으면 이전 세션 응답으로 이미지 목록을 덮어쓰지 않는다.
+    if (sid !== sessionIdRef.current) return;
     if (!projectNameDirtyRef.current) {
       setProjectName(data.session?.project_name || "");
     }
     const nextImages = data.images || [];
+    hydrationPendingRef.current = Boolean(data.hydration_pending);
     setImages(nextImages);
     if (nextImages.length) {
       const currentId = selectedIdRef.current || selectedId;
@@ -550,18 +606,38 @@ export default function App() {
     return nextImages;
   }
 
-  function scheduleLazyRefresh(sid, rounds = 8, intervalMs = 1200) {
+  // import 직후 서버가 백그라운드로 캐시를 연결하는 동안에만 요약 목록을 다시 받는다.
+  // 요약 GET은 가볍고, hydration_pending이 false가 되면 멈춘다.
+  function scheduleLazyRefresh(sid, maxRounds = 120, intervalMs = 1500) {
     let count = 0;
     const tick = async () => {
+      if (sid !== sessionIdRef.current) return;
       count += 1;
       try {
         await refresh(sid);
       } catch (err) {
         setStatus(String(err.message || err));
       }
-      if (count < rounds) window.setTimeout(tick, intervalMs);
+      if (hydrationPendingRef.current && count < maxRounds && sid === sessionIdRef.current) window.setTimeout(tick, intervalMs);
     };
-    window.setTimeout(tick, intervalMs);
+    if (hydrationPendingRef.current) window.setTimeout(tick, intervalMs);
+  }
+
+  // 서버가 돌려준 전체 레코드 하나를 반영한다. 목록에는 요약만, 선택 페이지면 상세에도 넣는다.
+  function applyImageRecord(record, { insertIfMissing = false } = {}) {
+    if (!record?.id) return;
+    const summary = imageSummaryOf(record);
+    // 일부 응답 레코드는 manifest 없이 만들어져 hash가 비어 있다. 목록의 기존 hash를 지우지 않는다.
+    if (summary.image_sha256 == null) delete summary.image_sha256;
+    setImages((items) => {
+      const found = items.some((item) => item.id === record.id);
+      if (!found) return insertIfMissing ? [...items, summary] : items;
+      return items.map((item) => (item.id === record.id ? { ...item, ...summary } : item));
+    });
+    if (record.detail_loaded !== false && record.id === selectedIdRef.current) {
+      pageDetailRequestRef.current += 1;
+      setPageDetail(record);
+    }
   }
 
   async function saveProjectName(nextName = projectName) {
@@ -577,7 +653,7 @@ export default function App() {
 
   useEffect(() => {
     api("/api/sessions/new", { method: "POST", body: "{}" }).then((data) => {
-      setSessionId(data.session.session_id);
+      setSessionTracked(data.session.session_id);
       refresh(data.session.session_id);
     });
     api("/api/sessions/recent").then((data) => {
@@ -587,7 +663,32 @@ export default function App() {
       setFonts(data.fonts || []);
       setFontPath(data.default || "");
     }).catch(() => {});
+    api("/api/ocr-models").then((data) => {
+      setOcrModels(Array.isArray(data.models) ? data.models : []);
+      setOcrDefaultModel(data.default || "");
+    }).catch(() => {});
   }, []);
+
+  useEffect(() => {
+    if (!sessionId || !baseSelected?.id) return;
+    const sameDocument = pageDetail
+      && pageDetail.id === baseSelected.id
+      && (pageDetail.input_path || "") === (baseSelected.input_path || "");
+    if (sameDocument && pageDetail.detail_rev === baseSelected.detail_rev) return;
+    const requestId = pageDetailRequestRef.current + 1;
+    pageDetailRequestRef.current = requestId;
+    const requestSid = sessionId;
+    const requestImageId = baseSelected.id;
+    api(`/api/session/${encodeURIComponent(requestSid)}/page/${encodeURIComponent(requestImageId)}`)
+      .then((data) => {
+        // 그 사이 다른 페이지/세션으로 이동했거나 더 새 요청이 있으면 버린다.
+        if (pageDetailRequestRef.current !== requestId || sessionIdRef.current !== requestSid) return;
+        if (data?.image) setPageDetail(data.image);
+      })
+      .catch((err) => {
+        if (pageDetailRequestRef.current === requestId) setStatus(String(err.message || err));
+      });
+  }, [sessionId, baseSelected?.id, baseSelected?.input_path, baseSelected?.detail_rev]);
 
   useEffect(() => {
     const next = defaultGuidance(selected);
@@ -595,11 +696,17 @@ export default function App() {
     setGuidance(next);
     resetGuidanceHistory();
     setOverlayGuidance(defaultOverlayGuidance(selected));
-    setOverlayEditVersion(0);
-    overlayAppliedVersionRef.current = 0;
+    // 페이지가 바뀌면 edit version을 한 단계 올리고 적용 완료로 맞춘다.
+    // 이전 페이지 요청의 version은 새 페이지 version과 절대 같아지지 않는다.
+    const nextVersion = overlayEditVersionRef.current + 1;
+    overlayEditVersionRef.current = nextVersion;
+    overlayAppliedVersionRef.current = nextVersion;
+    setOverlayEditVersion(nextVersion);
+    // 이전 페이지에서 대기 중이던 floating editor 적용 요청은 버린다.
+    handledOverlayApplyRequestRef.current = overlayApplyRequest;
     setSelectedTg(null);
     setSelectedRegionTracked(null);
-  }, [selected?.id]);
+  }, [selectedDetailKey]);
 
   useEffect(() => {
     currentGuidanceRef.current = guidance;
@@ -638,7 +745,7 @@ export default function App() {
     autoAnalysisRequestedRef.current.add(requestKey);
     setStatus(`${selected.name} 분석 산출물이 없어 현재 파일 분석을 시작합니다.`);
     analyze(selected.id);
-  }, [workspaceStarted, activeTab, selected?.id, selected?.image_sha256, selected?.regions, inputBusy, analyzeBusy, guidanceBusy]);
+  }, [workspaceStarted, activeTab, selected?.id, selected?.image_sha256, selected?.regions, selected?.has_analysis, inputBusy, analyzeBusy, guidanceBusy]);
 
   useEffect(() => {
     if (autoOverlayTimerRef.current) {
@@ -649,6 +756,7 @@ export default function App() {
       !autoOverlayPreview
       || activeTab !== "overlay"
       || !canRenderOverlayImage(selected)
+      || !selected?.detail_loaded
       || overlayBusy
       || overlayEditVersion <= overlayAppliedVersionRef.current
     ) {
@@ -664,12 +772,13 @@ export default function App() {
         autoOverlayTimerRef.current = null;
       }
     };
-  }, [autoOverlayPreview, activeTab, selected?.id, selected?.has_integrated_json, selected?.final_url, overlayEditVersion, overlayBusy]);
+  }, [autoOverlayPreview, activeTab, selected?.id, selected?.has_integrated_json, selected?.final_url, selected?.detail_loaded, overlayEditVersion, overlayBusy]);
 
   useEffect(() => {
     if (
       activeTab !== "overlay"
       || !canRenderOverlayImage(selected)
+      || !selected?.detail_loaded
       || selected?.final_url
       || overlayBusy
     ) {
@@ -686,7 +795,7 @@ export default function App() {
       silent: true,
       version: overlayEditVersionRef.current,
     });
-  }, [activeTab, selected?.id, selected?.has_integrated_json, selected?.final_url, overlayBusy, fontPath]);
+  }, [activeTab, selectedKey, selected?.has_integrated_json, selected?.final_url, selected?.detail_loaded, overlayBusy, fontPath]);
 
   useEffect(() => {
     function handleKeyDown(event) {
@@ -694,6 +803,12 @@ export default function App() {
       const tag = target?.tagName?.toLowerCase();
       const key = String(event.key || "").toLowerCase();
       const isTextTarget = tag === "input" || tag === "textarea" || tag === "select" || target?.isContentEditable;
+      // 버튼·링크·체크박스 등에 포커스가 있으면 Enter는 해당 컨트롤의 기본 동작에 맡긴다.
+      const isInteractiveTarget = Boolean(target?.closest?.(
+        "button, a[href], input, select, textarea, summary, [role='button'], [role='link'], [role='checkbox'], [role='radio'], [role='tab'], [role='menuitem'], [contenteditable='true']",
+      ));
+      // floating text editor는 자체 Cmd/Ctrl+Enter 처리(초안 반영 후 적용)를 한다.
+      const isFloatingEditorTarget = Boolean(target?.closest?.(".floating-text-editor"));
       if ((event.metaKey || event.ctrlKey) && !event.altKey && !event.shiftKey) {
         const nextTab = WORKFLOW_TAB_CODE_HOTKEYS[event.code] || WORKFLOW_TAB_NUMBER_HOTKEYS[String(event.key || "")];
         if (nextTab) {
@@ -705,7 +820,7 @@ export default function App() {
         }
       }
       if ((event.metaKey || event.ctrlKey) && !event.altKey && key === "z") {
-        if (activeTab !== "guidance") return;
+        if (activeTab !== "guidance" || isTextTarget) return;
         event.preventDefault();
         event.stopPropagation();
         if (event.shiftKey) redoGuidance();
@@ -717,6 +832,7 @@ export default function App() {
         && (event.metaKey || event.ctrlKey)
         && !event.altKey
         && key === "enter"
+        && !isFloatingEditorTarget
         && canRenderOverlayImage(selected)
         && !overlayBusy
       ) {
@@ -727,6 +843,7 @@ export default function App() {
         return;
       }
       if (event.metaKey || event.ctrlKey || event.altKey) return;
+      if (event.key === "Enter" && isInteractiveTarget) return;
       if (activeTab === "overlay") {
         if (isTextTarget) return;
         const rid = selectedRegionRefValue();
@@ -808,7 +925,6 @@ export default function App() {
         event.stopPropagation();
         setSelectedId(items[nextIndex].id);
         selectedIdRef.current = items[nextIndex].id;
-        setPreviewMode(activeTab === "overlay" ? "final" : "analysis");
         setStatus(`${items[nextIndex].name} 선택`);
         return;
       }
@@ -824,7 +940,16 @@ export default function App() {
     return () => {
       window.removeEventListener("keydown", handleKeyDown, true);
     };
-  }, [activeTab, selectedRegionId, overlayGuidance, guidanceUndoStack, guidanceRedoStack, selected?.id, selected?.has_integrated_json, overlayBusy, guidanceBusy, analyzeBusy]);
+  }, [activeTab, sessionId, fontPath, fonts, guidance, selectedRegionId, overlayGuidance, guidanceUndoStack, guidanceRedoStack, selected?.id, selected?.has_integrated_json, overlayBusy, guidanceBusy, analyzeBusy]);
+
+  // floating text editor의 Cmd/Ctrl+Enter: 초안 반영과 같은 render에서 갱신된 overlayGuidance로 적용한다.
+  // 다른 overlay 렌더가 진행 중이면 끝난 뒤 한 번 적용한다.
+  useEffect(() => {
+    if (overlayApplyRequest === handledOverlayApplyRequestRef.current) return;
+    if (overlayBusy) return;
+    handledOverlayApplyRequestRef.current = overlayApplyRequest;
+    if (activeTab === "overlay" && canRenderOverlayImage(selected)) applyOverlay();
+  }, [overlayApplyRequest, overlayBusy]);
 
   async function runTask(kind, label, fn) {
     setBusyTasks((current) => ({ ...current, [kind]: true }));
@@ -842,9 +967,16 @@ export default function App() {
     }
   }
 
+  // 세션 id가 아직 없을 때 서버가 새 세션을 만들었다면 그 세션을 현재 세션으로 채택한다.
+  function adoptCreatedSession(requestSid, resultSid) {
+    if (!requestSid && resultSid && resultSid !== sessionIdRef.current) setSessionTracked(resultSid);
+  }
+
   async function importPath() {
+    const requestSid = sessionId;
     await runTask("input", "폴더 import", async () => {
-      const result = await api("/api/import-path", { method: "POST", body: JSON.stringify({ session_id: sessionId, path: folderPath, recursive: true }) });
+      const result = await api("/api/import-path", { method: "POST", body: JSON.stringify({ session_id: requestSid, path: folderPath, recursive: true }) });
+      adoptCreatedSession(requestSid, result.session_id);
       const imgs = await refresh(result.session_id);
       if (result.imported > 0) scheduleLazyRefresh(result.session_id);
       setImageStatuses({});
@@ -858,26 +990,33 @@ export default function App() {
   }
 
   async function uploadFromInput(input) {
-    const files = Array.from(input.files || []);
+    await uploadFiles(Array.from(input.files || []), input);
+  }
+
+  // 파일 input과 Start page 드롭 영역이 같은 업로드 경로를 쓴다.
+  async function uploadFiles(files, input = null) {
     if (!files.length) return;
+    const requestSid = sessionId;
     await runTask("input", "업로드", async () => {
       const form = new FormData();
       files.forEach((file) => form.append("files", file));
-      const result = await api(`/api/upload?session_id=${sessionId}`, { method: "POST", body: form });
+      const result = await api(`/api/upload?session_id=${requestSid}`, { method: "POST", body: form });
+      adoptCreatedSession(requestSid, result.session_id);
       await refresh(result.session_id);
       if (result.imported > 0) scheduleLazyRefresh(result.session_id);
       setImageStatuses({});
       setActiveTab("guidance");
-      input.value = "";
+      if (input) input.value = "";
       return { logs: `${result.imported}개 이미지 업로드 완료. 캐시 확인은 백그라운드에서 진행 중` };
     });
   }
 
   async function openRecentSession(recent) {
     if (!recent?.session_id) return;
-    setSessionId(recent.session_id);
+    setSessionTracked(recent.session_id);
     selectedIdRef.current = "";
     const imgs = await refresh(recent.session_id);
+    if (sessionIdRef.current !== recent.session_id) return;
     if (imgs?.length) {
       setSelectedId(imgs[0].id);
       selectedIdRef.current = imgs[0].id;
@@ -912,9 +1051,10 @@ export default function App() {
     });
     setRecentMenuId("");
     setRecentSessions(result.sessions || []);
+    removeSessionSettings(recent.session_id);
     if (recent.session_id === sessionId) {
       const created = await api("/api/sessions/new", { method: "POST", body: "{}" });
-      setSessionId(created.session.session_id);
+      setSessionTracked(created.session.session_id);
       setProjectName(created.session.project_name || "");
       setImages([]);
       setSelectedId("");
@@ -939,6 +1079,7 @@ export default function App() {
   }
 
   async function analyze(target = "all") {
+    const requestSid = sessionId;
     await runTask("analyze", "OCR 직전 분석", async () => {
       const logLines = [];
       let completedImages = null;
@@ -953,8 +1094,10 @@ export default function App() {
       };
       await apiStream(
         "/api/analyze-stream",
-        { method: "POST", body: JSON.stringify({ session_id: sessionId, image_id: target, force: target !== "all", max_workers: analyzeWorkers }) },
+        { method: "POST", body: JSON.stringify({ session_id: requestSid, image_id: target, force: target !== "all", max_workers: analyzeWorkers }) },
         (event) => {
+          // 다른 세션으로 바뀐 뒤의 이벤트는 현재 세션 상태에 반영하지 않는다.
+          if (sessionIdRef.current !== requestSid) return;
           if (event.type === "log") appendLog(event.message);
           if (event.type === "image_status") {
             setImageStatuses((current) => ({
@@ -962,33 +1105,30 @@ export default function App() {
               [event.image_id]: { phase: "analysis", status: event.status, detail: event.detail || "" },
             }));
             if (event.image) {
-              setImages((items) => {
-                const found = items.some((item) => item.id === event.image.id);
-                return found ? items.map((item) => (item.id === event.image.id ? event.image : item)) : [...items, event.image];
-              });
-              if (event.status === "done" && (!selectedIdRef.current || event.image_id === selectedIdRef.current)) {
-                if (!selectedIdRef.current) setSelectedId(event.image_id);
-                setPreviewMode("analysis");
-              }
+              applyImageRecord(event.image, { insertIfMissing: true });
+              if (event.status === "done" && !selectedIdRef.current) setSelectedId(event.image_id);
             }
           }
           if (event.type === "error") {
+            appendLog(event.message);
+            // 이미지 단위 실패는 해당 이미지만 실패로 표시하고 나머지 진행 상황은 계속 추적한다.
             if (event.image_id) {
               setImageStatuses((current) => ({
                 ...current,
                 [event.image_id]: { phase: "analysis", status: "failed", detail: "실패" },
               }));
+              return;
             }
-            appendLog(event.message);
             throw new Error(event.message);
           }
           if (event.type === "complete") {
             completedImages = event.images || [];
-            setPreviewMode("analysis");
+            if (event.ok === false) appendLog("일부 이미지 분석 실패");
             appendLog(`${completedImages.length}개 분석 완료`);
           }
         },
       );
+      if (sessionIdRef.current !== requestSid) return { logs: logLines.join("\n") };
       if (completedImages) {
         setImages(completedImages);
         const currentId = selectedIdRef.current || selected?.id;
@@ -997,7 +1137,7 @@ export default function App() {
         setSelectedId(nextSelected);
         selectedIdRef.current = nextSelected;
       } else {
-        await refresh(sessionId);
+        await refresh(requestSid);
       }
       return { logs: logLines.join("\n") };
     });
@@ -1005,17 +1145,22 @@ export default function App() {
 
   async function applyGuidance() {
     if (!selected) return;
+    const requestSid = sessionId;
+    const requestImageId = selected.id;
     await runTask("guidance", "말풍선 분석 적용", async () => {
-      const result = await api("/api/guidance", { method: "POST", body: JSON.stringify({ session_id: sessionId, image_id: selected.id, guidance }) });
-      const refreshedImages = await refresh(sessionId);
-      const refreshedImage = refreshedImages.find((item) => item.id === result.image.id) || result.image;
-      setSelectedId(refreshedImage.id);
-      selectedIdRef.current = refreshedImage.id;
-      const next = defaultGuidance(refreshedImage);
-      currentGuidanceRef.current = next;
-      setGuidance(next);
-      resetGuidanceHistory();
-      setPreviewMode("analysis");
+      const result = await api("/api/guidance", { method: "POST", body: JSON.stringify({ session_id: requestSid, image_id: requestImageId, guidance }) });
+      const refreshedImages = await refresh(requestSid);
+      if (!refreshedImages || sessionIdRef.current !== requestSid) return { logs: "Step 3 재생성 완료 (다른 세션으로 이동해 화면 갱신 생략)" };
+      // 목록은 요약만 담으므로 guidance 등 상세는 응답의 전체 레코드를 쓴다.
+      const refreshedImage = result.image;
+      applyImageRecord(refreshedImage);
+      // 작업 중 다른 페이지로 이동했다면 선택을 되돌리지 않고, 보고 있는 페이지의 guidance도 건드리지 않는다.
+      if (selectedIdRef.current === requestImageId) {
+        const next = defaultGuidance(refreshedImage);
+        currentGuidanceRef.current = next;
+        setGuidance(next);
+        resetGuidanceHistory();
+      }
       const notices = guidanceEdgeNotices(result.image?.guidance_report || refreshedImage.guidance_report);
       if (notices.length) setGuidanceNotice({ title: "Edge Guidance", notices });
       return { logs: `Step 3 재생성 완료\nAnalysis: ${refreshedImage.bubble_vis_jpg}\nOCR Sheet: ${refreshedImage.indexed_sheet_jpg}\nMasked: ${refreshedImage.masked_jpg}` };
@@ -1024,29 +1169,47 @@ export default function App() {
 
   async function clearGuidanceOutputs() {
     if (!selected) return;
+    const requestSid = sessionId;
+    const requestImageId = selected.id;
     await runTask("guidance", "말풍선 분석 산출물 삭제", async () => {
-      const result = await api("/api/guidance/clear", { method: "POST", body: JSON.stringify({ session_id: sessionId, image_id: selected.id }) });
-      setImages((items) => items.map((item) => (item.id === result.image.id ? result.image : item)));
-      const next = defaultGuidance(result.image);
-      currentGuidanceRef.current = next;
-      setGuidance(next);
-      resetGuidanceHistory();
-      setSelectedTg(null);
-      setPreviewMode("analysis");
+      const result = await api("/api/guidance/clear", { method: "POST", body: JSON.stringify({ session_id: requestSid, image_id: requestImageId }) });
+      if (sessionIdRef.current !== requestSid) return { logs: "말풍선 분석 산출물 삭제 완료" };
+      applyImageRecord(result.image);
+      if (selectedIdRef.current === requestImageId) {
+        const next = defaultGuidance(result.image);
+        currentGuidanceRef.current = next;
+        setGuidance(next);
+        resetGuidanceHistory();
+        setSelectedTg(null);
+      }
       return { logs: "말풍선 분석 산출물 삭제 완료" };
     });
   }
 
   async function runFinal(force = false) {
     if (!selected) return;
+    const requestSid = sessionId;
+    const requestImageId = selected.id;
+    const requestVersion = overlayEditVersionRef.current;
     await runTask("ocr", "OCR/Overlay", async () => {
       const result = await api("/api/run-final", {
         method: "POST",
-        body: JSON.stringify({ session_id: sessionId, image_id: selected.id, extra_prompt: extraPrompt, font_path: fontPath, overlay_guidance: overlayGuidance, force }),
+        body: JSON.stringify({
+          session_id: requestSid,
+          image_id: requestImageId,
+          extra_prompt: extraPrompt,
+          font_path: fontPath,
+          overlay_guidance: overlayGuidance,
+          force,
+          ocr_model: ocrModelForRequest(),
+        }),
       });
-      setImages((items) => items.map((item) => (item.id === result.image.id ? result.image : item)));
-      setOverlayGuidance(defaultOverlayGuidance(result.image));
-      setPreviewMode("final");
+      if (sessionIdRef.current !== requestSid) return { logs: `최종 렌더 완료\nFinal: ${result.image.final_jpg}` };
+      applyImageRecord(result.image);
+      // 같은 페이지에 머물러 있고 요청 이후 overlay 편집이 없을 때만 서버 값으로 교체한다.
+      if (selectedIdRef.current === requestImageId && overlayEditVersionRef.current === requestVersion) {
+        setOverlayGuidance(defaultOverlayGuidance(result.image));
+      }
       return { logs: `최종 렌더 완료\nFinal: ${result.image.final_jpg}` };
     });
   }
@@ -1054,6 +1217,8 @@ export default function App() {
   async function runFinalStream(target = "all", force = false) {
     const targetImage = target === "all" ? null : images.find((img) => img.id === target) || selected;
     if (target !== "all" && !targetImage) return;
+    const requestSid = sessionId;
+    const startSelectedId = selectedIdRef.current;
     await runTask("ocr", target === "all" ? "전체 OCR/번역" : "현재 이미지 OCR/번역", async () => {
       const logLines = [];
       setOcrLog("");
@@ -1075,16 +1240,18 @@ export default function App() {
         {
           method: "POST",
           body: JSON.stringify({
-            session_id: sessionId,
+            session_id: requestSid,
             image_id: target,
             extra_prompt: extraPrompt,
             font_path: fontPath,
             overlay_guidance: target === selected?.id ? overlayGuidance : null,
             max_workers: analyzeWorkers,
             force,
+            ocr_model: ocrModelForRequest(),
           }),
         },
         (event) => {
+          if (sessionIdRef.current !== requestSid) return;
           if (event.type === "log") {
             appendLog(event.message);
             if (event.image_id) {
@@ -1107,7 +1274,7 @@ export default function App() {
               [event.image_id]: { phase: "ocr", status: event.status, detail: event.detail || "" },
             }));
             if (event.image) {
-              setImages((items) => items.map((item) => (item.id === event.image.id ? event.image : item)));
+              applyImageRecord(event.image);
             }
           }
           if (event.type === "error") {
@@ -1121,40 +1288,41 @@ export default function App() {
           }
         },
       );
-      if (targetImage?.id) {
+      // 작업 중 사용자가 다른 페이지로 이동했다면 완료 시 선택을 되돌리지 않는다.
+      if (targetImage?.id && sessionIdRef.current === requestSid && selectedIdRef.current === startSelectedId) {
         setSelectedId(targetImage.id);
         selectedIdRef.current = targetImage.id;
       }
-      setPreviewMode("final");
       return { logs: logLines.join("\n") };
     });
   }
 
-  async function applyOverlayRequest({ image, guidance, font, silent = false, version = overlayEditVersion } = {}) {
+  async function applyOverlayRequest({ image, guidance, font, silent = false, version = overlayEditVersionRef.current } = {}) {
     const targetImage = image || selected;
     if (!targetImage) return null;
+    const requestSid = sessionId;
     const run = async () => {
       const result = await api("/api/overlay/apply", {
         method: "POST",
         body: JSON.stringify({
-          session_id: sessionId,
+          session_id: requestSid,
           image_id: targetImage.id,
           font_path: font ?? fontPath,
           overlay_guidance: guidance || overlayGuidance,
         }),
       });
-      const isCurrentImage = (selectedIdRef.current || selected?.id) === result.image.id;
-      const responseIsCurrentEdit = !silent || overlayEditVersionRef.current === version;
-      if (!responseIsCurrentEdit) {
+      const isCurrentSession = sessionIdRef.current === requestSid;
+      const isCurrentImage = isCurrentSession && selectedIdRef.current === targetImage.id;
+      // 현재 페이지 + 요청 시점 이후 편집이 없을 때만 overlay 상태를 교체하고 적용 version을 올린다.
+      const isCurrentEdit = isCurrentImage && overlayEditVersionRef.current === version;
+      if (!isCurrentSession || (silent && isCurrentImage && !isCurrentEdit)) {
         return { logs: "오래된 Overlay preview 응답 무시", version, stale: true };
       }
-      setImages((items) => items.map((item) => (item.id === result.image.id ? result.image : item)));
-      if (isCurrentImage && responseIsCurrentEdit) {
+      applyImageRecord(result.image);
+      if (isCurrentEdit) {
         setOverlayGuidance(normalizeOverlayGuidance(defaultOverlayGuidance(result.image)));
+        overlayAppliedVersionRef.current = Math.max(overlayAppliedVersionRef.current, version);
       }
-      overlayAppliedVersionRef.current = Math.max(overlayAppliedVersionRef.current, version);
-      setPreviewMode("final");
-      setOverlayViewMode("preview");
       return { logs: `Overlay preview 갱신 완료\nFinal: ${result.image.final_jpg}`, version };
     };
     if (!silent) {
@@ -1232,6 +1400,7 @@ export default function App() {
       return;
     }
     setExportLog(`선택된 후보 ${targetIds.length}개 이미지 생성 요청 준비${force ? " (retry)" : ""}`);
+    const requestSid = sessionId;
     await runTask("export", "Missing final 이미지 생성", async () => {
       let latestImages = images;
       let generatedCount = 0;
@@ -1243,7 +1412,7 @@ export default function App() {
       await apiStream("/api/export/generate-missing/stream", {
         method: "POST",
         body: JSON.stringify({
-          session_id: sessionId,
+          session_id: requestSid,
           image_ids: targetIds,
           model: exportImageModel || "gpt-image-2",
           prompt_guide: exportPromptGuide,
@@ -1276,24 +1445,25 @@ export default function App() {
           appendLog(`완료. 생성 ${generatedCount}개, 실패 ${failedCount}개`);
         }
       });
-      setImages(latestImages || []);
-      setExportGenerateIds([]);
+      if (sessionIdRef.current === requestSid) {
+        setImages(latestImages || []);
+        setExportGenerateIds([]);
+      }
       return { logs: `이미지 생성 완료. 생성 ${generatedCount}개, 실패 ${failedCount}개` };
     });
   }
 
-  function selectImage(img, nextPreview = previewMode) {
+  function selectImage(img) {
     if (!img?.id) return;
     setSelectedId(img.id);
     selectedIdRef.current = img.id;
-    if (nextPreview) setPreviewMode(nextPreview);
     setStatus(`${img.name} 선택`);
   }
 
   function selectImageByIndex(index) {
     if (!images.length) return;
     const nextIndex = Math.min(images.length - 1, Math.max(0, index));
-    selectImage(images[nextIndex], activeTab === "overlay" ? "final" : "analysis");
+    selectImage(images[nextIndex]);
   }
 
   function ocrStateForImage(img) {
@@ -1304,7 +1474,7 @@ export default function App() {
     const savedState = img.ocr_status?.status;
     if (savedState === "failed" || savedState === "skipped") return savedState;
     if (savedState === "done") return "done";
-    if (img.integrated?.skipped) return "skipped";
+    if (img.integrated_skipped || img.integrated?.skipped) return "skipped";
     if (img.has_integrated_json) return "done";
     if (img.final_url) return "done";
     if (!img.indexed_sheet_url) return "failed";
@@ -1317,7 +1487,7 @@ export default function App() {
     if (detail) return detail;
     if (img.ocr_status?.detail) return img.ocr_status.detail;
     if (img.ocr_status?.message) return img.ocr_status.message;
-    if (img.integrated?.skipped) return img.integrated.message || "OCR/번역 스킵";
+    if (img.integrated_skipped || img.integrated?.skipped) return img.integrated_message || img.integrated?.message || "OCR/번역 스킵";
     if (img.has_integrated_json) return "integrated.json 있음";
     if (img.final_url) return "final ready";
     if (img.indexed_sheet_url) return "ready";
@@ -1352,7 +1522,7 @@ export default function App() {
           event.dataTransfer.setData("text/plain", img.id);
           event.dataTransfer.effectAllowed = "move";
         }}
-        onClick={() => selectImage(img, img.indexed_sheet_url ? "sheet" : "analysis")}
+        onClick={() => selectImage(img)}
       >
         <img className="image-status-thumb" src={img.input_url} alt="" loading="lazy" />
         <span>{img.name}</span>
@@ -1509,37 +1679,9 @@ export default function App() {
         selectedIdRef.current = nextSelected?.id || "";
         setSelectedTg(null);
         setSelectedRegionTracked(null);
-        setPreviewMode(activeTab === "overlay" ? "final" : "analysis");
       }
       return { logs: nextImages.length ? "이미지 제거 완료" : "이미지 제거 완료. 세션에 남은 파일이 없습니다." };
     });
-  }
-
-  function removeLast(kind) {
-    const keyMap = { tg: "tg_splits", wall: "virtual_walls", split: "split_guides", bubble: "manual_regions", ubox: "manual_regions" };
-    const key = keyMap[kind];
-    if (kind === "bubble" && (guidance.manual_seed_points || []).length) {
-      setGuidanceTracked({ ...guidance, manual_seed_points: (guidance.manual_seed_points || []).slice(0, -1) }, "Remove bubble seed");
-      return;
-    }
-    if (kind === "bubble" || kind === "ubox") {
-      const targetType = kind === "ubox" ? "unboxed" : "bubble";
-      const items = [...(guidance.manual_regions || [])];
-      const index = items.map((item) => item.type || "bubble").lastIndexOf(targetType);
-      if (index >= 0) items.splice(index, 1);
-      setGuidanceTracked({ ...guidance, manual_regions: items }, `Remove ${targetType}`);
-      return;
-    }
-    if (kind === "wall") {
-      const items = [...(guidance.virtual_walls || [])];
-      const lastBoxId = [...items].reverse().find((item) => item.box_id)?.box_id;
-      setGuidanceTracked(
-        { ...guidance, virtual_walls: lastBoxId ? items.filter((item) => item.box_id !== lastBoxId) : items.slice(0, -1) },
-        "Remove edge",
-      );
-      return;
-    }
-    setGuidanceTracked({ ...guidance, [key]: (guidance[key] || []).slice(0, -1) }, `Remove ${kind}`);
   }
 
   function guidanceHistoryItems() {
@@ -1629,7 +1771,19 @@ export default function App() {
               <p>Load comic images to start analysis.</p>
             </div>
             <div className="import-card">
-              <div className="import-drop">
+              <div
+                className="import-drop"
+                onDragOver={(event) => {
+                  // 기본 동작(브라우저가 파일로 이동)을 막아야 drop 이벤트가 온다.
+                  event.preventDefault();
+                  event.dataTransfer.dropEffect = inputBusy ? "none" : "copy";
+                }}
+                onDrop={(event) => {
+                  event.preventDefault();
+                  if (inputBusy) return;
+                  uploadFiles(Array.from(event.dataTransfer.files || []));
+                }}
+              >
                 <strong>Drop files here</strong>
                 <span>or browse from your computer</span>
                 <button className="primary" onClick={() => fileRef.current?.click()} disabled={inputBusy}>Load Files</button>
@@ -1846,11 +2000,11 @@ export default function App() {
           </div>
           <div className="field">
             <label>Extra prompt</label>
-            <textarea value={extraPrompt} onChange={(e) => setExtraPrompt(e.target.value)} />
+            <textarea value={extraPrompt} onChange={(e) => updateExtraPrompt(e.target.value)} />
           </div>
           <div className="row">
             <button className="primary" onClick={applyGuidance} disabled={guidanceBusy || analyzeBusy || !selected}>Apply Analysis</button>
-            <button onClick={runFinal} disabled={ocrBusy || !selected}>Run Final</button>
+            <button onClick={() => runFinal()} disabled={ocrBusy || !selected}>Run Final</button>
           </div>
           <button className="wide" onClick={() => setActiveTab("export")} disabled={!sessionId || !images.length}>Export Page</button>
         </div>
@@ -1986,10 +2140,25 @@ export default function App() {
               </div>
               <div className="ocr-panel">
                 <div className="ocr-prompt-panel">
+                  <label className="ocr-model-field">
+                    OCR/Translation Model
+                    <select
+                      value={effectiveOcrModel}
+                      onChange={(e) => updateOcrModel(e.target.value)}
+                      disabled={ocrBusy || !ocrModels.length}
+                      title={ocrModels.find((model) => model.id === effectiveOcrModel)?.note || undefined}
+                    >
+                      {ocrModels.map((model) => (
+                        <option key={model.id} value={model.id} title={model.note || undefined}>
+                          {model.label || model.id}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
                   <label>Additional Translation Prompt</label>
                   <textarea
                     value={extraPrompt}
-                    onChange={(e) => setExtraPrompt(e.target.value)}
+                    onChange={(e) => updateExtraPrompt(e.target.value)}
                     placeholder="번역 톤, 고유명사, 말투, 문맥 힌트를 적어두면 OCR/번역 요청에 함께 전달됩니다."
                   />
                 </div>
@@ -2013,7 +2182,7 @@ export default function App() {
                         const imageId = event.dataTransfer.getData("text/plain");
                         const image = images.find((item) => item.id === imageId);
                         if (!image?.indexed_sheet_url) return;
-                        selectImage(image, "sheet");
+                        selectImage(image);
                         runFinalStream(image.id, true);
                       }}
                     >
@@ -2081,6 +2250,7 @@ export default function App() {
                     selectedRegionId={selectedRegionRefValue()}
                     setSelectedRegionId={setSelectedRegionTracked}
                     setStatus={setStatus}
+                    onRequestApply={() => setOverlayApplyRequest((count) => count + 1)}
                   />
               </div>
             </section>

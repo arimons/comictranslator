@@ -17,8 +17,10 @@ export default function EditorCanvas({ image, baseUrl, guidance, setGuidance, un
   const undoGuidanceRef = useRef(undoGuidance);
   const redoGuidanceRef = useRef(redoGuidance);
   const dragPreviewRef = useRef(null);
+  // stage 핸들러는 mount 시점 클로저라 baseUrl은 ref로 읽어야 현재 페이지 key가 나온다.
+  const baseUrlRef = useRef(baseUrl);
+  baseUrlRef.current = baseUrl;
   const [dragPreview, setDragPreview] = useState(null);
-  const HANDLE_NAMES = ["nw", "ne", "se", "sw"];
 
   useEffect(() => {
     toolRef.current = tool;
@@ -73,7 +75,7 @@ export default function EditorCanvas({ image, baseUrl, guidance, setGuidance, un
   }
 
   function imageKey() {
-    return `${imageRef.current?.id || ""}:${baseUrl || imageRef.current?.final_url || imageRef.current?.input_url || ""}`;
+    return `${imageRef.current?.id || ""}:${baseUrlRef.current || imageRef.current?.final_url || imageRef.current?.input_url || ""}`;
   }
 
   function resetView(width, height, img) {
@@ -844,14 +846,21 @@ export default function EditorCanvas({ image, baseUrl, guidance, setGuidance, un
     const sourceUrl = baseUrl || image?.input_url;
     if (!sourceUrl) {
       redraw();
-      return;
+      return undefined;
     }
+    let cancelled = false;
     const img = new Image();
     img.onload = () => {
+      // 이전 페이지 이미지가 늦게 도착하면 현재 페이지를 덮어쓰지 않는다.
+      if (cancelled) return;
       imageObjRef.current = img;
       redraw();
     };
     img.src = sourceUrl;
+    return () => {
+      cancelled = true;
+      img.onload = null;
+    };
   }, [image?.id, image?.input_url, baseUrl]);
 
   useEffect(() => {
