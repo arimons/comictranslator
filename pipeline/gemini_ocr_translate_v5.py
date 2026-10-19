@@ -25,6 +25,7 @@ from google.genai import types
 from dotenv import load_dotenv
 
 try:
+    from pipeline.region_types import TEXT_BASED, region_processing_basis
     from pipeline.font_style_analyzer import (
         _normalized_render_hint,
         _clip_rect,
@@ -42,6 +43,7 @@ try:
         _style_features_for_anchor_ids,
     )
 except ImportError:
+    from region_types import TEXT_BASED, region_processing_basis
     from font_style_analyzer import (
         _normalized_render_hint,
         _clip_rect,
@@ -124,6 +126,32 @@ def _normalize_text_for_rendering(text: Any) -> str:
     return str(text or "").replace("｜", "|")
 
 
+def _region_ocr_problem(rid: int, r: Any) -> str | None:
+    """Region 하나의 OCR/번역 응답이 쓸 만한지 본다. 문제가 있으면 사유, 없으면 None."""
+    if not isinstance(r, dict):
+        return "regions 내에 객체가 아닌 요소가 포함됨"
+    segments = r.get("segments")
+    check_items = segments if isinstance(segments, list) and segments else [r]
+    for seg_idx, item in enumerate(check_items, start=1):
+        if not isinstance(item, dict):
+            return f"Region {rid}: segment {seg_idx}가 객체가 아님"
+        ocr_text = item.get("ocr_text")
+        text_translated = item.get("text_translated")
+
+        if ocr_text is None:
+            return f"Region {rid}: segment {seg_idx} ocr_text가 null임 (OCR 실패)"
+
+        if ocr_text.strip() != "":
+            if text_translated is None:
+                return f"Region {rid}: segment {seg_idx} 원문이 존재하나 번역문이 null임"
+            if text_translated.strip() == "":
+                return f"Region {rid}: segment {seg_idx} 원문이 존재하나 번역문이 빈 문자열임"
+        render_hint = item.get("render_hint", r.get("render_hint"))
+        if render_hint is not None and _normalized_render_hint(render_hint) == "normal" and str(render_hint or "normal") != "normal":
+            return f"Region {rid}: segment {seg_idx} render_hint 허용값 밖: {render_hint}"
+    return None
+
+
 def validate_gemini_ocr_regions(regions: list, expected_region_ids: set[int]) -> tuple[bool, str]:
     """Gemini OCR 응답이 후속 integrated 변환에 충분한지 검증한다."""
     if not isinstance(regions, list):
@@ -145,27 +173,38 @@ def validate_gemini_ocr_regions(regions: list, expected_region_ids: set[int]) ->
         return True, f"필수 region_id 누락: {sorted(list(missing_ids))}"
 
     for rid, r in returned_by_id.items():
-        segments = r.get("segments")
-        check_items = segments if isinstance(segments, list) and segments else [r]
-        for seg_idx, item in enumerate(check_items, start=1):
-            if not isinstance(item, dict):
-                return True, f"Region {rid}: segment {seg_idx}가 객체가 아님"
-            ocr_text = item.get("ocr_text")
-            text_translated = item.get("text_translated")
-
-            if ocr_text is None:
-                return True, f"Region {rid}: segment {seg_idx} ocr_text가 null임 (OCR 실패)"
-
-            if ocr_text.strip() != "":
-                if text_translated is None:
-                    return True, f"Region {rid}: segment {seg_idx} 원문이 존재하나 번역문이 null임"
-                if text_translated.strip() == "":
-                    return True, f"Region {rid}: segment {seg_idx} 원문이 존재하나 번역문이 빈 문자열임"
-            render_hint = item.get("render_hint", r.get("render_hint"))
-            if render_hint is not None and _normalized_render_hint(render_hint) == "normal" and str(render_hint or "normal") != "normal":
-                return True, f"Region {rid}: segment {seg_idx} render_hint 허용값 밖: {render_hint}"
+        problem = _region_ocr_problem(rid, r)
+        if problem:
+            return True, problem
 
     return False, ""
+
+
+def collect_valid_ocr_regions(regions: Any, wanted_ids: set[int]) -> tuple[dict[int, dict], dict[int, str]]:
+    """응답에서 wanted_ids 중 검증을 통과한 region만 고른다. (통과 region, 실패 사유)
+
+    한 영역이 틀렸다고 같은 응답의 다른 영역까지 버리지 않기 위해 영역 단위로 본다.
+    """
+    good: dict[int, dict] = {}
+    problems: dict[int, str] = {}
+    for r in regions if isinstance(regions, list) else []:
+        if not isinstance(r, dict):
+            continue
+        try:
+            rid = int(r.get("region_id"))
+        except (TypeError, ValueError):
+            continue
+        if rid not in wanted_ids or rid in good:
+            continue
+        problem = _region_ocr_problem(rid, r)
+        if problem:
+            problems[rid] = problem
+        else:
+            good[rid] = r
+            problems.pop(rid, None)
+    for rid in wanted_ids - set(good) - set(problems):
+        problems[rid] = f"Region {rid}: 응답에 없음"
+    return good, problems
 
 
 JAPANESE_TO_KOREAN_STYLE_GUIDE = """\
@@ -545,7 +584,7 @@ def _is_unboxed_consolidated_region(region: dict) -> bool:
         return True
     consolidated = region.get("consolidated_text_group") or {}
     tg_ids = consolidated.get("text_group_ids") or []
-    return region.get("type") == "unboxed" and len(tg_ids) > 1
+    return region_processing_basis(region) == TEXT_BASED and len(tg_ids) > 1
 
 
 def _collapse_segments_for_consolidated_unboxed(
@@ -576,6 +615,7 @@ def _build_integrated_from_sheet_regions(
     cv_clusters_path: str,
     output_integrated_path: str,
     style_features_by_region: dict[int, dict[str, Any]] | None = None,
+    missing_region_ids: list[int] | None = None,
 ) -> Dict[str, Any]:
     with open(sheet_json_path, "r", encoding="utf-8") as f:
         sheet = json.load(f)
@@ -691,6 +731,9 @@ def _build_integrated_from_sheet_regions(
         "model": MODEL_NAME,
         "ocr_source": "flood_indexed_sheet",
     }
+    if missing_region_ids:
+        # 재요청까지 실패해 번역이 없는 region. 렌더는 원본으로 두고, 편집기에서 직접 채울 대상이다.
+        integrated_data["missing_region_ids"] = list(missing_region_ids)
     with open(output_integrated_path, "w", encoding="utf-8") as f:
         json.dump(integrated_data, f, ensure_ascii=False, indent=2)
     return integrated_data
@@ -776,6 +819,7 @@ def _write_indexed_sheet_chunk(
     chunk_regions: list[dict],
     chunk_index: int,
     work_dir: Path,
+    name_suffix: str = "",
 ) -> str:
     image = cv2.imread(indexed_sheet_path)
     if image is None:
@@ -808,7 +852,7 @@ def _write_indexed_sheet_chunk(
         chunk_img[0:h, x:x + w] = crop
         x += w + (gap if i < len(crops) - 1 else 0)
 
-    out_path = work_dir / f"{Path(indexed_sheet_path).stem}_chunk_{chunk_index:02d}.jpg"
+    out_path = work_dir / f"{Path(indexed_sheet_path).stem}_chunk_{chunk_index:02d}{name_suffix}.jpg"
     out_path.parent.mkdir(parents=True, exist_ok=True)
     cv2.imwrite(str(out_path), chunk_img)
     return str(out_path)
@@ -918,9 +962,12 @@ def _process_sheet_ocr(
             )
             print(f"  ✂️ OCR sheet chunk 분할: {chunk_log}")
 
-        # 최대 3회 재시도 루프
+        # chunk마다 최대 3회 요청한다. 통과한 region은 보관하고 다음 시도에는 실패한 region만 다시 보낸다.
+        # 끝까지 실패한 region은 누락으로 남기고 나머지로 페이지를 완성한다(렌더는 누락 region을 원본으로 둔다).
         max_content_retries = 3
         all_returned_regions = []
+        missing_region_ids: list[int] = []
+        missing_reasons: dict[int, str] = {}
         total_elapsed = 0.0
 
         for chunk_index, chunk_regions in enumerate(ocr_chunks, start=1):
@@ -934,43 +981,49 @@ def _process_sheet_ocr(
                 if len(ocr_chunks) > 1
                 else sheet_image_path
             )
-            input_images = [chunk_sheet_path]
 
-            result = {}
-            elapsed = 0.0
-            final_retry_reason = ""
+            good: dict[int, dict] = {}
+            problems: dict[int, str] = {}
+            last_result: Any = {}
             for attempt in range(1, max_content_retries + 1):
+                pending_ids = chunk_expected_ids - set(good)
+                if not pending_ids:
+                    break
+                if pending_ids == chunk_expected_ids:
+                    request_sheet = chunk_sheet_path
+                else:
+                    request_sheet = _write_indexed_sheet_chunk(
+                        sheet_image_path,
+                        [r for r in chunk_regions if int(r.get("region_id", -1)) in pending_ids],
+                        chunk_index,
+                        sheet_work_dir,
+                        name_suffix=f"_retry{attempt}",
+                    )
                 try:
-                    result, elapsed = _run_model_json(input_images, prompt, temperature=0.25)
-                    _returned = result.get("regions", [])
-
-                    _retry, _reason = validate_gemini_ocr_regions(_returned, chunk_expected_ids)
-                    if not _retry:
-                        if attempt > 1:
-                            print(f"  ✨ Gemini OCR/번역 검증 통과 chunk {chunk_index}/{len(ocr_chunks)} (시도 {attempt}/{max_content_retries})")
-                        break
-
-                    final_retry_reason = _reason
-                    print(f"  ⚠️ Gemini OCR/번역 검증 실패 chunk {chunk_index}/{len(ocr_chunks)} — {_reason} (시도 {attempt}/{max_content_retries})")
+                    last_result, elapsed = _run_model_json([request_sheet], prompt, temperature=0.25)
+                    total_elapsed += elapsed
+                except Exception as e:
+                    for rid in pending_ids:
+                        problems[rid] = f"Gemini API 호출 실패: {str(e)}"
+                    print(f"  ⚠️ Gemini API 호출 실패 chunk {chunk_index}/{len(ocr_chunks)} — {str(e)} (시도 {attempt}/{max_content_retries})")
                     if attempt < max_content_retries:
                         time.sleep(2)
-                except Exception as e:
-                    final_retry_reason = f"Gemini API 호출 실패: {str(e)}"
-                    print(f"  ⚠️ Gemini API 호출 실패 chunk {chunk_index}/{len(ocr_chunks)} — {str(e)} (시도 {attempt}/{max_content_retries})")
-                    if attempt == max_content_retries:
-                        break
+                    continue
+                returned = last_result.get("regions", []) if isinstance(last_result, dict) else []
+                new_good, new_problems = collect_valid_ocr_regions(returned, pending_ids)
+                good.update(new_good)
+                problems = {rid: why for rid, why in {**problems, **new_problems}.items() if rid not in good}
+                still = sorted(chunk_expected_ids - set(good))
+                if not still:
+                    if attempt > 1:
+                        print(f"  ✨ Gemini OCR/번역 검증 통과 chunk {chunk_index}/{len(ocr_chunks)} (시도 {attempt}/{max_content_retries})")
+                    break
+                print(f"  ⚠️ Gemini OCR/번역 일부 실패 chunk {chunk_index}/{len(ocr_chunks)} — 남은 region {still}: {problems.get(still[0], '')} (시도 {attempt}/{max_content_retries})")
+                if attempt < max_content_retries:
                     time.sleep(2)
 
-            _returned = result.get("regions", []) if isinstance(result, dict) else []
-            # expected가 비어있는 경우(regions=0 은 위에서 early return되므로 여기선 실질적으로 미도달)
-            # result가 실제로 수신됐는지 여부로 판단 (빈 list와 미수신을 구분)
-            _got_response = isinstance(result, dict) and result
-            _retry, _reason = (
-                validate_gemini_ocr_regions(_returned, chunk_expected_ids)
-                if _got_response
-                else (True, final_retry_reason)
-            )
-            if _retry:
+            still_missing = sorted(chunk_expected_ids - set(good))
+            if still_missing:
                 error_dump_path = output_integrated_path.replace(".json", f"_chunk_{chunk_index:02d}_error_dump.json")
                 error_log_data = {
                     "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
@@ -978,8 +1031,9 @@ def _process_sheet_ocr(
                     "chunk_sheet_path": chunk_sheet_path,
                     "sheet_json_path": sheet_json_path,
                     "expected_region_ids": sorted(list(chunk_expected_ids)),
-                    "last_attempt_result": result,
-                    "failure_reason": _reason,
+                    "missing_region_ids": still_missing,
+                    "failure_reasons": {str(rid): problems.get(rid, "") for rid in still_missing},
+                    "last_attempt_result": last_result,
                     "max_attempts": max_content_retries,
                 }
                 try:
@@ -988,15 +1042,17 @@ def _process_sheet_ocr(
                     error_save_msg = f"이상로그 덤프 파일 저장 완료: {error_dump_path}"
                 except Exception as _log_e:
                     error_save_msg = f"이상로그 파일 저장 실패: {str(_log_e)}"
-
-                print(f"\n❌ [이상로그] Gemini OCR/번역 검증 최종 실패 chunk {chunk_index}/{len(ocr_chunks)}", file=sys.stderr)
-                print(f"    - 실패 사유: {_reason}", file=sys.stderr)
+                print(f"\n⚠️ [이상로그] OCR/번역 누락 region {still_missing} (chunk {chunk_index}/{len(ocr_chunks)}). 나머지 region은 저장합니다.", file=sys.stderr)
                 print(f"    - {error_save_msg}\n", file=sys.stderr)
+                missing_region_ids.extend(still_missing)
+                missing_reasons.update({rid: problems.get(rid, "") for rid in still_missing})
 
-                raise RuntimeError(f"Gemini OCR 검증 실패 chunk {chunk_index}/{len(ocr_chunks)}: {_reason}")
+            all_returned_regions.extend(good[rid] for rid in sorted(good))
 
-            all_returned_regions.extend(_returned)
-            total_elapsed += elapsed
+        if expected_ids and not all_returned_regions:
+            # 한 region도 받지 못했다면(API 키·네트워크 문제 등) 지금처럼 페이지를 실패로 둔다.
+            first_reason = next(iter(missing_reasons.values()), "")
+            raise RuntimeError(f"Gemini OCR 전체 실패: {first_reason}")
 
         result = {"regions": all_returned_regions}
 
@@ -1006,6 +1062,7 @@ def _process_sheet_ocr(
             cv_clusters_path,
             output_integrated_path,
             style_features_by_region,
+            missing_region_ids=sorted(missing_region_ids),
         )
         return {
             "img_name": Path(sheet_image_path).stem,
@@ -1013,6 +1070,7 @@ def _process_sheet_ocr(
             "output_path": output_integrated_path,
             "sentences": len(integrated.get("clusters", [])),
             "elapsed": total_elapsed,
+            "missing_region_ids": sorted(missing_region_ids),
         }
     except json.JSONDecodeError as e:
         return {"img_name": Path(sheet_image_path).stem, "success": False, "error": f"JSON 파싱 실패: {str(e)[:50]}"}
@@ -1238,6 +1296,8 @@ def main() -> None:
         print(f"❌ Gemini OCR 실패: {result.get('error')}")
         sys.exit(1)
     print(f"✅ Gemini OCR 완료: {result.get('sentences', 0)}개 sentence")
+    if result.get("missing_region_ids"):
+        print(f"⚠️ 번역 누락 region {result['missing_region_ids']}: 원본으로 남습니다. 편집기에서 직접 입력하세요.")
 
 
 if __name__ == "__main__":

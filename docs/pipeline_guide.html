@@ -983,12 +983,15 @@ python3 run_pipeline.py \
   </div>
 
   <h3>재시도 로직</h3>
-  <p>응답 품질을 자동 검증하고 필요 시 1회 재시도합니다.</p>
+  <p>응답을 region 단위로 검증합니다(<code>collect_valid_ocr_regions</code>). 다음 경우 그 region만 실패로 봅니다.</p>
   <ul>
-    <li>region 수 &lt; 예상 수 (<code>regions.json</code> 기준)</li>
-    <li><code>text_translated</code> 공백인 region 존재</li>
-    <li>OCR 텍스트 중복 (region_id 오할당 의심)</li>
+    <li>응답에 region이 없음 (<code>regions.json</code> 기준)</li>
+    <li><code>ocr_text</code>가 null이거나, 원문이 있는데 <code>text_translated</code>가 비어 있음</li>
+    <li><code>render_hint</code>가 허용값 밖</li>
   </ul>
+  <p>통과한 region은 보관하고, 다음 시도에는 실패한 region만 담은 시트를 다시 보냅니다(chunk당 최대 3회).
+  끝까지 실패한 region은 <code>integrated.json</code>의 <code>missing_region_ids</code>로 남기고 페이지는 성공으로 처리합니다. 렌더는 그 region을 원본으로 두며, 편집기에서 번역을 직접 넣으면 됩니다.
+  region을 하나도 받지 못한 경우(API 키·네트워크 오류 등)에만 페이지를 실패로 둡니다.</p>
 
   <div class="info-box info-note">
     <strong>스탈레 캐시 무효화</strong>

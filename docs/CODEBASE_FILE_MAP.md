@@ -351,7 +351,8 @@ OCR, 번역, Text Group 매칭을 한 번에 수행하고 integrated JSON을 생
 - `--model`로 모델을 고른다. `gemini-*`는 Gemini, `gpt-*`는 OpenAI로 보낸다. UI 노출 목록은 `SUPPORTED_OCR_MODELS`, 기본값은 `MODEL_NAME`이다.
 - OCR 직후 `font_style_analyzer.update_integrated_render_hints()`로 render_hint를 보정한다.
 - 출력: `*_integrated.json`
-- 출력 구조: `clusters`(=Text Group), `unmatched_clusters`, `model`, `ocr_source`
+- 출력 구조: `clusters`(=Text Group), `unmatched_clusters`, `model`, `ocr_source`. 번역을 끝내 받지 못한 region이 있으면 `missing_region_ids`도 쓴다.
+- 부분 성공 보존: chunk 응답은 region 단위로 검증한다(`collect_valid_ocr_regions`). 통과한 region은 보관하고, 다음 시도(최대 3회)에는 실패한 region만 담은 시트(`*_chunk_NN_retryK.jpg`)를 다시 보낸다. 끝까지 실패한 region은 `missing_region_ids`로 남기고 페이지는 성공 처리한다. 렌더는 누락 region을 원본으로 두므로 편집기에서 직접 번역을 넣는다. region을 하나도 받지 못하면(API 키·네트워크 오류) 페이지를 실패로 둔다.
 - 각 항목은 `sentence_id`, `text`, `text_translated`, `matched_cluster`, `matched_cluster_details`, `bounding_rect`, `location`, `source_region_id`, render_hint 관련 필드를 포함한다.
 
 ### `pipeline/font_style_analyzer.py`
