@@ -15,6 +15,17 @@ except ImportError:
     from unboxed_grouping import text_group_text
 
 
+def kana_kanji_count(text: str) -> int:
+    """가나·한자만 센다. 숫자·영문만 있는 TG(쪽번호, 효과음 로마자 등)는 0이다."""
+    return sum(1 for ch in str(text or "") if "぀" <= ch <= "ヿ" or "一" <= ch <= "鿿")
+
+
+# 굵은 글씨라도 가나·한자가 이만큼 이어지면 효과음보다 강조 대사로 본다.
+# Ore_2 실측: 수동 Ubox로 다시 지정한 굵은 대사는 모두 5자 이상(今日は一切, やっぱりなあ… 등),
+# 같은 규칙으로 제외돼 그대로 둔 효과음·잡음은 대부분 3자 이하(シーン, 襲来, 22 등)였다.
+HEAVY_DIALOGUE_MIN_KANA_KANJI = 5
+
+
 def japanese_char_count(text: str) -> int:
     """일본어 글자 수를 세고, 일본어가 없으면 공백 제거 길이를 사용한다."""
     compact = "".join(ch for ch in str(text or "") if not ch.isspace())
@@ -127,6 +138,7 @@ def compute_text_group_style(image: np.ndarray, group: dict[str, Any]) -> dict[s
     rect = as_rect(group.get("tight_rect", group.get("bounding_rect", [0, 0, 0, 0])))
     return {
         "char_count": total_chars,
+        "kana_kanji_count": kana_kanji_count(text_group_text(group)),
         "tf_count": len(fragments),
         "font_proxy": weighted("font_proxy"),
         "dark_density": weighted("dark_density"),
@@ -184,6 +196,7 @@ def classify_text_group_style(style: dict[str, Any], baseline: dict[str, float])
     fill_rel = float(style.get("ink_fill", 0.0)) / base_fill
     aspect = float(style.get("aspect", 0.0))
     char_count = int(style.get("char_count", 0) or 0)
+    long_japanese = int(style.get("kana_kanji_count", 0) or 0) >= HEAVY_DIALOGUE_MIN_KANA_KANJI
 
     style_class = "normal"
     include_policy = "include"
@@ -198,14 +211,14 @@ def classify_text_group_style(style: dict[str, Any], baseline: dict[str, float])
         style_class = "large_sparse_efx"
         include_policy = "exclude"
         review_tags.append("style_large_sparse_efx")
-    elif font_ratio >= 1.45 and density_rel >= 1.45 and fill_rel >= 1.15:
+    elif font_ratio >= 1.45 and density_rel >= 1.45 and fill_rel >= 1.15 and not long_japanese:
         style_class = "large_heavy_efx"
         include_policy = "exclude"
         review_tags.append("style_large_heavy_efx")
     elif font_ratio >= 1.45:
         style_class = "large_normal"
         quality_flags.append("style_large_normal")
-    elif font_ratio >= 1.08 and density_rel >= 1.18 and fill_rel >= 1.02 and char_count <= 10:
+    elif font_ratio >= 1.08 and density_rel >= 1.18 and fill_rel >= 1.02 and char_count <= 10 and not long_japanese:
         style_class = "large_heavy"
         include_policy = "exclude"
         review_tags.append("style_large_heavy")

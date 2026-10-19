@@ -26,12 +26,13 @@ def test_get_lama_loads_model_once_across_threads(monkeypatch):
     created = []
 
     class FakeLama:
-        def __init__(self):
+        def __init__(self, device=None):  # 실제 SimpleLama처럼 실행 장치를 받는다
             time.sleep(0.05)  # 동시에 들어온 스레드가 겹치도록 로드를 늦춘다.
             created.append(self)
 
     monkeypatch.setattr(de, "_lama", None)
     monkeypatch.setattr(de, "SimpleLama", FakeLama)
+    monkeypatch.setattr(de, "_acquire_lama_process_slot", lambda: None)  # 테스트가 실제 슬롯을 잡지 않게
     results = []
     threads = [threading.Thread(target=lambda: results.append(de._get_lama())) for _ in range(8)]
     for thread in threads:
