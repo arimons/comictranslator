@@ -12,7 +12,8 @@
       "sources": [
         "pipeline/work_glossary.py",
         "frontend/src/GlossaryPanel.jsx",
-        "main_v2.py"
+        "main_v2.py",
+        "pipeline/work_matching.py"
       ]
     },
     "docs/pipeline_guide.html": {
@@ -192,6 +193,13 @@
         "frontend/src/ServerStatus.jsx",
         "frontend/src/ImagePreview.jsx",
         "frontend/src/viewportControls.js"
+      ]
+    },
+    "docs/ORE3_IMAGE_ROUTE_REVIEW.md": {
+      "role": "record",
+      "topic": "3권 이미지 생성 경로 후보의 사용자 확인 전 검토",
+      "sources": [
+        "proof/src/review_ore3_image_routes.py"
       ]
     }
   }
