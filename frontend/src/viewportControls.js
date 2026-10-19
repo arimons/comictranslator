@@ -60,7 +60,7 @@ function wheelDeltaPixels(event, host) {
 //   isPanTool(): Hand 도구 여부
 export function createViewport(options) {
   const fitPadding = options.fitPadding ?? 0.98;
-  let view = { key: "", scale: 1, x: 0, y: 0, hostWidth: 0, hostHeight: 0 };
+  let view = { key: "", mode: "fit", scale: 1, x: 0, y: 0, hostWidth: 0, hostHeight: 0 };
   let pan = null;
   let detach = null;
 
@@ -97,9 +97,11 @@ export function createViewport(options) {
     const key = options.getKey?.() || "";
     if (view.key !== key || !Number.isFinite(view.scale)) {
       const fit = fitTransform(width, height, img);
-      view = { key, ...fit, hostWidth: width, hostHeight: height };
+      view = { key, mode: "fit", ...fit, hostWidth: width, hostHeight: height };
     } else if (view.hostWidth !== width || view.hostHeight !== height) {
-      view = clamp({ ...view, hostWidth: width, hostHeight: height }, width, height, img);
+      view = view.mode === "fit"
+        ? { ...view, ...fitTransform(width, height, img), hostWidth: width, hostHeight: height }
+        : clamp({ ...view, hostWidth: width, hostHeight: height }, width, height, img);
     }
     return view;
   }
@@ -108,7 +110,7 @@ export function createViewport(options) {
     const img = options.getImage?.();
     if (!img) return false;
     const { width, height } = hostSize();
-    view = clamp({ ...view, ...next, key: options.getKey?.() || "", hostWidth: width, hostHeight: height }, width, height, img);
+    view = clamp({ ...view, mode: "manual", ...next, key: options.getKey?.() || "", hostWidth: width, hostHeight: height }, width, height, img);
     if (statusText) options.onStatus?.(statusText(view));
     options.redraw?.();
     return true;
@@ -135,7 +137,7 @@ export function createViewport(options) {
     const img = options.getImage?.();
     if (!img) return false;
     const { width, height } = hostSize();
-    return apply(fitTransform(width, height, img), () => "Zoom fit");
+    return apply({ ...fitTransform(width, height, img), mode: "fit" }, () => "Zoom fit");
   }
 
   function zoomTo(scale, point = null) {

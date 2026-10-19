@@ -6,6 +6,9 @@ import { TEXT_BASED, regionProcessingBasis, regionTypeLabel } from "./regionType
 import { RestoreControls, RestoreStage, useRestore } from "./RestorePanel.jsx";
 import ShortcutHelp from "./ShortcutHelp.jsx";
 import StartScreen from "./StartScreen.jsx";
+import ImagePreview from "./ImagePreview.jsx";
+import ServerStatus from "./ServerStatus.jsx";
+import PagePreparation from "./PagePreparation.jsx";
 import GlossaryPanel from "./GlossaryPanel.jsx";
 import { KEYMAP, eventMatches, entryInContext, entryVisibleOnPlatform, shortcutFor, shortcutById } from "./keymap.js";
 import {
@@ -60,7 +63,7 @@ export default function App() {
   const [ocrLog, setOcrLog] = useState("");
   const [exportLog, setExportLog] = useState("");
   const [busyTasks, setBusyTasks] = useState({});
-  const [activeTaskLabel, setActiveTaskLabel] = useState("");
+  const taskLocksRef = useRef(new Set());
   const [activeTab, setActiveTab] = useState("guidance");
   const [workspaceStarted, setWorkspaceStarted] = useState(false);
   useEffect(() => {
@@ -1113,8 +1116,9 @@ export default function App() {
   }, [overlayApplyRequest, overlayBusy]);
 
   async function runTask(kind, label, fn) {
+    if (taskLocksRef.current.has(kind)) return;
+    taskLocksRef.current.add(kind);
     setBusyTasks((current) => ({ ...current, [kind]: true }));
-    setActiveTaskLabel(label);
     setStatus(`${label}...`);
     try {
       const result = await fn();
@@ -1123,8 +1127,8 @@ export default function App() {
     } catch (err) {
       setStatus(String(err.message || err));
     } finally {
+      taskLocksRef.current.delete(kind);
       setBusyTasks((current) => ({ ...current, [kind]: false }));
-      setActiveTaskLabel("");
     }
   }
 
@@ -1972,11 +1976,27 @@ export default function App() {
 
   const guidanceHistory = guidanceHistoryItems();
 
+  async function adoptPreparedProject(result) {
+    setWorkspaceStarted(false);
+    setSessionTracked(result.session_id);
+    projectNameDirtyRef.current = false;
+    selectedIdRef.current = "";
+    setPageDetail(null);
+    setImageStatuses({});
+    setAnalysisPolicy("reuse");
+    await refresh(result.session_id);
+    loadRecentSessions();
+    setStatus(`${result.image_count}장의 단일 페이지 프로젝트를 만들었습니다. 원본 프로젝트는 유지됩니다.`);
+  }
+  const previewSessionId = new URLSearchParams(window.location.search).get("page_preview");
+  const pagePreparationControl = (sessionId || previewSessionId) ? <PagePreparation sessionId={sessionId || previewSessionId} disabled={anyBusy} onPrepared={adoptPreparedProject} autoOpen={Boolean(previewSessionId)} /> : null;
+
   if (!workspaceStarted) {
     return <StartScreen
       images={images} recentSessions={recentSessions} projectName={projectName}
       recentLoadState={recentLoadState} loadRecentSessions={loadRecentSessions}
       importNameFocusRequest={importNameFocusRequest}
+      pagePreparationControl={pagePreparationControl}
       onProjectNameChange={(value) => { projectNameDirtyRef.current = true; setProjectName(value); }}
       saveProjectName={saveProjectName} folderPath={folderPath} setFolderPath={setFolderPath}
       fileRef={fileRef} uploadFiles={uploadFiles} uploadFromInput={uploadFromInput} importPath={importPath}
@@ -1992,9 +2012,7 @@ export default function App() {
   return (
     <div className={`app workspace-mode ${toolsOpen ? "" : "tools-collapsed"} ${activeTab === "overlay" ? "overlay-mode" : ""} ${activeTab === "ocr" ? "ocr-mode" : ""} ${activeTab === "export" ? "export-mode" : ""} ${activeTab === "restore" ? "restore-mode" : ""}`}>
       <header className="workspace-global-topbar">
-        <button className="workspace-brand" type="button" onClick={returnToStartPage} title="홈으로 돌아가기">
-          Comic Translator Studio
-        </button>
+        <div className="workspace-brand-group"><button className="workspace-brand" type="button" onClick={returnToStartPage} title="홈으로 돌아가기">Comic Translator Studio</button><ServerStatus /></div>
         <input
           className="project-name-input"
           value={projectName}
@@ -2017,6 +2035,7 @@ export default function App() {
         </nav>
         <GlossaryPanel sessionId={sessionId} projectName={projectName} ocrBusy={ocrBusy} />
         <div className="file-navigator top-file-nav">
+          {pagePreparationControl}
           <button onClick={() => selectImageByIndex(currentIndex - 1)} disabled={currentIndex <= 0}>‹</button>
           <select value={selected?.id || ""} onChange={(event) => selectImage(images.find((img) => img.id === event.target.value))}>
             {images.map((img, index) => <option key={img.id} value={img.id}>{`${index + 1}. ${img.name || img.id}`}</option>)}
@@ -2146,9 +2165,7 @@ export default function App() {
                   ))}
                 </div>
               </div>
-              <div className="preview-body fit-page">
-                {guidanceCompareUrl ? <img src={guidanceCompareUrl} /> : <div className="empty">비교 이미지 없음</div>}
-              </div>
+              <ImagePreview src={guidanceCompareUrl} />
             </section>
 
             <section className="viewer-card guidance-editor-card">
@@ -2785,13 +2802,6 @@ export default function App() {
               ? `System Status: ${restore.hasActiveJob ? "Restoring" : "Idle"} | File: ${selected?.name || "-"} | Mask: ${restore.maskPixels}px | Status: ${status || "-"}`
             : `System Status: ${guidanceBusy || analyzeBusy ? "Active" : "Idle"} | Tool: ${TOOL_LABELS.find(([id]) => id === tool)?.[1] || tool} | File: ${selected?.name || "-"}`}
       </footer>
-      {anyBusy ? (
-        <div className="task-progress-toast" role="status" aria-live="polite">
-          <strong>{activeTaskLabel || "작업 진행 중"}</strong>
-          <span>{selected?.name || "현재 이미지"}</span>
-          <div className="task-progress-bar"><i /></div>
-        </div>
-      ) : null}
       {shortcutToast ? <div className="shortcut-toast" role="status" aria-live="polite">{shortcutToast}</div> : null}
       <ShortcutHelp open={helpOpen} activeTab={activeTab} onClose={() => setHelpOpen(false)} />
       {guidanceNotice ? (

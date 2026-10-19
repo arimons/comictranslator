@@ -27,6 +27,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any
 from urllib.parse import quote
+from uuid import uuid4
 
 from dotenv import load_dotenv
 from fastapi import FastAPI, File, HTTPException, UploadFile
@@ -37,6 +38,7 @@ from pydantic import BaseModel
 
 from pipeline.manual_guidance import build_effective_text_groups, load_json, write_json
 from pipeline.region_types import regions_with_processing_basis
+from pipeline.page_preparation import build_plan, materialize_plan
 from pipeline.openai_image_redraw import redraw_image_with_openai
 from pipeline.pipeline_runner import DEFAULT_FONT, run_single_image, stream_subprocess
 from pipeline.render_text_overlay import apply_text_overlay
@@ -130,6 +132,11 @@ GUIDANCE_OUTPUT_REQUIRED = (
     "masked_jpg",
     "bubble_vis_jpg",
 )
+
+
+class PagePreparationRequest(BaseModel):
+    session_id: str
+    revision: str | None = None
 
 
 class ImportPathRequest(BaseModel):
@@ -2624,6 +2631,51 @@ def create_app() -> FastAPI:
     @app.get("/api/sessions/recent")
     def recent_sessions() -> dict[str, Any]:
         return {"sessions": list_recent_sessions()}
+
+    @app.get("/api/health")
+    def server_health() -> dict[str, str]:
+        return {"status": "ok"}
+
+    def preparation_source(session_id: str) -> dict[str, Any]:
+        if not re.fullmatch(r"[A-Za-z0-9_-]+", session_id) or not session_file(session_id).is_file():
+            raise HTTPException(status_code=404, detail="프로젝트를 찾을 수 없습니다.")
+        data = load_json(session_file(session_id), default={})
+        if not data.get("images"):
+            raise HTTPException(status_code=400, detail="불러온 이미지가 없습니다.")
+        return data
+
+    @app.post("/api/pages/preview")
+    def preview_pages(req: PagePreparationRequest) -> dict[str, Any]:
+        source = preparation_source(req.session_id)
+        try:
+            plan = build_plan(sorted_image_records(source["images"]))
+        except (OSError, ValueError) as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        for page in plan["pages"]:
+            page["source_url"] = file_url(page["source_path"])
+        return plan
+
+    @app.post("/api/pages/prepare")
+    def prepare_pages(req: PagePreparationRequest) -> dict[str, Any]:
+        source = preparation_source(req.session_id)
+        plan = build_plan(sorted_image_records(source["images"]))
+        if not req.revision or req.revision != plan["revision"]:
+            raise HTTPException(status_code=409, detail="원본이나 분할 계획이 바뀌었습니다. 미리보기를 다시 열어주세요.")
+        if not plan["changed_count"]:
+            raise HTTPException(status_code=400, detail="나누거나 여백을 정리할 가로 이미지가 없습니다.")
+        sid = f"{now_id()}_pages_{uuid4().hex[:8]}"
+        target = ensure_session(sid)
+        try:
+            records = materialize_plan(plan, session_dir(sid) / "input")
+            target["images"] = [image_manifest_item(record["path"], file_sha256(record["path"]), {key: value for key, value in record.items() if key != "path"}) for record in records]
+            target["project_name"] = f"{source.get('project_name') or '프로젝트'} · 단일 페이지"
+            target["parent_session_id"] = req.session_id
+            target["page_preparation"] = {"revision": plan["revision"], "reading_order": "rtl", "source_count": plan["source_count"], "output_count": plan["output_count"]}
+            save_session(target)
+        except Exception:
+            shutil.rmtree(session_dir(sid), ignore_errors=True)
+            raise
+        return {"session_id": sid, "project_name": target["project_name"], "image_count": len(target["images"])}
 
     @app.get("/api/session/{session_id}")
     def read_session(session_id: str) -> dict[str, Any]:

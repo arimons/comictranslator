@@ -29,6 +29,9 @@ NEW_COMIC_TRANSLATOR/
 │       ├── main.jsx            # React 엔트리포인트
 │       ├── App.jsx              # 세션/이미지 목록/워크플로우 탭 전체 상태
 │       ├── StartScreen.jsx      # 홈: 파일·폴더 불러오기, 최근 프로젝트, 분석 방법
+│       ├── PagePreparation.jsx  # 원본을 보존하는 페이지 분할 미리보기·별도 프로젝트 생성
+│       ├── ServerStatus.jsx     # 서버 연결 상태등 (작업 진행률과 별개)
+│       ├── ImagePreview.jsx     # 비교 이미지 확대·전체/너비 맞춤
 │       ├── GlossaryPanel.jsx    # 작품 확인·백그라운드 조사 상태·충돌/불확실 용어 검토
 │       ├── EditorCanvas.jsx      # Step 3 영역 분석 캔버스 (Konva)
 │       ├── OverlayCanvas.jsx     # Step 5 텍스트 오버레이 편집 캔버스 (Konva)
@@ -55,6 +58,7 @@ NEW_COMIC_TRANSLATOR/
 └── pipeline/
     ├── pipeline_runner.py      # 5단계 파이프라인 실행 엔진 + stream_subprocess()
     ├── input_preprocessor.py   # 입력 정리 (가로 2페이지 spread 자동 분할)
+    ├── page_preparation.py     # UI 입력: 중앙 표지 crop·우→좌 펼침 계획과 원본 보존
     ├── cloud_vision_api.py     # Step 1
     ├── text_group_builder_v2.py  # Step 2
     ├── dialogue_extractor.py   # Step 3 진입점 (경계 기반 검출 + 텍스트 기반 지우기 + OCR sheet)

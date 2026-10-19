@@ -1,4 +1,5 @@
 import { useEffect, useRef } from "react";
+import ServerStatus from "./ServerStatus.jsx";
 
 function FolderIcon() {
   return <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h5l2 2h7a2 2 0 0 1 2 2v10H3Z" /><path d="M3 10h18" /></svg>;
@@ -15,6 +16,7 @@ export default function StartScreen({
   images, recentSessions, projectName, onProjectNameChange, saveProjectName,
   recentLoadState, loadRecentSessions,
   importNameFocusRequest,
+  pagePreparationControl,
   folderPath, setFolderPath, fileRef, uploadFiles, uploadFromInput, importPath,
   inputBusy, analyzeBusy, analyzeWorkers, setAnalyzeWorkers, analysisPolicy, setAnalysisPolicy,
   startRegionAnalysis, removeLoadedImage, openRecentSession, recentMenuId, setRecentMenuId,
@@ -38,7 +40,7 @@ export default function StartScreen({
   return (
     <div className="app-shell import-mode">
       <header className="app-topbar">
-        <div className="app-brand">Comic Translator Studio</div>
+        <div className="workspace-brand-group"><div className="app-brand">Comic Translator Studio</div><ServerStatus /></div>
         <a className="app-manual-link" href="/manual" target="_blank" rel="noopener">사용 설명서 ↗</a>
       </header>
       <main className="home-scroll">
@@ -83,6 +85,7 @@ export default function StartScreen({
                     </div>
                   </details>
                 </div>}
+                {pagePreparationControl && <div className="home-page-preparation">{pagePreparationControl}</div>}
               </section>
 
               <section className="home-recent" aria-labelledby="recent-heading">

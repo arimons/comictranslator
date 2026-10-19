@@ -9,7 +9,11 @@
     "docs/WORK_GLOSSARY.md": {
       "role": "canonical",
       "topic": "작품별 번역 용어집의 확인·자동 조사·인용 검증·검토·번역 연결",
-      "sources": ["pipeline/work_glossary.py", "frontend/src/GlossaryPanel.jsx", "main_v2.py"]
+      "sources": [
+        "pipeline/work_glossary.py",
+        "frontend/src/GlossaryPanel.jsx",
+        "main_v2.py"
+      ]
     },
     "docs/pipeline_guide.html": {
       "role": "canonical",
@@ -44,7 +48,10 @@
         "pipeline/region_types.py",
         "frontend/src/regionTypes.js",
         "frontend/src/RegionTypeBadge.jsx",
-        "frontend/src/StartScreen.jsx"
+        "frontend/src/StartScreen.jsx",
+        "frontend/src/PagePreparation.jsx",
+        "frontend/src/ServerStatus.jsx",
+        "frontend/src/ImagePreview.jsx"
       ]
     },
     "docs/editor_agent_bridge_review.md": {
@@ -174,6 +181,18 @@
       "role": "hub",
       "topic": "편집기 UI와 MCP 후속 할 일",
       "sources": []
+    },
+    "docs/PAGE_PREPARATION.md": {
+      "role": "canonical",
+      "topic": "원본 보존 페이지 분할 미리보기·서버 상태등·이미지 맞춤",
+      "sources": [
+        "pipeline/page_preparation.py",
+        "main_v2.py",
+        "frontend/src/PagePreparation.jsx",
+        "frontend/src/ServerStatus.jsx",
+        "frontend/src/ImagePreview.jsx",
+        "frontend/src/viewportControls.js"
+      ]
     }
   }
 }
