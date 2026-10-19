@@ -40,7 +40,7 @@ export const KEYMAP = [
   { id: "view.zoomOut", context: CANVAS, group: "보기/탐색", label: "축소", kind: "key", keys: [["Ctrl", "-"]], allowInInput: true, match: { code: ["Minus", "NumpadSubtract"], mod: true, shift: "any" }, action: "view.zoomOut" },
 
   // 탭·페이지: 모든 탭
-  { id: "tab.guidance", context: "global", group: "탭·페이지", label: "말풍선 분석 탭", kind: "key", keys: [["Alt", "1"]], match: { code: DIGIT_CODES(1), alt: true }, action: "tab", arg: "guidance" },
+  { id: "tab.guidance", context: "global", group: "탭·페이지", label: "영역 분석 탭", kind: "key", keys: [["Alt", "1"]], match: { code: DIGIT_CODES(1), alt: true }, action: "tab", arg: "guidance" },
   { id: "tab.ocr", context: "global", group: "탭·페이지", label: "글자인식/번역 탭", kind: "key", keys: [["Alt", "2"]], match: { code: DIGIT_CODES(2), alt: true }, action: "tab", arg: "ocr" },
   { id: "tab.overlay", context: "global", group: "탭·페이지", label: "글자 입히기 탭", kind: "key", keys: [["Alt", "3"]], match: { code: DIGIT_CODES(3), alt: true }, action: "tab", arg: "overlay" },
   { id: "tab.export", context: "global", group: "탭·페이지", label: "내보내기 탭", kind: "key", keys: [["Alt", "4"]], match: { code: DIGIT_CODES(4), alt: true }, action: "tab", arg: "export" },
@@ -57,8 +57,8 @@ export const KEYMAP = [
   { id: "guidance.tool.tg-split", context: "guidance", group: "도구", label: "TG Split", kind: "key", keys: [["T"]], match: { code: "KeyT" }, action: "tool", arg: "tg-split" },
   { id: "guidance.tool.wall", context: "guidance", group: "도구", label: "Edge Wall", kind: "key", keys: [["E"]], match: { code: "KeyE" }, action: "tool", arg: "wall" },
   { id: "guidance.tool.region-split", context: "guidance", group: "도구", label: "Region Split", kind: "key", keys: [["L"]], match: { code: "KeyL" }, action: "tool", arg: "region-split" },
-  { id: "guidance.tool.ubox", context: "guidance", group: "도구", label: "Ubox", kind: "key", keys: [["U"]], match: { code: "KeyU" }, action: "tool", arg: "ubox" },
-  { id: "guidance.tool.bubble", context: "guidance", group: "도구", label: "Bubble", kind: "key", keys: [["B"]], match: { code: "KeyB" }, action: "tool", arg: "bubble" },
+  { id: "guidance.tool.ubox", context: "guidance", group: "도구", label: "텍스트 기반 영역", kind: "key", keys: [["U"]], match: { code: "KeyU" }, action: "tool", arg: "ubox" },
+  { id: "guidance.tool.bubble", context: "guidance", group: "도구", label: "경계 기반 seed", kind: "key", keys: [["B"]], match: { code: "KeyB" }, action: "tool", arg: "bubble" },
   { id: "guidance.tool.region-off", context: "guidance", group: "도구", label: "Region Off", kind: "key", keys: [["X"]], match: { code: "KeyX" }, action: "tool", arg: "region-off" },
   { id: "overlay.tool.select", context: "overlay", group: "도구", label: "Select", kind: "key", keys: [["V"]], match: { code: "KeyV" }, action: "tool", arg: "select" },
   { id: "overlay.tool.hand", context: "overlay", group: "도구", label: "Hand (화면 이동)", kind: "key", keys: [["H"]], match: { code: "KeyH" }, action: "tool", arg: "hand" },
@@ -96,7 +96,7 @@ export const KEYMAP = [
   { id: "overlay.orientation", context: "overlay", group: "스타일", label: "쓰기 방향 순환: 자동 → 가로 → 세로", kind: "key", when: ["regionSelected"], keys: [["O"]], match: { code: "KeyO" }, action: "overlay.orientation" },
 
   // 적용
-  { id: "guidance.apply", context: "guidance", group: "적용", label: "말풍선 분석 적용 (Apply Analysis)", kind: "key", keys: [["Ctrl", "Enter"]], allowInInput: true, match: { code: ["Enter", "NumpadEnter"], mod: true }, action: "apply" },
+  { id: "guidance.apply", context: "guidance", group: "적용", label: "영역 분석 적용 (Apply Analysis)", kind: "key", keys: [["Ctrl", "Enter"]], allowInInput: true, match: { code: ["Enter", "NumpadEnter"], mod: true }, action: "apply" },
   { id: "overlay.apply", context: "overlay", group: "적용", label: "Overlay 적용 (Apply Overlay)", kind: "key", keys: [["Ctrl", "Enter"]], allowInInput: true, when: ["notInFloatingEditor"], match: { code: ["Enter", "NumpadEnter"], mod: true }, action: "apply" },
 
   // 대사 편집 팝업

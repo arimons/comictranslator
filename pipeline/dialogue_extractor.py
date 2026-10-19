@@ -1,4 +1,4 @@
-# 만화 대사 추출기 — Bubble Detector + Unboxed Text Eraser(LaMa) + OCR Sheet 생성
+# 만화 대사 추출기 — 경계 기반 영역 검출 + 텍스트 기반 지우기 + OCR Sheet 생성
 #!/usr/bin/env python3
 
 import cv2
@@ -17,6 +17,7 @@ from PIL import Image
 SimpleLama: Any | None = None
 
 try:
+    from pipeline.region_types import TEXT_BASED, BOUNDARY_BASED, region_processing_basis
     from pipeline.bubble_detector import build_ocr_region_sheet, _load_json, _is_dark_bg_text, _is_horizontal_text_group, _fill_mask_holes
     from pipeline.geometry import as_rect as _as_rect, union_rect as _union_rect
     from pipeline.unboxed_grouping import (
@@ -37,6 +38,7 @@ try:
     from pipeline.unboxed_text_detector import _classify_inpaint_background
     from pipeline.flood_split import collect_inflection_candidates, split_mask_by_erosion_components, split_mask_by_inflection_line
 except ImportError:
+    from region_types import TEXT_BASED, BOUNDARY_BASED, region_processing_basis
     from bubble_detector import build_ocr_region_sheet, _load_json, _is_dark_bg_text, _is_horizontal_text_group, _fill_mask_holes
     from geometry import as_rect as _as_rect, union_rect as _union_rect
     from unboxed_grouping import (
@@ -195,7 +197,7 @@ def _manual_unboxed_crops(
     crops: List[Dict[str, Any]] = []
     group_by_id = {_tg_id(group, idx): group for idx, group in enumerate(groups, start=1)}
     for index, item in enumerate(manual_regions, start=1):
-        if item.get("type") != "unboxed":
+        if region_processing_basis(item) != TEXT_BASED:
             continue
         raw_rect = item.get("unboxed_rect") or item.get("rect")
         if not isinstance(raw_rect, list) or len(raw_rect) < 4:
@@ -2245,19 +2247,19 @@ def _apply_manual_unboxed_overrides(
     img_w: int,
     img_h: int,
 ) -> List[Dict[str, Any]]:
-    unboxed_indexes = [idx for idx, item in enumerate(crops) if item.get("type") == "unboxed" and item.get("source_rect")]
-    if len(unboxed_indexes) < 2:
+    text_based_indexes = [idx for idx, item in enumerate(crops) if region_processing_basis(item) == TEXT_BASED and item.get("source_rect")]
+    if len(text_based_indexes) < 2:
         return crops
 
     consumed: set[int] = set()
-    manual_indexes = [idx for idx in unboxed_indexes if _is_manual_ubox_crop(crops[idx])]
+    manual_indexes = [idx for idx in text_based_indexes if _is_manual_ubox_crop(crops[idx])]
     if not manual_indexes:
         return crops
 
     for manual_idx in manual_indexes:
         manual = crops[manual_idx]
         manual_order = int(manual.get("source_order") or manual_idx)
-        for other_idx in unboxed_indexes:
+        for other_idx in text_based_indexes:
             if other_idx == manual_idx or other_idx in consumed:
                 continue
             other = crops[other_idx]
@@ -2340,14 +2342,14 @@ def _same_split_parent(left: Dict[str, Any], right: Dict[str, Any]) -> bool:
 def _dedupe_dialogue_crops(crops: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     """OCR sheet로 나가기 전 U/R 중복 후보를 제거한다."""
     consumed: set[int] = set()
-    bubble_indexes = [idx for idx, item in enumerate(crops) if item.get("type") == "bubble"]
-    unboxed_indexes = [idx for idx, item in enumerate(crops) if item.get("type") == "unboxed"]
+    boundary_indexes = [idx for idx, item in enumerate(crops) if region_processing_basis(item) == BOUNDARY_BASED]
+    text_based_indexes = [idx for idx, item in enumerate(crops) if region_processing_basis(item) == TEXT_BASED]
 
-    for uidx in unboxed_indexes:
+    for uidx in text_based_indexes:
         u_item = crops[uidx]
         u_rect = _crop_rect(u_item)
         u_ids = _crop_anchor_ids(u_item)
-        for bidx in bubble_indexes:
+        for bidx in boundary_indexes:
             b_item = crops[bidx]
             b_rect = _crop_rect(b_item)
             b_ids = _crop_anchor_ids(b_item)
@@ -2357,7 +2359,7 @@ def _dedupe_dialogue_crops(crops: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
                 consumed.add(uidx)
                 break
 
-    for pos, left_idx in enumerate(unboxed_indexes):
+    for pos, left_idx in enumerate(text_based_indexes):
         if left_idx in consumed:
             continue
         left = crops[left_idx]
@@ -2366,7 +2368,7 @@ def _dedupe_dialogue_crops(crops: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         left_rect = _crop_rect(left)
         lx, ly, lw, lh = left_rect
         left_area = max(1, lw * lh)
-        for right_idx in unboxed_indexes[pos + 1:]:
+        for right_idx in text_based_indexes[pos + 1:]:
             if right_idx in consumed:
                 continue
             right = crops[right_idx]
@@ -2391,13 +2393,13 @@ def _dedupe_dialogue_crops(crops: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
                 if child_idx == left_idx:
                     break
 
-    for pos, left_idx in enumerate(bubble_indexes):
+    for pos, left_idx in enumerate(boundary_indexes):
         if left_idx in consumed:
             continue
         left = crops[left_idx]
         left_rect = _crop_rect(left)
         left_ids = _crop_anchor_ids(left)
-        for right_idx in bubble_indexes[pos + 1:]:
+        for right_idx in boundary_indexes[pos + 1:]:
             if right_idx in consumed:
                 continue
             right = crops[right_idx]
@@ -2564,7 +2566,7 @@ def _overlay_final_unboxed_regions(
     sub_tg_color = (0, 210, 210)
 
     for region in output_regions:
-        if region.get("type") != "unboxed":
+        if region_processing_basis(region) != TEXT_BASED:
             continue
         rect = region.get("unboxed_rect") or region.get("erase_rect")
         if not rect:
@@ -2575,7 +2577,7 @@ def _overlay_final_unboxed_regions(
         cv2.rectangle(overlay, (x, y), (x + w, y + h), unboxed_fill_color, -1)
 
     for region in output_regions:
-        if region.get("type") == "unboxed":
+        if region_processing_basis(region) == TEXT_BASED:
             continue
         if _is_rescue_source_method(region.get("source_method")):
             color = rescue_fill_color
@@ -2588,7 +2590,7 @@ def _overlay_final_unboxed_regions(
     vis = cv2.addWeighted(overlay, 0.38, vis, 0.62, 0)
 
     for region in output_regions:
-        if region.get("type") != "unboxed":
+        if region_processing_basis(region) != TEXT_BASED:
             continue
         rect = region.get("unboxed_rect") or region.get("erase_rect")
         if not rect:
@@ -2616,7 +2618,7 @@ def _overlay_final_unboxed_regions(
     split_parent_color = (150, 150, 150)
     split_lines: set[tuple[tuple[int, int], tuple[int, int]]] = set()
     for region in output_regions:
-        if region.get("type") == "unboxed":
+        if region_processing_basis(region) == TEXT_BASED:
             continue
         split_parent_rect = region.get("split_parent_rect")
         if split_parent_rect:
@@ -3083,6 +3085,7 @@ def build_dialogue_sheet(
             "anchor_ids": item["anchor_ids"],
             "sheet_rect": [sheet_x, 0, w, h],
             "type": item["type"],
+            "processing_basis": region_processing_basis(item),
         }
         if item["type"] == "unboxed":
             region_data["erase_rect"] = item["erase_rect"]
@@ -3155,13 +3158,13 @@ def build_dialogue_sheet(
             cv2.line(indexed, (img_x - 1, 0), (img_x - 1, max(0, h - 1)), (180, 180, 180), 1)
 
         # 라벨 텍스트
-        is_unboxed = region["type"] == "unboxed"
-        prefix = "U" if is_unboxed else "R"
+        is_text_based = region_processing_basis(region) == TEXT_BASED
+        prefix = "U" if is_text_based else "R"
         label = f"{prefix}{region['region_id']}"
         aids = "TG" + ",".join(str(a) for a in region["anchor_ids"]) if region["anchor_ids"] else "TG-"
 
-        color_id = (0, 90, 220) if is_unboxed else (0, 0, 220)
-        color_tg = (130, 80, 0) if is_unboxed else (200, 60, 0)
+        color_id = (0, 90, 220) if is_text_based else (0, 0, 220)
+        color_tg = (130, 80, 0) if is_text_based else (200, 60, 0)
 
         cv2.putText(indexed, label, (idx_x + 4, 18), cv2.FONT_HERSHEY_SIMPLEX, 0.58, color_id, 2, cv2.LINE_AA)
         cv2.putText(indexed, aids, (idx_x + 4, 37), cv2.FONT_HERSHEY_SIMPLEX, 0.42, color_tg, 1, cv2.LINE_AA)

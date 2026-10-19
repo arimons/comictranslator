@@ -28,6 +28,8 @@ NEW_COMIC_TRANSLATOR/
 │       ├── keymap.js             # 키보드·마우스 단축키 단일 정의
 │       ├── viewportControls.js   # 두 캔버스 공용 확대/이동/맞춤
 │       ├── ShortcutHelp.jsx      # ? 단축키 도움말
+│       ├── regionTypes.js        # 경계 기반/텍스트 기반 용어 및 과거 타입 호환
+│       ├── RegionTypeBadge.jsx   # 공통 처리 기준 배지
 │       └── lib.js                # 공용 순수 헬퍼 함수 + 상수
 ├── run_pipeline.py             # CLI 진입점
 ├── run_debug_pipeline.py       # Debug 이미지 일괄 실행 wrapper
@@ -58,6 +60,7 @@ NEW_COMIC_TRANSLATOR/
     ├── run_masked_vis.py       # unboxed 추출·통합 마스킹 시각화 (dialogue_extractor가 import)
     ├── bubble_candidate_visualizer.py  # 말풍선 후보 검토 시각화 (*_bubble_vis.jpg)
     ├── manual_guidance.py      # 편집기 guidance → 유효 TG 생성, atomic JSON 쓰기
+    ├── region_types.py         # 처리 기준 상수·기존 JSON 타입 호환·비파괴 projection
     ├── geometry.py             # 사각형 좌표 유틸
     ├── gemini_ocr_translate_v5.py  # Step 4 (Gemini 기본, gpt-* 선택 가능)
     ├── font_style_analyzer.py  # Step 4 직후 render_hint CV 보정
@@ -155,6 +158,8 @@ guidance(수동 보정)가 있는 이미지는 `guidance_digest`(guidance 내용
 - Step 4 모델은 편집기 OCR 탭의 선택 상자에서 고른다. 서버 기본값과 같으면 프론트가 `ocr_model: null`을 보내 `--model` 인자를 생략한다. 추가 프롬프트는 `--extra-prompt=값` 형식으로 넘겨 `-`로 시작하는 프롬프트도 옵션으로 오인되지 않는다.
 
 **프론트엔드** — `ui_v2/index.html`이 로드하는 `ui_v2/app.bundle.js`는 `frontend/src/`를 esbuild로 번들링한 결과물이다. 소스는 다음처럼 나뉜다.
+
+영역 ID는 R 번호로 통일하고 경계 기반/텍스트 기반 배지를 붙인다. 저장된 `bubble/unboxed`를 유지하는 호환 정책과 변수명 변경 내역은 [변경 기록](REGION_PROCESSING_BASIS_CHANGELOG.md)을 참고한다.
 
 | 파일 | 역할 |
 | --- | --- |

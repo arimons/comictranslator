@@ -6,7 +6,6 @@ import {
   overlayItemKey,
   overlayItemLabel,
   overlayControlItems,
-  overlayRegionKind,
   overlayRegionColor,
   rectsApproximatelyEqual,
   regionDisplayRect,
@@ -15,6 +14,8 @@ import {
   overlayRegionValue,
   overlayEraserRects,
 } from "./lib.js";
+import RegionTypeBadge from "./RegionTypeBadge.jsx";
+import { TEXT_BASED, regionProcessingBasis, regionTypeLabel } from "./regionTypes.js";
 import { createViewport } from "./viewportControls.js";
 import { shortcutFor } from "./keymap.js";
 
@@ -621,7 +622,7 @@ const OverlayCanvas = forwardRef(function OverlayCanvas({ image, overlayGuidance
       const rid = overlayItemKey(region);
       const labelText = overlayItemLabel(region);
       const selected = rid === String(selectedRegionRef.current);
-      const regionKind = overlayRegionKind(region);
+      const processingBasis = regionProcessingBasis(region);
       const regionColor = overlayRegionColor(region);
       const regionRect = region.region_outline_rect || region.bubble_rect || region.unboxed_rect || region.source_rect;
       const override = overlayRegionValue(overlayRef.current, rid);
@@ -649,7 +650,7 @@ const OverlayCanvas = forwardRef(function OverlayCanvas({ image, overlayGuidance
           layer.add(moveRect);
         }
         if (
-          regionKind !== "unboxed"
+          processingBasis !== TEXT_BASED
           && regionRect
           && !rectsApproximatelyEqual(regionRect, editableSafeRect)
         ) {
@@ -665,9 +666,9 @@ const OverlayCanvas = forwardRef(function OverlayCanvas({ image, overlayGuidance
         const safeBorder = new Konva.Rect({
           ...toStageRotatedRect(editableSafeRect, rotationDeg),
           stroke: selected ? "#ef4444" : regionColor,
-          strokeWidth: selected ? 2 : regionKind === "unboxed" ? 1.8 : 1.1,
-          opacity: selected ? 0.95 : regionKind === "unboxed" ? 0.82 : 0.50,
-          dash: regionKind === "unboxed" ? [] : [5, 4],
+          strokeWidth: selected ? 2 : processingBasis === TEXT_BASED ? 1.8 : 1.1,
+          opacity: selected ? 0.95 : processingBasis === TEXT_BASED ? 0.82 : 0.50,
+          dash: processingBasis === TEXT_BASED ? [] : [5, 4],
           hitStrokeWidth: selected ? 18 : 14,
           draggable: false,
         });
@@ -736,6 +737,10 @@ const OverlayCanvas = forwardRef(function OverlayCanvas({ image, overlayGuidance
         label.add(new Konva.Tag({ fill: selected ? "#ef4444" : regionColor }));
         label.add(new Konva.Text({ text: labelText, fill: "white", padding: 3, fontSize: 11, fontStyle: "bold" }));
         layer.add(label);
+        const badge = new Konva.Label({ x: lx + label.width() + 3, y: Math.max(0, ly - 18), listening: false });
+        badge.add(new Konva.Tag({ fill: regionColor, cornerRadius: 3 }));
+        badge.add(new Konva.Text({ text: regionTypeLabel(region), fill: "white", padding: 3, fontSize: 11 }));
+        layer.add(badge);
       }
     });
 
@@ -1029,7 +1034,7 @@ const OverlayCanvas = forwardRef(function OverlayCanvas({ image, overlayGuidance
           onDoubleClick={(event) => event.stopPropagation()}
         >
           <div className="floating-text-editor-head">
-            <strong>{overlayItemLabel(editorRegion)}</strong>
+            <strong>{overlayItemLabel(editorRegion)}</strong><RegionTypeBadge region={editorRegion} />
             <button type="button" className="icon-button" onClick={closeFloatingEditor} title="닫기">×</button>
           </div>
           {/* Esc(취소)와 Cmd/Ctrl+Enter(반영 후 render)는 App의 전역 디스패처가 처리한다. */}

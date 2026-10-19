@@ -24,6 +24,11 @@ from typing import Any
 import cv2
 import numpy as np
 
+try:
+    from pipeline.region_types import TEXT_BASED, region_processing_basis
+except ImportError:
+    from region_types import TEXT_BASED, region_processing_basis
+
 Rect = list[int]
 
 RESOLUTION_CHOICES = {"512": 512, "768": 768, "original": None}
@@ -144,7 +149,7 @@ def build_text_stroke_mask(
 
 
 def seeds_from_regions(regions_payload: Any, text_groups: Any) -> list[dict[str, Any]]:
-    """Step 3 regions.json의 unboxed(말풍선 밖) 영역을 글자 seed로 바꾼다. 말풍선 내부는 제외한다."""
+    """Step 3의 텍스트 기반 영역을 글자 seed로 바꾼다. 경계 기반 영역은 제외한다."""
     regions = (regions_payload or {}).get("regions", []) if isinstance(regions_payload, dict) else []
     tg_by_id: dict[int, dict[str, Any]] = {}
     for idx, group in enumerate(text_groups if isinstance(text_groups, list) else []):
@@ -154,7 +159,7 @@ def seeds_from_regions(regions_payload: Any, text_groups: Any) -> list[dict[str,
             continue
     seeds: list[dict[str, Any]] = []
     for region in regions:
-        if region.get("type") != "unboxed":
+        if region_processing_basis(region) != TEXT_BASED:
             continue
         rect = region.get("erase_rect") or region.get("unboxed_rect")
         if not rect:

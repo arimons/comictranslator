@@ -36,6 +36,7 @@ from PIL import Image
 from pydantic import BaseModel
 
 from pipeline.manual_guidance import build_effective_text_groups, load_json, write_json
+from pipeline.region_types import regions_with_processing_basis
 from pipeline.openai_image_redraw import redraw_image_with_openai
 from pipeline.pipeline_runner import DEFAULT_FONT, run_single_image, stream_subprocess
 from pipeline.render_text_overlay import apply_text_overlay
@@ -1052,7 +1053,7 @@ def image_record(
         "detail_loaded": include_detail,
     }
     if include_detail:
-        regions = load_json(json_dir / f"{stem}_regions.json", default={})
+        regions = regions_with_processing_basis(load_json(json_dir / f"{stem}_regions.json", default={}))
         integrated = load_json(json_dir / f"{stem}_integrated.json", default=[])
         record.update({
             "text_groups": load_json(json_dir / f"{stem}_text_groups.json", default=[]),

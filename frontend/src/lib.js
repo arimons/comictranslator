@@ -1,3 +1,6 @@
+import { BOUNDARY_BASED, TEXT_BASED, regionProcessingBasis, usesEdgeBarrier } from "./regionTypes.js";
+export { BOUNDARY_BASED, TEXT_BASED, regionProcessingBasis, regionTypeLabel } from "./regionTypes.js";
+
 export const TOOL_LABELS = [
   ["select", "Select"],
   ["hand", "Hand"],
@@ -5,8 +8,8 @@ export const TOOL_LABELS = [
   ["tg-split", "TG Split"],
   ["wall", "Edge"],
   ["region-split", "Split"],
-  ["ubox", "Ubox"],
-  ["bubble", "Bubble"],
+  ["ubox", "텍스트 기반 영역"],
+  ["bubble", "경계 기반 seed"],
   ["region-off", "R Off"],
 ];
 
@@ -26,13 +29,13 @@ export const TOOL_ICONS = {
 export const OVERLAY_HANDLE_NAMES = ["nw", "n", "ne", "e", "se", "s", "sw", "w"];
 export const OVERLAY_MIN_RECT_SIZE = 12;
 export const OVERLAY_REGION_COLORS = {
-  bubble: "#38bdf8",
-  edge: "#22c55e",
-  unboxed: "#eab308",
+  [BOUNDARY_BASED]: "#38bdf8",
+  edge_barrier: "#22c55e",
+  [TEXT_BASED]: "#eab308",
 };
 
 export const WORKFLOW_TABS = [
-  ["guidance", "말풍선 분석", "1"],
+  ["guidance", "영역 분석", "1"],
   ["ocr", "글자인식/번역", "2"],
   ["overlay", "글자 입히기", "3"],
   ["restore", "배경 복원", "5"],
@@ -395,21 +398,9 @@ export function overlayControlItems(image, overlayGuidanceOverride = null) {
   });
 }
 
-export function overlayRegionKind(region) {
-  const methodText = [
-    region?.source_method,
-    region?.method,
-    region?.source_region_type,
-    region?.region_type_guess,
-    ...(Array.isArray(region?.quality_flags) ? region.quality_flags : []),
-  ].join(" ").toLowerCase();
-  if (region?.type === "unboxed" || methodText.includes("unboxed") || methodText.includes("ubox")) return "unboxed";
-  if (methodText.includes("edge_barrier") || methodText.includes("manual_edge")) return "edge";
-  return "bubble";
-}
-
 export function overlayRegionColor(region) {
-  return OVERLAY_REGION_COLORS[overlayRegionKind(region)] || OVERLAY_REGION_COLORS.bubble;
+  const basis = regionProcessingBasis(region);
+  return OVERLAY_REGION_COLORS[usesEdgeBarrier(region) ? "edge_barrier" : basis] || OVERLAY_REGION_COLORS[BOUNDARY_BASED];
 }
 
 export function rectsApproximatelyEqual(a, b, tolerance = 3) {

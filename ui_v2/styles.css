@@ -2111,7 +2111,7 @@ button.wide {
   background: white;
   padding: 8px;
   display: grid;
-  grid-template-columns: auto auto minmax(0, 1fr);
+  grid-template-columns: auto auto auto minmax(0, 1fr);
   align-items: center;
   gap: 8px;
   text-align: left;
@@ -2122,7 +2122,7 @@ button.wide {
   font-size: 13px;
 }
 
-.region-quick-item span {
+.region-quick-item span:not(.region-type-badge) {
   min-width: 28px;
   min-height: 24px;
   border-radius: 6px;
@@ -2148,10 +2148,25 @@ button.wide {
   box-shadow: inset 3px 0 0 var(--blue);
 }
 
-.region-quick-item.active span {
+.region-quick-item.active span:not(.region-type-badge) {
   background: var(--blue);
   color: white;
 }
+
+.region-type-badge {
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+  padding: 2px 5px;
+  border: 1px solid currentColor;
+  border-radius: 4px;
+  font-size: 10px;
+  line-height: 1.5;
+  white-space: nowrap;
+}
+.region-type-badge.boundary_based { color: #0f766e; background: #f0fdfa; }
+.region-type-badge.text_based { color: #92400e; background: #fffbeb; }
+.region-type-badge.unknown { color: var(--muted); background: var(--panel-2); }
 
 .export-workspace {
   height: 100%;

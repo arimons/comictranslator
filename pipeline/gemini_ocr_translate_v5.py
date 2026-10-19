@@ -25,6 +25,7 @@ from google.genai import types
 from dotenv import load_dotenv
 
 try:
+    from pipeline.region_types import TEXT_BASED, region_processing_basis
     from pipeline.font_style_analyzer import (
         _normalized_render_hint,
         _clip_rect,
@@ -42,6 +43,7 @@ try:
         _style_features_for_anchor_ids,
     )
 except ImportError:
+    from region_types import TEXT_BASED, region_processing_basis
     from font_style_analyzer import (
         _normalized_render_hint,
         _clip_rect,
@@ -582,7 +584,7 @@ def _is_unboxed_consolidated_region(region: dict) -> bool:
         return True
     consolidated = region.get("consolidated_text_group") or {}
     tg_ids = consolidated.get("text_group_ids") or []
-    return region.get("type") == "unboxed" and len(tg_ids) > 1
+    return region_processing_basis(region) == TEXT_BASED and len(tg_ids) > 1
 
 
 def _collapse_segments_for_consolidated_unboxed(
@@ -639,6 +641,7 @@ def _build_integrated_from_sheet_regions(
         region_anchor_ids = [int(v) for v in region.get("anchor_ids", [])]
         
         region_type = region.get("type", "bubble")
+        processing_basis = region_processing_basis({"type": region_type})
         _all_details, all_anchor_rects = _cluster_details(region_anchor_ids, cv_cluster_map)
         if region_type == "unboxed":
             bubble_rect = region.get("unboxed_rect") or _bbox_union(all_anchor_rects)
@@ -695,6 +698,7 @@ def _build_integrated_from_sheet_regions(
                 "union_bbox": render_rect,
                 "bounding_rect": render_rect,
                 "location": region_type,
+                "processing_basis": processing_basis,
                 "match_score": 1.0,
                 "source_region_id": region_id,
                 "source_region_rect": bubble_rect,

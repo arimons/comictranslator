@@ -30,7 +30,25 @@
         "main_v2.py",
         "ui_v2/index.html",
         "pipeline/manual_guidance.py",
+        "pipeline/dialogue_extractor.py",
+        "frontend/src/App.jsx",
+        "frontend/src/EditorCanvas.jsx",
+        "frontend/src/OverlayCanvas.jsx",
         "frontend/src/keymap.js",
+        "frontend/src/RestorePanel.jsx",
+        "pipeline/region_types.py",
+        "frontend/src/regionTypes.js",
+        "frontend/src/RegionTypeBadge.jsx"
+      ]
+    },
+    "docs/editor_agent_bridge_review.md": {
+      "role": "record",
+      "topic": "2026-10-19 편집기 MCP 연결 및 에이전트 1차 검토 방안",
+      "sources": [
+        "main_v2.py",
+        "pipeline/manual_guidance.py",
+        "pipeline/background_restore.py",
+        "frontend/src/EditorCanvas.jsx",
         "frontend/src/RestorePanel.jsx"
       ]
     },
@@ -42,7 +60,10 @@
         "main_v2.py",
         "pipeline/pipeline_runner.py",
         "pipeline/background_restore.py",
-        "frontend/src/RestorePanel.jsx"
+        "frontend/src/RestorePanel.jsx",
+        "pipeline/region_types.py",
+        "frontend/src/regionTypes.js",
+        "frontend/src/RegionTypeBadge.jsx"
       ]
     },
     "docs/AGENT_WORKSPACE_RULES.md": {
@@ -102,6 +123,18 @@
       "role": "record",
       "topic": "flood leak 실험 결과",
       "sources": []
+    },
+    "docs/REGION_PROCESSING_BASIS_CHANGELOG.md": {
+      "role": "record",
+      "topic": "경계 기반/텍스트 기반 용어·변수명·JSON 및 캐시 호환 변경 기록",
+      "sources": [
+        "pipeline/region_types.py",
+        "frontend/src/regionTypes.js",
+        "frontend/src/RegionTypeBadge.jsx",
+        "main_v2.py",
+        "pipeline/dialogue_extractor.py",
+        "tests/test_region_processing_basis.py"
+      ]
     }
   }
 }

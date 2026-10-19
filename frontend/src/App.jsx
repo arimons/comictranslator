@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import EditorCanvas from "./EditorCanvas.jsx";
 import OverlayCanvas from "./OverlayCanvas.jsx";
+import RegionTypeBadge from "./RegionTypeBadge.jsx";
+import { TEXT_BASED, regionProcessingBasis, regionTypeLabel } from "./regionTypes.js";
 import { RestoreControls, RestoreStage, useRestore } from "./RestorePanel.jsx";
 import ShortcutHelp from "./ShortcutHelp.jsx";
 import { KEYMAP, eventMatches, entryInContext, entryVisibleOnPlatform, shortcutFor, shortcutById } from "./keymap.js";
@@ -154,7 +156,7 @@ export default function App() {
   const selectedToolLabel = TOOL_LABELS.find(([id]) => id === tool)?.[1] || tool;
   const disabledCount = guidance.disabled_tg_ids?.length || 0;
   const splitCount = guidance.tg_splits?.length || 0;
-  const uboxCount = (guidance.manual_regions || []).filter((item) => item.type === "unboxed").length;
+  const textBasedGuideCount = (guidance.manual_regions || []).filter((item) => regionProcessingBasis(item) === TEXT_BASED).length;
   const suppressedCount = guidance.suppressed_regions?.length || 0;
   const overlayRegions = overlayControlItems(selected, overlayGuidance);
   const selectedRegion = selectedRegionId
@@ -1221,7 +1223,7 @@ export default function App() {
     setStatus("Start page로 돌아왔습니다.");
   }
 
-  async function startSpeechBubbleAnalysis() {
+  async function startRegionAnalysis() {
     if (!images.length || analyzeBusy || inputBusy) return;
     setWorkspaceStarted(true);
     setActiveTab("guidance");
@@ -1304,7 +1306,7 @@ export default function App() {
     if (!selected || !pageDetailReady()) return;
     const requestSid = sessionId;
     const requestImageId = selected.id;
-    await runTask("guidance", "말풍선 분석 적용", async () => {
+    await runTask("guidance", "영역 분석 적용", async () => {
       const result = await api("/api/guidance", { method: "POST", body: JSON.stringify({ session_id: requestSid, image_id: requestImageId, guidance }) });
       const refreshedImages = await refresh(requestSid);
       if (!refreshedImages || sessionIdRef.current !== requestSid) return { logs: "Step 3 재생성 완료 (다른 세션으로 이동해 화면 갱신 생략)" };
@@ -1328,9 +1330,9 @@ export default function App() {
     if (!selected) return;
     const requestSid = sessionId;
     const requestImageId = selected.id;
-    await runTask("guidance", "말풍선 분석 산출물 삭제", async () => {
+    await runTask("guidance", "영역 분석 산출물 삭제", async () => {
       const result = await api("/api/guidance/clear", { method: "POST", body: JSON.stringify({ session_id: requestSid, image_id: requestImageId }) });
-      if (sessionIdRef.current !== requestSid) return { logs: "말풍선 분석 산출물 삭제 완료" };
+      if (sessionIdRef.current !== requestSid) return { logs: "영역 분석 산출물 삭제 완료" };
       applyImageRecord(result.image);
       if (selectedIdRef.current === requestImageId) {
         const next = defaultGuidance(result.image);
@@ -1339,7 +1341,7 @@ export default function App() {
         resetGuidanceHistory();
         setSelectedTg(null);
       }
-      return { logs: "말풍선 분석 산출물 삭제 완료" };
+      return { logs: "영역 분석 산출물 삭제 완료" };
     });
   }
 
@@ -1716,9 +1718,10 @@ export default function App() {
       <div key={rid} className={`region-card active`} onClick={() => setSelectedRegionTracked(rid)}>
         <div className="region-card-head">
           <strong>{overlayItemLabel(region)}</strong>
+          <RegionTypeBadge region={region} />
           <div className="region-card-controls" onClick={(event) => event.stopPropagation()}>
             {hasSegmentSiblings ? (
-              <div className="segment-mode-controls" title="같은 bubble 안 segment 렌더 단위를 강제합니다">
+              <div className="segment-mode-controls" title="같은 영역 안 segment 렌더 단위를 강제합니다">
                 <button
                   type="button"
                   className={segmentMode === "merge" ? "active" : ""}
@@ -1859,15 +1862,15 @@ export default function App() {
       items.push({ key: `split-${index}`, kind: "split_guides", index, label: `Split line ${index + 1}`, detail: item.source || "" });
     });
     (guidance.manual_regions || []).forEach((item, index) => {
-      const type = item.type === "unboxed" ? "Ubox" : "Bubble";
-      const forcedLama = item.type === "unboxed" && item.inpaint_engine === "lama";
+      const type = regionTypeLabel(item);
+      const forcedLama = regionProcessingBasis(item) === TEXT_BASED && item.inpaint_engine === "lama";
       items.push({
         key: `region-${index}`,
         kind: "manual_regions",
         index,
         label: `${type} ${index + 1}`,
         detail: forcedLama ? "LaMa 강제" : item.source || "",
-        isUbox: item.type === "unboxed",
+        isTextBased: regionProcessingBasis(item) === TEXT_BASED,
         forcedLama,
       });
     });
@@ -1900,16 +1903,16 @@ export default function App() {
     return next;
   }
 
-  // Ubox 지우기 엔진: 기본은 배경 분류(Telea/LaMa) 자동, 켜면 LaMa로 고정한다.
-  function toggleUboxForcedLama(historyItem) {
+  // 텍스트 기반 영역 지우기 엔진: 기본은 배경 분류(Telea/LaMa) 자동, 켜면 LaMa로 고정한다.
+  function toggleTextBasedForcedLama(historyItem) {
     setGuidanceTracked((current) => {
       const next = cloneJson(current || defaultGuidance(null));
       const region = (next.manual_regions || [])[historyItem.index];
-      if (!region || region.type !== "unboxed") return current;
+      if (!region || regionProcessingBasis(region) !== TEXT_BASED) return current;
       if (region.inpaint_engine === "lama") delete region.inpaint_engine;
       else region.inpaint_engine = "lama";
       return next;
-    }, "Ubox 엔진 변경");
+    }, "텍스트 기반 영역 엔진 변경");
   }
 
   function removeGuidanceHistoryItem(historyItem, options = {}) {
@@ -2083,8 +2086,8 @@ export default function App() {
                 <strong>{images.length ? `${images.length} images loaded` : "No images loaded"}</strong>
                 <span>{images.length ? "캐시가 있으면 바로 시각화하고, 없으면 분석을 진행합니다." : "파일이나 폴더를 먼저 불러오세요."}</span>
               </div>
-              <button className="primary wide" onClick={startSpeechBubbleAnalysis} disabled={!images.length || inputBusy || analyzeBusy}>
-                Analyze & Open 말풍선 분석
+              <button className="primary wide" onClick={startRegionAnalysis} disabled={!images.length || inputBusy || analyzeBusy}>
+                Analyze & Open 영역 분석
               </button>
             </div>
           </aside>
@@ -2200,7 +2203,7 @@ export default function App() {
             <div className="metric"><strong>{images.length}</strong><span>images</span></div>
             <div className="metric"><strong>{disabledCount}</strong><span>TG off</span></div>
             <div className="metric"><strong>{splitCount}</strong><span>TG split</span></div>
-            <div className="metric"><strong>{uboxCount}</strong><span>Ubox</span></div>
+            <div className="metric"><strong>{textBasedGuideCount}</strong><span>텍스트 기반</span></div>
             <div className="metric"><strong>{suppressedCount}</strong><span>R off</span></div>
             <div className="metric"><strong>{selected?.regions?.regions?.length || 0}</strong><span>regions</span></div>
           </div>
@@ -2278,7 +2281,7 @@ export default function App() {
                 setSelectedTg={setSelectedTg}
                 setStatus={setStatus}
               />
-              <div className="floating-toolbox" aria-label="말풍선 분석 도구">
+              <div className="floating-toolbox" aria-label="영역 분석 도구">
                 {TOOL_LABELS.map(([id, label]) => (
                   <button
                     key={id}
@@ -2653,6 +2656,7 @@ export default function App() {
                   onClick={() => setSelectedRegionTracked(rid)}
                 >
                   <strong>{overlayItemLabel(region)}</strong>
+          <RegionTypeBadge region={region} />
                   <span>{styleShort}</span>
                   <em>{text || "텍스트 없음"}</em>
                 </button>
@@ -2670,7 +2674,7 @@ export default function App() {
           <div className="side-action-grid">
             <button onClick={clearUnsavedGuidance} disabled={guidanceBusy || analyzeBusy || !selected}>Clear Unsaved</button>
             <button className="danger" onClick={clearGuidanceOutputs} disabled={guidanceBusy || analyzeBusy || !selected}>Delete Outputs</button>
-            <button className="primary wide" onClick={applyGuidance} disabled={guidanceBusy || analyzeBusy || !selected} title={`말풍선 분석 적용 (${shortcutById("guidance.apply")})`}>Apply Analysis</button>
+            <button className="primary wide" onClick={applyGuidance} disabled={guidanceBusy || analyzeBusy || !selected} title={`영역 분석 적용 (${shortcutById("guidance.apply")})`}>Apply Analysis</button>
           </div>
         </div>
 
@@ -2691,11 +2695,11 @@ export default function App() {
                     <span>{item.label}</span>
                     {item.detail ? <em>{item.detail}</em> : null}
                   </button>
-                  {item.isUbox ? (
+                  {item.isTextBased ? (
                     <button
                       className={`history-engine-toggle${item.forcedLama ? " active" : ""}`}
-                      title={item.forcedLama ? "LaMa 강제 해제 (배경에 따라 자동 선택)" : "이 Ubox를 LaMa로 지우기"}
-                      onClick={() => toggleUboxForcedLama(item)}
+                      title={item.forcedLama ? "LaMa 강제 해제 (배경에 따라 자동 선택)" : "이 텍스트 기반 영역을 LaMa로 지우기"}
+                      onClick={() => toggleTextBasedForcedLama(item)}
                     >
                       LaMa
                     </button>
@@ -2737,7 +2741,7 @@ export default function App() {
         </div>
 
         <div className="section">
-          <h2>말풍선 분석 JSON</h2>
+          <h2>영역 분석 JSON</h2>
           <textarea
             value={JSON.stringify(guidance, null, 2)}
             onChange={(e) => {

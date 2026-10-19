@@ -2,6 +2,7 @@ import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from "re
 import Konva from "konva";
 import { rectOf, tgId, imageGroups, defaultGuidance, regionId, imageRegions, regionDisplayRect } from "./lib.js";
 import { createViewport } from "./viewportControls.js";
+import { TEXT_BASED, regionProcessingBasis, regionTypeLabel } from "./regionTypes.js";
 
 const EditorCanvas = forwardRef(function EditorCanvas({ image, baseUrl, guidance, setGuidance, tool, layers, selectedTg, setSelectedTg, setStatus }, ref) {
   const hostRef = useRef(null);
@@ -118,8 +119,8 @@ const EditorCanvas = forwardRef(function EditorCanvas({ image, baseUrl, guidance
   }
 
   function guideLabel(hit) {
-    if (hit.kind === "manual_seed_points") return "Bubble seed";
-    if (hit.kind === "manual_regions") return hit.item?.type === "unboxed" ? "Ubox guide" : "Bubble guide";
+    if (hit.kind === "manual_seed_points") return "경계 기반 seed";
+    if (hit.kind === "manual_regions") return `${regionTypeLabel(hit.item)} 가이드`;
     if (hit.kind === "suppressed_regions") return "Auto region suppress";
     if (hit.kind === "virtual_walls") return "Edge barrier";
     if (hit.kind === "split_guides") return "Split guide";
@@ -433,8 +434,8 @@ const EditorCanvas = forwardRef(function EditorCanvas({ image, baseUrl, guidance
     if (x2 - x1 < 8 || y2 - y1 < 8) return;
     const latest = guidanceRef.current || defaultGuidance(null);
     const rect = [x1, y1, x2 - x1, y2 - y1];
-    const isUbox = kind === "ubox";
-    const item = isUbox
+    const isTextBased = kind === "ubox";
+    const item = isTextBased
       ? { id: `manual_ubox_${Date.now()}`, type: "unboxed", unboxed_rect: rect, source_method: "manual_ubox_guide" }
       : { id: `manual_bubble_${Date.now()}`, type: "bubble", bubble_rect: rect, source_method: "manual_bubble_guide" };
     const next = {
@@ -446,10 +447,10 @@ const EditorCanvas = forwardRef(function EditorCanvas({ image, baseUrl, guidance
     };
     guidanceRef.current = next;
     setGuidance(next);
-    setStatus(isUbox ? "Manual Ubox 추가" : "Manual bubble 추가");
+    setStatus(isTextBased ? "텍스트 기반 영역 추가" : "경계 기반 영역 추가");
   }
 
-  function addBubbleSeed(point) {
+  function addBoundarySeed(point) {
     const latest = guidanceRef.current || defaultGuidance(null);
     const next = {
       ...latest,
@@ -460,7 +461,7 @@ const EditorCanvas = forwardRef(function EditorCanvas({ image, baseUrl, guidance
     };
     guidanceRef.current = next;
     setGuidance(next);
-    setStatus("Bubble seed 추가");
+    setStatus("경계 기반 seed 추가");
   }
 
   function redraw() {
@@ -531,24 +532,28 @@ const EditorCanvas = forwardRef(function EditorCanvas({ image, baseUrl, guidance
         const rect = region.bubble_rect || region.unboxed_rect || region.erase_rect;
         if (!rect) return;
         const r = toStageRect(rect);
-        const isUnboxed = region.type === "unboxed";
-        const color = isUnboxed ? "#b45309" : "#0f766e";
+        const isTextBased = regionProcessingBasis(region) === TEXT_BASED;
+        const color = isTextBased ? "#b45309" : "#0f766e";
         overlay.add(new Konva.Rect({
           ...r,
           stroke: color,
           strokeWidth: 1.5,
-          fill: isUnboxed ? "rgba(180,83,9,0.035)" : "rgba(15,118,110,0.035)",
-          dash: isUnboxed ? [6, 4] : undefined,
+          fill: isTextBased ? "rgba(180,83,9,0.035)" : "rgba(15,118,110,0.035)",
+          dash: isTextBased ? [6, 4] : undefined,
         }));
         overlay.add(new Konva.Label({ x: r.x, y: Math.max(2, r.y - 20), listening: false }).add(
           new Konva.Tag({ fill: color, cornerRadius: 2 }),
           new Konva.Text({
-            text: `${isUnboxed ? "U" : "R"}${regionId(region)}`,
+            text: `R${regionId(region)}`,
             fontSize: 12,
             fontStyle: "bold",
             fill: "#ffffff",
             padding: 3,
           }),
+        ));
+        overlay.add(new Konva.Label({ x: r.x + 30, y: Math.max(2, r.y - 20), listening: false }).add(
+          new Konva.Tag({ fill: color, cornerRadius: 3 }),
+          new Konva.Text({ text: regionTypeLabel(region), fontSize: 11, fill: "#ffffff", padding: 3 }),
         ));
         if (region.safe_text_rect) {
           overlay.add(new Konva.Rect({ ...toStageRect(region.safe_text_rect), stroke: "#111827", strokeWidth: 1, dash: [4, 3] }));
@@ -574,15 +579,15 @@ const EditorCanvas = forwardRef(function EditorCanvas({ image, baseUrl, guidance
         label: "split",
       }));
       (currentGuidance.manual_regions || []).forEach((item) => {
-        const isUbox = item.type === "unboxed";
-        const rect = isUbox ? item.unboxed_rect || item.rect : item.bubble_rect || item.rect;
+        const isTextBased = regionProcessingBasis(item) === TEXT_BASED;
+        const rect = isTextBased ? item.unboxed_rect || item.rect : item.bubble_rect || item.rect;
         if (!rect) return;
         overlay.add(new Konva.Rect({
           ...toStageRect(rect),
-          stroke: isUbox ? "#b45309" : "#111827",
+          stroke: isTextBased ? "#b45309" : "#111827",
           strokeWidth: 2,
           dash: [7, 4],
-          fill: isUbox ? "rgba(180,83,9,0.08)" : "rgba(17,24,39,0.06)",
+          fill: isTextBased ? "rgba(180,83,9,0.08)" : "rgba(17,24,39,0.06)",
         }));
       });
       (currentGuidance.suppressed_regions || []).forEach((item) => {
@@ -616,16 +621,16 @@ const EditorCanvas = forwardRef(function EditorCanvas({ image, baseUrl, guidance
 
     if (currentDragPreview) {
       const isRectRegion = currentDragPreview.tool === "ubox";
-      const isUbox = currentDragPreview.tool === "ubox";
+      const isTextBased = currentDragPreview.tool === "ubox";
       const isWall = currentDragPreview.tool === "wall";
-      const color = isUbox ? "#b45309" : currentDragPreview.tool === "bubble" ? "#111827" : isWall ? "#b91c1c" : "#b45309";
+      const color = isTextBased ? "#b45309" : currentDragPreview.tool === "bubble" ? "#111827" : isWall ? "#b91c1c" : "#b45309";
       if (isRectRegion || isWall) {
         overlay.add(new Konva.Rect({
           ...stageRectFromPoints(currentDragPreview.start, currentDragPreview.end),
           stroke: color,
           strokeWidth: 2.5,
           dash: [8, 4],
-          fill: isUbox ? "rgba(180,83,9,0.10)" : isWall ? "rgba(185,28,28,0.08)" : "rgba(17,24,39,0.10)",
+          fill: isTextBased ? "rgba(180,83,9,0.10)" : isWall ? "rgba(185,28,28,0.08)" : "rgba(17,24,39,0.10)",
         }));
       } else {
         drawGuideLine(overlay, [[currentDragPreview.start.x, currentDragPreview.start.y], [currentDragPreview.end.x, currentDragPreview.end.y]], color, isWall ? "wall" : "split", { prominent: currentDragPreview.tool === "region-split" || currentDragPreview.tool === "tg-split" });
@@ -730,7 +735,7 @@ const EditorCanvas = forwardRef(function EditorCanvas({ image, baseUrl, guidance
       const currentTool = toolRef.current;
       const point = pointerToImage(stage);
       if (currentTool === "bubble") {
-        addBubbleSeed(point);
+        addBoundarySeed(point);
         return;
       }
       if (currentTool === "region-off") {

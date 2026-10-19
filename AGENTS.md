@@ -10,6 +10,8 @@
 
 용어 정의(Glossary)와 파이프라인 흐름 요약은 `CLAUDE.md` 참고.
 
+영역 처리 기준의 현재 용어·변수명·기존 JSON/캐시 호환 정책은 [변경 기록](docs/REGION_PROCESSING_BASIS_CHANGELOG.md)을 따른다.
+
 ---
 
 ## 현재 실행 구조

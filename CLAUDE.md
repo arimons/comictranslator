@@ -2,6 +2,8 @@
 
 현재 프로젝트 기준은 `AGENTS.md`(파이프라인·파일 구조), `docs/CODEBASE_FILE_MAP.md`(파일별 상세), `docs/AGENT_WORKSPACE_RULES.md`(폴더 규칙)를 따른다.
 
+현재 영역 용어는 **경계 기반 / 텍스트 기반**, 화면 ID는 **R 번호 + 타입 배지**다. 변수명과 기존 JSON·캐시 호환 정책은 [영역 처리 기준 변경 기록](docs/REGION_PROCESSING_BASIS_CHANGELOG.md)을 따른다. 저장된 `bubble/unboxed`와 좌표 키를 전역 치환하지 않는다.
+
 ---
 
 ## 용어 정리 (Glossary)
@@ -11,6 +13,7 @@
 | **ATG** (Anchor Text Group) | Cloud Vision이 감지한 텍스트 블록을 clustering한 단위. 말풍선 하나에 대응. `*_text_groups.json`의 각 항목. |
 | **Anchor** | ATG의 대표 bounding box. flood fill 시드 포인트 출발점. |
 | **bbox** | bounding box. Cloud Vision/clustering이 반환하는 직사각형 영역. |
+| **processing_basis** | 처리 기준: `boundary_based`(경계 기반) / `text_based`(텍스트 기반). 기존 저장 `type: bubble/unboxed`를 호환 함수로 읽는다. Edge는 처리 타입이 아니라 검출 방법이다. |
 | **flood region** | 하나의 ATG anchor에서 floodfill로 확장된 실제 픽셀 영역. 말풍선 내부 전체를 커버. |
 | **flood_rect** | flood region의 최소 외접 직사각형. |
 | **flood_pre_masked.jpg** | `create_floodfill_fallback_outputs()`가 만드는 flood 기반 마스킹 결과. Step 5 masking의 입력 베이스. |
