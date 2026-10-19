@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import EditorCanvas from "./EditorCanvas.jsx";
 import OverlayCanvas from "./OverlayCanvas.jsx";
+import { RestoreControls, RestoreStage, useRestore } from "./RestorePanel.jsx";
 import ShortcutHelp from "./ShortcutHelp.jsx";
 import { KEYMAP, eventMatches, entryInContext, entryVisibleOnPlatform, shortcutFor, shortcutById } from "./keymap.js";
 import {
@@ -134,6 +135,7 @@ export default function App() {
     }
     return baseSelected;
   }, [baseSelected, pageDetail]);
+  const restore = useRestore({ sessionId, image: selected, active: activeTab === "restore", setStatus });
   // id는 파일명 stem이라 세션이 달라도 겹칠 수 있다. 세션별 input_path로 페이지를 구분한다.
   const selectedKey = selected ? (selected.input_path || selected.id) : "";
   // 페이지 전환 직후 요약만 있을 때와 상세가 도착했을 때를 구분해, 상세 도착 시 편집 상태를 다시 초기화한다.
@@ -1045,6 +1047,7 @@ export default function App() {
       setHelpOpen(false);
       return;
     }
+    // 배경 복원 탭은 RestorePanel이 자기 키를 처리한다. 여기서는 전역(탭·페이지·도움말)만 본다.
     const contexts = [];
     if (activeTab === "overlay" && overlayCanvasRef.current?.isEditorOpen()) contexts.push("floatingEditor");
     if (activeTab === "guidance" || activeTab === "overlay") contexts.push(activeTab);
@@ -2072,7 +2075,7 @@ export default function App() {
   }
 
   return (
-    <div className={`app workspace-mode ${toolsOpen ? "" : "tools-collapsed"} ${activeTab === "overlay" ? "overlay-mode" : ""} ${activeTab === "ocr" ? "ocr-mode" : ""} ${activeTab === "export" ? "export-mode" : ""}`}>
+    <div className={`app workspace-mode ${toolsOpen ? "" : "tools-collapsed"} ${activeTab === "overlay" ? "overlay-mode" : ""} ${activeTab === "ocr" ? "ocr-mode" : ""} ${activeTab === "export" ? "export-mode" : ""} ${activeTab === "restore" ? "restore-mode" : ""}`}>
       <header className="workspace-global-topbar">
         <button className="workspace-brand" type="button" onClick={returnToStartPage} title="Start page로 돌아가기">
           Comic Translator Studio
@@ -2421,6 +2424,7 @@ export default function App() {
           </div>
         ) : null}
 
+        {activeTab === "restore" ? <RestoreStage restore={restore} setStatus={setStatus} /> : null}
 
         {activeTab === "export" ? (
           <div className="export-workspace">
@@ -2638,6 +2642,7 @@ export default function App() {
         </div>
         </> : null}
 
+        {activeTab === "restore" ? <RestoreControls restore={restore} /> : null}
 
         {activeTab === "guidance" ? <>
         <div className="section compact-section">
@@ -2859,6 +2864,8 @@ export default function App() {
             ? `System Status: ${overlayBusy ? "Rendering" : "Idle"} | File: ${selected?.name || "-"} | Region: ${selectedRegion ? overlayItemLabel(selectedRegion) : "-"}`
             : activeTab === "export"
               ? `System Status: ${anyBusy ? "Active" : "Idle"} | Final: ${finalImages.length}/${images.length} | Session: ${sessionId || "-"}`
+            : activeTab === "restore"
+              ? `System Status: ${restore.hasActiveJob ? "Restoring" : "Idle"} | File: ${selected?.name || "-"} | Mask: ${restore.maskPixels}px | Status: ${status || "-"}`
             : `System Status: ${guidanceBusy || analyzeBusy ? "Active" : "Idle"} | Tool: ${TOOL_LABELS.find(([id]) => id === tool)?.[1] || tool} | File: ${selected?.name || "-"}`}
       </footer>
       {anyBusy ? (

@@ -228,6 +228,8 @@ def _manual_unboxed_crops(
             "inpaint_skipped": False,
             "source_method": item.get("source_method") or "manual_ubox_guide",
             "source_region_type": "manual_ubox",
+            # 사용자가 엔진을 지정하면 배경 분류 결과보다 우선한다(현재는 "lama"만 의미가 있다).
+            "inpaint_engine_override": item.get("inpaint_engine"),
             "quality_flags": ["manual_ubox"],
             "review_tags": ["manual_ubox"],
         })
@@ -360,7 +362,8 @@ def _apply_manual_ubox_lama(
     clipped_roi = image[y:y + h, x:x + w]
     background_meta = _classify_manual_ubox_background(clipped_roi, text_mask)
     if background_meta.get("manual_mask_polarity") == "bright":
-        clipped, text_mask = _manual_ubox_text_mask(image, rect, anchor_groups, polarity="bright", dilate_px=2)
+        # 흰 글자의 테두리·번진 가장자리가 마스크 밖에 남으면 LaMa가 글자 모양 얼룩을 되살린다. 6px까지 덮는다.
+        clipped, text_mask = _manual_ubox_text_mask(image, rect, anchor_groups, polarity="bright", dilate_px=6)
         if text_mask is None:
             return False
         x, y, w, h = clipped
@@ -386,7 +389,7 @@ def _apply_manual_ubox_lama(
         return False
 
     roi = image[cy:cy + ch, cx:cx + cw].copy()
-    engine = str(background_meta.get("recommended_inpaint_engine") or "lama")
+    engine = str(item.get("inpaint_engine_override") or background_meta.get("recommended_inpaint_engine") or "lama")
     if engine == "telea":
         inpaint_roi = cv2.inpaint(roi, context_mask, 5, cv2.INPAINT_TELEA)
     else:

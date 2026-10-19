@@ -24,6 +24,7 @@ NEW_COMIC_TRANSLATOR/
 │       ├── App.jsx              # 세션/이미지 목록/워크플로우 탭 전체 상태
 │       ├── EditorCanvas.jsx      # Step 3 말풍선 분석 캔버스 (Konva)
 │       ├── OverlayCanvas.jsx     # Step 5 텍스트 오버레이 편집 캔버스 (Konva)
+│       ├── RestorePanel.jsx      # 배경 복원 탭 (마스크 브러시 + LaMa 복원)
 │       ├── keymap.js             # 키보드·마우스 단축키 단일 정의
 │       ├── viewportControls.js   # 두 캔버스 공용 확대/이동/맞춤
 │       ├── ShortcutHelp.jsx      # ? 단축키 도움말
@@ -61,6 +62,7 @@ NEW_COMIC_TRANSLATOR/
     ├── gemini_ocr_translate_v5.py  # Step 4 (Gemini 기본, gpt-* 선택 가능)
     ├── font_style_analyzer.py  # Step 4 직후 render_hint CV 보정
     ├── render_text_overlay.py  # Step 5
+    ├── background_restore.py   # 배경 복원 탭 엔진 (문맥 영역·마스크 분리, LaMa, 확정 패치 합성)
     ├── openai_image_redraw.py  # 렌더 생략 페이지 OpenAI 이미지 재생성 (main_v2 export)
     ├── vis/                    # pipeline 진단 시각화 도구
     ├── experimental/           # pipeline 승격 후보 실험 모듈
@@ -160,7 +162,8 @@ guidance(수동 보정)가 있는 이미지는 `guidance_digest`(guidance 내용
 | `frontend/src/keymap.js` | 단축키 단일 정의(키 조합, 탭 범위, 조건, 동작 id, 설명). App 디스패처·툴바 tooltip·도움말이 읽고, `tests/test_docs_sync.py`가 `docs/editor_manual.html` 단축키 표와 대조 |
 | `frontend/src/viewportControls.js` | 두 Konva 캔버스 공용 보기 조작 — 휠=이동, 핀치·Ctrl/Cmd+휠=확대, Space·휠버튼·Hand 도구 드래그 이동, 맞춤/100%/선택 확대 |
 | `frontend/src/ShortcutHelp.jsx` | `?`로 여는 단축키 도움말. 현재 탭의 keymap 항목을 묶어 표시 |
-| `frontend/src/App.jsx` | 세션 관리, 이미지 목록, 워크플로우 탭(분석/OCR/오버레이/내보내기) 전체 상태 |
+| `frontend/src/RestorePanel.jsx` | 배경 복원 탭 — 제거 마스크 브러시·지우개, 문맥 영역 사각형, 자동 마스크, LaMa 작업 실행·확정·패치 제거. 자기 캔버스 키를 직접 처리한다(keymap의 `passive` 항목) |
+| `frontend/src/App.jsx` | 세션 관리, 이미지 목록, 워크플로우 탭(분석/OCR/오버레이/배경 복원/내보내기) 전체 상태. Action History의 Ubox 줄에서 LaMa 강제 토글(`manual_regions[].inpaint_engine = "lama"`) |
 | `frontend/src/main.jsx` | React 엔트리포인트 |
 
 프론트엔드 코드를 수정하면 `frontend/`에서 `npm install`(최초 1회) 후 `npm run build`로 `ui_v2/app.bundle.js`를 다시 생성해야 한다. `ui_v2/app.bundle.js`는 결과물이므로 커밋 대상이며, 앱을 실행만 할 때는 Node.js가 필요 없다.
@@ -263,6 +266,7 @@ Step 3 진입점이다. `pipeline_runner`가 `python -m pipeline.dialogue_extrac
 - `build_dialogue_sheet()`: ① `bubble_detector.build_ocr_region_sheet()`로 말풍선 검출·흰색 마스킹 → ② 말풍선 밖 텍스트를 LaMa(`simple_lama_inpainting`)로 지움 → ③ 두 종류 crop을 읽기 순서로 모아 indexed OCR sheet + `regions.json` 저장
 - 편집기 guidance(`manual_regions`, `manual_seed_points`, `virtual_walls`, `split_guides`, suppressed region)를 인자로 받아 반영한다.
 - region별 `safe_text_rect`(`_compute_safe_text_rect`)와 `mask_centroid`(`_compute_mask_centroid`)를 계산해 `regions.json`에 기록한다. Step 5 배치의 기준값이다.
+- 수동 Ubox(`_apply_manual_ubox_lama`): 박스 안에서 글자 색 픽셀만 마스크로 잡고, 문맥은 박스 바깥 24px까지 본다. 박스가 어두우면 밝은 글자로 보고 마스크를 6px 넓힌다(흰 테두리가 남으면 LaMa가 글자 모양 얼룩을 되살린다). 엔진은 `_classify_inpaint_background` 배경 분류로 Telea/LaMa를 고르고, guidance의 `inpaint_engine: "lama"`가 있으면 그 값이 우선한다.
 
 ### `pipeline/bubble_detector.py`
 
@@ -383,7 +387,17 @@ indexed sheet crop의 획두께·ink density를 재서 Gemini가 준 `render_hin
 - aspect-ratio 3단계(tall/wide/square) 기반 inner padding(`inner_rect_for`)
 - split 버블 폰트 균일화: 같은 flood region에서 나뉜 버블은 그룹 최솟값의 120%를 상한으로 맞춘다(`prepare_page_layouts` 2nd pass)
 - 표준 경로는 `--regions_json`을 `build_flood_info_from_regions_json`, `build_shared_flood_groups_from_regions_json`으로 읽어 bbox·safe rect를 고른다. `--flood_vis_json`(`build_flood_info_by_anchor`, `build_shared_flood_groups`)은 선택 입력으로 남아 있다.
+- 배경 복원 탭에서 확정한 패치는 `--restore-state`(`state.json`)로 받아 렌더 직전 마스크 안쪽에만 합성한다(`background_restore.apply_restore_patches`).
 - 구버전: `archive/render_text_overlay_legacy.py`
+
+### `pipeline/background_restore.py`
+
+배경 복원 탭(`RestorePanel.jsx`, `main_v2.py`의 `/api/restore/*`)의 엔진이다. 엔진은 LaMa 하나다. FLUX.1 Fill(MFLUX)을 시험했지만 어두운 배경·투명 말풍선에서도 LaMa보다 결과가 나쁘고 영역당 수 분이 걸려 제거했다.
+
+- 문맥 영역(`context_rect`)과 제거 마스크를 분리한다. 모델에는 문맥 영역을 잘라 넘기고, 바꾸는 것은 마스크 픽셀뿐이다(`composite_inside_mask`). 마스크 바깥 픽셀이 하나라도 바뀌면 결과를 버린다(`changed_pixels_outside_mask`).
+- 처리 해상도는 긴 변 512/768/원본 중 고르며 기본은 원본이다. 16의 배수 패딩과 역변환은 `prepare_model_input`/`restore_from_model_output`이 맡고, 이진 마스크는 최근접 보간만 쓴다.
+- 자동 마스크(`build_text_stroke_mask`)는 `regions.json`의 unboxed 영역과 CV 단어 bbox를 seed로 글자 획만 고른다.
+- 확정 패치는 세션 작업 폴더의 `restore/<이미지>/`에 PNG로 저장해 페이지 JPEG를 다시 저장하지 않는다.
 
 ### 보관·폐기된 pipeline 모듈
 

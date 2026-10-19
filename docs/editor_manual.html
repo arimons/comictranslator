@@ -293,6 +293,7 @@
     <a href="#guidance">Guidance Editor</a>
     <a href="#ocr">OCR / Translation</a>
     <a href="#overlay">Overlay Result Editor</a>
+    <a href="#restore">배경 복원</a>
     <a href="#shortcuts">단축키</a>
     <a href="#tips">작업 팁</a>
     <a href="#names">제품명 아이디어</a>
@@ -367,6 +368,8 @@
         <article class="card">
           <h3>Bubble / Ubox</h3>
           <p>말풍선 영역은 Bubble로, 말풍선 밖 일반 대사는 Ubox로 지정합니다. 작은 클릭은 seed point, 드래그는 box guide가 됩니다.</p>
+          <p>Ubox는 사각형 전체를 지우지 않고, 사각형 안에서 글자 색과 같은 픽셀만 골라 지웁니다. 배경이 흰색처럼 평평하면 Telea, 망점·어두운 배경·선화면 LaMa가 자동으로 고릅니다. 박스 안에 속도선이나 머리카락 끝이 걸리면 그 선도 글자로 보고 함께 지우니, 박스는 글자와 후리가나에 바짝 붙여 잡습니다.</p>
+          <p>Action History의 Ubox 줄 오른쪽 <strong>LaMa</strong> 버튼을 켜면 배경 판정과 관계없이 LaMa로 지웁니다. 망점 위 글자가 매끈하게 번져 지워졌다면 켜 봅니다.</p>
           <p><span class="tag">Guidance only</span> <kbd>B</kbd>, <kbd>U</kbd></p>
         </article>
       </div>
@@ -506,6 +509,23 @@
       </p>
     </section>
 
+    <section id="restore">
+      <h2>배경 복원</h2>
+      <p>
+        Ubox 사각형으로는 깔끔하게 지워지지 않는 곳을 직접 칠해서 LaMa로 다시 지우는 화면입니다.
+        흰 글자가 같은 흰 바탕과 맞닿아 있거나, 속도선이 글자를 가로지르는 경우처럼 사각형 안에서 글자와 배경을 색으로 나눌 수 없을 때 씁니다.
+      </p>
+      <ol>
+        <li><strong>자동 마스크</strong>를 누르면 말풍선 밖 글자 위치로 지울 영역(빨강)을 만듭니다.</li>
+        <li>지우개(<kbd>E</kbd>)로 배경까지 잡힌 부분을 걷어 내고, 칠하기(<kbd>B</kbd>)로 빠진 글자 부분을 더합니다.</li>
+        <li>문맥 영역(<kbd>C</kbd>)으로 LaMa가 참고할 범위를 사각형으로 감쌉니다. 해당 컷 안으로만 잡고, 옆 컷이 섞이지 않게 합니다.</li>
+        <li><strong>복원 실행</strong> 후 결과가 괜찮으면 <strong>이 결과 확정</strong>을 누릅니다. 확정한 패치는 글자 입히기 렌더 때 마스크 안쪽에만 합성됩니다.</li>
+      </ol>
+      <p class="note">
+        처리 해상도는 기본값 "원본 크기"를 권합니다. 마스크 바깥 픽셀은 바뀌지 않도록 검사하며, 실패하면 기존 결과를 덮어쓰지 않습니다.
+      </p>
+    </section>
+
     <section id="shortcuts">
       <h2>단축키</h2>
       <p>
@@ -538,6 +558,7 @@
           <tr data-shortcut="tab.ocr"><td><kbd>Alt</kbd> + <kbd>2</kbd></td><td>글자인식/번역 탭</td></tr>
           <tr data-shortcut="tab.overlay"><td><kbd>Alt</kbd> + <kbd>3</kbd></td><td>글자 입히기 탭</td></tr>
           <tr data-shortcut="tab.export"><td><kbd>Alt</kbd> + <kbd>4</kbd></td><td>내보내기 탭</td></tr>
+          <tr data-shortcut="tab.restore"><td><kbd>Alt</kbd> + <kbd>5</kbd></td><td>배경 복원 탭</td></tr>
           <tr data-shortcut="page.prev"><td><kbd>PgUp</kbd>, <kbd>Alt</kbd> + <kbd>←</kbd></td><td>이전 페이지</td></tr>
           <tr data-shortcut="page.prev.arrow"><td><kbd>←</kbd></td><td>이전 페이지 (선택한 region·TG가 없을 때)</td></tr>
           <tr data-shortcut="page.next.arrow"><td><kbd>→</kbd></td><td>다음 페이지 (선택한 region·TG가 없을 때)</td></tr>
@@ -620,6 +641,23 @@
         </tbody>
       </table>
 
+      <h3>배경 복원 탭</h3>
+      <p>배경 복원 화면은 자체 캔버스라 키 처리를 따로 합니다. 이 탭에서 전역 키는 탭 이동, 페이지 이동, 도움말만 동작합니다.</p>
+      <table>
+        <thead><tr><th>키·조작</th><th>기능</th></tr></thead>
+        <tbody>
+          <tr data-shortcut="restore.brush"><td><kbd>B</kbd></td><td>칠하기</td></tr>
+          <tr data-shortcut="restore.eraser"><td><kbd>E</kbd></td><td>지우기</td></tr>
+          <tr data-shortcut="restore.context"><td><kbd>C</kbd></td><td>문맥 영역</td></tr>
+          <tr data-shortcut="restore.seed"><td><kbd>T</kbd></td><td>글자 영역 추가</td></tr>
+          <tr data-shortcut="restore.pan"><td><kbd>H</kbd></td><td>이동 도구</td></tr>
+          <tr data-shortcut="restore.mask"><td><kbd>M</kbd></td><td>마스크 표시 켜기/끄기</td></tr>
+          <tr data-shortcut="restore.brushSize"><td><kbd>[</kbd>, <kbd>]</kbd></td><td>브러시 크기 줄이기/키우기</td></tr>
+          <tr data-shortcut="restore.undo"><td><kbd>Ctrl</kbd> + <kbd>Z</kbd></td><td>마스크 되돌리기</td></tr>
+          <tr data-shortcut="restore.panDrag"><td><kbd>Space</kbd> + <kbd>드래그</kbd></td><td>화면 이동 (휠 버튼·우클릭 드래그도 가능)</td></tr>
+          <tr data-shortcut="restore.zoom"><td><kbd>휠</kbd></td><td>확대/축소</td></tr>
+        </tbody>
+      </table>
     </section>
 
     <section id="tips">

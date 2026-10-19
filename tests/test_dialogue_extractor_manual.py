@@ -331,6 +331,10 @@ def test_manual_ubox_region_becomes_unboxed_crop():
     assert crops[0]["anchor_ids"] == [7]
     assert crops[0]["source_rect"] == [20, 20, 50, 40]
     assert crops[0]["inpaint_skipped"] is False
+    assert crops[0]["inpaint_engine_override"] is None
+
+    forced = _manual_unboxed_crops(image, [{**manual[0], "inpaint_engine": "lama"}], groups, 120, 120)
+    assert forced[0]["inpaint_engine_override"] == "lama"
 
 
 def test_manual_ubox_text_mask_covers_full_manual_rect_for_furigana():
@@ -430,6 +434,35 @@ def test_manual_ubox_uses_telea_for_white_background(monkeypatch):
     assert "manual_ubox_telea" in item["quality_flags"]
     assert captured["method"] == cv2.INPAINT_TELEA
     assert (masked[75, 75] == [210, 210, 210]).all()
+
+
+def test_manual_ubox_lama_override_beats_white_background_telea(monkeypatch):
+    image = np.full((140, 140, 3), 255, dtype=np.uint8)
+    cv2.rectangle(image, (70, 65), (80, 85), (0, 0, 0), -1)
+    masked = image.copy()
+    item = {
+        "type": "unboxed",
+        "source_rect": [66, 61, 22, 30],
+        "erase_rect": [66, 61, 22, 30],
+        "anchor_ids": [7],
+        "quality_flags": ["manual_ubox"],
+        "inpaint_engine_override": "lama",
+    }
+    group_by_id = {7: {"text_group_id": 7, "fallback_rect": [68, 62, 16, 28], "text": "あ"}}
+
+    class FakeLama:
+        def __call__(self, image_pil, mask_pil):
+            arr = np.array(image_pil).copy()
+            arr[np.array(mask_pil) > 0] = [200, 200, 200]
+            return Image.fromarray(arr)
+
+    monkeypatch.setattr("pipeline.dialogue_extractor.cv2.inpaint", lambda *a: (_ for _ in ()).throw(AssertionError("Telea should not be used")))
+    monkeypatch.setattr("pipeline.dialogue_extractor._get_lama", lambda: FakeLama())
+
+    assert _apply_manual_ubox_lama(image, masked, item, group_by_id) is True
+    assert item["manual_inpaint_background_class"] == "white_flat"
+    assert item["manual_inpaint_engine"] == "lama"
+    assert (masked[75, 75] == [200, 200, 200]).all()
 
 
 def test_manual_ubox_does_not_consolidate_with_adjacent_unboxed_crop():

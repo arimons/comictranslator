@@ -2865,6 +2865,242 @@ button.wide {
   }
 }
 
+/* ── 배경 복원 탭 ─────────────────────────────────────────── */
+.restore-workspace {
+  grid-row: 1 / -1;
+  min-height: 0;
+  height: 100%;
+  display: grid;
+  grid-template-rows: minmax(0, 1fr) 230px;
+  gap: 10px;
+  overflow: hidden;
+}
+
+.restore-stage-card,
+.restore-compare-card {
+  min-height: 0;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  overflow: hidden;
+}
+
+.restore-stage-head {
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.restore-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.restore-toolbar button {
+  padding: 4px 8px;
+  font-size: 12px;
+}
+
+.restore-toolbar button.active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+
+.restore-toolbar kbd {
+  font-size: 10px;
+  opacity: 0.7;
+}
+
+.restore-brush {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.restore-brush input {
+  width: 90px;
+}
+
+.restore-stage-body {
+  --restore-stage-bg: #e5e7eb;
+  position: relative;
+  min-height: 0;
+  overflow: hidden;
+  background: var(--restore-stage-bg);
+}
+
+.restore-canvas {
+  display: block;
+  touch-action: none;
+  cursor: crosshair;
+}
+
+.restore-canvas.tool-pan {
+  cursor: grab;
+}
+
+.restore-empty {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+}
+
+.restore-compare-strip {
+  min-height: 0;
+  display: flex;
+  gap: 8px;
+  padding: 8px;
+  overflow-x: auto;
+}
+
+.restore-compare-strip figure {
+  margin: 0;
+  flex: 0 0 auto;
+  height: 100%;
+  display: grid;
+  grid-template-rows: minmax(0, 1fr) auto;
+  gap: 4px;
+  cursor: zoom-in;
+}
+
+.restore-compare-strip img {
+  height: 100%;
+  max-width: 360px;
+  object-fit: contain;
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+}
+
+.restore-compare-strip figcaption {
+  font-size: 11px;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.restore-job-placeholder {
+  width: 140px;
+  display: grid;
+  place-items: center;
+  border: 1px dashed var(--line-2);
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.restore-job-figure.status-error .restore-job-placeholder {
+  color: var(--red);
+  border-color: var(--red);
+}
+
+.restore-lightbox {
+  width: min(92vw, 1400px);
+  height: min(90vh, 1100px);
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  background: var(--panel);
+  border-radius: 8px;
+  padding: 12px;
+}
+
+.restore-lightbox-body {
+  min-height: 0;
+  overflow: auto;
+  display: grid;
+  place-items: center;
+  background: var(--panel-2);
+}
+
+.restore-lightbox-body img {
+  width: auto;
+  height: 100%;
+  min-height: 300px;
+  image-rendering: pixelated;
+}
+
+.restore-form-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px 8px;
+}
+
+.restore-form-grid label {
+  display: grid;
+  gap: 3px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.restore-form-grid input,
+.restore-form-grid select {
+  width: 100%;
+  min-width: 0;
+}
+
+.restore-span-2 {
+  grid-column: 1 / -1;
+}
+
+.restore-hint {
+  margin: 4px 0 6px;
+  font-size: 11px;
+  line-height: 1.45;
+  color: var(--muted);
+}
+
+.restore-metric {
+  align-self: center;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.restore-context-value {
+  margin-bottom: 6px;
+  font-family: ui-monospace, "Nanum Gothic Coding", monospace;
+  font-size: 12px;
+}
+
+.restore-error {
+  margin-top: 6px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  background: #fef2f2;
+  color: var(--red);
+  font-size: 12px;
+  word-break: break-word;
+}
+
+.restore-job-list {
+  display: grid;
+  gap: 6px;
+}
+
+.restore-job {
+  display: grid;
+  gap: 5px;
+  padding: 8px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  font-size: 12px;
+}
+
+.restore-job.status-error {
+  border-color: #fecaca;
+}
+
+.restore-job-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 6px;
+}
+
+.restore-job-meta {
+  color: var(--muted);
+  font-size: 11px;
+}
+
 /* 공용 보기 조작: Space·Hand 도구 이동 커서 */
 .vp-grab,
 .vp-grab * {

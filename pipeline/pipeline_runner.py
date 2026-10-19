@@ -434,6 +434,9 @@ def run_single_image(
             overlay_cmd += ["--regions_json", str(_regions), "--original_image", str(image_path)]
         if tracking_offset is not None:
             overlay_cmd += ["--tracking-offset", str(tracking_offset)]
+        restore_state = Path(work_dir) / "restore" / image_path.stem / "state.json"
+        if restore_state.exists():
+            overlay_cmd += ["--restore-state", str(restore_state)]
         _run_step(overlay_cmd, STEP_TIMEOUT["overlay"], "Text Overlay", log_callback)
         _append_log(log, "  ✅ 완료", log_callback)
         _append_log(log, f"  ⏱️ 단계 소요 {time.time() - step_started:.1f}s / 누적 {elapsed()}", log_callback)

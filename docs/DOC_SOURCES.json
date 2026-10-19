@@ -30,7 +30,8 @@
         "main_v2.py",
         "ui_v2/index.html",
         "pipeline/manual_guidance.py",
-        "frontend/src/keymap.js"
+        "frontend/src/keymap.js",
+        "frontend/src/RestorePanel.jsx"
       ]
     },
     "docs/CODEBASE_FILE_MAP.md": {
@@ -39,7 +40,9 @@
       "sources": [
         "run_pipeline.py",
         "main_v2.py",
-        "pipeline/pipeline_runner.py"
+        "pipeline/pipeline_runner.py",
+        "pipeline/background_restore.py",
+        "frontend/src/RestorePanel.jsx"
       ]
     },
     "docs/AGENT_WORKSPACE_RULES.md": {

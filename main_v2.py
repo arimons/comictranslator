@@ -162,6 +162,47 @@ class OverlayRequest(BaseModel):
     replace: bool = False
 
 
+class RestoreAutoMaskRequest(BaseModel):
+    session_id: str
+    image_id: str
+    dilate_px: int = 4
+    polarity: str = "auto"
+    threshold: int | None = None
+    min_area: int = 10
+    use_region_seeds: bool = True
+    extra_seed_rects: list[list[int]] = []
+    save: bool = True  # False면 저장하지 않고 PNG만 돌려준다(편집 중인 마스크에 합칠 때)
+
+
+class RestoreMaskRequest(BaseModel):
+    session_id: str
+    image_id: str
+    mask_png: str
+
+
+class RestoreRunRequest(BaseModel):
+    session_id: str
+    image_id: str
+    engine: str = "lama"
+    context_rect: list[int]
+    mask_png: str | None = None
+    resolution: str = "original"
+    feather_px: int = 0
+    source: str = "masked"
+
+
+class RestoreAcceptRequest(BaseModel):
+    session_id: str
+    image_id: str
+    job_id: str
+
+
+class RestorePatchRemoveRequest(BaseModel):
+    session_id: str
+    image_id: str
+    patch_id: str
+
+
 class GenerateMissingFinalRequest(BaseModel):
     session_id: str
     image_ids: list[str] = []
@@ -961,6 +1002,7 @@ def image_record(
     vis_dir = work / "vis"
     sheets_dir = work / "sheets"
     masked_dir = work / "masked"
+    restore_dir = work / "restore" / stem
     final_path = output / "final" / f"{stem}_final.jpg"
     export_recovery_path = json_dir / f"{stem}_export_recovery.json"
     export_recovery = load_json(export_recovery_path, default={})
@@ -994,6 +1036,11 @@ def image_record(
         "indexed_sheet_url": file_url(sheets_dir / f"{stem}_indexed_sheet.jpg"),
         "masked_url": file_url(masked_dir / f"{stem}_masked.jpg"),
         "final_url": file_url(final_path),
+        "restore_dir": str(restore_dir),
+        "restore_state_json": str(restore_dir / "state.json"),
+        "restore_mask_png": str(restore_dir / "mask.png"),
+        "restore_mask_url": file_url(restore_dir / "mask.png"),
+        "restore_patch_count": len(load_json(restore_dir / "state.json", default={}).get("patches", [])),
         "has_effective_text_groups": (json_dir / f"{stem}_text_groups_effective.json").exists(),
         "has_integrated_json": (json_dir / f"{stem}_integrated.json").exists(),
         "ocr_status": load_json(json_dir / f"{stem}_ocr_status.json", default={}),
@@ -1052,6 +1099,8 @@ IMAGE_SUMMARY_KEYS = (
     "indexed_sheet_url",
     "masked_url",
     "final_url",
+    "restore_mask_url",
+    "restore_patch_count",
     "has_effective_text_groups",
     "has_integrated_json",
     "has_analysis",
@@ -1679,6 +1728,7 @@ def render_overlay_for_record(record: dict[str, Any], font_path: str | None, tra
         tracking_offset=tracking_offset,
         overlay_guidance_path=Path(record["overlay_guidance_json"]) if Path(record["overlay_guidance_json"]).exists() else None,
         overlay_layout_output=Path(record["overlay_layout_json"]),
+        restore_state_path=Path(record["restore_state_json"]) if Path(record["restore_state_json"]).exists() else None,
     )
     if log_callback is not None:
         log_callback(f"  ✅ overlay 렌더 완료: {count}개")
@@ -2113,6 +2163,247 @@ def run_subprocess_stream(cmd: list[str], timeout: int = 300, log_callback=None)
     if returncode != 0:
         raise HTTPException(status_code=500, detail=combined)
     return combined
+
+
+# ── 배경 글자 복원(LaMa) ───────────────────────────────────────────
+# 복원은 서버 프로세스 안의 단일 작업 스레드에서 순서대로 돈다.
+_RESTORE_EXECUTOR = ThreadPoolExecutor(max_workers=1, thread_name_prefix="restore")
+_RESTORE_JOBS: dict[str, dict[str, Any]] = {}
+_RESTORE_JOBS_LOCK = threading.Lock()
+_RESTORE_STATE_LOCK = threading.Lock()
+
+
+def _restore_record(session_id: str, image_id: str) -> dict[str, Any]:
+    source = get_image(session_id, image_id)
+    return image_record(session_id, Path(source["input_path"]), source.get("image_sha256"))
+
+
+def _read_bgr(path: str | Path):
+    import cv2
+
+    image = cv2.imread(str(path), cv2.IMREAD_COLOR)
+    if image is None:
+        raise HTTPException(status_code=400, detail=f"이미지를 읽을 수 없습니다: {Path(path).name}")
+    return image
+
+
+def _restore_state(record: dict[str, Any]) -> dict[str, Any]:
+    state = load_json(record["restore_state_json"], default={})
+    return state if isinstance(state, dict) else {}
+
+
+def _update_restore_state(record: dict[str, Any], **changes: Any) -> dict[str, Any]:
+    with _RESTORE_STATE_LOCK:
+        state = _restore_state(record)
+        state.update(changes)
+        state.setdefault("patches", [])
+        write_json(record["restore_state_json"], state)
+        return state
+
+
+def restore_source_image(record: dict[str, Any], source: str):
+    """복원 입력 페이지. masked: Step 3 결과에 확정 패치를 얹은 현재 상태, original: 원본 입력."""
+    from pipeline.background_restore import apply_restore_patches
+
+    if source == "masked" and Path(record["masked_jpg"]).exists():
+        image = _read_bgr(record["masked_jpg"])
+        apply_restore_patches(image, Path(record["restore_state_json"]))
+        return image, "masked"
+    return _read_bgr(record["input_path"]), "original"
+
+
+def write_restore_preview(record: dict[str, Any]) -> None:
+    """확정 패치를 얹은 현재 페이지 미리보기(PNG). 최종 출력 경로와 무관한 확인용이다."""
+    import cv2
+
+    preview = Path(record["restore_dir"]) / "preview.png"
+    if not _restore_state(record).get("patches"):
+        preview.unlink(missing_ok=True)
+        return
+    image, _ = restore_source_image(record, "masked")
+    cv2.imwrite(str(preview), image)
+
+
+def restore_info(record: dict[str, Any]) -> dict[str, Any]:
+    from pipeline.background_restore import is_grayscale_image
+
+    original = _read_bgr(record["input_path"])
+    state = _restore_state(record)
+    return {
+        "image_id": record["id"],
+        "width": int(original.shape[1]),
+        "height": int(original.shape[0]),
+        "is_grayscale": is_grayscale_image(original),
+        "state": state,
+        "mask_url": record.get("restore_mask_url"),
+        "has_masked": Path(record["masked_jpg"]).exists(),
+        "preview_url": file_url(Path(record["restore_dir"]) / "preview.png"),
+        "masked_url": record.get("masked_url"),
+        "input_url": record.get("input_url"),
+        "patches": [
+            {
+                **patch,
+                "patch_url": file_url(Path(record["restore_dir"]) / patch["patch_png"]),
+                "mask_url": file_url(Path(record["restore_dir"]) / patch["mask_png"]),
+            }
+            for patch in state.get("patches", [])
+        ],
+    }
+
+
+def _restore_job_public(job: dict[str, Any]) -> dict[str, Any]:
+    return {key: value for key, value in job.items() if not key.startswith("_")}
+
+
+def submit_restore_job(req: RestoreRunRequest) -> dict[str, Any]:
+    import cv2
+
+    from pipeline.background_restore import ENGINES, RESOLUTION_CHOICES, RestoreParams, decode_mask_png
+
+    if req.engine not in ENGINES:
+        raise HTTPException(status_code=400, detail=f"engine은 {ENGINES} 중 하나여야 합니다")
+    if req.resolution not in RESOLUTION_CHOICES:
+        raise HTTPException(status_code=400, detail=f"resolution은 {list(RESOLUTION_CHOICES)} 중 하나여야 합니다")
+    record = _restore_record(req.session_id, req.image_id)
+    page, source_kind = restore_source_image(record, req.source)
+    h, w = page.shape[:2]
+    if req.mask_png:
+        mask = decode_mask_png(req.mask_png, w, h)
+        Path(record["restore_dir"]).mkdir(parents=True, exist_ok=True)
+        cv2.imwrite(record["restore_mask_png"], mask)
+    elif Path(record["restore_mask_png"]).exists():
+        mask = cv2.imread(record["restore_mask_png"], cv2.IMREAD_GRAYSCALE)
+        mask = (mask > 127).astype("uint8") * 255
+    else:
+        raise HTTPException(status_code=400, detail="제거 마스크가 없습니다. 자동 마스크를 만들거나 직접 칠하세요.")
+    _update_restore_state(record, context_rect=[int(v) for v in req.context_rect[:4]])
+
+    job_id = f"{dt.datetime.now().strftime('%H%M%S')}_{req.engine}_{hashlib.sha1(str(time.time_ns()).encode()).hexdigest()[:6]}"
+    job_dir = Path(record["restore_dir"]) / "jobs" / job_id
+    params = RestoreParams(
+        engine=req.engine,
+        resolution=req.resolution,
+        feather_px=max(0, int(req.feather_px)),
+    )
+    job: dict[str, Any] = {
+        "job_id": job_id,
+        "session_id": req.session_id,
+        "image_id": req.image_id,
+        "engine": req.engine,
+        "source": source_kind,
+        "status": "queued",
+        "progress": {"step": 0, "total": 1},
+        "created_at": time.time(),
+        "_job_dir": str(job_dir),
+    }
+    with _RESTORE_JOBS_LOCK:
+        _RESTORE_JOBS[job_id] = job
+
+    def work() -> None:
+        from pipeline.background_restore import run_restore
+
+        job["status"] = "running"
+        job["started_at"] = time.time()
+        try:
+            result = run_restore(page, mask, req.context_rect, params, job_dir)
+            job["meta"] = result["meta"]
+            job["result"] = {
+                "crop_before_url": file_url(job_dir / "crop_before.png"),
+                "crop_after_url": file_url(job_dir / "crop_after.png"),
+                "crop_mask_url": file_url(job_dir / "crop_mask.png"),
+                "crop_model_raw_url": file_url(job_dir / "crop_model_raw.png"),
+            }
+            job["status"] = "done"
+        except Exception as exc:  # noqa: BLE001 - 실패는 작업 상태로 돌려주고 기존 결과는 건드리지 않는다
+            job["status"] = "error"
+            job["error"] = f"{type(exc).__name__}: {exc}"
+        finally:
+            job["finished_at"] = time.time()
+
+    _RESTORE_EXECUTOR.submit(work)
+    return _restore_job_public(job)
+
+
+def accept_restore_job(req: RestoreAcceptRequest) -> dict[str, Any]:
+    with _RESTORE_JOBS_LOCK:
+        job = _RESTORE_JOBS.get(req.job_id)
+    if job is None or job.get("session_id") != req.session_id or job.get("image_id") != req.image_id:
+        raise HTTPException(status_code=404, detail="복원 작업을 찾을 수 없습니다")
+    if job.get("status") != "done":
+        raise HTTPException(status_code=400, detail="완료된 복원 결과만 확정할 수 있습니다")
+    record = _restore_record(req.session_id, req.image_id)
+    job_dir = Path(job["_job_dir"])
+    patches_dir = Path(record["restore_dir"]) / "patches"
+    patches_dir.mkdir(parents=True, exist_ok=True)
+    patch_id = req.job_id
+    shutil.copy2(job_dir / "crop_after.png", patches_dir / f"{patch_id}_patch.png")
+    shutil.copy2(job_dir / "crop_mask.png", patches_dir / f"{patch_id}_mask.png")
+    meta = job.get("meta", {})
+    patch = {
+        "id": patch_id,
+        "engine": job["engine"],
+        "rect": meta.get("context_rect"),
+        "patch_png": f"patches/{patch_id}_patch.png",
+        "mask_png": f"patches/{patch_id}_mask.png",
+        "params": meta.get("params"),
+        "timing": meta.get("timing"),
+        "source": job.get("source"),
+        "accepted_at": dt.datetime.now().isoformat(timespec="seconds"),
+    }
+    with _RESTORE_STATE_LOCK:
+        state = _restore_state(record)
+        state["patches"] = [p for p in state.get("patches", []) if p.get("id") != patch_id] + [patch]
+        write_json(record["restore_state_json"], state)
+    write_restore_preview(record)
+    return restore_info(record)
+
+
+def remove_restore_patch(req: RestorePatchRemoveRequest) -> dict[str, Any]:
+    record = _restore_record(req.session_id, req.image_id)
+    with _RESTORE_STATE_LOCK:
+        state = _restore_state(record)
+        state["patches"] = [p for p in state.get("patches", []) if p.get("id") != req.patch_id]
+        write_json(record["restore_state_json"], state)
+    write_restore_preview(record)
+    return restore_info(record)
+
+
+def build_restore_auto_mask(req: RestoreAutoMaskRequest) -> dict[str, Any]:
+    import cv2
+
+    from pipeline.background_restore import MaskParams, build_text_stroke_mask, seeds_from_regions, suggest_context_rect
+
+    record = _restore_record(req.session_id, req.image_id)
+    # 글자 획은 원본에서 찾는다. masked.jpg는 이미 LaMa가 지운 상태일 수 있다.
+    original = _read_bgr(record["input_path"])
+    seeds: list[dict[str, Any]] = []
+    if req.use_region_seeds:
+        groups_path = record["effective_text_groups_json"] if Path(record["effective_text_groups_json"]).exists() else record["text_groups_json"]
+        seeds = seeds_from_regions(load_json(record["regions_json"], default={}), load_json(groups_path, default=[]))
+    seeds += [{"rect": [int(v) for v in rect[:4]], "fragments": [], "source": "user"} for rect in req.extra_seed_rects if len(rect) >= 4]
+    params = MaskParams(polarity=req.polarity, threshold=req.threshold, dilate_px=max(0, min(32, int(req.dilate_px))), min_area=max(1, int(req.min_area)))
+    mask = build_text_stroke_mask(original, seeds, params)
+    if not req.save:
+        ok, buf = cv2.imencode(".png", mask)
+        return {
+            "mask_png": "data:image/png;base64," + base64.b64encode(buf.tobytes()).decode() if ok else None,
+            "seeds": [{"rect": s["rect"], "source": s.get("source"), "region_id": s.get("region_id")} for s in seeds],
+            "mask_pixels": int((mask > 0).sum()),
+        }
+    Path(record["restore_dir"]).mkdir(parents=True, exist_ok=True)
+    cv2.imwrite(record["restore_mask_png"], mask)
+    _update_restore_state(record, mask_params={
+        "dilate_px": params.dilate_px, "polarity": params.polarity, "threshold": params.threshold, "min_area": params.min_area,
+    }, extra_seed_rects=[s["rect"] for s in seeds if s.get("source") == "user"])
+    refreshed = _restore_record(req.session_id, req.image_id)
+    return {
+        **restore_info(refreshed),
+        "seeds": [{"rect": s["rect"], "source": s.get("source"), "region_id": s.get("region_id")} for s in seeds],
+        "suggested_context_rect": suggest_context_rect(mask),
+        "mask_pixels": int((mask > 0).sum()),
+    }
+
+
 class RevalidatingStaticFiles(StaticFiles):
     """UI 자산은 매 요청마다 재검증한다(바뀌지 않았으면 304).
 
@@ -2318,6 +2609,56 @@ def create_app() -> FastAPI:
         if not resolved.exists():
             raise HTTPException(status_code=404, detail="File not found")
         return FileResponse(resolved)
+
+    @app.get("/api/restore/status")
+    def restore_status() -> dict[str, Any]:
+        from pipeline.background_restore import ENGINES, RESOLUTION_CHOICES
+
+        return {
+            "engines": list(ENGINES),
+            "resolutions": list(RESOLUTION_CHOICES),
+        }
+
+    @app.get("/api/restore/info")
+    def restore_info_endpoint(session_id: str, image_id: str) -> dict[str, Any]:
+        return restore_info(_restore_record(session_id, image_id))
+
+    @app.post("/api/restore/auto-mask")
+    def restore_auto_mask(req: RestoreAutoMaskRequest) -> dict[str, Any]:
+        return build_restore_auto_mask(req)
+
+    @app.post("/api/restore/mask")
+    def restore_save_mask(req: RestoreMaskRequest) -> dict[str, Any]:
+        import cv2
+
+        from pipeline.background_restore import decode_mask_png
+
+        record = _restore_record(req.session_id, req.image_id)
+        original = _read_bgr(record["input_path"])
+        mask = decode_mask_png(req.mask_png, original.shape[1], original.shape[0])
+        Path(record["restore_dir"]).mkdir(parents=True, exist_ok=True)
+        cv2.imwrite(record["restore_mask_png"], mask)
+        return restore_info(_restore_record(req.session_id, req.image_id))
+
+    @app.post("/api/restore/run")
+    def restore_run(req: RestoreRunRequest) -> dict[str, Any]:
+        return submit_restore_job(req)
+
+    @app.get("/api/restore/job/{job_id}")
+    def restore_job(job_id: str) -> dict[str, Any]:
+        with _RESTORE_JOBS_LOCK:
+            job = _RESTORE_JOBS.get(job_id)
+        if job is None:
+            raise HTTPException(status_code=404, detail="복원 작업을 찾을 수 없습니다")
+        return _restore_job_public(job)
+
+    @app.post("/api/restore/accept")
+    def restore_accept(req: RestoreAcceptRequest) -> dict[str, Any]:
+        return accept_restore_job(req)
+
+    @app.post("/api/restore/patch/remove")
+    def restore_patch_remove(req: RestorePatchRemoveRequest) -> dict[str, Any]:
+        return remove_restore_patch(req)
 
     @app.get("/api/ocr-models")
     def list_ocr_models() -> dict[str, Any]:

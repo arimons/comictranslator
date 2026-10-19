@@ -14,6 +14,11 @@ import cv2
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 
+try:
+    from pipeline.background_restore import apply_restore_patches
+except ImportError:
+    from background_restore import apply_restore_patches
+
 
 # 기본 폰트 (normal dialogue)
 FONT_PATH = Path("Fonts/Freesentation-5Medium.ttf")
@@ -4591,6 +4596,7 @@ def apply_text_overlay(
     overlay_layout_output: Path | None = None,
     debug_vis_image: Path | None = None,
     debug_merge_output: Path | None = None,
+    restore_state_path: Path | None = None,
 ) -> int:
     global _GLOBAL_TRACKING_OFFSET
     _GLOBAL_TRACKING_OFFSET = tracking_offset if tracking_offset is not None else 0
@@ -4636,6 +4642,8 @@ def apply_text_overlay(
         clusters,
         overlay_suppressed_region_ids(overlay_guidance),
     )
+    # 배경 복원 탭에서 확정한 패치(PNG)를 마스크 내부에만 합성한다. masked.jpg를 다시 저장하지 않는다.
+    apply_restore_patches(image, restore_state_path)
     applied_eraser_count = apply_overlay_eraser_rects(image, overlay_eraser_rects(overlay_guidance))
 
     prepared = prepare_page_layouts(
@@ -4791,6 +4799,7 @@ def main() -> None:
     parser.add_argument("--tracking-offset", type=int, default=None, help="자간 추가 오프셋 (px)")
     parser.add_argument("--overlay-guidance", default=None, help="수동 overlay guidance JSON 경로")
     parser.add_argument("--overlay-layout-output", default=None, help="실제 렌더 layout JSON 출력 경로")
+    parser.add_argument("--restore-state", default=None, help="배경 복원 패치 state.json 경로 (선택)")
     args = parser.parse_args()
 
     flood_vis = Path(args.flood_vis_json) if args.flood_vis_json else None
@@ -4809,6 +4818,7 @@ def main() -> None:
         tracking_offset=args.tracking_offset,
         overlay_guidance_path=Path(args.overlay_guidance) if args.overlay_guidance else None,
         overlay_layout_output=Path(args.overlay_layout_output) if args.overlay_layout_output else None,
+        restore_state_path=Path(args.restore_state) if args.restore_state else None,
     )
     print(f"렌더링 완료: {count}개")
 

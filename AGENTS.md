@@ -38,6 +38,7 @@ NEW_COMIC_TRANSLATOR/
     ├── gemini_ocr_translate_v5.py  # Step 4
     ├── font_style_analyzer.py  # render_hint CV 보정
     ├── render_text_overlay.py  # Step 5
+    ├── background_restore.py   # 배경 복원 탭 엔진 (LaMa, 확정 패치 합성)
     ├── manual_guidance.py      # 편집기 guidance → 유효 TG
     └── openai_image_redraw.py  # 렌더 생략 페이지 OpenAI 이미지 재생성
 ```
@@ -83,6 +84,7 @@ Step 5: Text Overlay            → output_dir/final/{name}_final.jpg
 | `pipeline/gemini_ocr_translate_v5.py` | indexed OCR sheet 기반 OCR/번역/integrated JSON 생성 (Gemini/OpenAI) |
 | `pipeline/render_text_overlay.py` | split flood region 우선 bbox + DP 줄바꿈 텍스트 렌더링 |
 | `pipeline/manual_guidance.py` | 편집기 guidance 적용, atomic JSON 쓰기 |
+| `pipeline/background_restore.py` | 배경 복원 탭: 문맥 영역·제거 마스크 분리, LaMa 복원, 마스크 내부만 합성한 패치를 Step 5 렌더 때 적용 |
 | `pipeline/openai_image_redraw.py` | 렌더 생략 페이지 OpenAI image model 재생성 |
 | `visualize_debug.py` | union/cluster/line bbox 시각화 |
 
