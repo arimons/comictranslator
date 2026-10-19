@@ -210,12 +210,12 @@ export default function App() {
   const exportFocusedImage = images.find((img) => img.id === exportFocusedId) || missingFinalImages[0] || selected;
   const exportFocusedIsGenerated = isImageGenerationFallback(exportFocusedImage);
   const exportPreviewUrl = exportFocusedImage?.final_url || exportFocusedImage?.input_url || "";
-  const orderedOverlayRegions = selectedRegion
-    ? [
-        selectedRegion,
-        ...overlayRegions.filter((region) => overlayItemKey(region) !== overlayItemKey(selectedRegion)),
-      ]
-    : overlayRegions;
+  // Region List는 Tab 순서와 같은 읽는 순서(파이프라인이 매긴 region id 순)로 고정한다.
+  const orderedOverlayRegions = overlayRegions;
+  useEffect(() => {
+    // 목록 순서를 고정했으므로, 선택이 바뀌면 그 행이 보이도록만 스크롤한다.
+    document.querySelector(".region-quick-item.active")?.scrollIntoView({ block: "nearest" });
+  }, [selectedRegionId]);
   const forceDropLabel = ocrBusy ? "OCR 실행 중에는 드롭할 수 없습니다." : "여기로 드롭하면 해당 파일만 강제 재실행합니다.";
 
   // 비동기 응답이 어느 세션 것인지 판별하려면 세션 id를 ref에도 즉시 반영해야 한다.
@@ -762,10 +762,7 @@ export default function App() {
   }
 
   useEffect(() => {
-    api("/api/sessions/new", { method: "POST", body: "{}" }).then((data) => {
-      setSessionTracked(data.session.session_id);
-      refresh(data.session.session_id);
-    });
+    // 세션은 첫 import/업로드 때 서버가 만든다. 앱을 열 때마다 빈 세션이 쌓이지 않게 여기서는 만들지 않는다.
     api("/api/sessions/recent").then((data) => {
       setRecentSessions(data.sessions || []);
     }).catch(() => {});
@@ -1110,7 +1107,15 @@ export default function App() {
 
   // 세션 id가 아직 없을 때 서버가 새 세션을 만들었다면 그 세션을 현재 세션으로 채택한다.
   function adoptCreatedSession(requestSid, resultSid) {
-    if (!requestSid && resultSid && resultSid !== sessionIdRef.current) setSessionTracked(resultSid);
+    if (!requestSid && resultSid && resultSid !== sessionIdRef.current) {
+      setSessionTracked(resultSid);
+      const pendingName = projectName.trim();
+      if (projectNameDirtyRef.current && pendingName) {
+        api("/api/session/meta", { method: "POST", body: JSON.stringify({ session_id: resultSid, project_name: pendingName }) })
+          .then(() => { projectNameDirtyRef.current = false; })
+          .catch(() => {});
+      }
+    }
   }
 
   async function importPath() {
@@ -1194,9 +1199,8 @@ export default function App() {
     setRecentSessions(result.sessions || []);
     removeSessionSettings(recent.session_id);
     if (recent.session_id === sessionId) {
-      const created = await api("/api/sessions/new", { method: "POST", body: "{}" });
-      setSessionTracked(created.session.session_id);
-      setProjectName(created.session.project_name || "");
+      setSessionTracked("");
+      setProjectName("");
       setImages([]);
       setSelectedId("");
       selectedIdRef.current = "";
