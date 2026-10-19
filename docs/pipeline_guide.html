@@ -801,7 +801,7 @@ python3 run_pipeline.py \
   <h4>FloodFill 분할 (flood_split.py)</h4>
   <p>하나의 flood region에 여러 TG가 포함된 경우, 두 가지 방법으로 분리합니다.</p>
   <ul>
-    <li><strong>Inflection Split</strong> — convexity defect 쌍을 찾아 절단선으로 분리. 최소 defect 각도 35°, 절단 폭 비율 ≤ 8% (<code>_SPLIT_MAX_CUT_RATIO=0.08</code>). 재귀 최대 깊이 2.</li>
+    <li><strong>Inflection Split</strong> — convexity defect 쌍을 찾아 절단선으로 분리. 최소 defect 각도 35°, 절단 폭 비율 ≤ 8% (<code>_SPLIT_MAX_CUT_RATIO=0.08</code>). 재귀 최대 깊이 2. 후보 평가는 해당 flood region 영역만 잘라서 계산합니다(결과는 페이지 전체로 계산했을 때와 같음).</li>
     <li><strong>Erosion Split</strong> (fallback) — 점진적 침식 후 connected component가 분리되면 Voronoi 경계로 TG 할당. 최소 subregion 면적 2000px².</li>
   </ul>
 

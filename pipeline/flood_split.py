@@ -649,8 +649,12 @@ def collect_geometry_split_candidates(
     anchor_centers: List[Point],
     min_defect_depth: float = 15.0,
     max_pair_points: int = _MAX_DEFECT_PAIR_POINTS,
+    image_area: Optional[int] = None,
 ) -> Dict[str, Any]:
-    """anchor-aware split 실패 후 사용하는 geometry-only split 후보를 수집한다."""
+    """anchor-aware split 실패 후 사용하는 geometry-only split 후보를 수집한다.
+
+    image_area: 최소 분할 면적 기준이 되는 페이지 면적. 잘라낸 mask를 넘길 때 원래 페이지 면적을 준다.
+    """
     binary = np.where(mask > 0, 255, 0).astype(np.uint8)
     contours, _ = cv2.findContours(binary, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
     if not contours:
@@ -689,7 +693,7 @@ def collect_geometry_split_candidates(
             ],
         }
 
-    min_sub_area = _adaptive_min_split_area(binary.shape[0] * binary.shape[1])
+    min_sub_area = _adaptive_min_split_area(image_area or binary.shape[0] * binary.shape[1])
     short_side = max(1, min(bw, bh))
     candidates: List[Dict[str, Any]] = []
     selected: Optional[Dict[str, Any]] = None
@@ -754,12 +758,14 @@ def _split_mask_by_geometry_fallback(
     anchor_ids: List[int],
     anchor_centers: List[Point],
     min_defect_depth: float,
+    image_area: Optional[int] = None,
 ) -> Optional[List[Dict[str, Any]]]:
     candidate_info = collect_geometry_split_candidates(
         binary,
         anchor_ids,
         anchor_centers,
         min_defect_depth=min_defect_depth,
+        image_area=image_area,
     )
     selected = candidate_info.get("selected")
     if selected is None:
@@ -772,7 +778,7 @@ def _split_mask_by_geometry_fallback(
         p2,
         anchor_ids,
         anchor_centers,
-        min_sub_area=_adaptive_min_split_area(binary.shape[0] * binary.shape[1]),
+        min_sub_area=_adaptive_min_split_area(image_area or binary.shape[0] * binary.shape[1]),
     )
 
 
@@ -951,6 +957,7 @@ def _finalize_split_result_with_optional_recursion(
     anchor_centers: List[Point],
     min_defect_depth: float,
     anchor_rects: Optional[List[List[int]]],
+    image_area: Optional[int] = None,
 ) -> List[Dict[str, Any]]:
     final_result: List[Dict[str, Any]] = []
     needs_recurse = False
@@ -971,6 +978,7 @@ def _finalize_split_result_with_optional_recursion(
                 sub["sub_mask"], sub_ids, sub_centers,
                 min_defect_depth=min_defect_depth,
                 anchor_rects=sub_rects,
+                image_area=image_area,
             )
             if sub_split is not None:
                 final_result.extend(sub_split)
@@ -981,20 +989,90 @@ def _finalize_split_result_with_optional_recursion(
     return final_result if needs_recurse else result
 
 
+_SPLIT_CROP_MARGIN = 8
+
+
+def _split_crop_box(
+    binary: np.ndarray,
+    anchor_centers: List[Point],
+    anchor_rects: Optional[List[List[int]]],
+) -> Optional[Tuple[int, int, int, int]]:
+    """mask·anchor 중심·anchor rect를 모두 담는 계산 영역 (x1, y1, x2, y2). 페이지 밖으로는 넘지 않는다."""
+    h, w = binary.shape[:2]
+    bbox = _mask_bbox(binary)
+    if bbox is None:
+        return None
+    x1, y1, x2, y2 = bbox[0], bbox[1], bbox[0] + bbox[2], bbox[1] + bbox[3]
+    for cx, cy in anchor_centers:
+        x1, y1, x2, y2 = min(x1, int(cx)), min(y1, int(cy)), max(x2, int(cx) + 1), max(y2, int(cy) + 1)
+    for rect in anchor_rects or []:
+        rx, ry, rw, rh = (int(v) for v in rect[:4])
+        x1, y1, x2, y2 = min(x1, rx), min(y1, ry), max(x2, rx + rw), max(y2, ry + rh)
+    m = _SPLIT_CROP_MARGIN
+    return max(0, x1 - m), max(0, y1 - m), min(w, x2 + m), min(h, y2 + m)
+
+
+def _uncrop_split_item(item: Dict[str, Any], shape: Tuple[int, ...], x0: int, y0: int) -> Dict[str, Any]:
+    """잘라낸 영역 좌표의 split 결과를 원래 페이지 좌표로 되돌린다."""
+    out = dict(item)
+    sub = item["sub_mask"]
+    full = np.zeros(shape[:2], dtype=sub.dtype)
+    full[y0:y0 + sub.shape[0], x0:x0 + sub.shape[1]] = sub
+    out["sub_mask"] = full
+    if item.get("flood_rect") is not None:
+        fx, fy, fw, fh = item["flood_rect"]
+        out["flood_rect"] = [fx + x0, fy + y0, fw, fh]
+    if item.get("split_line") is not None:
+        out["split_line"] = [[int(px) + x0, int(py) + y0] for px, py in item["split_line"]]
+    return out
+
+
 def split_mask_by_inflection_line(
     mask: np.ndarray,
     anchor_ids: List[int],
     anchor_centers: List[Point],
     min_defect_depth: float = 15.0,
     anchor_rects: Optional[List[List[int]]] = None,
+    image_area: Optional[int] = None,
 ) -> Optional[List[Dict[str, Any]]]:
     """
     flood region mask를 contour inflection points 기반으로 분할한다.
 
     여러 defect pair 중 TG를 실제로 양쪽 sub-mask 안에 포함하고,
     최소 면적을 만족하는 후보를 점수화해 선택한다.
+
+    후보 평가가 페이지 전체 크기 배열로 돌면 무거운 페이지에서 Step 3 시간 대부분을 쓴다.
+    그래서 mask·anchor를 담는 영역만 잘라 계산하고 결과 좌표를 되돌린다. 최소 분할 면적은
+    image_area(기본: 넘겨받은 mask 면적)로 정해 자르기 전과 같은 기준을 쓴다.
     """
     binary = np.where(mask > 0, 255, 0).astype(np.uint8)
+    image_area = image_area or binary.shape[0] * binary.shape[1]
+    box = _split_crop_box(binary, anchor_centers, anchor_rects)
+    if box is None or box == (0, 0, binary.shape[1], binary.shape[0]):
+        return _split_mask_by_inflection_line_core(
+            binary, anchor_ids, anchor_centers, min_defect_depth, anchor_rects, image_area,
+        )
+    x0, y0, x1, y1 = box
+    crop_centers = [(int(cx) - x0, int(cy) - y0) for cx, cy in anchor_centers]
+    crop_rects = None
+    if anchor_rects is not None:
+        crop_rects = [[int(r[0]) - x0, int(r[1]) - y0, *(int(v) for v in r[2:4])] for r in anchor_rects]
+    result = _split_mask_by_inflection_line_core(
+        binary[y0:y1, x0:x1], anchor_ids, crop_centers, min_defect_depth, crop_rects, image_area,
+    )
+    if result is None:
+        return None
+    return [_uncrop_split_item(item, binary.shape, x0, y0) for item in result]
+
+
+def _split_mask_by_inflection_line_core(
+    binary: np.ndarray,
+    anchor_ids: List[int],
+    anchor_centers: List[Point],
+    min_defect_depth: float,
+    anchor_rects: Optional[List[List[int]]],
+    image_area: int,
+) -> Optional[List[Dict[str, Any]]]:
     recursive_result = _search_best_recursive_split(
         binary,
         anchor_ids,
@@ -1026,6 +1104,7 @@ def split_mask_by_inflection_line(
                 anchor_ids,
                 anchor_centers,
                 min_defect_depth,
+                image_area=image_area,
             )
         if result is None:
             return None
@@ -1036,6 +1115,7 @@ def split_mask_by_inflection_line(
         anchor_centers,
         min_defect_depth,
         anchor_rects,
+        image_area=image_area,
     )
 
 

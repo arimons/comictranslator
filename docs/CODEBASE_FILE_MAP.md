@@ -321,7 +321,7 @@ region_type 분류 (`_classify_anchor_region`): `bubble`, `narration_like`, `noi
 같은 flood region을 공유하는 Anchor Text Group을 독립 region으로 나눌지 판단한다.
 
 - `collect_inflection_candidates(mask, anchor_centers, min_defect_depth, anchor_rects)`: convexity defect pair 전체를 평가해 후보 목록 반환. `anchor_rects` 지정 시 split line이 anchor center로부터 `min(bbox_w, bbox_h) * 0.25` 이상 떨어져야 유효 (`bboxes_clear` 플래그). 메인 로직과 시각화 공유.
-- `split_mask_by_inflection_line(mask, anchor_ids, anchor_centers, anchor_rects)`: `collect_inflection_candidates` 결과로 split line 선택. ATG가 선 양쪽에 갈리고 각 sub-mask 안에 center가 포함되어야 수락.
+- `split_mask_by_inflection_line(mask, anchor_ids, anchor_centers, anchor_rects)`: `collect_inflection_candidates` 결과로 split line 선택. ATG가 선 양쪽에 갈리고 각 sub-mask 안에 center가 포함되어야 수락. 계산은 mask·anchor를 담는 영역(+8px)만 잘라서 하고 결과 좌표를 페이지로 되돌린다(`_split_crop_box`, `_uncrop_split_item`). 후보마다 페이지 전체 크기 배열을 만들던 때는 무거운 페이지에서 Step 3 시간의 85%를 썼다. geometry fallback의 최소 분할 면적은 `image_area`로 페이지 면적 기준을 유지한다.
 - `split_mask_by_erosion_components(mask, anchor_ids, anchor_centers)`: inflection 실패 후 점진적 erosion으로 CC가 분리될 때까지 침식 후 Voronoi 할당. `all_anchor_rects_are_disjoint` 통과 시에만 호출 (bbox 겹침 있는 anchor는 erosion split 시 Voronoi 오배정 위험).
 - `all_anchor_rects_are_disjoint(anchor_rects)`: anchor bbox가 모두 비겹침인지 확인 — erosion split 사전 조건.
 - `_line_segment_intersects_rect(p1, p2, rect)`: Liang-Barsky 알고리즘으로 선분-직사각형 교차 판단.
