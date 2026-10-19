@@ -1772,3 +1772,24 @@ def test_analyze_cache_reapplies_existing_guidance(tmp_path, monkeypatch):
 
     assert calls == [(session_id, "page1")]
     assert any("Guidance 재적용" in event for event in events)
+
+
+def test_run_final_for_item_replace_drops_removed_overlay_keys(tmp_path, monkeypatch):
+    """run-final도 replace면 편집기 상태로 교체한다(Delete로 지운 위치값이 병합으로 되살아나지 않는다)."""
+    session_id = "run_final_replace"
+    monkeypatch.setattr(main_v2, "SESSION_ROOT", tmp_path / "sessions")
+    image_path = tmp_path / "sessions" / session_id / "input" / "page1.jpg"
+    image_path.parent.mkdir(parents=True)
+    image_path.write_bytes(b"image")
+    item = {"id": "page1", "name": "page1.jpg", "input_path": str(image_path)}
+    record = main_v2.image_record(session_id, image_path)
+    guidance_path = Path(record["overlay_guidance_json"])
+    guidance_path.parent.mkdir(parents=True, exist_ok=True)
+    guidance_path.write_text('{"regions": {"1": {"safe_text_rect": [1, 2, 30, 40], "rotation_deg": 5}}}', encoding="utf-8")
+    # OCR 이전 단계가 없으므로 overlay_guidance 저장 직후 skip 경로로 끝난다.
+    main_v2.run_final_for_item(session_id, item, "", None, overlay_guidance={"regions": {"1": {}}}, replace_overlay=True)
+    assert main_v2.load_json(guidance_path, default={}) == {"regions": {"1": {}}}
+
+    guidance_path.write_text('{"regions": {"1": {"safe_text_rect": [1, 2, 30, 40]}}}', encoding="utf-8")
+    main_v2.run_final_for_item(session_id, item, "", None, overlay_guidance={"regions": {"1": {}}})
+    assert main_v2.load_json(guidance_path, default={})["regions"]["1"].get("safe_text_rect") == [1, 2, 30, 40]
