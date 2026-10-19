@@ -160,6 +160,12 @@ def main():
         restore += f'<figure style="margin:16px 0"><img src="data:image/jpeg;base64,{uri}" alt="{label}" loading="lazy" style="display:block;width:100%;height:auto"><figcaption>{label}</figcaption></figure>'
     restore += '<p>마지막으로 원문 잔상, 선화 끊김, 망점 번짐, 글자처럼 보이는 새 무늬가 있는지 원본과 비교합니다. 결과가 적절한지 확인한 뒤 확정하고 글자 입히기를 다시 렌더합니다. 이 예시의 품질 판정은 미확정입니다.</p>'
     text = insert_before(text, '    </section>\n\n    <section id="shortcuts">', 'restore', restore)
+    # 용어 치환에서 이미지 바이트를 제외한다. U4 같은 짧은 문자열은 base64에도 나타난다.
+    embedded_images = []
+    def protect_image(match):
+        embedded_images.append(match.group(0))
+        return f'__INLINE_IMAGE_{len(embedded_images) - 1}__'
+    text = re.sub(r'data:image/[^"\s]+', protect_image, text)
     # 대화에서 합의한 새 화면 용어. 저장 JSON의 소문자 호환 키는 유지한다.
     text = text.replace('말풍선 분석', '영역 분석').replace('R / U와 도구 선택', '영역 타입과 도구 선택')
     text = text.replace('Bubble / Ubox', '경계 기반 / 텍스트 기반').replace('Bubble', '경계 기반').replace('Ubox', '텍스트 기반 영역').replace('Unboxed', '텍스트 기반')
@@ -172,6 +178,7 @@ def main():
     text = text.replace('텍스트 기반 영역는', '텍스트 기반 영역은').replace('텍스트 기반 영역로', '텍스트 기반 영역으로')
     text = text.replace('대상 처리 기준와 다른 결과 영역의 변화', '제외한 영역과 다른 결과 영역의 변화')
     text = text.replace('처리 기준 타입과', '처리 기준과')
+    text = re.sub(r'__INLINE_IMAGE_(\d+)__', lambda m: embedded_images[int(m.group(1))], text)
     MANUAL.write_text(text)
     print(f'{MANUAL}: {MANUAL.stat().st_size:,} bytes')
 
