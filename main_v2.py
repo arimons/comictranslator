@@ -2545,11 +2545,12 @@ def create_app() -> FastAPI:
         src = Path(req.path).expanduser()
         paths = scan_images(src, req.recursive)
         records = copy_images_into_session(paths, data["session_id"])
-        if records and src.is_dir():
+        if records:
             data = ensure_session(data["session_id"])
-            data["source_folder_name"] = src.name
+            if src.is_dir():
+                data["source_folder_name"] = src.name
             if not data.get("project_name"):
-                data["project_name"] = src.name
+                data["project_name"] = (src.name if src.is_dir() else src.stem)[:120]
             save_session(data)
         return {"session_id": data["session_id"], "imported": len(records), "images": records}
 
@@ -2573,10 +2574,12 @@ def create_app() -> FastAPI:
             copied.append(target)
         records = []
         current = ensure_session(data["session_id"])
-        if copied and source_folder_name.strip():
-            current["source_folder_name"] = source_folder_name.strip()[:120]
+        if copied:
+            folder_name = source_folder_name.strip()[:120]
+            if folder_name:
+                current["source_folder_name"] = folder_name
             if not current.get("project_name"):
-                current["project_name"] = current["source_folder_name"]
+                current["project_name"] = folder_name or copied[0].stem[:120]
         known = {item["id"] for item in current.get("images", [])}
         for path in copied:
             if path.stem in known:

@@ -62,6 +62,11 @@ export default function App() {
   const [activeTaskLabel, setActiveTaskLabel] = useState("");
   const [activeTab, setActiveTab] = useState("guidance");
   const [workspaceStarted, setWorkspaceStarted] = useState(false);
+  useEffect(() => {
+    // 스크린샷용 임시 hash를 남기지 않고 현재 화면 이름을 표시한다.
+    const hash = workspaceStarted ? "#editor" : "#home";
+    if (window.location.hash !== hash) window.history.replaceState(null, "", `${window.location.pathname}${window.location.search}${hash}`);
+  }, [workspaceStarted]);
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [tool, setTool] = useState("select");
   const [selectedTg, setSelectedTg] = useState(null);
@@ -77,6 +82,7 @@ export default function App() {
   const [fontPath, setFontPath] = useState("");
   const [analyzeWorkers, setAnalyzeWorkers] = useState(4);
   const [analysisPolicy, setAnalysisPolicy] = useState("reuse");
+  const [importNameFocusRequest, setImportNameFocusRequest] = useState(0);
   const [imageStatuses, setImageStatuses] = useState({});
   const [guidanceCompareMode, setGuidanceCompareMode] = useState("masked");
   const [autoOverlayPreview, setAutoOverlayPreview] = useState(true);
@@ -1121,12 +1127,12 @@ export default function App() {
   }
 
   // 세션 id가 아직 없을 때 서버가 새 세션을 만들었다면 그 세션을 현재 세션으로 채택한다.
-  function adoptCreatedSession(requestSid, resultSid) {
+  async function adoptCreatedSession(requestSid, resultSid) {
     if (!requestSid && resultSid && resultSid !== sessionIdRef.current) {
       setSessionTracked(resultSid);
       const pendingName = projectName.trim();
       if (projectNameDirtyRef.current && pendingName) {
-        api("/api/session/meta", { method: "POST", body: JSON.stringify({ session_id: resultSid, project_name: pendingName }) })
+        await api("/api/session/meta", { method: "POST", body: JSON.stringify({ session_id: resultSid, project_name: pendingName }) })
           .then(() => { projectNameDirtyRef.current = false; })
           .catch(() => {});
       }
@@ -1137,9 +1143,12 @@ export default function App() {
     const requestSid = sessionId;
     await runTask("input", "폴더 import", async () => {
       const result = await api("/api/import-path", { method: "POST", body: JSON.stringify({ session_id: requestSid, path: folderPath, recursive: true }) });
-      adoptCreatedSession(requestSid, result.session_id);
+      await adoptCreatedSession(requestSid, result.session_id);
       const imgs = await refresh(result.session_id);
-      if (result.imported > 0) scheduleLazyRefresh(result.session_id);
+      if (result.imported > 0) {
+        scheduleLazyRefresh(result.session_id);
+        setImportNameFocusRequest((request) => request + 1);
+      }
       setImageStatuses({});
       if (imgs?.length) {
         setSelectedId(imgs[0].id);
@@ -1163,9 +1172,12 @@ export default function App() {
       files.forEach((file) => form.append("files", file));
       const folderName = files[0]?.webkitRelativePath?.split("/")[0] || "";
       const result = await api(`/api/upload?session_id=${requestSid}&source_folder_name=${encodeURIComponent(folderName)}`, { method: "POST", body: form });
-      adoptCreatedSession(requestSid, result.session_id);
+      await adoptCreatedSession(requestSid, result.session_id);
       await refresh(result.session_id);
-      if (result.imported > 0) scheduleLazyRefresh(result.session_id);
+      if (result.imported > 0) {
+        scheduleLazyRefresh(result.session_id);
+        setImportNameFocusRequest((request) => request + 1);
+      }
       setImageStatuses({});
       setActiveTab("guidance");
       if (input) input.value = "";
@@ -1962,6 +1974,7 @@ export default function App() {
     return <StartScreen
       images={images} recentSessions={recentSessions} projectName={projectName}
       recentLoadState={recentLoadState} loadRecentSessions={loadRecentSessions}
+      importNameFocusRequest={importNameFocusRequest}
       onProjectNameChange={(value) => { projectNameDirtyRef.current = true; setProjectName(value); }}
       saveProjectName={saveProjectName} folderPath={folderPath} setFolderPath={setFolderPath}
       fileRef={fileRef} uploadFiles={uploadFiles} uploadFromInput={uploadFromInput} importPath={importPath}
@@ -1978,7 +1991,7 @@ export default function App() {
     <div className={`app workspace-mode ${toolsOpen ? "" : "tools-collapsed"} ${activeTab === "overlay" ? "overlay-mode" : ""} ${activeTab === "ocr" ? "ocr-mode" : ""} ${activeTab === "export" ? "export-mode" : ""} ${activeTab === "restore" ? "restore-mode" : ""}`}>
       <header className="workspace-global-topbar">
         <button className="workspace-brand" type="button" onClick={returnToStartPage} title="홈으로 돌아가기">
-          만화 번역 스튜디오
+          Comic Translator Studio
         </button>
         <input
           className="project-name-input"

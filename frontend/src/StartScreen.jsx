@@ -1,4 +1,4 @@
-import { useRef } from "react";
+import { useEffect, useRef } from "react";
 
 function FolderIcon() {
   return <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h5l2 2h7a2 2 0 0 1 2 2v10H3Z" /><path d="M3 10h18" /></svg>;
@@ -14,21 +14,31 @@ function workDate(value) {
 export default function StartScreen({
   images, recentSessions, projectName, onProjectNameChange, saveProjectName,
   recentLoadState, loadRecentSessions,
+  importNameFocusRequest,
   folderPath, setFolderPath, fileRef, uploadFiles, uploadFromInput, importPath,
   inputBusy, analyzeBusy, analyzeWorkers, setAnalyzeWorkers, analysisPolicy, setAnalysisPolicy,
   startRegionAnalysis, removeLoadedImage, openRecentSession, recentMenuId, setRecentMenuId,
   renameRecentSession, deleteRecentSession, status, setStatus,
 }) {
   const folderRef = useRef(null);
+  const nameRef = useRef(null);
+  const handledFocusRequest = useRef(importNameFocusRequest);
   const busy = inputBusy || analyzeBusy;
   const analyzed = images.filter((image) => image.has_analysis).length;
+  useEffect(() => {
+    // 업로드 중에는 이름 입력란이 disabled다. 완료된 뒤 한 번만 이동해 재조회가 편집을 방해하지 않게 한다.
+    if (inputBusy || handledFocusRequest.current === importNameFocusRequest) return;
+    handledFocusRequest.current = importNameFocusRequest;
+    nameRef.current?.focus();
+    nameRef.current?.select();
+  }, [inputBusy, importNameFocusRequest]);
   // 메뉴 작업의 오류도 홈 화면에 표시한다. 여기서는 분석·비용 호출을 직접 실행하지 않는다.
   const safely = (action) => Promise.resolve().then(action).catch((err) => setStatus(String(err.message || err)));
 
   return (
     <div className="app-shell import-mode">
       <header className="app-topbar">
-        <div className="app-brand">만화 번역 스튜디오</div>
+        <div className="app-brand">Comic Translator Studio</div>
         <a className="app-manual-link" href="/manual" target="_blank" rel="noopener">사용 설명서 ↗</a>
       </header>
       <main className="home-scroll">
@@ -117,10 +127,10 @@ export default function StartScreen({
               <h2 id="settings-heading">작업 준비</h2>
               <div className="field">
                 <label htmlFor="home-project-name">프로젝트 이름 <span className="home-optional">선택</span></label>
-                <input id="home-project-name" value={projectName} disabled={busy} placeholder="예: 작품명 1권"
+                <input ref={nameRef} id="home-project-name" value={projectName} disabled={busy} placeholder="예: 작품명 1권"
                   onChange={(event) => onProjectNameChange(event.target.value)} onBlur={() => safely(() => saveProjectName())}
                   onKeyDown={(event) => { if (event.key === "Enter") event.currentTarget.blur(); }} />
-                <p className="home-hint">폴더를 불러오면 폴더명을 이름으로 사용합니다.</p>
+                <p className="home-hint">파일명 또는 폴더명이 자동으로 채워집니다. 원하는 작품명으로 바꿔주세요.</p>
               </div>
               <fieldset className="analysis-policy" disabled={busy}>
                 <legend>분석 방법</legend>
@@ -137,7 +147,7 @@ export default function StartScreen({
                 <div className="field"><label htmlFor="home-workers">동시 분석 이미지 수</label><input id="home-workers" type="number" min="1" max="12" value={analyzeWorkers} disabled={busy} onChange={(event) => setAnalyzeWorkers(Math.max(1, Math.min(12, Number(event.target.value) || 1)))} /><p className="home-hint">기본 4장. 컴퓨터 성능에 따라 조절하세요.</p></div>
               </details>
               <div className="import-action">
-                <strong>{images.length ? `${images.length}장 작업 준비` : "이미지를 먼저 선택하세요"}</strong>
+                {images.length > 0 && <strong>{images.length}장 작업 준비</strong>}
                 <button className="primary wide" onClick={startRegionAnalysis} disabled={!images.length || busy}>{analysisPolicy === "refresh" ? "다시 분석하고 열기" : "분석하고 작업 시작"}<span aria-hidden="true"> →</span></button>
                 <p className="home-hint">새 분석에 필요한 외부 API 비용이 발생할 수 있습니다. 번역은 편집기에서 별도로 실행합니다.</p>
               </div>

@@ -120,6 +120,35 @@ def test_folder_upload_uses_folder_name_without_overwriting_project_name(tmp_pat
     assert saved["project_name"] == (existing_name or "작품폴더")
 
 
+@pytest.mark.parametrize("existing_name", ["", "내 작품"])
+def test_file_upload_defaults_to_first_natural_filename_and_keeps_custom_name(tmp_path, monkeypatch, existing_name):
+    monkeypatch.setattr(main_v2, "SESSION_ROOT", tmp_path / "sessions")
+    monkeypatch.setattr(main_v2, "hydrate_load_cache_for_records", lambda *args, **kwargs: None)
+    session = main_v2.ensure_session("files_named")
+    session["project_name"] = existing_name
+    main_v2.save_session(session)
+    response = TestClient(main_v2.create_app()).post(
+        "/api/upload?session_id=files_named",
+        files=[("files", (name, b"fixture", "image/jpeg")) for name in ("page10.jpg", "page2.jpg")],
+    )
+    assert response.status_code == 200
+    assert main_v2.ensure_session("files_named")["project_name"] == (existing_name or "page2")
+
+
+@pytest.mark.parametrize("is_folder", [True, False])
+def test_import_path_defaults_project_name_to_input_name(tmp_path, monkeypatch, is_folder):
+    monkeypatch.setattr(main_v2, "SESSION_ROOT", tmp_path / "sessions")
+    monkeypatch.setattr(main_v2, "hydrate_load_cache_for_records", lambda *args, **kwargs: None)
+    folder = tmp_path / "작품 폴더"
+    folder.mkdir()
+    source = folder / "page1.jpg"
+    source.write_bytes(b"fixture")
+    response = TestClient(main_v2.create_app()).post("/api/import-path", json={"session_id":"path_named", "path":str(folder if is_folder else source)})
+    assert response.status_code == 200
+    saved = main_v2.ensure_session("path_named")
+    assert saved["project_name"] == ("작품 폴더" if is_folder else "page1")
+
+
 def test_update_session_meta_persists_project_name(tmp_path, monkeypatch):
     session_id = "project_named"
     monkeypatch.setattr(main_v2, "SESSION_ROOT", tmp_path / "sessions")
