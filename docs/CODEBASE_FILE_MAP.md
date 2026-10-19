@@ -18,6 +18,8 @@ FloodFill 필터 체계 상세는 [FLOODFILL_MASKING_PROGRESS.md](FLOODFILL_MASK
 ```text
 NEW_COMIC_TRANSLATOR/
 ├── main_v2.py                  # FastAPI 기반 리뷰 UI (현재 메인 UI)
+├── run_editor_mcp.py           # UI 독립 stdio MCP 진입점 (조회·검토 초안)
+├── configure_editor_mcp.py     # 프로젝트 로컬 Codex/Claude MCP 설정 생성
 ├── ui_v2/                      # main_v2.py 정적 자산 (index.html, styles.css, app.bundle.js)
 ├── frontend/                    # ui_v2 프론트엔드 소스 + esbuild 빌드 설정
 │   ├── package.json
@@ -63,6 +65,7 @@ NEW_COMIC_TRANSLATOR/
     ├── bubble_candidate_visualizer.py  # 말풍선 후보 검토 시각화 (*_bubble_vis.jpg)
     ├── manual_guidance.py      # 편집기 guidance → 유효 TG 생성, atomic JSON 쓰기
     ├── region_types.py         # 처리 기준 상수·기존 JSON 타입 호환·비파괴 projection
+    ├── editor_review_bridge.py # 세션 산출물 조회·이미지 crop·revision·미적용 검토 초안
     ├── geometry.py             # 사각형 좌표 유틸
     ├── gemini_ocr_translate_v5.py  # Step 4 (Gemini 기본, gpt-* 선택 가능)
     ├── font_style_analyzer.py  # Step 4 직후 render_hint CV 보정

@@ -9,6 +9,8 @@ google-genai>=2.4.0
 google-cloud-vision>=3.0.0
 python-dotenv>=1.0.0
 requests>=2.31.0
+# 로컬 편집기 검토 MCP (stdio). 구현·검증 버전 1.30.0, v2 API와 분리.
+mcp>=1.30.0,<2.0.0
 
 # 구형 SDK. run_floodfill_batch.py와 batch/submit_batch_folder.py가 아직 사용한다.
 # 두 파일을 google-genai로 옮기면 제거한다.

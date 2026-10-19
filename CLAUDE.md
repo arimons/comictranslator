@@ -4,6 +4,8 @@
 
 현재 영역 용어는 **경계 기반 / 텍스트 기반**, 화면 ID는 **R 번호 + 타입 배지**다. 변수명과 기존 JSON·캐시 호환 정책은 [영역 처리 기준 변경 기록](docs/REGION_PROCESSING_BASIS_CHANGELOG.md)을 따른다. 저장된 `bubble/unboxed`와 좌표 키를 전역 치환하지 않는다.
 
+로컬 MCP `comic-translator-review`는 조회 3개와 검토 초안 저장만 제공한다. [편집기 검토 MCP](docs/editor_mcp.md)의 순서대로 원본·산출물을 함께 보고 사용자에게 더블체크한다. 프로젝트 `.mcp.json`은 `python configure_editor_mcp.py`로 생성하며, 초안 저장은 실제 보정 적용이 아니다.
+
 ---
 
 ## 용어 정리 (Glossary)

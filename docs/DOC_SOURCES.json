@@ -63,7 +63,9 @@
         "frontend/src/RestorePanel.jsx",
         "pipeline/region_types.py",
         "frontend/src/regionTypes.js",
-        "frontend/src/RegionTypeBadge.jsx"
+        "frontend/src/RegionTypeBadge.jsx",
+        "run_editor_mcp.py",
+        "pipeline/editor_review_bridge.py"
       ]
     },
     "docs/AGENT_WORKSPACE_RULES.md": {
@@ -140,6 +142,17 @@
       "role": "hub",
       "topic": "현재 정본 문서 연결 및 초기 구현 기록 안내",
       "sources": []
+    },
+    "docs/editor_mcp.md": {
+      "role": "canonical",
+      "topic": "편집기 검토 MCP의 실제 도구·설정·revision·초안 저장 계약",
+      "sources": [
+        "run_editor_mcp.py",
+        "configure_editor_mcp.py",
+        "pipeline/editor_review_bridge.py",
+        "pipeline/region_types.py",
+        "tests/test_editor_mcp.py"
+      ]
     }
   }
 }

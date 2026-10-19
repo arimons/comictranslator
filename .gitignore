@@ -23,6 +23,9 @@ MANIFEST
 
 # Virtual Environment
 .venv/
+# 호스트의 절대 경로를 포함하는 로컬 MCP 클라이언트 설정 (configure_editor_mcp.py로 생성)
+.codex/config.toml
+.mcp.json
 venv/
 ENV/
 env/

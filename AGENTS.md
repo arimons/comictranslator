@@ -12,6 +12,8 @@
 
 영역 처리 기준의 현재 용어·변수명·기존 JSON/캐시 호환 정책은 [변경 기록](docs/REGION_PROCESSING_BASIS_CHANGELOG.md)을 따른다.
 
+에이전트의 프로젝트·페이지·영역 조회와 미적용 검토 초안은 [편집기 검토 MCP](docs/editor_mcp.md)를 사용한다. 진입점은 `run_editor_mcp.py`이며 UI 서버 없이 동작한다.
+
 ---
 
 ## 현재 실행 구조
