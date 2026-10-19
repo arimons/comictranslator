@@ -149,6 +149,8 @@ class RunFinalRequest(BaseModel):
     max_workers: int = 1
     force: bool = False
     ocr_model: str | None = None
+    # True면 overlay_guidance를 기존 파일과 병합하지 않고 그대로 저장한다(OverlayRequest.replace와 같은 의미).
+    replace: bool = False
 
 
 class OverlayRequest(BaseModel):
@@ -1763,13 +1765,17 @@ def run_final_for_item(
     force: bool = False,
     log_callback=None,
     ocr_model: str | None = None,
+    replace_overlay: bool = False,
 ) -> dict[str, Any]:
     record = image_record(session_id, Path(item["input_path"]), item.get("image_sha256"))
     clusters = current_clusters_path(record, record["id"])
     font = font_path or DEFAULT_FONT
     if overlay_guidance is not None:
-        existing_overlay_guidance = load_json(Path(record["overlay_guidance_json"]), default={})
-        write_json(Path(record["overlay_guidance_json"]), merge_overlay_guidance(existing_overlay_guidance, overlay_guidance))
+        if replace_overlay:
+            write_json(Path(record["overlay_guidance_json"]), overlay_guidance)
+        else:
+            existing_overlay_guidance = load_json(Path(record["overlay_guidance_json"]), default={})
+            write_json(Path(record["overlay_guidance_json"]), merge_overlay_guidance(existing_overlay_guidance, overlay_guidance))
     if force:
         for key in ("integrated_json", "final_jpg", "overlay_layout_json", "ocr_status_json", "export_recovery_json"):
             path = Path(record[key])
@@ -1841,6 +1847,7 @@ def stream_run_final(req: RunFinalRequest):
                 force=req.force,
                 log_callback=log_emit,
                 ocr_model=req.ocr_model,
+                replace_overlay=req.replace and req.image_id != "all",
             )
             skip_detail = integrated_skip_detail(refreshed.get("integrated"))
             if skip_detail:
@@ -2559,6 +2566,7 @@ def create_app() -> FastAPI:
                 req.overlay_guidance,
                 req.force,
                 ocr_model=req.ocr_model,
+                replace_overlay=req.replace,
             )
         except Exception as exc:
             record = image_record(req.session_id, Path(source["input_path"]), source.get("image_sha256"))
@@ -2675,6 +2683,11 @@ def create_app() -> FastAPI:
             "default": DEFAULT_FONT,
             "fonts": [{"name": path.stem, "path": str(path)} for path in fonts],
         }
+
+    @app.get("/manual")
+    def editor_manual() -> FileResponse:
+        # 사용자 매뉴얼은 docs/editor_manual.html 하나를 정본으로 두고 그대로 보여 준다.
+        return FileResponse(ROOT / "docs" / "editor_manual.html", media_type="text/html")
 
     fonts_dir = ROOT / "Fonts"
     if fonts_dir.exists():

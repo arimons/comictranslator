@@ -43,7 +43,10 @@ export default function ShortcutHelp({ open, activeTab, onClose }) {
             </section>
           ))}
         </div>
-        <p className="shortcut-help-foot">입력칸에 글자를 쓰는 중이거나 한글 조합 중에는 글자·숫자 단축키가 동작하지 않습니다.</p>
+        <p className="shortcut-help-foot">
+          입력칸에 글자를 쓰는 중이거나 한글 조합 중에는 글자·숫자 단축키가 동작하지 않습니다.
+          {" "}<a href="/manual" target="_blank" rel="noopener">전체 사용 설명서 열기</a>
+        </p>
       </div>
     </div>
   );

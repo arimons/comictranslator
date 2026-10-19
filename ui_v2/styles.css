@@ -352,6 +352,17 @@ textarea {
   white-space: nowrap;
 }
 
+.app-manual-link {
+  margin-left: auto;
+  font-size: 13px;
+  color: var(--blue);
+  text-decoration: none;
+}
+
+.app-manual-link:hover {
+  text-decoration: underline;
+}
+
 .import-screen {
   min-height: 0;
   overflow: auto;

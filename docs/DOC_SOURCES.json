@@ -25,7 +25,7 @@
     },
     "docs/editor_manual.html": {
       "role": "canonical",
-      "topic": "MangaScript Pro 편집기 사용법",
+      "topic": "Comic Translator Studio 편집기 사용법",
       "sources": [
         "main_v2.py",
         "ui_v2/index.html",

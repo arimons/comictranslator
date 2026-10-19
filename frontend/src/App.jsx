@@ -781,7 +781,11 @@ export default function App() {
     const sameDocument = pageDetail
       && pageDetail.id === baseSelected.id
       && (pageDetail.input_path || "") === (baseSelected.input_path || "");
-    if (sameDocument && pageDetail.detail_rev === baseSelected.detail_rev) return;
+    if (sameDocument && pageDetail.detail_rev === baseSelected.detail_rev) {
+      // A→B→A처럼 되돌아온 경우, 아직 진행 중인 B 요청이 A의 상세를 덮어쓰지 않도록 무효화한다.
+      pageDetailRequestRef.current += 1;
+      return;
+    }
     const requestId = pageDetailRequestRef.current + 1;
     pageDetailRequestRef.current = requestId;
     const requestSid = sessionId;
@@ -790,7 +794,7 @@ export default function App() {
       .then((data) => {
         // 그 사이 다른 페이지/세션으로 이동했거나 더 새 요청이 있으면 버린다.
         if (pageDetailRequestRef.current !== requestId || sessionIdRef.current !== requestSid) return;
-        if (data?.image) setPageDetail(data.image);
+        if (data?.image && data.image.id === selectedIdRef.current) setPageDetail(data.image);
       })
       .catch((err) => {
         if (pageDetailRequestRef.current === requestId) setStatus(String(err.message || err));
@@ -1163,6 +1167,7 @@ export default function App() {
     selectedIdRef.current = "";
     const imgs = await refresh(recent.session_id);
     if (sessionIdRef.current !== recent.session_id) return;
+    scheduleLazyRefresh(recent.session_id);
     if (imgs?.length) {
       setSelectedId(imgs[0].id);
       selectedIdRef.current = imgs[0].id;
@@ -1288,8 +1293,15 @@ export default function App() {
     });
   }
 
+  // 목록 요약만 있고 페이지 상세가 아직 없으면 guidance가 비어 있어, 저장하면 기존 편집을 지운다.
+  function pageDetailReady() {
+    if (selected?.detail_loaded) return true;
+    setStatus("페이지 정보를 불러오는 중입니다. 잠시 후 다시 시도하세요.");
+    return false;
+  }
+
   async function applyGuidance() {
-    if (!selected) return;
+    if (!selected || !pageDetailReady()) return;
     const requestSid = sessionId;
     const requestImageId = selected.id;
     await runTask("guidance", "말풍선 분석 적용", async () => {
@@ -1332,7 +1344,7 @@ export default function App() {
   }
 
   async function runFinal(force = false) {
-    if (!selected) return;
+    if (!selected || !pageDetailReady()) return;
     const requestSid = sessionId;
     const requestImageId = selected.id;
     const requestVersion = overlayEditVersionRef.current;
@@ -1345,6 +1357,8 @@ export default function App() {
           extra_prompt: extraPrompt,
           font_path: fontPath,
           overlay_guidance: overlayGuidance,
+          // 편집기는 전체 상태를 보내므로 병합하지 않고 교체한다(지운 값이 되살아나지 않게).
+          replace: true,
           force,
           ocr_model: ocrModelForRequest(),
         }),
@@ -1389,7 +1403,8 @@ export default function App() {
             image_id: target,
             extra_prompt: extraPrompt,
             font_path: fontPath,
-            overlay_guidance: target === selected?.id ? overlayGuidance : null,
+            overlay_guidance: target === selected?.id && selected?.detail_loaded ? overlayGuidance : null,
+            replace: target === selected?.id && Boolean(selected?.detail_loaded),
             max_workers: analyzeWorkers,
             force,
             ocr_model: ocrModelForRequest(),
@@ -1489,7 +1504,7 @@ export default function App() {
   }
 
   async function applyOverlay() {
-    if (!selected) return;
+    if (!selected || !pageDetailReady()) return;
     await applyOverlayRequest();
   }
 
@@ -1931,6 +1946,7 @@ export default function App() {
       <div className="app-shell import-mode">
         <header className="app-topbar">
           <div className="app-brand">Comic Translator Studio</div>
+          <a className="app-manual-link" href="/manual" target="_blank" rel="noopener">사용 설명서</a>
         </header>
         <main className="import-screen">
           <section className="import-primary">
