@@ -335,9 +335,9 @@
         </article>
       </div>
       <p class="note">
-        탭 이동은 <kbd>Ctrl</kbd> + <kbd>1</kbd>, <kbd>Ctrl</kbd> + <kbd>2</kbd>, <kbd>Ctrl</kbd> + <kbd>3</kbd>으로 가능하고, <kbd>Ctrl</kbd> + <kbd>4</kbd>는 내보내기 탭으로 갑니다.
-        macOS에서는 이 문서의 <kbd>Ctrl</kbd> 자리에 <kbd>Cmd</kbd>를 눌러도 같게 동작합니다.
-        각 탭의 단축키는 현재 탭에서만 동작합니다.
+        탭 이동은 <kbd>Alt</kbd> + <kbd>1</kbd>부터 <kbd>Alt</kbd> + <kbd>5</kbd>까지입니다. 순서는 말풍선 분석, 글자인식/번역, 글자 입히기, 내보내기, 배경 복원입니다.
+        macOS에서는 이 문서의 <kbd>Ctrl</kbd> 자리에 <kbd>Cmd</kbd>를, <kbd>Alt</kbd> 자리에 <kbd>Option</kbd>을 누릅니다.
+        각 탭의 단축키는 현재 탭에서만 동작하고, <kbd>?</kbd>로 지금 탭의 단축키를 볼 수 있습니다.
       </p>
     </section>
 
@@ -352,7 +352,7 @@
         <article class="card">
           <h3>Text Group Off</h3>
           <p>번역 대상이 아니거나 잘못 묶인 텍스트 그룹을 끕니다. 잘못 끈 항목은 undo로 되돌릴 수 있습니다.</p>
-          <p><span class="tag">Guidance only</span> <kbd>D</kbd> 또는 <kbd>Delete</kbd></p>
+          <p><span class="tag">Guidance only</span> <kbd>D</kbd> 도구. 선택한 TG는 <kbd>Delete</kbd>로 바로 끕니다.</p>
         </article>
         <article class="card">
           <h3>Text Group Split</h3>
@@ -367,7 +367,7 @@
         <article class="card">
           <h3>Bubble / Ubox</h3>
           <p>말풍선 영역은 Bubble로, 말풍선 밖 일반 대사는 Ubox로 지정합니다. 작은 클릭은 seed point, 드래그는 box guide가 됩니다.</p>
-          <p><span class="tag">Guidance only</span> <kbd>S</kbd>, <kbd>U</kbd></p>
+          <p><span class="tag">Guidance only</span> <kbd>B</kbd>, <kbd>U</kbd></p>
         </article>
       </div>
 
@@ -472,7 +472,7 @@
       <div class="grid cols-2">
         <article class="card">
           <h3>Floating Text Editor</h3>
-          <p>safe rect를 더블클릭하면 대사 편집 팝업이 열립니다. 여러 줄 대사를 직접 입력한 뒤 Apply를 누르면 대사만 반영하고 팝업을 닫습니다. <kbd>Ctrl</kbd> + <kbd>Enter</kbd>는 대사를 반영하고 overlay render까지 바로 실행합니다. 다른 render가 진행 중이면 그것이 끝난 뒤 한 번 실행합니다.</p>
+          <p>safe rect를 더블클릭하거나, region을 고른 채 <kbd>Enter</kbd>를 누르면 대사 편집 팝업이 열립니다. 여러 줄 대사를 직접 입력한 뒤 Apply를 누르면 대사만 반영하고 팝업을 닫습니다. <kbd>Ctrl</kbd> + <kbd>Enter</kbd>는 대사를 반영하고 overlay render까지 바로 실행합니다. 다른 render가 진행 중이면 그것이 끝난 뒤 한 번 실행합니다. <kbd>Esc</kbd>는 고친 내용을 버리고 닫습니다.</p>
         </article>
         <article class="card">
           <h3>Font Style</h3>
@@ -480,7 +480,7 @@
         </article>
         <article class="card">
           <h3>Writing Mode</h3>
-          <p>가로쓰기와 세로쓰기는 동시에 켜지지 않는 선택값입니다. 자동 추정이 틀렸다면 region을 선택한 상태에서 <kbd>H</kbd> 또는 <kbd>V</kbd>로 강제 지정합니다.</p>
+          <p>가로쓰기와 세로쓰기는 동시에 켜지지 않는 선택값입니다. 자동 추정이 틀렸다면 region을 선택한 상태에서 <kbd>O</kbd>를 누릅니다. 누를 때마다 자동 → 가로 → 세로 → 자동으로 바뀌고, 화면 아래에 바뀐 방향이 잠깐 표시됩니다.</p>
         </article>
         <article class="card">
           <h3>Font Size Offset</h3>
@@ -497,8 +497,9 @@
 
       <h3>수동 지우개</h3>
       <p>
-        <kbd>D</kbd>를 누르고 있는 동안 지우개 모드가 켜집니다.
-        그 상태로 드래그하면 흰색 eraser rect가 생성되고, 다음 overlay render에서 텍스트를 다시 얹기 전에 해당 영역을 흰색으로 채웁니다.
+        <kbd>E</kbd>를 누르거나 캔버스 왼쪽 위 ⌫ 버튼을 누르면 지우개 도구가 켜지고, 한 번 더 누르면 꺼집니다.
+        지우개 도구로 드래그하면 흰색 eraser rect가 생성되고, 다음 overlay render에서 텍스트를 다시 얹기 전에 해당 영역을 흰색으로 채웁니다.
+        끌지 않고 이미 있는 eraser rect를 클릭하면 그 영역이 선택되고, <kbd>Delete</kbd>로 지울 수 있습니다.
       </p>
       <p class="note warning">
         지우개는 최종 레이아웃 보정용입니다. 안 지워진 원문 흔적이나 작은 잔상을 정리하는 데 쓰고, 큰 마스킹 실패는 Guidance 단계에서 region이나 edge를 다시 잡는 편이 좋습니다.
@@ -507,69 +508,118 @@
 
     <section id="shortcuts">
       <h2>단축키</h2>
-      <h3>공통</h3>
+      <p>
+        조작 방식은 Figma 같은 디자인 도구에 맞췄습니다. 휠은 화면을 옮기고, 핀치나 <kbd>Ctrl</kbd> + 휠이 확대합니다.
+        macOS에서는 이 문서의 <kbd>Ctrl</kbd> 자리에 <kbd>Cmd</kbd>를, <kbd>Alt</kbd> 자리에 <kbd>Option</kbd>을 누릅니다.
+        편집 화면에서 <kbd>?</kbd>를 누르면 지금 탭에서 쓸 수 있는 단축키만 모아 보여 줍니다. 이 표와 도움말은 같은 정의(<code>frontend/src/keymap.js</code>)에서 나옵니다.
+      </p>
+      <p class="note">
+        입력칸에 글자를 쓰는 중이거나 한글을 조합하는 중에는 글자·숫자 단축키가 동작하지 않습니다.
+        글자 키는 자판 위치로 판정하므로 한글 입력 상태여도 같은 키로 동작합니다.
+        일반 <kbd>Enter</kbd>는 아무것도 적용하지 않습니다. 적용은 항상 <kbd>Ctrl</kbd> + <kbd>Enter</kbd>입니다.
+      </p>
+
+      <h3>공통 (두 편집 화면과 모든 탭)</h3>
       <table>
-        <thead><tr><th>키</th><th>기능</th><th>범위</th></tr></thead>
+        <thead><tr><th>키·조작</th><th>기능</th></tr></thead>
         <tbody>
-          <tr><td><kbd>Ctrl</kbd> + <kbd>1</kbd></td><td>Guidance 탭으로 이동</td><td>공통</td></tr>
-          <tr><td><kbd>Ctrl</kbd> + <kbd>2</kbd></td><td>OCR / Translation 탭으로 이동</td><td>공통</td></tr>
-          <tr><td><kbd>Ctrl</kbd> + <kbd>3</kbd></td><td>Overlay 탭으로 이동</td><td>공통</td></tr>
-          <tr><td><kbd>Ctrl</kbd> + <kbd>4</kbd></td><td>내보내기 탭으로 이동</td><td>공통</td></tr>
-          <tr><td><kbd>←</kbd>, <kbd>→</kbd></td><td>이미지 이동</td><td>모든 탭. Overlay 탭에서는 region을 선택하지 않았을 때</td></tr>
+          <tr data-shortcut="view.pan.wheel"><td><kbd>휠</kbd>, <kbd>Shift</kbd> + <kbd>휠</kbd></td><td>화면 이동 (두 손가락 스크롤·마우스 휠, Shift+휠은 가로)</td></tr>
+          <tr data-shortcut="view.zoom.wheel"><td><kbd>Ctrl</kbd> + <kbd>휠</kbd>, <kbd>핀치</kbd></td><td>확대/축소 (포인터 기준, 트랙패드 핀치 포함)</td></tr>
+          <tr data-shortcut="view.pan.space"><td><kbd>Space</kbd> + <kbd>드래그</kbd></td><td>누른 채 드래그해 화면 이동</td></tr>
+          <tr data-shortcut="view.pan.middle"><td><kbd>휠 버튼</kbd> + <kbd>드래그</kbd></td><td>휠 버튼 드래그로 화면 이동</td></tr>
+          <tr data-shortcut="view.fit.dblclick"><td><kbd>더블클릭</kbd></td><td>빈 곳 더블클릭: 화면 맞춤</td></tr>
+          <tr data-shortcut="view.fit"><td><kbd>Shift</kbd> + <kbd>1</kbd></td><td>화면 맞춤</td></tr>
+          <tr data-shortcut="view.zoom100"><td><kbd>Shift</kbd> + <kbd>0</kbd></td><td>100% (실제 픽셀)</td></tr>
+          <tr data-shortcut="view.zoomSelection"><td><kbd>Shift</kbd> + <kbd>2</kbd></td><td>선택 항목으로 확대</td></tr>
+          <tr data-shortcut="view.fit.mod"><td><kbd>Ctrl</kbd> + <kbd>0</kbd></td><td>화면 맞춤 (브라우저 확대 대신)</td></tr>
+          <tr data-shortcut="view.zoomIn"><td><kbd>Ctrl</kbd> + <kbd>=</kbd></td><td>확대</td></tr>
+          <tr data-shortcut="view.zoomOut"><td><kbd>Ctrl</kbd> + <kbd>-</kbd></td><td>축소</td></tr>
+          <tr data-shortcut="tab.guidance"><td><kbd>Alt</kbd> + <kbd>1</kbd></td><td>말풍선 분석 탭</td></tr>
+          <tr data-shortcut="tab.ocr"><td><kbd>Alt</kbd> + <kbd>2</kbd></td><td>글자인식/번역 탭</td></tr>
+          <tr data-shortcut="tab.overlay"><td><kbd>Alt</kbd> + <kbd>3</kbd></td><td>글자 입히기 탭</td></tr>
+          <tr data-shortcut="tab.export"><td><kbd>Alt</kbd> + <kbd>4</kbd></td><td>내보내기 탭</td></tr>
+          <tr data-shortcut="page.prev"><td><kbd>PgUp</kbd>, <kbd>Alt</kbd> + <kbd>←</kbd></td><td>이전 페이지</td></tr>
+          <tr data-shortcut="page.prev.arrow"><td><kbd>←</kbd></td><td>이전 페이지 (선택한 region·TG가 없을 때)</td></tr>
+          <tr data-shortcut="page.next.arrow"><td><kbd>→</kbd></td><td>다음 페이지 (선택한 region·TG가 없을 때)</td></tr>
+          <tr data-shortcut="page.next"><td><kbd>PgDn</kbd>, <kbd>Alt</kbd> + <kbd>→</kbd></td><td>다음 페이지</td></tr>
+          <tr data-shortcut="edit.undo"><td><kbd>Ctrl</kbd> + <kbd>Z</kbd></td><td>실행 취소</td></tr>
+          <tr data-shortcut="edit.redo"><td><kbd>Ctrl</kbd> + <kbd>Shift</kbd> + <kbd>Z</kbd></td><td>다시 실행</td></tr>
+          <tr data-shortcut="edit.redo.y"><td><kbd>Ctrl</kbd> + <kbd>Y</kbd></td><td>다시 실행 (Windows·Linux)</td></tr>
+          <tr data-shortcut="help.toggle"><td><kbd>?</kbd></td><td>단축키 도움말 열기/닫기</td></tr>
         </tbody>
       </table>
       <p class="note">
-        입력칸, 선택 상자, 버튼에 포커스가 있을 때 <kbd>Enter</kbd>는 그 컨트롤의 기본 동작만 합니다.
-        방금 누른 버튼에 포커스가 남아 있는 상태에서 <kbd>Enter</kbd>를 눌러도 분석 적용이나 overlay render가 실행되지 않습니다.
+        <kbd>←</kbd>, <kbd>→</kbd>는 선택한 것이 없을 때만 페이지를 넘깁니다. 글자 입히기에서 region을 골랐다면 safe rect를 움직이고, 말풍선 분석에서 TG를 골랐다면 아무 일도 하지 않습니다.
+        선택과 상관없이 페이지를 넘기려면 <kbd>PgUp</kbd>/<kbd>PgDn</kbd>이나 <kbd>Alt</kbd> + 방향키를 씁니다.
+        브라우저 탭 전환 키(<kbd>Ctrl</kbd> + 숫자)는 이제 쓰지 않습니다.
       </p>
 
-      <h3>Guidance 탭</h3>
+      <h3>말풍선 분석 탭</h3>
       <table>
-        <thead><tr><th>키</th><th>기능</th></tr></thead>
+        <thead><tr><th>키·조작</th><th>기능</th></tr></thead>
         <tbody>
-          <tr><td><kbd>V</kbd>, <kbd>Esc</kbd></td><td>Select</td></tr>
-          <tr><td><kbd>D</kbd>, <kbd>Delete</kbd>, <kbd>Backspace</kbd></td><td>Text Group Off</td></tr>
-          <tr><td><kbd>T</kbd></td><td>Text Group Split</td></tr>
-          <tr><td><kbd>E</kbd></td><td>Edge Wall</td></tr>
-          <tr><td><kbd>L</kbd></td><td>Region Split</td></tr>
-          <tr><td><kbd>U</kbd></td><td>Ubox</td></tr>
-          <tr><td><kbd>S</kbd>, <kbd>B</kbd></td><td>Bubble</td></tr>
-          <tr><td><kbd>X</kbd></td><td>Region Off</td></tr>
-          <tr><td><kbd>Enter</kbd></td><td>말풍선 분석 적용 (Apply Analysis)</td></tr>
-          <tr><td><kbd>Ctrl</kbd> + <kbd>Z</kbd></td><td>Guidance undo. 입력칸 안에서는 일반 글자 되돌리기로 동작합니다.</td></tr>
-          <tr><td><kbd>Ctrl</kbd> + <kbd>Shift</kbd> + <kbd>Z</kbd></td><td>Guidance redo. 입력칸 안에서는 일반 글자 다시 실행으로 동작합니다.</td></tr>
+          <tr data-shortcut="guidance.tool.select"><td><kbd>V</kbd></td><td>Select</td></tr>
+          <tr data-shortcut="guidance.tool.hand"><td><kbd>H</kbd></td><td>Hand (화면 이동)</td></tr>
+          <tr data-shortcut="guidance.tool.tg-toggle"><td><kbd>D</kbd></td><td>TG Off</td></tr>
+          <tr data-shortcut="guidance.tool.tg-split"><td><kbd>T</kbd></td><td>TG Split</td></tr>
+          <tr data-shortcut="guidance.tool.wall"><td><kbd>E</kbd></td><td>Edge Wall</td></tr>
+          <tr data-shortcut="guidance.tool.region-split"><td><kbd>L</kbd></td><td>Region Split</td></tr>
+          <tr data-shortcut="guidance.tool.ubox"><td><kbd>U</kbd></td><td>Ubox</td></tr>
+          <tr data-shortcut="guidance.tool.bubble"><td><kbd>B</kbd></td><td>Bubble</td></tr>
+          <tr data-shortcut="guidance.tool.region-off"><td><kbd>X</kbd></td><td>Region Off</td></tr>
+          <tr data-shortcut="edit.escape.guidance"><td><kbd>Esc</kbd></td><td>단계별 해제: 선택 해제 → Select 도구</td></tr>
+          <tr data-shortcut="guidance.delete"><td><kbd>Delete</kbd>, <kbd>Backspace</kbd></td><td>선택한 TG를 끄기. 선택이 없으면 포인터 아래 guide/TG/region 삭제 (우클릭과 같음)</td></tr>
+          <tr data-shortcut="guidance.rightClick"><td><kbd>우클릭</kbd></td><td>포인터 아래 guide/TG/region 삭제</td></tr>
+          <tr data-shortcut="guidance.apply"><td><kbd>Ctrl</kbd> + <kbd>Enter</kbd></td><td>말풍선 분석 적용 (Apply Analysis)</td></tr>
         </tbody>
       </table>
 
-      <h3>Overlay 탭</h3>
+      <h3>글자 입히기 탭</h3>
       <table>
-        <thead><tr><th>키</th><th>기능</th></tr></thead>
+        <thead><tr><th>키·조작</th><th>기능</th></tr></thead>
         <tbody>
-          <tr><td><kbd>1</kbd>, <kbd>N</kbd></td><td>Normal style</td></tr>
-          <tr><td><kbd>2</kbd>, <kbd>B</kbd></td><td>Bold style</td></tr>
-          <tr><td><kbd>3</kbd>, <kbd>I</kbd></td><td>Impact style</td></tr>
-          <tr><td><kbd>4</kbd>, <kbd>L</kbd></td><td>Light style</td></tr>
-          <tr><td><kbd>5</kbd>, <kbd>R</kbd></td><td>Serif style</td></tr>
-          <tr><td><kbd>6</kbd></td><td>Serif Bold style</td></tr>
-          <tr><td><kbd>7</kbd></td><td>Handwritten style. <kbd>H</kbd>는 가로쓰기가 먼저 가져가므로 Handwritten에는 동작하지 않습니다.</td></tr>
-          <tr><td><kbd>8</kbd>, <kbd>E</kbd>, <kbd>S</kbd></td><td>EFX style (serif emphasis)</td></tr>
-          <tr><td><kbd>9</kbd>, <kbd>T</kbd></td><td>Etc style</td></tr>
-          <tr><td><kbd>H</kbd></td><td>Horizontal writing</td></tr>
-          <tr><td><kbd>V</kbd></td><td>Vertical writing</td></tr>
-          <tr><td><kbd>=</kbd>, <kbd>-</kbd></td><td>Font size offset 3 step 조정 (숫자패드 <kbd>+</kbd>도 3 step)</td></tr>
-          <tr><td><kbd>Shift</kbd> + <kbd>=</kbd>, <kbd>Shift</kbd> + <kbd>-</kbd></td><td>Font size offset 1 step 조정 (일반 키보드의 <kbd>+</kbd>가 여기에 해당)</td></tr>
-          <tr><td><kbd>↑</kbd>, <kbd>↓</kbd>, <kbd>←</kbd>, <kbd>→</kbd></td><td>선택된 safe rect 1 px 이동</td></tr>
-          <tr><td><kbd>Shift</kbd> + 방향키</td><td>선택된 safe rect 10 px 이동</td></tr>
-          <tr><td><kbd>D</kbd> hold</td><td>수동 지우개 모드</td></tr>
-          <tr><td><kbd>Enter</kbd></td><td>Overlay render 적용</td></tr>
-          <tr><td><kbd>Ctrl</kbd> + <kbd>Enter</kbd></td><td>Overlay render 적용. 입력칸에 커서가 있어도 동작합니다.</td></tr>
-          <tr><td><kbd>Ctrl</kbd> + <kbd>Enter</kbd> (Floating editor 안)</td><td>편집한 대사를 반영하고 overlay render 적용</td></tr>
+          <tr data-shortcut="overlay.tool.select"><td><kbd>V</kbd></td><td>Select</td></tr>
+          <tr data-shortcut="overlay.tool.hand"><td><kbd>H</kbd></td><td>Hand (화면 이동)</td></tr>
+          <tr data-shortcut="overlay.tool.eraser"><td><kbd>E</kbd></td><td>지우개 (켜기/끄기)</td></tr>
+          <tr data-shortcut="edit.escape.overlay"><td><kbd>Esc</kbd></td><td>단계별 해제: 대사 편집 닫기 → 선택 해제 → Select 도구</td></tr>
+          <tr data-shortcut="overlay.nudge"><td><kbd>←</kbd>, <kbd>→</kbd>, <kbd>↑</kbd>, <kbd>↓</kbd></td><td>선택한 safe rect 1px 이동 (선택이 없으면 ←/→는 페이지 이동)</td></tr>
+          <tr data-shortcut="overlay.nudge.big"><td><kbd>Shift</kbd> + <kbd>←</kbd>, <kbd>Shift</kbd> + <kbd>→</kbd>, <kbd>Shift</kbd> + <kbd>↑</kbd>, <kbd>Shift</kbd> + <kbd>↓</kbd></td><td>선택한 safe rect 10px 이동</td></tr>
+          <tr data-shortcut="overlay.nextRegion"><td><kbd>Tab</kbd></td><td>다음 region 선택 (Region List 기본 순서)</td></tr>
+          <tr data-shortcut="overlay.prevRegion"><td><kbd>Shift</kbd> + <kbd>Tab</kbd></td><td>이전 region 선택</td></tr>
+          <tr data-shortcut="overlay.openEditor"><td><kbd>Enter</kbd></td><td>선택한 region의 대사 편집 열기</td></tr>
+          <tr data-shortcut="overlay.delete"><td><kbd>Delete</kbd>, <kbd>Backspace</kbd></td><td>선택한 지우개 영역 삭제. 없으면 선택 region의 위치·크기·회전 수동값 초기화 (대사·스타일은 유지)</td></tr>
+          <tr data-shortcut="overlay.rotateSnap"><td><kbd>Shift</kbd> + <kbd>회전 드래그</kbd></td><td>회전 핸들 드래그 중 15° 단위로 맞춤</td></tr>
+          <tr data-shortcut="overlay.editor.dblclick"><td><kbd>region 더블클릭</kbd></td><td>region 더블클릭: 대사 편집 열기</td></tr>
+          <tr data-shortcut="overlay.style.normal"><td><kbd>1</kbd></td><td>Normal 스타일</td></tr>
+          <tr data-shortcut="overlay.style.bold"><td><kbd>2</kbd></td><td>Bold 스타일</td></tr>
+          <tr data-shortcut="overlay.style.impact"><td><kbd>3</kbd></td><td>Impact 스타일</td></tr>
+          <tr data-shortcut="overlay.style.light"><td><kbd>4</kbd></td><td>Light 스타일</td></tr>
+          <tr data-shortcut="overlay.style.memory_serif"><td><kbd>5</kbd></td><td>Serif 스타일</td></tr>
+          <tr data-shortcut="overlay.style.serif_bold"><td><kbd>6</kbd></td><td>Serif Bold 스타일</td></tr>
+          <tr data-shortcut="overlay.style.handwritten"><td><kbd>7</kbd></td><td>Handwritten 스타일</td></tr>
+          <tr data-shortcut="overlay.style.serif_emphasis"><td><kbd>8</kbd></td><td>EFX 스타일</td></tr>
+          <tr data-shortcut="overlay.style.etc"><td><kbd>9</kbd></td><td>Etc 스타일</td></tr>
+          <tr data-shortcut="overlay.fontBigger"><td><kbd>=</kbd>, <kbd>Shift</kbd> + <kbd>=</kbd></td><td>글자 크기 +3 (Shift는 +1)</td></tr>
+          <tr data-shortcut="overlay.fontSmaller"><td><kbd>-</kbd>, <kbd>Shift</kbd> + <kbd>-</kbd></td><td>글자 크기 -3 (Shift는 -1)</td></tr>
+          <tr data-shortcut="overlay.orientation"><td><kbd>O</kbd></td><td>쓰기 방향 순환: 자동 → 가로 → 세로</td></tr>
+          <tr data-shortcut="overlay.apply"><td><kbd>Ctrl</kbd> + <kbd>Enter</kbd></td><td>Overlay 적용 (Apply Overlay)</td></tr>
         </tbody>
       </table>
       <p class="note">
-        글꼴, 쓰기 방향, 글자 크기, 방향키 이동 단축키는 region을 선택했을 때만 동작합니다.
-        선택한 region이 없으면 글꼴·쓰기 방향 키는 아무 일도 하지 않고, <kbd>←</kbd>, <kbd>→</kbd>는 이미지 이동으로 동작합니다.
+        글꼴, 쓰기 방향, 글자 크기, 방향키 이동은 region을 선택했을 때만 동작합니다.
+        숫자 스타일 키는 다른 키와 함께 누르면 무시합니다. <kbd>Shift</kbd> + 숫자는 보기 조작(맞춤·100%·선택 확대)입니다.
+        <kbd>Ctrl</kbd> + <kbd>Z</kbd>는 이 페이지에서 한 편집(이동, 크기, 회전, 스타일, 글자 크기, 대사, 지우개)을 최대 100단계까지 되돌리고, 되돌린 결과로 auto preview가 다시 렌더링합니다. 페이지를 옮기면 기록은 비워집니다.
       </p>
+
+      <h3>대사 편집 팝업</h3>
+      <table>
+        <thead><tr><th>키·조작</th><th>기능</th></tr></thead>
+        <tbody>
+          <tr data-shortcut="editor.commit"><td><kbd>Ctrl</kbd> + <kbd>Enter</kbd></td><td>대사 반영 후 overlay render</td></tr>
+          <tr data-shortcut="editor.cancel"><td><kbd>Esc</kbd></td><td>편집 취소 (초안 버림)</td></tr>
+        </tbody>
+      </table>
+
     </section>
 
     <section id="tips">

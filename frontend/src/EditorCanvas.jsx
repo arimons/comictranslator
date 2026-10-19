@@ -1,26 +1,40 @@
-import { useEffect, useRef, useState } from "react";
+import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from "react";
 import Konva from "konva";
 import { rectOf, tgId, imageGroups, defaultGuidance, regionId, imageRegions, regionDisplayRect } from "./lib.js";
+import { createViewport } from "./viewportControls.js";
 
-export default function EditorCanvas({ image, baseUrl, guidance, setGuidance, undoGuidance, redoGuidance, tool, layers, selectedTg, setSelectedTg, setStatus }) {
+const EditorCanvas = forwardRef(function EditorCanvas({ image, baseUrl, guidance, setGuidance, tool, layers, selectedTg, setSelectedTg, setStatus }, ref) {
   const hostRef = useRef(null);
   const stageRef = useRef(null);
   const imageObjRef = useRef(null);
   const transformRef = useRef({ scale: 1, x: 0, y: 0, w: 1, h: 1 });
-  const viewRef = useRef({ imageKey: "", scale: 1, x: 0, y: 0, hostWidth: 0, hostHeight: 0 });
   const dragRef = useRef(null);
+  // 포인터가 캔버스 위에 있을 때만 Delete 키가 포인터 아래 항목을 지운다.
+  const pointerInsideRef = useRef(false);
   const toolRef = useRef(tool);
   const imageRef = useRef(image);
   const guidanceRef = useRef(guidance);
   const layersRef = useRef(layers);
   const selectedTgRef = useRef(selectedTg);
-  const undoGuidanceRef = useRef(undoGuidance);
-  const redoGuidanceRef = useRef(redoGuidance);
   const dragPreviewRef = useRef(null);
   // stage 핸들러는 mount 시점 클로저라 baseUrl은 ref로 읽어야 현재 페이지 key가 나온다.
   const baseUrlRef = useRef(baseUrl);
   baseUrlRef.current = baseUrl;
   const [dragPreview, setDragPreview] = useState(null);
+  const setStatusRef = useRef(setStatus);
+  setStatusRef.current = setStatus;
+  const vpRef = useRef(null);
+  if (!vpRef.current) {
+    vpRef.current = createViewport({
+      getHost: () => hostRef.current,
+      getImage: () => imageObjRef.current,
+      getKey: () => imageKey(),
+      fitPadding: 0.98,
+      redraw: () => redraw(),
+      onStatus: (text) => setStatusRef.current?.(text),
+      isPanTool: () => toolRef.current === "hand",
+    });
+  }
 
   useEffect(() => {
     toolRef.current = tool;
@@ -28,10 +42,9 @@ export default function EditorCanvas({ image, baseUrl, guidance, setGuidance, un
     guidanceRef.current = guidance;
     layersRef.current = layers;
     selectedTgRef.current = selectedTg;
-    undoGuidanceRef.current = undoGuidance;
-    redoGuidanceRef.current = redoGuidance;
     dragPreviewRef.current = dragPreview;
-  }, [tool, image, guidance, layers, selectedTg, undoGuidance, redoGuidance, dragPreview]);
+    vpRef.current.refreshCursor();
+  }, [tool, image, guidance, layers, selectedTg, dragPreview]);
 
   function toStageRect(rect) {
     const t = transformRef.current;
@@ -65,120 +78,8 @@ export default function EditorCanvas({ image, baseUrl, guidance, setGuidance, un
     };
   }
 
-  function fitTransform(width, height, img) {
-    const scale = Math.min(width / img.width, height / img.height) * 0.98;
-    return {
-      scale,
-      x: (width - img.width * scale) / 2,
-      y: (height - img.height * scale) / 2,
-    };
-  }
-
   function imageKey() {
     return `${imageRef.current?.id || ""}:${baseUrlRef.current || imageRef.current?.final_url || imageRef.current?.input_url || ""}`;
-  }
-
-  function resetView(width, height, img) {
-    const fit = fitTransform(width, height, img);
-    viewRef.current = {
-      imageKey: imageKey(),
-      scale: fit.scale,
-      x: fit.x,
-      y: fit.y,
-      hostWidth: width,
-      hostHeight: height,
-    };
-    return viewRef.current;
-  }
-
-  function ensureView(width, height, img) {
-    const current = viewRef.current;
-    const key = imageKey();
-    if (current.imageKey !== key || !Number.isFinite(current.scale)) {
-      return resetView(width, height, img);
-    }
-    if (current.hostWidth !== width || current.hostHeight !== height) {
-      viewRef.current = clampView({
-        ...current,
-        imageKey: key,
-        hostWidth: width,
-        hostHeight: height,
-      }, width, height, img);
-      return viewRef.current;
-    }
-    return current;
-  }
-
-  function clampView(view, width, height, img) {
-    const scaledW = img.width * view.scale;
-    const scaledH = img.height * view.scale;
-    const margin = 80;
-    let x = view.x;
-    let y = view.y;
-    if (scaledW <= width) {
-      x = (width - scaledW) / 2;
-    } else {
-      x = Math.min(margin, Math.max(width - scaledW - margin, x));
-    }
-    if (scaledH <= height) {
-      y = (height - scaledH) / 2;
-    } else {
-      y = Math.min(margin, Math.max(height - scaledH - margin, y));
-    }
-    return { ...view, x, y };
-  }
-
-  function zoomAt(stage, deltaY) {
-    const img = imageObjRef.current;
-    const host = hostRef.current;
-    if (!img || !host) return;
-    const pointer = stage.getPointerPosition();
-    if (!pointer) return;
-    const width = host.clientWidth || 800;
-    const height = host.clientHeight || 600;
-    const old = transformRef.current;
-    const fit = fitTransform(width, height, img);
-    const zoomFactor = deltaY > 0 ? 1 / 1.16 : 1.16;
-    const minScale = fit.scale;
-    const maxScale = fit.scale * 10;
-    const nextScale = Math.min(maxScale, Math.max(minScale, old.scale * zoomFactor));
-    const imagePoint = {
-      x: (pointer.x - old.x) / old.scale,
-      y: (pointer.y - old.y) / old.scale,
-    };
-    viewRef.current = clampView({
-      imageKey: imageKey(),
-      scale: nextScale,
-      x: pointer.x - imagePoint.x * nextScale,
-      y: pointer.y - imagePoint.y * nextScale,
-      hostWidth: width,
-      hostHeight: height,
-    }, width, height, img);
-    setStatus(`Zoom ${Math.round((nextScale / fit.scale) * 100)}%`);
-    redraw();
-  }
-
-  function panBy(deltaX, deltaY) {
-    const img = imageObjRef.current;
-    const host = hostRef.current;
-    if (!img || !host) return;
-    const width = host.clientWidth || 800;
-    const height = host.clientHeight || 600;
-    const current = viewRef.current;
-    viewRef.current = clampView({
-      ...current,
-      imageKey: imageKey(),
-      x: current.x + deltaX,
-      y: current.y + deltaY,
-      hostWidth: width,
-      hostHeight: height,
-    }, width, height, img);
-    redraw();
-  }
-
-  function stagePointer(stage) {
-    const pointer = stage.getPointerPosition();
-    return pointer ? { x: pointer.x, y: pointer.y } : null;
   }
 
   function findTgAt(point) {
@@ -324,7 +225,25 @@ export default function EditorCanvas({ image, baseUrl, guidance, setGuidance, un
     evt.evt?.preventDefault();
     evt.evt?.stopPropagation?.();
     evt.cancelBubble = true;
-    const point = pointerToImage(stage);
+    deleteAtPoint(pointerToImage(stage));
+  }
+
+  function disableTg(id) {
+    const latest = guidanceRef.current || defaultGuidance(null);
+    const disabled = new Set(latest.disabled_tg_ids || []);
+    if (disabled.has(id)) return false;
+    disabled.add(id);
+    const next = { ...latest, disabled_tg_ids: Array.from(disabled).sort((a, b) => a - b) };
+    if (Number(selectedTgRef.current) === id) {
+      selectedTgRef.current = null;
+      setSelectedTg(null);
+    }
+    setGuidanceWithRightClickUndo(next, `TG${id} 삭제`);
+    return true;
+  }
+
+  // 우클릭과 같은 우선순위: guide → TG → 자동 region
+  function deleteAtPoint(point) {
     const guideHit = findGuideAt(point);
     if (guideHit) {
       setGuidanceWithRightClickUndo(removeGuide(guideHit), `${guideLabel(guideHit)} 삭제`);
@@ -340,18 +259,47 @@ export default function EditorCanvas({ image, baseUrl, guidance, setGuidance, un
       suppressRegion(region);
       return;
     }
-    const id = tgId(group);
-    const latest = guidanceRef.current || defaultGuidance(null);
-    const disabled = new Set(latest.disabled_tg_ids || []);
-    if (disabled.has(id)) return;
-    disabled.add(id);
-    const next = { ...latest, disabled_tg_ids: Array.from(disabled).sort((a, b) => a - b) };
-    if (Number(selectedTgRef.current) === id) {
-      selectedTgRef.current = null;
-      setSelectedTg(null);
-    }
-    setGuidanceWithRightClickUndo(next, `TG${id} 삭제`);
+    disableTg(tgId(group));
   }
+
+  // Delete/Backspace: 선택한 TG가 있으면 끄고, 없으면 포인터 아래 항목을 우클릭처럼 지운다.
+  function deleteSelection() {
+    const selectedId = Number(selectedTgRef.current);
+    if (selectedTgRef.current != null && Number.isFinite(selectedId)) {
+      disableTg(selectedId);
+      return true;
+    }
+    const stage = stageRef.current;
+    if (!stage || !pointerInsideRef.current || !stage.getPointerPosition()) {
+      setStatus("삭제할 선택 없음 (TG를 선택하거나 지울 항목 위에 포인터를 두세요)");
+      return false;
+    }
+    deleteAtPoint(pointerToImage(stage));
+    return true;
+  }
+
+  function selectedTgRect() {
+    const id = Number(selectedTgRef.current);
+    if (selectedTgRef.current == null || !Number.isFinite(id)) return null;
+    const group = imageGroups(imageRef.current).find((item) => tgId(item) === id);
+    return group ? rectOf(group) : null;
+  }
+
+  useImperativeHandle(ref, () => ({
+    fit: () => vpRef.current.fit(),
+    zoom100: () => vpRef.current.zoom100(),
+    zoomBy: (factor) => vpRef.current.zoomBy(factor),
+    panBy: (dx, dy) => vpRef.current.panBy(dx, dy),
+    zoomToSelection: () => {
+      const rect = selectedTgRect();
+      if (!rect) {
+        setStatus("확대할 선택 TG 없음");
+        return false;
+      }
+      return vpRef.current.zoomToRect(rect);
+    },
+    deleteSelection,
+  }));
 
   function toggleTg(id) {
     const latest = guidanceRef.current || defaultGuidance(null);
@@ -541,7 +489,7 @@ export default function EditorCanvas({ image, baseUrl, guidance, setGuidance, un
       return;
     }
 
-    const view = ensureView(width, height, img);
+    const view = vpRef.current.ensure(width, height, img);
     transformRef.current = { scale: view.scale, x: view.x, y: view.y, w: img.width, h: img.height };
     base.add(new Konva.Image({ image: img, x: view.x, y: view.y, width: img.width * view.scale, height: img.height * view.scale }));
 
@@ -725,19 +673,21 @@ export default function EditorCanvas({ image, baseUrl, guidance, setGuidance, un
     const observer = new ResizeObserver(() => redraw());
     observer.observe(host);
 
-    stage.on("wheel", (evt) => {
-      evt.evt.preventDefault();
-      zoomAt(stage, evt.evt.deltaY);
-    });
+    const vp = vpRef.current;
+    vp.attach();
+    const onEnter = () => { pointerInsideRef.current = true; };
+    const onLeave = () => { pointerInsideRef.current = false; };
+    host.addEventListener("mouseenter", onEnter);
+    host.addEventListener("mouseleave", onLeave);
     stage.on("contentContextmenu", (evt) => {
       evt.evt.preventDefault();
     });
+    // 빈 곳 더블클릭만 화면 맞춤. TG나 guide 위 더블클릭은 그대로 둔다.
     stage.on("dblclick dbltap", () => {
-      const img = imageObjRef.current;
-      if (!img) return;
-      resetView(host.clientWidth || 800, host.clientHeight || 600, img);
-      setStatus("Zoom fit");
-      redraw();
+      if (!imageObjRef.current || !stage.getPointerPosition()) return;
+      const point = pointerToImage(stage);
+      if (findGuideAt(point) || findTgAt(point)) return;
+      vp.fit();
     });
     stage.on("mousedown touchstart", (evt) => {
       const button = evt.evt?.button;
@@ -745,14 +695,7 @@ export default function EditorCanvas({ image, baseUrl, guidance, setGuidance, un
         rightClickDelete(stage, evt);
         return;
       }
-      if (button === 1) {
-        evt.evt.preventDefault();
-        const pointer = stagePointer(stage);
-        if (!pointer) return;
-        dragRef.current = { mode: "pan", startPointer: pointer, lastPointer: pointer };
-        setStatus("Pan 휠클릭 드래그");
-        return;
-      }
+      if (button === 1) return;
       const currentTool = toolRef.current;
       if (!["tg-split", "wall", "region-split", "ubox"].includes(currentTool)) return;
       const point = pointerToImage(stage);
@@ -762,24 +705,12 @@ export default function EditorCanvas({ image, baseUrl, guidance, setGuidance, un
     });
     stage.on("mousemove touchmove", () => {
       if (!dragRef.current) return;
-      if (dragRef.current.mode === "pan") {
-        const pointer = stagePointer(stage);
-        if (!pointer) return;
-        const last = dragRef.current.lastPointer || pointer;
-        panBy(pointer.x - last.x, pointer.y - last.y);
-        dragRef.current.lastPointer = pointer;
-        return;
-      }
       const currentTool = toolRef.current;
       if (!["tg-split", "wall", "region-split", "ubox"].includes(currentTool)) return;
       setDragPreview({ tool: currentTool, start: dragRef.current.start, end: pointerToImage(stage) });
     });
     stage.on("mouseup touchend", () => {
       if (!dragRef.current) return;
-      if (dragRef.current.mode === "pan") {
-        dragRef.current = null;
-        return;
-      }
       const end = pointerToImage(stage);
       const { start, tg } = dragRef.current;
       dragRef.current = null;
@@ -820,19 +751,11 @@ export default function EditorCanvas({ image, baseUrl, guidance, setGuidance, un
       setStatus(`TG${id} 선택`);
       if (currentTool === "tg-toggle") toggleTg(id);
     });
-    const onKeyDown = (event) => {
-      const tagName = event.target?.tagName?.toLowerCase();
-      if (tagName === "input" || tagName === "textarea" || tagName === "select" || event.target?.isContentEditable) return;
-      if (!(event.metaKey || event.ctrlKey) || event.altKey || event.key?.toLowerCase() !== "z") return;
-      event.preventDefault();
-      event.stopPropagation();
-      if (event.shiftKey) redoGuidanceRef.current?.();
-      else undoGuidanceRef.current?.();
-    };
-    document.addEventListener("keydown", onKeyDown, true);
 
     return () => {
-      document.removeEventListener("keydown", onKeyDown, true);
+      vp.detach();
+      host.removeEventListener("mouseenter", onEnter);
+      host.removeEventListener("mouseleave", onLeave);
       host.removeEventListener("contextmenu", preventContextMenu);
       stage.content?.removeEventListener("contextmenu", preventContextMenu);
       observer.disconnect();
@@ -868,4 +791,6 @@ export default function EditorCanvas({ image, baseUrl, guidance, setGuidance, un
   }, [image, guidance, tool, layers, selectedTg, dragPreview]);
 
   return <div id="stageHost" tabIndex="0" className={["tg-split", "wall", "region-split", "ubox", "bubble"].includes(tool) ? "drawing" : ""} ref={hostRef} />;
-}
+});
+
+export default EditorCanvas;

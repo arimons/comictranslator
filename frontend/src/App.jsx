@@ -1,23 +1,16 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import EditorCanvas from "./EditorCanvas.jsx";
 import OverlayCanvas from "./OverlayCanvas.jsx";
+import ShortcutHelp from "./ShortcutHelp.jsx";
+import { KEYMAP, eventMatches, entryInContext, entryVisibleOnPlatform, shortcutFor, shortcutById } from "./keymap.js";
 import {
   TOOL_LABELS,
-  TOOL_SHORTCUTS,
   TOOL_ICONS,
   OVERLAY_MIN_RECT_SIZE,
-  TOOL_HOTKEYS,
-  TOOL_CODE_HOTKEYS,
   WORKFLOW_TABS,
   FONT_STYLES,
   FONT_STYLE_IDS,
   ETC_DEFAULT_FONT_NAME,
-  FONT_STYLE_HOTKEYS,
-  FONT_STYLE_CODE_HOTKEYS,
-  OVERLAY_STYLE_NUMBER_HOTKEYS,
-  OVERLAY_STYLE_CODE_HOTKEYS,
-  WORKFLOW_TAB_NUMBER_HOTKEYS,
-  WORKFLOW_TAB_CODE_HOTKEYS,
   api,
   apiStream,
   defaultGuidance,
@@ -43,6 +36,10 @@ import {
   writeSessionSettings,
   removeSessionSettings,
 } from "./lib.js";
+
+// 글자 입히기 편집 기록 상한과, 같은 종류의 연속 변경을 한 칸으로 묶는 시간
+const OVERLAY_HISTORY_LIMIT = 100;
+const OVERLAY_HISTORY_MERGE_MS = 1500;
 
 export default function App() {
   const [sessionId, setSessionId] = useState("");
@@ -94,7 +91,19 @@ export default function App() {
   const [guidanceRedoStack, setGuidanceRedoStack] = useState([]);
   const [guidanceNotice, setGuidanceNotice] = useState(null);
   const [recentMenuId, setRecentMenuId] = useState("");
+  // 글자 입히기 캔버스 도구: select | hand | eraser
+  const [overlayTool, setOverlayTool] = useState("select");
+  const [helpOpen, setHelpOpen] = useState(false);
+  const [shortcutToast, setShortcutToast] = useState(null);
   const fileRef = useRef(null);
+  const editorCanvasRef = useRef(null);
+  const overlayCanvasRef = useRef(null);
+  const keyHandlerRef = useRef(null);
+  const shortcutToastTimerRef = useRef(null);
+  // 글자 입히기 편집 기록(페이지 단위). 확정된 변경마다 직전 overlayGuidance를 쌓는다.
+  const overlayHistoryRef = useRef({ undo: [], redo: [], lastKey: "", lastAt: 0 });
+  const overlayGuidanceRef = useRef(overlayGuidance);
+  overlayGuidanceRef.current = overlayGuidance;
   const sessionIdRef = useRef(sessionId);
   const selectedIdRef = useRef(selectedId);
   const imagesRef = useRef(images);
@@ -393,7 +402,7 @@ export default function App() {
     };
   }
 
-  function updateOverlayRegion(rid, patch) {
+  function updateOverlayRegion(rid, patch, historyKey = null) {
     if (!rid) return;
     const key = String(rid);
     setOverlayGuidanceTracked((current) => {
@@ -409,7 +418,7 @@ export default function App() {
           }),
         },
       };
-    });
+    }, { historyKey });
   }
 
   function setOverlayRegionSegmentMode(region, mode) {
@@ -470,7 +479,7 @@ export default function App() {
     const parsed = Number(value);
     if (!Number.isFinite(parsed)) return;
     rect[index] = parsed;
-    updateOverlayRegion(rid, { safe_text_rect: clampOverlayRect(rect) });
+    updateOverlayRegion(rid, { safe_text_rect: clampOverlayRect(rect) }, `rect:${rid}:${field}`);
   }
 
   function setOverlayTextAlign(rid, region, align) {
@@ -479,30 +488,129 @@ export default function App() {
     setStatus(`${overlayItemLabel(region)} text ${align}`);
   }
 
-  function setOverlayGuidanceTracked(nextGuidance) {
+  function bumpOverlayEditVersion() {
+    setOverlayEditVersion((version) => {
+      const nextVersion = version + 1;
+      overlayEditVersionRef.current = nextVersion;
+      return nextVersion;
+    });
+  }
+
+  // options.historyKey: 같은 key의 연속 변경(타이핑, 회전 드래그, 방향키 이동)은 기록 한 칸으로 묶는다.
+  function setOverlayGuidanceTracked(nextGuidance, options = {}) {
     setOverlayGuidance((current) => {
       const resolved = normalizeOverlayGuidance(
         typeof nextGuidance === "function" ? nextGuidance(current || { regions: {} }) : nextGuidance
       );
       if (guidanceEquals(current || {}, resolved || {})) return current;
-      setOverlayEditVersion((version) => {
-        const nextVersion = version + 1;
-        overlayEditVersionRef.current = nextVersion;
-        return nextVersion;
-      });
+      recordOverlayHistory(current, options?.historyKey);
+      bumpOverlayEditVersion();
       return resolved;
     });
   }
 
+  function resetOverlayHistory() {
+    overlayHistoryRef.current = { undo: [], redo: [], lastKey: "", lastAt: 0 };
+  }
+
+  function recordOverlayHistory(previous, historyKey) {
+    const history = overlayHistoryRef.current;
+    const now = Date.now();
+    const key = historyKey || "";
+    const merge = Boolean(key)
+      && history.lastKey === key
+      && (key.startsWith("rotate:") || now - history.lastAt < OVERLAY_HISTORY_MERGE_MS);
+    history.lastKey = key;
+    history.lastAt = now;
+    history.redo = [];
+    if (merge) return;
+    const snapshot = cloneJson(previous || {});
+    const top = history.undo[history.undo.length - 1];
+    // updater가 두 번 호출돼도 같은 스냅샷을 두 번 쌓지 않는다.
+    if (top && guidanceEquals(top, snapshot)) return;
+    history.undo = [...history.undo.slice(-(OVERLAY_HISTORY_LIMIT - 1)), snapshot];
+  }
+
+  function stepOverlayHistory(direction) {
+    const history = overlayHistoryRef.current;
+    const from = direction < 0 ? history.undo : history.redo;
+    if (!from.length) {
+      setStatus(direction < 0 ? "되돌릴 overlay 편집 없음" : "다시 실행할 overlay 편집 없음");
+      return;
+    }
+    const target = from[from.length - 1];
+    const current = cloneJson(overlayGuidanceRef.current || {});
+    if (direction < 0) {
+      history.undo = history.undo.slice(0, -1);
+      history.redo = [...history.redo, current];
+    } else {
+      history.redo = history.redo.slice(0, -1);
+      history.undo = [...history.undo, current];
+    }
+    history.lastKey = "";
+    const next = normalizeOverlayGuidance(cloneJson(target));
+    overlayGuidanceRef.current = next;
+    setOverlayGuidance(next);
+    // 일반 편집과 같은 경로로 auto preview가 다시 render한다.
+    bumpOverlayEditVersion();
+    setStatus(`${direction < 0 ? "Undo" : "Redo"} overlay (남은 undo ${history.undo.length} / redo ${history.redo.length})`);
+  }
+
+  function showShortcutToast(text) {
+    setStatus(text);
+    setShortcutToast(text);
+    if (shortcutToastTimerRef.current) window.clearTimeout(shortcutToastTimerRef.current);
+    shortcutToastTimerRef.current = window.setTimeout(() => setShortcutToast(null), 1600);
+  }
+
+  const WRITING_MODE_LABELS = { auto: "자동", horizontal: "가로", vertical: "세로" };
+
+  // O 키: 자동 → 가로 → 세로 → 자동
+  function cycleOverlayWritingMode(rid) {
+    if (!rid) return;
+    const region = overlayRegions.find((item) => overlayItemKey(item) === String(rid));
+    const choice = overlayWritingModeChoice(overlayRegionValue(overlayGuidance, rid));
+    const next = { auto: "horizontal", horizontal: "vertical", vertical: "auto" }[choice] || "auto";
+    if (next === "horizontal") updateOverlayRegion(rid, { force_horizontal: true, force_vertical: false });
+    else if (next === "vertical") updateOverlayRegion(rid, { force_vertical: true, force_horizontal: false });
+    else updateOverlayRegion(rid, { force_horizontal: false, force_vertical: false });
+    showShortcutToast(`${region ? overlayItemLabel(region) : `R${rid}`} 쓰기 방향: ${WRITING_MODE_LABELS[next]}`);
+  }
+
+  // Delete: 위치·크기·회전 수동값만 자동으로 되돌린다. 대사와 스타일은 유지한다.
+  function resetOverlayRegionLayout(rid) {
+    if (!rid) return false;
+    const region = overlayRegions.find((item) => overlayItemKey(item) === String(rid));
+    const override = overlayRegionValue(overlayGuidance, rid);
+    const label = region ? overlayItemLabel(region) : `R${rid}`;
+    if (!override.safe_text_rect && !override.rotation_deg) {
+      setStatus(`${label} 수동 위치·크기·회전 없음`);
+      return true;
+    }
+    updateOverlayRegion(rid, { safe_text_rect: null, rotation_deg: 0 });
+    setStatus(`${label} 위치·크기·회전 자동으로 초기화`);
+    return true;
+  }
+
+  function cycleOverlayRegion(step) {
+    const keys = overlayRegions.map((item) => overlayItemKey(item));
+    if (!keys.length) return false;
+    const currentKey = selectedRegionRefValue();
+    const index = currentKey ? keys.indexOf(String(currentKey)) : -1;
+    const nextIndex = index < 0
+      ? (step > 0 ? 0 : keys.length - 1)
+      : (index + step + keys.length) % keys.length;
+    const nextKey = keys[nextIndex];
+    setSelectedRegionTracked(nextKey);
+    overlayCanvasRef.current?.ensureRegionVisible(nextKey);
+    const region = overlayRegions[nextIndex];
+    setStatus(`${overlayItemLabel(region)} 선택 (${nextIndex + 1}/${keys.length})`);
+    return true;
+  }
+
   function updateFontPath(nextFontPath) {
     setFontPath(nextFontPath);
-    if (activeTab === "overlay" && canRenderOverlayImage(selected)) {
-      setOverlayEditVersion((version) => {
-        const nextVersion = version + 1;
-        overlayEditVersionRef.current = nextVersion;
-        return nextVersion;
-      });
-    }
+    if (activeTab === "overlay" && canRenderOverlayImage(selected)) bumpOverlayEditVersion();
   }
 
   function cycleOverlayFontStyle(rid, currentStyle) {
@@ -535,7 +643,7 @@ export default function App() {
       const nextSize = normalizedFontSize(baseSize + delta);
       setStatus(`${region ? overlayItemLabel(region) : `R${rid}`} font size ${nextSize}`);
       return { font_size: nextSize };
-    });
+    }, `size:${rid}`);
   }
 
   function setOverlayWritingMode(rid, mode) {
@@ -575,7 +683,7 @@ export default function App() {
           Math.round(moved[3]),
         ]
       : moved.map((value) => Math.round(value));
-    updateOverlayRegion(rid, { safe_text_rect: bounded });
+    updateOverlayRegion(rid, { safe_text_rect: bounded }, `nudge:${rid}`);
     setStatus(`${overlayItemLabel(region)} safe rect 이동 ${dx},${dy}`);
     return true;
   }
@@ -696,6 +804,7 @@ export default function App() {
     setGuidance(next);
     resetGuidanceHistory();
     setOverlayGuidance(defaultOverlayGuidance(selected));
+    resetOverlayHistory();
     // 페이지가 바뀌면 edit version을 한 단계 올리고 적용 완료로 맞춘다.
     // 이전 페이지 요청의 version은 새 페이지 version과 절대 같아지지 않는다.
     const nextVersion = overlayEditVersionRef.current + 1;
@@ -797,150 +906,179 @@ export default function App() {
     });
   }, [activeTab, selectedKey, selected?.has_integrated_json, selected?.final_url, selected?.detail_loaded, overlayBusy, fontPath]);
 
-  useEffect(() => {
-    function handleKeyDown(event) {
-      const target = event.target;
-      const tag = target?.tagName?.toLowerCase();
-      const key = String(event.key || "").toLowerCase();
-      const isTextTarget = tag === "input" || tag === "textarea" || tag === "select" || target?.isContentEditable;
-      // 버튼·링크·체크박스 등에 포커스가 있으면 Enter는 해당 컨트롤의 기본 동작에 맡긴다.
-      const isInteractiveTarget = Boolean(target?.closest?.(
-        "button, a[href], input, select, textarea, summary, [role='button'], [role='link'], [role='checkbox'], [role='radio'], [role='tab'], [role='menuitem'], [contenteditable='true']",
-      ));
-      // floating text editor는 자체 Cmd/Ctrl+Enter 처리(초안 반영 후 적용)를 한다.
-      const isFloatingEditorTarget = Boolean(target?.closest?.(".floating-text-editor"));
-      if ((event.metaKey || event.ctrlKey) && !event.altKey && !event.shiftKey) {
-        const nextTab = WORKFLOW_TAB_CODE_HOTKEYS[event.code] || WORKFLOW_TAB_NUMBER_HOTKEYS[String(event.key || "")];
-        if (nextTab) {
-          event.preventDefault();
-          event.stopPropagation();
-          setActiveTab(nextTab);
-          setStatus(`Tab ${WORKFLOW_TABS.find(([id]) => id === nextTab)?.[1] || nextTab}`);
-          return;
-        }
-      }
-      if ((event.metaKey || event.ctrlKey) && !event.altKey && key === "z") {
-        if (activeTab !== "guidance" || isTextTarget) return;
-        event.preventDefault();
-        event.stopPropagation();
-        if (event.shiftKey) redoGuidance();
-        else undoGuidance();
-        return;
-      }
-      if (
-        activeTab === "overlay"
-        && (event.metaKey || event.ctrlKey)
-        && !event.altKey
-        && key === "enter"
-        && !isFloatingEditorTarget
-        && canRenderOverlayImage(selected)
-        && !overlayBusy
-      ) {
-        event.preventDefault();
-        event.stopPropagation();
-        if (typeof target?.blur === "function") target.blur();
-        applyOverlay();
-        return;
-      }
-      if (event.metaKey || event.ctrlKey || event.altKey) return;
-      if (event.key === "Enter" && isInteractiveTarget) return;
+  // 전역 키보드 디스패처. 조합 판정과 표시는 keymap.js가, 동작은 아래 표가 맡는다.
+  function selectPageByStep(step) {
+    const items = imagesRef.current || [];
+    if (!items.length) return false;
+    const currentId = selectedIdRef.current || items[0].id;
+    const index = Math.max(0, items.findIndex((item) => item.id === currentId));
+    const nextIndex = Math.min(items.length - 1, Math.max(0, index + step));
+    if (nextIndex === index) {
+      setStatus(step > 0 ? "마지막 페이지입니다" : "첫 페이지입니다");
+      return true;
+    }
+    setSelectedId(items[nextIndex].id);
+    selectedIdRef.current = items[nextIndex].id;
+    setStatus(`${items[nextIndex].name} 선택`);
+    return true;
+  }
+
+  function activeCanvasRef() {
+    if (activeTab === "guidance") return editorCanvasRef;
+    if (activeTab === "overlay") return overlayCanvasRef;
+    return null;
+  }
+
+  const shortcutConditions = {
+    regionSelected: () => Boolean(selectedRegionRefValue()),
+    nothingSelected: () => {
+      if (activeTab === "overlay") return !selectedRegionRefValue() && !overlayCanvasRef.current?.hasSelectedEraser();
+      if (activeTab === "guidance") return selectedTg == null;
+      return true;
+    },
+    inFloatingEditor: (event) => Boolean(event.target?.closest?.(".floating-text-editor")),
+    notInFloatingEditor: (event) => !event.target?.closest?.(".floating-text-editor"),
+  };
+
+  const shortcutActions = {
+    "view.fit": () => activeCanvasRef()?.current?.fit(),
+    "view.zoom100": () => activeCanvasRef()?.current?.zoom100(),
+    "view.zoomSelection": () => activeCanvasRef()?.current?.zoomToSelection(),
+    "view.zoomIn": () => activeCanvasRef()?.current?.zoomBy(1.25),
+    "view.zoomOut": () => activeCanvasRef()?.current?.zoomBy(1 / 1.25),
+    tab: (_event, tab) => {
+      setActiveTab(tab);
+      setStatus(`Tab ${WORKFLOW_TABS.find(([id]) => id === tab)?.[1] || tab}`);
+    },
+    "page.prev": () => selectPageByStep(-1),
+    "page.next": () => selectPageByStep(1),
+    tool: (_event, nextTool) => {
       if (activeTab === "overlay") {
-        if (isTextTarget) return;
-        const rid = selectedRegionRefValue();
-        const arrowMove = {
-          ArrowLeft: [-1, 0],
-          ArrowRight: [1, 0],
-          ArrowUp: [0, -1],
-          ArrowDown: [0, 1],
-        }[event.key];
-        if (arrowMove && rid) {
-          const step = event.shiftKey ? 10 : 1;
-          event.preventDefault();
-          event.stopPropagation();
-          moveSelectedSafeRect(arrowMove[0] * step, arrowMove[1] * step);
-          return;
-        }
-        if ((event.key === "=" || event.key === "+") && rid) {
-          event.preventDefault();
-          event.stopPropagation();
-          adjustOverlayFontSize(rid, event.shiftKey ? 1 : 3);
-          return;
-        }
-        if ((event.key === "-" || event.key === "_") && rid) {
-          event.preventDefault();
-          event.stopPropagation();
-          adjustOverlayFontSize(rid, event.shiftKey ? -1 : -3);
-          return;
-        }
-        if (event.key === "Enter" && canRenderOverlayImage(selected) && !overlayBusy) {
-          event.preventDefault();
-          event.stopPropagation();
-          applyOverlay();
-          return;
-        }
-        if (key === "d" || event.code === "KeyD") {
-          event.preventDefault();
-          return;
-        }
-        const writingModeHotkey =
-          event.code === "KeyH" || key === "h" ? "horizontal" :
-          event.code === "KeyV" || key === "v" ? "vertical" :
-          null;
-        if (writingModeHotkey && rid) {
-          event.preventDefault();
-          event.stopPropagation();
-          setOverlayWritingMode(rid, writingModeHotkey);
-          return;
-        }
-        const numericStyle = OVERLAY_STYLE_CODE_HOTKEYS[event.code] || OVERLAY_STYLE_NUMBER_HOTKEYS[String(event.key || "")];
-        const style = numericStyle || FONT_STYLE_CODE_HOTKEYS[event.code] || FONT_STYLE_HOTKEYS[String(event.key || "").toLowerCase()];
-        if (style) {
-          event.preventDefault();
-          event.stopPropagation();
-          if (rid) {
-            updateOverlayRegion(rid, overlayFontStylePatch(style));
-            setStatus(`R${rid} style ${style}`);
-          }
-          return;
-        }
-      }
-      if (isTextTarget) return;
-      if (activeTab === "guidance" && event.key === "Enter") {
-        event.preventDefault();
-        event.stopPropagation();
-        if (!guidanceBusy && !analyzeBusy && selected) {
-          applyGuidance();
-        }
+        const resolved = nextTool === "eraser" && overlayTool === "eraser" ? "select" : nextTool;
+        setOverlayTool(resolved);
+        setStatus(`Tool ${resolved === "eraser" ? "Eraser" : resolved === "hand" ? "Hand" : "Select"}`);
         return;
       }
-      if (event.key === "ArrowLeft" || event.key === "ArrowRight") {
-        const items = imagesRef.current || [];
-        if (!items.length) return;
-        const currentId = selectedIdRef.current || items[0].id;
-        const currentIndex = Math.max(0, items.findIndex((item) => item.id === currentId));
-        const delta = event.key === "ArrowRight" ? 1 : -1;
-        const nextIndex = Math.min(items.length - 1, Math.max(0, currentIndex + delta));
-        if (nextIndex === currentIndex) return;
-        event.preventDefault();
-        event.stopPropagation();
-        setSelectedId(items[nextIndex].id);
-        selectedIdRef.current = items[nextIndex].id;
-        setStatus(`${items[nextIndex].name} 선택`);
-        return;
-      }
-      if (activeTab !== "guidance") return;
-      const nextTool = TOOL_CODE_HOTKEYS[event.code] || TOOL_HOTKEYS[key];
-      if (!nextTool) return;
-      event.preventDefault();
-      event.stopPropagation();
       setTool(nextTool);
       setStatus(`Tool ${TOOL_LABELS.find(([id]) => id === nextTool)?.[1] || nextTool}`);
+    },
+    escape: () => {
+      if (activeTab === "overlay") {
+        if (overlayCanvasRef.current?.clearEraserSelection()) return true;
+        if (selectedRegionRefValue()) {
+          setSelectedRegionTracked(null);
+          setStatus("선택 해제");
+          return true;
+        }
+        if (overlayTool !== "select") {
+          setOverlayTool("select");
+          setStatus("Tool Select");
+          return true;
+        }
+        return false;
+      }
+      if (selectedTg != null) {
+        setSelectedTg(null);
+        setStatus("선택 해제");
+        return true;
+      }
+      if (tool !== "select") {
+        setTool("select");
+        setStatus("Tool Select");
+        return true;
+      }
+      return false;
+    },
+    undo: () => (activeTab === "overlay" ? stepOverlayHistory(-1) : undoGuidance()),
+    redo: () => (activeTab === "overlay" ? stepOverlayHistory(1) : redoGuidance()),
+    delete: () => {
+      if (activeTab === "guidance") return editorCanvasRef.current?.deleteSelection() ?? false;
+      if (overlayCanvasRef.current?.hasSelectedEraser()) return overlayCanvasRef.current.deleteSelectedEraser();
+      const rid = selectedRegionRefValue();
+      return rid ? resetOverlayRegionLayout(rid) : false;
+    },
+    "overlay.nudge": (event, step) => {
+      const dir = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] }[event.code];
+      if (!dir) return false;
+      moveSelectedSafeRect(dir[0] * step, dir[1] * step);
+      return true;
+    },
+    "overlay.cycleRegion": (_event, step) => cycleOverlayRegion(step),
+    "overlay.openEditor": () => overlayCanvasRef.current?.openEditorForSelected() ?? false,
+    "overlay.style": (_event, style) => {
+      const rid = selectedRegionRefValue();
+      updateOverlayRegion(rid, overlayFontStylePatch(style));
+      setStatus(`R${rid} style ${style}`);
+    },
+    "overlay.fontSize": (event, sign) => {
+      // 일반 키보드의 + 는 Shift+= 라 1 step, 숫자패드 +/- 는 3 step
+      adjustOverlayFontSize(selectedRegionRefValue(), sign * (event.shiftKey ? 1 : 3));
+    },
+    "overlay.orientation": () => cycleOverlayWritingMode(selectedRegionRefValue()),
+    apply: (event) => {
+      if (typeof event.target?.blur === "function" && event.target !== document.body) event.target.blur();
+      if (activeTab === "guidance") {
+        if (!guidanceBusy && !analyzeBusy && selected) applyGuidance();
+        return true;
+      }
+      if (canRenderOverlayImage(selected) && !overlayBusy) applyOverlay();
+      return true;
+    },
+    "editor.commit": () => overlayCanvasRef.current?.commitEditor() ?? false,
+    "editor.cancel": () => overlayCanvasRef.current?.closeEditor() ?? false,
+    "help.toggle": () => setHelpOpen((open) => !open),
+  };
+
+  function handleShortcutKeyDown(event) {
+    // IME 조합 중(한글 입력 등)에는 어떤 단축키도 쓰지 않는다.
+    if (event.isComposing || event.keyCode === 229) return;
+    const target = event.target;
+    const tag = target?.tagName?.toLowerCase();
+    const isTextTarget = tag === "input" || tag === "textarea" || tag === "select" || Boolean(target?.isContentEditable);
+    // 버튼·링크 등에 포커스가 있으면 일반 Enter는 그 컨트롤의 기본 동작에 맡긴다.
+    const isInteractiveTarget = Boolean(target?.closest?.(
+      "button, a[href], input, select, textarea, summary, [role='button'], [role='link'], [role='checkbox'], [role='radio'], [role='tab'], [role='menuitem'], [contenteditable='true']",
+    ));
+    if (helpOpen && event.code === "Escape") {
+      event.preventDefault();
+      event.stopPropagation();
+      setHelpOpen(false);
+      return;
     }
-    window.addEventListener("keydown", handleKeyDown, true);
-    return () => {
-      window.removeEventListener("keydown", handleKeyDown, true);
-    };
-  }, [activeTab, sessionId, fontPath, fonts, guidance, selectedRegionId, overlayGuidance, guidanceUndoStack, guidanceRedoStack, selected?.id, selected?.has_integrated_json, overlayBusy, guidanceBusy, analyzeBusy]);
+    const contexts = [];
+    if (activeTab === "overlay" && overlayCanvasRef.current?.isEditorOpen()) contexts.push("floatingEditor");
+    if (activeTab === "guidance" || activeTab === "overlay") contexts.push(activeTab);
+    contexts.push("global");
+    for (const context of contexts) {
+      for (const entry of KEYMAP) {
+        if (entry.passive || entry.kind !== "key" || !entry.action) continue;
+        if (!entryInContext(entry, context) || !entryVisibleOnPlatform(entry)) continue;
+        if (!eventMatches(entry, event)) continue;
+        if (isTextTarget && !entry.allowInInput) continue;
+        if (!entry.allowInInput && event.code === "Enter" && !event.metaKey && !event.ctrlKey && isInteractiveTarget) continue;
+        if ((entry.when || []).some((name) => !shortcutConditions[name]?.(event))) continue;
+        const handler = shortcutActions[entry.action];
+        if (!handler) continue;
+        const result = handler(event, entry.arg);
+        // false를 돌려주면 처리하지 않은 것으로 보고 브라우저 기본 동작을 남긴다.
+        if (result === false) return;
+        event.preventDefault();
+        event.stopPropagation();
+        return;
+      }
+    }
+  }
+  keyHandlerRef.current = handleShortcutKeyDown;
+
+  useEffect(() => {
+    const onKeyDown = (event) => keyHandlerRef.current?.(event);
+    window.addEventListener("keydown", onKeyDown, true);
+    return () => window.removeEventListener("keydown", onKeyDown, true);
+  }, []);
+
+  useEffect(() => () => {
+    if (shortcutToastTimerRef.current) window.clearTimeout(shortcutToastTimerRef.current);
+  }, []);
 
   // floating text editor의 Cmd/Ctrl+Enter: 초안 반영과 같은 render에서 갱신된 overlayGuidance로 적용한다.
   // 다른 overlay 렌더가 진행 중이면 끝난 뒤 한 번 적용한다.
@@ -1309,6 +1447,8 @@ export default function App() {
           image_id: targetImage.id,
           font_path: font ?? fontPath,
           overlay_guidance: guidance || overlayGuidance,
+          // 편집기는 항상 전체 상태를 보낸다. 병합하면 실행 취소·초기화로 지운 키가 되살아난다.
+          replace: true,
         }),
       });
       const isCurrentSession = sessionIdRef.current === requestSid;
@@ -1609,7 +1749,7 @@ export default function App() {
           <textarea
             value={text}
             onClick={(event) => event.stopPropagation()}
-            onChange={(event) => updateOverlayRegion(rid, { text_override: event.target.value })}
+            onChange={(event) => updateOverlayRegion(rid, { text_override: event.target.value }, `text:${rid}`)}
           />
           <div className="region-bbox-grid" onClick={(event) => event.stopPropagation()}>
             <div className="text-align-controls" title="safe rect 안에서 텍스트를 좌/중/우 정렬합니다">
@@ -1643,7 +1783,7 @@ export default function App() {
                 max="45"
                 step="1"
                 title="회전 각도"
-                onChange={(event) => updateOverlayRegion(rid, { rotation_deg: event.target.value })}
+                onChange={(event) => updateOverlayRegion(rid, { rotation_deg: event.target.value }, `rotation:${rid}`)}
               />
             </label>
           </div>
@@ -1698,7 +1838,16 @@ export default function App() {
     });
     (guidance.manual_regions || []).forEach((item, index) => {
       const type = item.type === "unboxed" ? "Ubox" : "Bubble";
-      items.push({ key: `region-${index}`, kind: "manual_regions", index, label: `${type} ${index + 1}`, detail: item.source || "" });
+      const forcedLama = item.type === "unboxed" && item.inpaint_engine === "lama";
+      items.push({
+        key: `region-${index}`,
+        kind: "manual_regions",
+        index,
+        label: `${type} ${index + 1}`,
+        detail: forcedLama ? "LaMa 강제" : item.source || "",
+        isUbox: item.type === "unboxed",
+        forcedLama,
+      });
     });
     (guidance.tg_splits || []).forEach((item, index) => {
       items.push({ key: `tg-split-${index}`, kind: "tg_splits", index, label: `TG${item.text_group_id || "?"} split`, detail: "" });
@@ -1727,6 +1876,18 @@ export default function App() {
     if (historyItem.index >= 0 && historyItem.index < list.length) list.splice(historyItem.index, 1);
     next[historyItem.kind] = list;
     return next;
+  }
+
+  // Ubox 지우기 엔진: 기본은 배경 분류(Telea/LaMa) 자동, 켜면 LaMa로 고정한다.
+  function toggleUboxForcedLama(historyItem) {
+    setGuidanceTracked((current) => {
+      const next = cloneJson(current || defaultGuidance(null));
+      const region = (next.manual_regions || [])[historyItem.index];
+      if (!region || region.type !== "unboxed") return current;
+      if (region.inpaint_engine === "lama") delete region.inpaint_engine;
+      else region.inpaint_engine = "lama";
+      return next;
+    }, "Ubox 엔진 변경");
   }
 
   function removeGuidanceHistoryItem(historyItem, options = {}) {
@@ -1931,7 +2092,7 @@ export default function App() {
         />
         <nav className="workflow-tabs top-workflow-tabs">
           {WORKFLOW_TABS.map(([id, label]) => (
-            <button key={id} className={activeTab === id ? "active" : ""} onClick={() => setActiveTab(id)}>
+            <button key={id} className={activeTab === id ? "active" : ""} onClick={() => setActiveTab(id)} title={`${label} (${shortcutById(`tab.${id}`)})`}>
               {label}
             </button>
           ))}
@@ -1951,6 +2112,7 @@ export default function App() {
           >
             ×
           </button>
+          <button className="shortcut-help-button" type="button" onClick={() => setHelpOpen((open) => !open)} title={`단축키 도움말 (${shortcutById("help.toggle")})`}>?</button>
         </div>
       </header>
       <aside className={`sidebar ${sidebarOpen ? "open" : "collapsed"}`}>
@@ -2082,12 +2244,11 @@ export default function App() {
                 </div>
               </div>
                 <EditorCanvas
+                  ref={editorCanvasRef}
                   image={selected}
                   baseUrl={guidanceEditorUrl}
                   guidance={guidance}
                   setGuidance={setGuidanceTracked}
-                  undoGuidance={undoGuidance}
-                  redoGuidance={redoGuidance}
                   tool={tool}
                   layers={layers}
                   selectedTg={selectedTg}
@@ -2101,10 +2262,10 @@ export default function App() {
                     className={tool === id ? "active" : ""}
                     onClick={() => setTool(id)}
                     aria-label={label}
-                    title={`${label} (${TOOL_SHORTCUTS[id] || ""})`}
+                    title={`${label} (${shortcutFor("guidance", "tool", id)})`}
                   >
                     <span>{TOOL_ICONS[id]}</span>
-                    <em>{TOOL_SHORTCUTS[id]}</em>
+                    <em>{shortcutFor("guidance", "tool", id)}</em>
                   </button>
                 ))}
               </div>
@@ -2244,6 +2405,9 @@ export default function App() {
               </div>
               <div className="overlay-stage-body">
                   <OverlayCanvas
+                    ref={overlayCanvasRef}
+                    tool={overlayTool}
+                    setTool={setOverlayTool}
                     image={selected}
                     overlayGuidance={overlayGuidance}
                     setOverlayGuidance={setOverlayGuidanceTracked}
@@ -2256,6 +2420,7 @@ export default function App() {
             </section>
           </div>
         ) : null}
+
 
         {activeTab === "export" ? (
           <div className="export-workspace">
@@ -2350,7 +2515,7 @@ export default function App() {
         {activeTab === "overlay" ? <>
         <div className="section compact-section">
           <div className="row">
-            <button className="primary" onClick={applyOverlay} disabled={overlayBusy || !canRenderOverlayImage(selected)}>Apply Overlay</button>
+            <button className="primary" onClick={applyOverlay} disabled={overlayBusy || !canRenderOverlayImage(selected)} title={`Overlay 적용 (${shortcutById("overlay.apply")})`}>Apply Overlay</button>
             <button onClick={() => runFinal(true)} disabled={ocrBusy || !selected} title="현재 Additional Translation Prompt를 사용해 OCR/번역부터 다시 실행합니다.">Re-run OCR</button>
           </div>
           <label className="auto-preview-toggle">
@@ -2386,7 +2551,7 @@ export default function App() {
                     className={selectedEffectiveFontStyle === id ? "active" : ""}
                     onClick={() => selectedRegionRefValue() && updateOverlayRegion(selectedRegionRefValue(), overlayFontStylePatch(id))}
                     disabled={!selectedRegionRefValue()}
-                    title={`${label} (${Object.entries(OVERLAY_STYLE_NUMBER_HOTKEYS).find(([, style]) => style === id)?.[0] || Object.entries(FONT_STYLE_HOTKEYS).find(([, style]) => style === id)?.[0] || ""})`}
+                    title={`${label} (${shortcutById(`overlay.style.${id}`)})`}
                   >
                     <span className={`font-style-sample sample-${id}`}>{sample}</span>
                     <span className="font-style-name">{label}</span>
@@ -2437,7 +2602,7 @@ export default function App() {
                     min="0"
                     max="12"
                     value={selectedStrokeWidth}
-                    onChange={(e) => selectedRegionRefValue() && updateOverlayRegion(selectedRegionRefValue(), { stroke_width: e.target.value })}
+                    onChange={(e) => selectedRegionRefValue() && updateOverlayRegion(selectedRegionRefValue(), { stroke_width: e.target.value }, `stroke:${selectedRegionRefValue()}`)}
                     disabled={!selectedRegionRefValue()}
                   />
                 </div>
@@ -2473,13 +2638,14 @@ export default function App() {
         </div>
         </> : null}
 
+
         {activeTab === "guidance" ? <>
         <div className="section compact-section">
           <h2>Actions</h2>
           <div className="side-action-grid">
             <button onClick={clearUnsavedGuidance} disabled={guidanceBusy || analyzeBusy || !selected}>Clear Unsaved</button>
             <button className="danger" onClick={clearGuidanceOutputs} disabled={guidanceBusy || analyzeBusy || !selected}>Delete Outputs</button>
-            <button className="primary wide" onClick={applyGuidance} disabled={guidanceBusy || analyzeBusy || !selected}>Apply Analysis</button>
+            <button className="primary wide" onClick={applyGuidance} disabled={guidanceBusy || analyzeBusy || !selected} title={`말풍선 분석 적용 (${shortcutById("guidance.apply")})`}>Apply Analysis</button>
           </div>
         </div>
 
@@ -2487,18 +2653,29 @@ export default function App() {
           <div className="history-head side-history-head">
             <strong>Action History</strong>
             <div>
-              <button className="icon-button" onClick={undoGuidance} disabled={!guidanceUndoStack.length && !guidanceHistory.length} title="Undo">↶</button>
-              <button className="icon-button" onClick={redoGuidance} disabled={!guidanceRedoStack.length} title="Redo">↷</button>
+              <button className="icon-button" onClick={undoGuidance} disabled={!guidanceUndoStack.length && !guidanceHistory.length} title={`Undo (${shortcutById("edit.undo")})`}>↶</button>
+              <button className="icon-button" onClick={redoGuidance} disabled={!guidanceRedoStack.length} title={`Redo (${shortcutById("edit.redo")})`}>↷</button>
               <button className="icon-button" onClick={clearUnsavedGuidance} title="화면 guidance 초기화">×</button>
             </div>
           </div>
           {guidanceHistory.length ? (
             <div className="history-list side-history-list">
               {guidanceHistory.slice().reverse().map((item) => (
-                <button key={item.key} className="history-row" title={`${item.detail || item.label} 제거`} onClick={() => removeGuidanceHistoryItem(item)}>
-                  <span>{item.label}</span>
-                  {item.detail ? <em>{item.detail}</em> : null}
-                </button>
+                <div key={item.key} className="history-row-wrap">
+                  <button className="history-row" title={`${item.detail || item.label} 제거`} onClick={() => removeGuidanceHistoryItem(item)}>
+                    <span>{item.label}</span>
+                    {item.detail ? <em>{item.detail}</em> : null}
+                  </button>
+                  {item.isUbox ? (
+                    <button
+                      className={`history-engine-toggle${item.forcedLama ? " active" : ""}`}
+                      title={item.forcedLama ? "LaMa 강제 해제 (배경에 따라 자동 선택)" : "이 Ubox를 LaMa로 지우기"}
+                      onClick={() => toggleUboxForcedLama(item)}
+                    >
+                      LaMa
+                    </button>
+                  ) : null}
+                </div>
               ))}
             </div>
           ) : (
@@ -2691,6 +2868,8 @@ export default function App() {
           <div className="task-progress-bar"><i /></div>
         </div>
       ) : null}
+      {shortcutToast ? <div className="shortcut-toast" role="status" aria-live="polite">{shortcutToast}</div> : null}
+      <ShortcutHelp open={helpOpen} activeTab={activeTab} onClose={() => setHelpOpen(false)} />
       {guidanceNotice ? (
         <div className="notice-backdrop" role="presentation" onClick={() => setGuidanceNotice(null)}>
           <div className="notice-dialog" role="dialog" aria-modal="true" aria-label={guidanceNotice.title} onClick={(event) => event.stopPropagation()}>

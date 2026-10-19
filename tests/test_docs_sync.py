@@ -147,7 +147,7 @@ def test_retired_references_are_actually_absent() -> None:
             candidate
             for candidate in ROOT.glob(f"**/{name}")
             if "archive" not in candidate.parts
-            and not any(part.startswith(".venv") for part in candidate.parts)  # .venv-flux 등 가상환경 포함
+            and not any(part.startswith(".venv") for part in candidate.parts)  # .venv 계열 가상환경 제외
         )
     ]
     assert not revived, (
@@ -229,3 +229,51 @@ def test_canonical_docs_are_not_stale() -> None:
         + "\n\n문서 내용에 영향이 없는 변경이었다면, 문서를 함께 커밋해 시각을 맞추거나 "
         "docs/DOC_SOURCES.json의 sources에서 해당 파일을 빼세요."
     )
+
+
+# 편집기 단축키: frontend/src/keymap.js의 각 항목이 매뉴얼 단축키 표에 같은 키로 적혀 있어야 한다.
+KEYMAP_PATH = ROOT / "frontend" / "src" / "keymap.js"
+EDITOR_MANUAL_PATH = ROOT / "docs" / "editor_manual.html"
+# keymap.js 항목은 `{ id: "...", ... keys: [[...]], ...}` 꼴이고 id와 keys 사이에 중괄호가 없다.
+KEYMAP_ENTRY_PATTERN = re.compile(r'\{\s*id:\s*"([^"]+)"[^{}]*?keys:\s*(\[\[.*?\]\])', re.S)
+
+
+def _keymap_entries() -> dict[str, list[list[str]]]:
+    import json
+
+    source = KEYMAP_PATH.read_text(encoding="utf-8")
+    return {entry_id: json.loads(keys) for entry_id, keys in KEYMAP_ENTRY_PATTERN.findall(source)}
+
+
+def _manual_shortcut_rows() -> dict[str, set[str]]:
+    text = EDITOR_MANUAL_PATH.read_text(encoding="utf-8")
+    rows = {}
+    for entry_id, body in re.findall(r'<tr data-shortcut="([^"]+)">(.*?)</tr>', text, flags=re.S):
+        first_cell = re.search(r"<td>(.*?)</td>", body, flags=re.S)
+        cell = first_cell.group(1) if first_cell else ""
+        rows[entry_id] = {html_module.unescape(token).strip() for token in re.findall(r"<kbd>(.*?)</kbd>", cell)}
+    return rows
+
+
+def test_keymap_parsed() -> None:
+    """정규식이 keymap.js를 제대로 읽는지 확인한다(항목이 비면 아래 검사가 의미 없어진다)."""
+    entries = _keymap_entries()
+    assert len(entries) >= 40, f"keymap.js 항목을 {len(entries)}개만 읽었습니다. 항목 형식을 확인하세요."
+    assert "view.fit" in entries and entries["view.fit"] == [["Shift", "1"]]
+
+
+def test_keymap_entries_documented_in_manual() -> None:
+    """keymap.js의 모든 단축키가 editor_manual.html 단축키 표에 같은 키로 있어야 한다."""
+    rows = _manual_shortcut_rows()
+    problems = []
+    for entry_id, combos in _keymap_entries().items():
+        if entry_id not in rows:
+            problems.append(f"{entry_id}: 매뉴얼에 <tr data-shortcut=\"{entry_id}\"> 행이 없음")
+            continue
+        missing = sorted({token for combo in combos for token in combo} - rows[entry_id])
+        if missing:
+            problems.append(f"{entry_id}: 매뉴얼 행에 키 {missing} 없음")
+    stale = sorted(set(rows) - set(_keymap_entries()))
+    if stale:
+        problems.append(f"keymap.js에 없는 매뉴얼 행: {stale}")
+    assert not problems, "단축키 표가 keymap.js와 다릅니다:\n" + "\n".join(problems)

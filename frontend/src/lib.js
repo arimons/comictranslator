@@ -1,5 +1,6 @@
 export const TOOL_LABELS = [
   ["select", "Select"],
+  ["hand", "Hand"],
   ["tg-toggle", "TG Off"],
   ["tg-split", "TG Split"],
   ["wall", "Edge"],
@@ -9,19 +10,10 @@ export const TOOL_LABELS = [
   ["region-off", "R Off"],
 ];
 
-export const TOOL_SHORTCUTS = {
-  select: "V",
-  "tg-toggle": "D",
-  "tg-split": "T",
-  wall: "E",
-  "region-split": "L",
-  ubox: "U",
-  bubble: "S",
-  "region-off": "X",
-};
-
+// 단축키는 keymap.js가 단일 정의다.
 export const TOOL_ICONS = {
   select: "⌖",
+  hand: "✋",
   "tg-toggle": "T×",
   "tg-split": "T/",
   wall: "▱",
@@ -37,35 +29,6 @@ export const OVERLAY_REGION_COLORS = {
   bubble: "#38bdf8",
   edge: "#22c55e",
   unboxed: "#eab308",
-};
-
-export const TOOL_HOTKEYS = {
-  escape: "select",
-  v: "select",
-  b: "bubble",
-  d: "tg-toggle",
-  delete: "tg-toggle",
-  e: "wall",
-  s: "bubble",
-  t: "tg-split",
-  l: "region-split",
-  u: "ubox",
-  x: "region-off",
-};
-
-export const TOOL_CODE_HOTKEYS = {
-  Escape: "select",
-  KeyV: "select",
-  KeyB: "bubble",
-  KeyD: "tg-toggle",
-  Delete: "tg-toggle",
-  Backspace: "tg-toggle",
-  KeyE: "wall",
-  KeyS: "bubble",
-  KeyT: "tg-split",
-  KeyL: "region-split",
-  KeyU: "ubox",
-  KeyX: "region-off",
 };
 
 export const WORKFLOW_TABS = [
@@ -88,68 +51,6 @@ export const FONT_STYLES = [
 ];
 export const FONT_STYLE_IDS = FONT_STYLES.map(([id]) => id);
 export const ETC_DEFAULT_FONT_NAME = "NanumBarunpenB";
-
-export const FONT_STYLE_HOTKEYS = {
-  n: "normal",
-  r: "memory_serif",
-  e: "serif_emphasis",
-  s: "serif_emphasis",
-  b: "bold",
-  i: "impact",
-  l: "light",
-  h: "handwritten",
-  t: "etc",
-};
-
-export const FONT_STYLE_CODE_HOTKEYS = {
-  KeyN: "normal",
-  KeyR: "memory_serif",
-  KeyE: "serif_emphasis",
-  KeyS: "serif_emphasis",
-  KeyB: "bold",
-  KeyI: "impact",
-  KeyL: "light",
-  KeyH: "handwritten",
-  KeyT: "etc",
-};
-
-export const OVERLAY_STYLE_NUMBER_HOTKEYS = {
-  1: "normal",
-  2: "bold",
-  3: "impact",
-  4: "light",
-  5: "memory_serif",
-  6: "serif_bold",
-  7: "handwritten",
-  8: "serif_emphasis",
-  9: "etc",
-};
-
-export const OVERLAY_STYLE_CODE_HOTKEYS = {
-  Digit1: "normal",
-  Digit2: "bold",
-  Digit3: "impact",
-  Digit4: "light",
-  Digit5: "memory_serif",
-  Digit6: "serif_bold",
-  Digit7: "handwritten",
-  Digit8: "serif_emphasis",
-  Digit9: "etc",
-};
-
-export const WORKFLOW_TAB_NUMBER_HOTKEYS = {
-  1: "guidance",
-  2: "ocr",
-  3: "overlay",
-  4: "export",
-};
-
-export const WORKFLOW_TAB_CODE_HOTKEYS = {
-  Digit1: "guidance",
-  Digit2: "ocr",
-  Digit3: "overlay",
-  Digit4: "export",
-};
 
 export function api(path, options = {}) {
   const headers = options.body instanceof FormData ? {} : { "Content-Type": "application/json" };

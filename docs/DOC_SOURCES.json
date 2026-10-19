@@ -29,7 +29,8 @@
       "sources": [
         "main_v2.py",
         "ui_v2/index.html",
-        "pipeline/manual_guidance.py"
+        "pipeline/manual_guidance.py",
+        "frontend/src/keymap.js"
       ]
     },
     "docs/CODEBASE_FILE_MAP.md": {

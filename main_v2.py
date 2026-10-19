@@ -157,6 +157,9 @@ class OverlayRequest(BaseModel):
     overlay_guidance: dict[str, Any]
     font_path: str | None = None
     tracking_offset: int | None = None
+    # True면 기존 파일과 병합하지 않고 그대로 저장한다. 편집기가 전체 상태를 보낼 때 쓰며,
+    # 실행 취소·수동값 초기화로 지운 키가 병합 때문에 되살아나지 않게 한다.
+    replace: bool = False
 
 
 class GenerateMissingFinalRequest(BaseModel):
@@ -2281,8 +2284,12 @@ def create_app() -> FastAPI:
         source = get_image(req.session_id, req.image_id)
         # 렌더에는 경로만 필요하다. 원본 전체를 여는 여백 probe는 하지 않고 manifest 크기 정보를 쓴다.
         record = image_record(req.session_id, Path(source["input_path"]), source.get("image_sha256"), source, probe_image=False, include_detail=False)
-        existing_overlay_guidance = load_json(Path(record["overlay_guidance_json"]), default={})
-        write_json(Path(record["overlay_guidance_json"]), merge_overlay_guidance(existing_overlay_guidance, req.overlay_guidance))
+        if req.replace:
+            next_overlay_guidance = req.overlay_guidance
+        else:
+            existing_overlay_guidance = load_json(Path(record["overlay_guidance_json"]), default={})
+            next_overlay_guidance = merge_overlay_guidance(existing_overlay_guidance, req.overlay_guidance)
+        write_json(Path(record["overlay_guidance_json"]), next_overlay_guidance)
         render_overlay_for_record(record, req.font_path, req.tracking_offset)
         return {"ok": True, "image": page_record(req.session_id, req.image_id)}
 

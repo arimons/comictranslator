@@ -1300,6 +1300,52 @@ def test_overlay_apply_saves_guidance_and_runs_renderer(tmp_path, monkeypatch):
     assert response.json()["image"]["overlay_layout"]["regions"]["1"]["text_layout"] == "실제\n배치"
 
 
+def test_overlay_apply_replace_drops_removed_keys(tmp_path, monkeypatch):
+    """replace=True는 편집기 전체 상태를 그대로 저장한다(실행 취소로 지운 키가 되살아나지 않는다)."""
+    session_id = "overlay_guidance_replace"
+    monkeypatch.setattr(main_v2, "SESSION_ROOT", tmp_path / "sessions")
+    image_path = tmp_path / "sessions" / session_id / "input" / "page1.jpg"
+    image_path.parent.mkdir(parents=True)
+    image_path.write_bytes(b"image")
+    session = main_v2.ensure_session(session_id)
+    session["images"] = [{"id": "page1", "name": "page1.jpg", "input_path": str(image_path)}]
+    main_v2.save_session(session)
+    record = main_v2.image_record(session_id, image_path)
+    for key, content in {
+        "integrated_json": b"[]",
+        "masked_jpg": b"masked",
+        "regions_json": b'{"regions": []}',
+    }.items():
+        path = Path(record[key])
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(content)
+    Path(record["overlay_guidance_json"]).write_text(
+        '{"regions": {"1": {"font_style": "impact", "safe_text_rect": [1, 2, 30, 40], "text_override": "원문"}}}',
+        encoding="utf-8",
+    )
+
+    def fake_apply_text_overlay(masked, integrated, final, **kwargs):
+        Path(final).parent.mkdir(parents=True, exist_ok=True)
+        Path(final).write_bytes(b"final")
+        return 1
+
+    monkeypatch.setattr(main_v2, "apply_text_overlay", fake_apply_text_overlay)
+
+    response = TestClient(main_v2.create_app()).post(
+        "/api/overlay/apply",
+        json={
+            "session_id": session_id,
+            "image_id": "page1",
+            "overlay_guidance": {"regions": {"1": {"text_override": "원문"}}, "eraser_rects": []},
+            "replace": True,
+        },
+    )
+
+    assert response.status_code == 200
+    saved = main_v2.load_json(Path(record["overlay_guidance_json"]), default={})
+    assert saved["regions"]["1"] == {"text_override": "원문"}
+
+
 def test_overlay_apply_merges_text_override_without_dropping_font_style(tmp_path, monkeypatch):
     session_id = "overlay_guidance_merge"
     monkeypatch.setattr(main_v2, "SESSION_ROOT", tmp_path / "sessions")

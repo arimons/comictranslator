@@ -1176,6 +1176,38 @@ button.wide {
   border-bottom: 0;
 }
 
+.history-row-wrap {
+  display: flex;
+  align-items: stretch;
+  border-bottom: 1px solid #eef0f3;
+}
+
+.history-row-wrap:last-child {
+  border-bottom: 0;
+}
+
+.history-row-wrap .history-row {
+  flex: 1;
+  min-width: 0;
+  border-bottom: 0;
+}
+
+.history-engine-toggle {
+  flex: none;
+  padding: 0 8px;
+  border: 0;
+  border-left: 1px solid #eef0f3;
+  border-radius: 0;
+  background: white;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.history-engine-toggle.active {
+  background: var(--blue);
+  color: white;
+}
+
 .history-row span {
   min-width: 0;
   overflow: hidden;
@@ -2831,4 +2863,128 @@ button.wide {
   .overlay-preview-body {
     padding: 6px;
   }
+}
+
+/* 공용 보기 조작: Space·Hand 도구 이동 커서 */
+.vp-grab,
+.vp-grab * {
+  cursor: grab !important;
+}
+
+.vp-grabbing,
+.vp-grabbing * {
+  cursor: grabbing !important;
+}
+
+.file-navigator.top-file-nav {
+  grid-template-columns: 32px minmax(120px, 1fr) 32px 32px 32px;
+  max-width: 372px;
+}
+
+.file-navigator .shortcut-help-button {
+  font-weight: 800;
+  color: var(--muted);
+}
+
+/* 단축키 도움말 (?) */
+.shortcut-help {
+  width: min(760px, 100%);
+  max-height: min(720px, calc(100vh - 40px));
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+  box-shadow: var(--shadow);
+  padding: 14px 16px;
+}
+
+.shortcut-help-groups {
+  columns: 2 320px;
+  column-gap: 20px;
+}
+
+.shortcut-help-group {
+  break-inside: avoid;
+  margin-bottom: 12px;
+}
+
+.shortcut-help-group h3 {
+  margin: 0 0 6px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.shortcut-help-group dl {
+  margin: 0;
+  display: grid;
+  gap: 4px;
+}
+
+.shortcut-help-row {
+  display: grid;
+  grid-template-columns: minmax(110px, max-content) 1fr;
+  gap: 10px;
+  align-items: baseline;
+  font-size: 12px;
+}
+
+.shortcut-help-row dt {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.shortcut-help-row dd {
+  margin: 0;
+  color: var(--text);
+  line-height: 1.4;
+}
+
+.shortcut-help-row.pointer dd {
+  color: var(--muted);
+}
+
+.shortcut-help-combo {
+  display: inline-flex;
+  gap: 2px;
+}
+
+.shortcut-help-combo + .shortcut-help-combo::before {
+  content: "/";
+  color: var(--muted-2);
+  margin-right: 2px;
+}
+
+.shortcut-help kbd {
+  border: 1px solid var(--line-2);
+  border-bottom-width: 2px;
+  border-radius: 4px;
+  background: var(--panel-2);
+  padding: 0 5px;
+  font-family: "Cascadia Code", Consolas, monospace;
+  font-size: 11px;
+  line-height: 18px;
+  white-space: nowrap;
+}
+
+.shortcut-help-foot {
+  margin: 4px 0 0;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.shortcut-toast {
+  position: fixed;
+  left: 50%;
+  bottom: 44px;
+  z-index: 60;
+  transform: translateX(-50%);
+  border-radius: 8px;
+  background: var(--accent);
+  color: white;
+  padding: 8px 14px;
+  font-size: 13px;
+  font-weight: 700;
+  box-shadow: var(--shadow);
+  pointer-events: none;
 }

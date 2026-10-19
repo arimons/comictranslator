@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from "react";
 import Konva from "konva";
 import {
   OVERLAY_HANDLE_NAMES,
@@ -15,17 +15,22 @@ import {
   overlayRegionValue,
   overlayEraserRects,
 } from "./lib.js";
+import { createViewport } from "./viewportControls.js";
+import { shortcutFor } from "./keymap.js";
 
 // 클릭/더블클릭의 미세한 흔들림을 이동으로 저장하지 않기 위한 화면 px 기준
 const DRAG_COMMIT_THRESHOLD_PX = 3;
 
-export default function OverlayCanvas({ image, overlayGuidance, setOverlayGuidance, selectedRegionId, setSelectedRegionId, setStatus, onRequestApply }) {
+// 회전 핸들을 Shift와 함께 끌면 이 각도 단위로 맞춘다.
+const ROTATION_SNAP_DEG = 15;
+
+const OverlayCanvas = forwardRef(function OverlayCanvas({ image, overlayGuidance, setOverlayGuidance, selectedRegionId, setSelectedRegionId, setStatus, onRequestApply, tool = "select", setTool }, ref) {
   const hostRef = useRef(null);
   const stageRef = useRef(null);
   const imageObjRef = useRef(null);
   const transformRef = useRef({ scale: 1, x: 0, y: 0 });
-  const viewRef = useRef({ imageKey: "", scale: 1, x: 0, y: 0, hostWidth: 0, hostHeight: 0 });
   const dragRef = useRef(null);
+  const dragSeqRef = useRef(0);
   const floatingEditorRef = useRef(null);
   const overlayLayerRef = useRef(null);
   const previewNodeRef = useRef(null);
@@ -35,9 +40,34 @@ export default function OverlayCanvas({ image, overlayGuidance, setOverlayGuidan
   const loadedPageKeyRef = useRef("");
   const [floatingEditor, setFloatingEditor] = useState(null);
   const [floatingDraft, setFloatingDraft] = useState("");
-  const [eraserActive, setEraserActive] = useState(false);
-  const eraserActiveRef = useRef(false);
+  const eraserActive = tool === "eraser";
+  const toolRef = useRef(tool);
+  toolRef.current = tool;
+  const eraserActiveRef = useRef(eraserActive);
+  eraserActiveRef.current = eraserActive;
+  // 지우개 도구에서 클릭으로 고른 eraser rect 번호. Delete로 지운다.
+  const [selectedEraser, setSelectedEraser] = useState(null);
+  const selectedEraserRef = useRef(null);
   const suppressStagePointerUntilRef = useRef(0);
+  const setStatusRef = useRef(setStatus);
+  setStatusRef.current = setStatus;
+  const vpRef = useRef(null);
+  if (!vpRef.current) {
+    vpRef.current = createViewport({
+      getHost: () => hostRef.current,
+      getImage: () => imageObjRef.current,
+      getKey: () => (imageObjRef.current ? viewKey(imageObjRef.current) : imageKey()),
+      fitPadding: 0.96,
+      redraw: () => draw(),
+      onStatus: (text) => setStatusRef.current?.(text),
+      isPanTool: () => toolRef.current === "hand",
+    });
+  }
+
+  function selectEraserIndex(index) {
+    selectedEraserRef.current = index;
+    setSelectedEraser(index);
+  }
 
   function selectRegionId(nextId) {
     setSelectedRegionId(nextId);
@@ -57,32 +87,6 @@ export default function OverlayCanvas({ image, overlayGuidance, setOverlayGuidan
 
   function viewKey(img) {
     return `${imageKey()}|${img.width}x${img.height}`;
-  }
-
-  function fitTransform(width, height, img) {
-    const scale = Math.min(width / img.width, height / img.height) * 0.96;
-    return { scale, x: (width - img.width * scale) / 2, y: (height - img.height * scale) / 2 };
-  }
-
-  function ensureView(width, height, img) {
-    const current = viewRef.current;
-    const key = viewKey(img);
-    if (current.imageKey !== key || current.hostWidth !== width || current.hostHeight !== height || !Number.isFinite(current.scale)) {
-      const fit = fitTransform(width, height, img);
-      viewRef.current = { imageKey: key, scale: fit.scale, x: fit.x, y: fit.y, hostWidth: width, hostHeight: height };
-    }
-    return viewRef.current;
-  }
-
-  function clampView(view, width, height, img) {
-    const scaledW = img.width * view.scale;
-    const scaledH = img.height * view.scale;
-    const margin = 80;
-    return {
-      ...view,
-      x: scaledW <= width ? (width - scaledW) / 2 : Math.min(margin, Math.max(width - scaledW - margin, view.x)),
-      y: scaledH <= height ? (height - scaledH) / 2 : Math.min(margin, Math.max(height - scaledH - margin, view.y)),
-    };
   }
 
   function toStageRect(rect) {
@@ -148,10 +152,8 @@ export default function OverlayCanvas({ image, overlayGuidance, setOverlayGuidan
     if (container) container.style.cursor = cursor;
   }
 
-  function setEraserMode(active) {
-    eraserActiveRef.current = Boolean(active);
-    setEraserActive(Boolean(active));
-    setStageCursor(active ? "cell" : "crosshair");
+  function toggleEraserTool() {
+    setTool?.(eraserActiveRef.current ? "select" : "eraser");
   }
 
   function resizeCursorForHandle(handle) {
@@ -281,11 +283,12 @@ export default function OverlayCanvas({ image, overlayGuidance, setOverlayGuidan
     return Math.hypot(point.x - hx, point.y - hy) <= threshold;
   }
 
-  function rotationAngleForPoint(point, rect) {
+  function rotationAngleForPoint(point, rect, snap = false) {
     const [x, y, w, h] = rect;
     const cx = x + w / 2;
     const cy = y + h / 2;
-    const deg = Math.atan2(point.y - cy, point.x - cx) * 180 / Math.PI + 90;
+    let deg = Math.atan2(point.y - cy, point.x - cx) * 180 / Math.PI + 90;
+    if (snap) deg = Math.round(deg / ROTATION_SNAP_DEG) * ROTATION_SNAP_DEG;
     return Math.max(-45, Math.min(45, Math.round(deg)));
   }
 
@@ -376,7 +379,7 @@ export default function OverlayCanvas({ image, overlayGuidance, setOverlayGuidan
     });
   }
 
-  function updateRegionOverride(rid, patch) {
+  function updateRegionOverride(rid, patch, historyKey = null) {
     const key = String(rid);
     setOverlayGuidance((current) => {
       const previousRegion = ((current || {}).regions || {})[key] || {};
@@ -391,7 +394,7 @@ export default function OverlayCanvas({ image, overlayGuidance, setOverlayGuidan
           },
         },
       };
-    });
+    }, historyKey ? { historyKey } : undefined);
   }
 
   function addEraserRect(rect) {
@@ -406,6 +409,30 @@ export default function OverlayCanvas({ image, overlayGuidance, setOverlayGuidan
       ],
     }));
     setStatus(`지우개 ${clamped[2]}×${clamped[3]} 적용`);
+  }
+
+  function eraserIndexAt(point) {
+    const rects = overlayEraserRects(overlayRef.current);
+    for (let index = rects.length - 1; index >= 0; index -= 1) {
+      if (pointInRect(point, rects[index])) return index;
+    }
+    return null;
+  }
+
+  function deleteSelectedEraser() {
+    const index = selectedEraserRef.current;
+    const rects = overlayEraserRects(overlayRef.current);
+    if (index == null || index < 0 || index >= rects.length) {
+      selectEraserIndex(null);
+      return false;
+    }
+    setOverlayGuidance((current) => ({
+      ...(current || { regions: {} }),
+      eraser_rects: overlayEraserRects(current).filter((_rect, itemIndex) => itemIndex !== index),
+    }));
+    selectEraserIndex(null);
+    setStatus(`지우개 영역 ${index + 1} 삭제`);
+    return true;
   }
 
   function floatingEditorPositionForRect(rect) {
@@ -457,12 +484,65 @@ export default function OverlayCanvas({ image, overlayGuidance, setOverlayGuidan
   }
 
   function applyFloatingEditor() {
-    if (!floatingEditor?.rid) return;
+    if (!floatingEditor?.rid) return false;
     updateRegionOverride(floatingEditor.rid, { text_override: floatingDraft });
     closeFloatingEditor();
     const region = overlayControlItems(imageRef.current, overlayRef.current).find((item) => overlayItemKey(item) === String(floatingEditor.rid));
     setStatus(`${region ? overlayItemLabel(region) : floatingEditor.rid} text 적용`);
+    return true;
   }
+
+  function regionRectByKey(key) {
+    if (key == null) return null;
+    const region = overlayControlItems(imageRef.current, overlayRef.current).find((item) => overlayItemKey(item) === String(key));
+    return region ? regionDisplayRect(region) : null;
+  }
+
+  useImperativeHandle(ref, () => ({
+    fit: () => vpRef.current.fit(),
+    zoom100: () => vpRef.current.zoom100(),
+    zoomBy: (factor) => vpRef.current.zoomBy(factor),
+    panBy: (dx, dy) => vpRef.current.panBy(dx, dy),
+    zoomToSelection: () => {
+      const rect = regionRectByKey(selectedRegionRef.current);
+      if (!rect) {
+        setStatus("확대할 선택 region 없음");
+        return false;
+      }
+      return vpRef.current.zoomToRect(rect);
+    },
+    ensureRegionVisible: (key) => {
+      const rect = regionRectByKey(key);
+      return rect ? vpRef.current.ensureVisible(rect) : false;
+    },
+    isEditorOpen: () => Boolean(floatingEditor),
+    openEditorForSelected: () => {
+      const key = selectedRegionRef.current;
+      const rect = regionRectByKey(key);
+      if (!rect) return false;
+      openFloatingEditor(String(key), rect);
+      return true;
+    },
+    closeEditor: () => {
+      if (!floatingEditor) return false;
+      closeFloatingEditor();
+      setStatus("대사 편집 취소");
+      return true;
+    },
+    commitEditor: () => {
+      // 초안을 먼저 overlay guidance에 반영한 뒤 Overlay 적용을 요청한다.
+      if (!applyFloatingEditor()) return false;
+      onRequestApply?.();
+      return true;
+    },
+    hasSelectedEraser: () => selectedEraserRef.current != null,
+    clearEraserSelection: () => {
+      if (selectedEraserRef.current == null) return false;
+      selectEraserIndex(null);
+      return true;
+    },
+    deleteSelectedEraser,
+  }));
 
   function setPreviewRect(preview) {
     const layer = overlayLayerRef.current;
@@ -519,19 +599,20 @@ export default function OverlayCanvas({ image, overlayGuidance, setOverlayGuidan
       return;
     }
 
-    const view = ensureView(width, height, img);
+    const view = vpRef.current.ensure(width, height, img);
     transformRef.current = { scale: view.scale, x: view.x, y: view.y };
     layer.add(new Konva.Image({ image: img, ...toStageRect([0, 0, img.width, img.height]) }));
 
-    overlayEraserRects(overlayRef.current).forEach((rect) => {
+    overlayEraserRects(overlayRef.current).forEach((rect, index) => {
       if (!Array.isArray(rect) || rect.length < 4) return;
+      const isSelectedEraser = index === selectedEraserRef.current;
       layer.add(new Konva.Rect({
         ...toStageRect(rect),
         fill: "white",
-        opacity: 0.42,
-        stroke: "#06b6d4",
-        strokeWidth: 1,
-        dash: [5, 4],
+        opacity: isSelectedEraser ? 0.6 : 0.42,
+        stroke: isSelectedEraser ? "#0e7490" : "#06b6d4",
+        strokeWidth: isSelectedEraser ? 2.5 : 1,
+        dash: isSelectedEraser ? [] : [5, 4],
         listening: false,
       }));
     });
@@ -661,43 +742,23 @@ export default function OverlayCanvas({ image, overlayGuidance, setOverlayGuidan
     layer.draw();
   }
 
-  function zoomAt(stage, deltaY) {
-    const img = imageObjRef.current;
-    const host = hostRef.current;
-    const pointer = stage.getPointerPosition();
-    if (!img || !host || !pointer) return;
-    const width = host.clientWidth || 800;
-    const height = host.clientHeight || 600;
-    const old = transformRef.current;
-    const fit = fitTransform(width, height, img);
-    const nextScale = Math.min(fit.scale * 10, Math.max(fit.scale, old.scale * (deltaY > 0 ? 1 / 1.16 : 1.16)));
-    const imagePoint = { x: (pointer.x - old.x) / old.scale, y: (pointer.y - old.y) / old.scale };
-    viewRef.current = clampView({
-      imageKey: viewKey(img),
-      scale: nextScale,
-      x: pointer.x - imagePoint.x * nextScale,
-      y: pointer.y - imagePoint.y * nextScale,
-      hostWidth: width,
-      hostHeight: height,
-    }, width, height, img);
-    draw();
-  }
-
   useEffect(() => {
     const host = hostRef.current;
     if (!host) return;
     host.innerHTML = "";
     stageRef.current = new Konva.Stage({ container: host, width: host.clientWidth || 800, height: host.clientHeight || 600 });
     const stage = stageRef.current;
-    const onWheel = (event) => {
-      event.evt.preventDefault();
-      zoomAt(stage, event.evt.deltaY);
-    };
+    const vp = vpRef.current;
+    vp.attach();
     const onDoubleClick = (event) => {
       if (isFloatingEditorEvent(event)) return;
       const point = pointerToImage(stage);
       const hit = findRegionAt(point);
-      if (!hit) return;
+      if (!hit) {
+        // 빈 곳 더블클릭은 화면 맞춤
+        vp.fit();
+        return;
+      }
       const key = overlayItemKey(hit);
       openFloatingEditor(key, regionDisplayRect(hit));
       dragRef.current = null;
@@ -711,6 +772,7 @@ export default function OverlayCanvas({ image, overlayGuidance, setOverlayGuidan
       if (eraserActiveRef.current) {
         closeFloatingEditor();
         dragRef.current = {
+          startClient: eventClientPoint(event),
           start: point,
           active: true,
           mode: "eraser",
@@ -737,7 +799,9 @@ export default function OverlayCanvas({ image, overlayGuidance, setOverlayGuidan
       const handle = wasSelectedHit && !rotateHit ? rotatedHandleAt(point, safeRect, rotationDeg) : null;
       const moveHit = wasSelectedHit && pointInRotatedRect(point, safeRect, rotationDeg);
       const mode = rotateHit ? "rotate" : (handle ? "resize" : (moveHit ? "move" : "select"));
+      dragSeqRef.current += 1;
       dragRef.current = {
+        id: dragSeqRef.current,
         start: point,
         startClient: eventClientPoint(event),
         moved: false,
@@ -789,11 +853,12 @@ export default function OverlayCanvas({ image, overlayGuidance, setOverlayGuidan
       if (rect && rect[2] >= 4 && rect[3] >= 4) {
         setPreviewRect(drag?.mode === "eraser" ? { tool: "eraser", rect } : rect);
       } else if (drag?.mode === "rotate" && drag.startRect && selectedRegionRef.current) {
-        const angle = rotationAngleForPoint(point, drag.startRect);
+        const angle = rotationAngleForPoint(point, drag.startRect, Boolean((event?.evt || event)?.shiftKey));
         // window/stage mousemove가 같은 이벤트로 두 번 들어오므로 같은 각도는 다시 커밋하지 않는다.
         if (angle === drag.lastAngle) return;
         drag.lastAngle = angle;
-        updateRegionOverride(selectedRegionRef.current, { rotation_deg: angle });
+        // 한 번의 회전 드래그는 실행 취소 기록 한 칸으로 묶는다.
+        updateRegionOverride(selectedRegionRef.current, { rotation_deg: angle }, `rotate:${drag.id}`);
         setStatus(`${selectedRegionRef.current} rotation ${angle}°`);
       }
     };
@@ -810,12 +875,20 @@ export default function OverlayCanvas({ image, overlayGuidance, setOverlayGuidan
       // 클릭/더블클릭(이동 없음)은 safe rect·회전을 manual override로 저장하지 않는다.
       const moved = Boolean(drag?.moved || (drag?.active && dragMovedEnough(drag, event)));
       if (drag?.mode === "eraser") {
-        if (rect && rect[2] >= 4 && rect[3] >= 4) addEraserRect(rect);
+        if (rect && rect[2] >= 4 && rect[3] >= 4 && moved) {
+          addEraserRect(rect);
+          selectEraserIndex(null);
+        } else {
+          // 끌지 않고 클릭하면 그 자리의 지우개 영역을 고른다 (Delete로 삭제).
+          const index = eraserIndexAt(end);
+          selectEraserIndex(index);
+          if (index != null) setStatus(`지우개 영역 ${index + 1} 선택 (Delete로 삭제)`);
+        }
       } else if (drag?.mode === "rotate") {
         if (moved && drag.startRect && selectedRegionRef.current) {
-          const angle = rotationAngleForPoint(end, drag.startRect);
+          const angle = rotationAngleForPoint(end, drag.startRect, Boolean((event?.evt || event)?.shiftKey));
           if (angle !== drag.lastAngle) {
-            updateRegionOverride(selectedRegionRef.current, { rotation_deg: angle });
+            updateRegionOverride(selectedRegionRef.current, { rotation_deg: angle }, `rotate:${drag.id}`);
             setStatus(`${selectedRegionRef.current} rotation ${angle}°`);
           }
         }
@@ -835,7 +908,6 @@ export default function OverlayCanvas({ image, overlayGuidance, setOverlayGuidan
       dragRef.current = null;
       clearPreviewRect();
     };
-    stage.on("wheel", onWheel);
     stage.on("dblclick dbltap", onDoubleClick);
     stage.on("mousedown touchstart", onDown);
     stage.on("mousemove touchmove", onMove);
@@ -851,29 +923,14 @@ export default function OverlayCanvas({ image, overlayGuidance, setOverlayGuidan
       if (!dragRef.current?.active) return;
       onUp(event);
     };
-    const onKeyDown = (event) => {
-      const tag = event.target?.tagName?.toLowerCase();
-      if (tag === "input" || tag === "textarea" || tag === "select" || event.target?.isContentEditable) return;
-      if (event.metaKey || event.ctrlKey || event.altKey) return;
-      if (String(event.key || "").toLowerCase() !== "d" && event.code !== "KeyD") return;
-      event.preventDefault();
-      setEraserMode(true);
-    };
-    const onKeyUp = (event) => {
-      if (String(event.key || "").toLowerCase() !== "d" && event.code !== "KeyD") return;
-      setEraserMode(false);
-    };
     window.addEventListener("resize", resize);
     window.addEventListener("mousemove", onWindowMove, true);
     window.addEventListener("mouseup", onWindowUp, true);
-    document.addEventListener("keydown", onKeyDown, true);
-    document.addEventListener("keyup", onKeyUp, true);
     return () => {
+      vp.detach();
       window.removeEventListener("resize", resize);
       window.removeEventListener("mousemove", onWindowMove, true);
       window.removeEventListener("mouseup", onWindowUp, true);
-      document.removeEventListener("keydown", onKeyDown, true);
-      document.removeEventListener("keyup", onKeyUp, true);
       stage.destroy();
       stageRef.current = null;
     };
@@ -881,7 +938,21 @@ export default function OverlayCanvas({ image, overlayGuidance, setOverlayGuidan
 
   useEffect(() => {
     closeFloatingEditor();
+    selectEraserIndex(null);
   }, [image?.id, image?.input_url]);
+
+  useEffect(() => {
+    // 도구가 바뀌면 커서와 지우개 선택을 정리한다.
+    setStageCursor(tool === "eraser" ? "cell" : "crosshair");
+    if (tool !== "eraser") selectEraserIndex(null);
+    vpRef.current.refreshCursor();
+  }, [tool]);
+
+  useEffect(() => {
+    // 실행 취소 등으로 eraser rect가 줄면 범위를 벗어난 선택을 지운다.
+    const index = selectedEraserRef.current;
+    if (index != null && index >= overlayEraserRects(overlayGuidance).length) selectEraserIndex(null);
+  }, [overlayGuidance]);
 
   useEffect(() => {
     const pageKey = imageKey();
@@ -910,7 +981,7 @@ export default function OverlayCanvas({ image, overlayGuidance, setOverlayGuidan
 
   useEffect(() => {
     draw();
-  }, [image, overlayGuidance, selectedRegionId, eraserActive]);
+  }, [image, overlayGuidance, selectedRegionId, eraserActive, selectedEraser]);
 
   const editorRegion = floatingEditor
     ? overlayControlItems(image, overlayGuidance).find((region) => overlayItemKey(region) === String(floatingEditor.rid))
@@ -924,9 +995,9 @@ export default function OverlayCanvas({ image, overlayGuidance, setOverlayGuidan
           className={eraserActive ? "active" : ""}
           onClick={(event) => {
             event.preventDefault();
-            setEraserMode(!eraserActiveRef.current);
+            toggleEraserTool();
           }}
-          title="지우개. 클릭해서 켜고 끄거나 D 키를 누른 채 드래그"
+          title={`지우개 (${shortcutFor("overlay", "tool", "eraser")}). 드래그해 영역 추가, 클릭으로 영역 선택 후 Delete`}
         >
           ⌫
         </button>
@@ -961,19 +1032,12 @@ export default function OverlayCanvas({ image, overlayGuidance, setOverlayGuidan
             <strong>{overlayItemLabel(editorRegion)}</strong>
             <button type="button" className="icon-button" onClick={closeFloatingEditor} title="닫기">×</button>
           </div>
+          {/* Esc(취소)와 Cmd/Ctrl+Enter(반영 후 render)는 App의 전역 디스패처가 처리한다. */}
           <textarea
             rows={7}
+            autoFocus
             value={floatingDraft}
             onChange={(event) => setFloatingDraft(event.target.value)}
-            onKeyDown={(event) => {
-              if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
-                event.preventDefault();
-                event.stopPropagation();
-                // 초안을 먼저 overlay guidance에 반영한 뒤 Overlay 적용을 요청한다.
-                applyFloatingEditor();
-                onRequestApply?.();
-              }
-            }}
             placeholder="번역문을 입력하세요"
           />
           <div className="floating-text-editor-actions">
@@ -984,4 +1048,6 @@ export default function OverlayCanvas({ image, overlayGuidance, setOverlayGuidan
       ) : null}
     </div>
   );
-}
+});
+
+export default OverlayCanvas;

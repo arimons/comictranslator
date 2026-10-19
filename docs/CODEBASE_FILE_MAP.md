@@ -24,6 +24,9 @@ NEW_COMIC_TRANSLATOR/
 │       ├── App.jsx              # 세션/이미지 목록/워크플로우 탭 전체 상태
 │       ├── EditorCanvas.jsx      # Step 3 말풍선 분석 캔버스 (Konva)
 │       ├── OverlayCanvas.jsx     # Step 5 텍스트 오버레이 편집 캔버스 (Konva)
+│       ├── keymap.js             # 키보드·마우스 단축키 단일 정의
+│       ├── viewportControls.js   # 두 캔버스 공용 확대/이동/맞춤
+│       ├── ShortcutHelp.jsx      # ? 단축키 도움말
 │       └── lib.js                # 공용 순수 헬퍼 함수 + 상수
 ├── run_pipeline.py             # CLI 진입점
 ├── run_debug_pipeline.py       # Debug 이미지 일괄 실행 wrapper
@@ -154,6 +157,9 @@ guidance(수동 보정)가 있는 이미지는 `guidance_digest`(guidance 내용
 | `frontend/src/lib.js` | `api()`/`apiStream()` fetch 헬퍼, TG·region·guidance·overlay 관련 순수 함수와 상수, 세션별 OCR 설정(추가 프롬프트·모델) localStorage 저장 |
 | `frontend/src/EditorCanvas.jsx` | Step 3 캔버스 — TG on/off, edge barrier, manual bubble/ubox, bubble seed 등 guidance 편집 |
 | `frontend/src/OverlayCanvas.jsx` | Step 5 캔버스 — 오버레이 안전 영역 이동/리사이즈/회전, eraser rect 편집. 화면 기준 3px 이상 끌었을 때만 수동 위치로 저장 |
+| `frontend/src/keymap.js` | 단축키 단일 정의(키 조합, 탭 범위, 조건, 동작 id, 설명). App 디스패처·툴바 tooltip·도움말이 읽고, `tests/test_docs_sync.py`가 `docs/editor_manual.html` 단축키 표와 대조 |
+| `frontend/src/viewportControls.js` | 두 Konva 캔버스 공용 보기 조작 — 휠=이동, 핀치·Ctrl/Cmd+휠=확대, Space·휠버튼·Hand 도구 드래그 이동, 맞춤/100%/선택 확대 |
+| `frontend/src/ShortcutHelp.jsx` | `?`로 여는 단축키 도움말. 현재 탭의 keymap 항목을 묶어 표시 |
 | `frontend/src/App.jsx` | 세션 관리, 이미지 목록, 워크플로우 탭(분석/OCR/오버레이/내보내기) 전체 상태 |
 | `frontend/src/main.jsx` | React 엔트리포인트 |
 
