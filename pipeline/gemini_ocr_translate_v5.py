@@ -25,7 +25,6 @@ from google.genai import types
 from dotenv import load_dotenv
 
 try:
-    from pipeline.region_types import TEXT_BASED, region_processing_basis
     from pipeline.font_style_analyzer import (
         _normalized_render_hint,
         _clip_rect,
@@ -43,7 +42,6 @@ try:
         _style_features_for_anchor_ids,
     )
 except ImportError:
-    from region_types import TEXT_BASED, region_processing_basis
     from font_style_analyzer import (
         _normalized_render_hint,
         _clip_rect,
@@ -584,7 +582,7 @@ def _is_unboxed_consolidated_region(region: dict) -> bool:
         return True
     consolidated = region.get("consolidated_text_group") or {}
     tg_ids = consolidated.get("text_group_ids") or []
-    return region_processing_basis(region) == TEXT_BASED and len(tg_ids) > 1
+    return region.get("type") == "unboxed" and len(tg_ids) > 1
 
 
 def _collapse_segments_for_consolidated_unboxed(
