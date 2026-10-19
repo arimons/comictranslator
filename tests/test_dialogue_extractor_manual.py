@@ -264,6 +264,28 @@ def test_complex_unboxed_lama_uses_tg_rect_mask_without_extra_dilate():
     assert selected[5, 5] == 0
 
 
+def test_complex_unboxed_with_visible_text_uses_ubox_style_stroke_mask():
+    # 검은 그림 위 흰 글자: 사각형 전체가 아니라 글자 획(+확장)만 지운다.
+    roi = np.zeros((120, 60, 3), dtype=np.uint8)
+    cv2.rectangle(roi, (26, 30), (32, 80), (255, 255, 255), -1)
+    candidate = {
+        "text_mask": np.zeros((120, 60), dtype=np.uint8),
+        "lane_mask": np.full((120, 60), 255, dtype=np.uint8),
+        "roi": roi,
+        "roi_rect": [100, 200, 60, 120],
+        "tg_rect": [120, 225, 20, 60],
+        "background_class": "dark_bg",
+        "recommended_inpaint_engine": "lama",
+    }
+
+    selected, meta = _select_unboxed_inpaint_mask(candidate)
+
+    assert meta["mask_strategy"] == "ubox_style_stroke_lama"
+    assert selected[55, 29] == 255  # 글자 획
+    assert selected[55, 36] == 255  # 확장으로 덮인 외곽
+    assert selected[30, 15] == 0    # 사각형 안이지만 글자에서 먼 배경은 남긴다
+
+
 def test_furigana_pass_uses_rect_plus_furigana_lama_mask():
     text_mask = np.zeros((80, 50), dtype=np.uint8)
     text_mask[10:25, 10:20] = 255

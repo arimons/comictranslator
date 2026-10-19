@@ -2003,6 +2003,33 @@ def _rect_mask_in_roi(mask_shape: Tuple[int, int], roi_rect: List[int], rect: Li
     return mask
 
 
+def _ubox_style_mask_in_roi(candidate: Dict[str, Any], pad: int = 8) -> np.ndarray | None:
+    """자동 unboxed 후보에 수동 Ubox와 같은 글자 마스크를 만든다(ROI 좌표). 너무 작으면 None.
+
+    TG 사각형(+pad)을 Ubox로 보고, 박스 밝기로 글자 색을 하나 정해 그 색 픽셀만 고른 뒤 넓힌다.
+    흰 글자+검은 외곽선처럼 테두리가 있는 글자는 넉넉한 확장으로 외곽선까지 덮여야 LaMa가 흔적을 되살리지 않는다.
+    (위치마다 글자 색을 따로 정하면 외곽선이 마스크 밖에 남아 흰 얼룩이 생겼다.)
+    """
+    roi = candidate["roi"]
+    rx, ry, _rw, _rh = _as_rect(candidate.get("roi_rect", [0, 0, 0, 0]))
+    tx, ty, tw, th = _as_rect(candidate.get("tg_rect", [0, 0, 0, 0]))
+    if tw <= 0 or th <= 0:
+        return None
+    box = [tx - rx - pad, ty - ry - pad, tw + pad * 2, th + pad * 2]
+    clipped, text_mask = _manual_ubox_text_mask(roi, box, [])
+    if text_mask is None:
+        return None
+    x, y, w, h = clipped
+    if _classify_manual_ubox_background(roi[y:y + h, x:x + w], text_mask).get("manual_mask_polarity") == "bright":
+        clipped, text_mask = _manual_ubox_text_mask(roi, box, [], polarity="bright", dilate_px=6)
+        if text_mask is None:
+            return None
+        x, y, w, h = clipped
+    mask = np.zeros(roi.shape[:2], dtype=np.uint8)
+    mask[y:y + h, x:x + w] = text_mask
+    return mask if int(np.count_nonzero(mask)) >= 20 else None
+
+
 def _select_unboxed_inpaint_mask(candidate: Dict[str, Any]) -> Tuple[np.ndarray, Dict[str, Any]]:
     """배경 복잡도에 따라 LaMa에 넘길 unboxed 마스크를 선택한다."""
     text_mask = candidate["text_mask"]
@@ -2024,6 +2051,15 @@ def _select_unboxed_inpaint_mask(candidate: Dict[str, Any]) -> Tuple[np.ndarray,
             }
 
     if engine == "lama" and background_class in {"mixed_line_art", "dark_bg"}:
+        # 사각형 전체를 지우면 그림 위 글자(머리카락 등)에서 LaMa가 사각형 안 그림을 통째로 새로 그려 뭉개진다.
+        # 수동 Ubox와 같은 글자 마스크를 먼저 쓰고, 글자가 안 잡힐 때만 사각형으로 지운다.
+        stroke_mask = _ubox_style_mask_in_roi(candidate)
+        if stroke_mask is not None:
+            return stroke_mask, {
+                "mask_strategy": "ubox_style_stroke_lama",
+                "extra_dilate": 0,
+                "extra_dilate_reason": "complex_background_stroke_mask",
+            }
         rect_mask = _rect_mask_in_roi(
             text_mask.shape,
             _as_rect(candidate.get("roi_rect", [0, 0, 0, 0])),
