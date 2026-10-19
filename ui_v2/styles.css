@@ -194,7 +194,7 @@ textarea {
   border-bottom: 1px solid var(--line);
   background: var(--panel);
   display: grid;
-  grid-template-columns: max-content minmax(120px, 190px) minmax(430px, 1fr) minmax(220px, 340px);
+  grid-template-columns: max-content minmax(100px, 170px) minmax(360px, 1fr) max-content minmax(220px, 340px);
   gap: 14px;
   align-items: stretch;
   padding: 0 14px;
@@ -3277,3 +3277,28 @@ button.wide {
   box-shadow: var(--shadow);
   pointer-events: none;
 }
+
+/* 작품별 용어집은 편집 상태와 독립된 창에서 검토한다. */
+.glossary-toggle { white-space: nowrap; font-size: 12px; }
+.glossary-backdrop { position: fixed; inset: 0; z-index: 3000; display: flex; align-items: center; justify-content: center; padding: 24px; background: #0006; }
+.glossary-dialog { width: min(760px, 100%); max-height: 90vh; overflow: auto; background: var(--panel); color: var(--text); border: 1px solid var(--line); border-radius: 12px; padding: 24px; box-shadow: var(--shadow); text-align: left; }
+.glossary-heading, .glossary-work, .glossary-term-heading { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+.glossary-heading h2 { margin: 0; font-size: 20px; }
+.glossary-dialog label { display: grid; gap: 6px; margin: 14px 0; }
+.glossary-dialog input, .glossary-dialog select { width: 100%; min-width: 0; }
+.glossary-dialog .row { display: flex; gap: 8px; margin: 10px 0; }
+.glossary-dialog .row input { flex: 1; }
+.glossary-dialog p { line-height: 1.6; font-size: 13px; white-space: normal; }
+.glossary-dialog summary { cursor: pointer; padding: 10px 0; }
+.glossary-work { margin-top: 20px; flex-wrap: wrap; }
+.glossary-work span, .glossary-term-heading span { color: var(--muted); font-size: 12px; }
+.glossary-term { border: 1px solid var(--line); border-radius: 8px; padding: 14px; margin: 10px 0; }
+.glossary-term.review { border-left: 4px solid var(--orange); }
+.glossary-term.auto, .glossary-term.accepted { border-left: 4px solid var(--green); }
+.glossary-term p { margin: 6px 0; }
+.glossary-error { color: var(--red); }
+.glossary-citation { padding: 8px; border-top: 1px solid var(--line); overflow-wrap: anywhere; }
+.glossary-citation a { color: var(--blue); }
+.glossary-summary { white-space: pre-wrap !important; }
+.glossary-search-suggestions { width: 100%; height: 180px; border: 0; margin-top: 12px; }
+@media (max-width: 800px) { .glossary-backdrop { padding: 8px; } .glossary-dialog { padding: 16px; } .glossary-toggle { max-width: 145px; overflow: hidden; text-overflow: ellipsis; } }

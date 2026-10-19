@@ -40,6 +40,7 @@ from pipeline.region_types import regions_with_processing_basis
 from pipeline.openai_image_redraw import redraw_image_with_openai
 from pipeline.pipeline_runner import DEFAULT_FONT, run_single_image, stream_subprocess
 from pipeline.render_text_overlay import apply_text_overlay
+from pipeline.work_glossary import GlossaryStore, glossary_snapshot
 
 load_dotenv()
 
@@ -64,6 +65,35 @@ OCR_SKIP_REASON_NO_REGIONS = "no_ocr_regions"
 OCR_SKIP_REASON_MISSING_SHEET = "missing_ocr_sheet"
 _LOAD_HYDRATE_LOCK = threading.Lock()
 _LOAD_HYDRATE_RUNNING: set[tuple[str, str]] = set()
+_GLOSSARY_STORES: dict[str, GlossaryStore] = {}
+_GLOSSARY_STORE_LOCK = threading.Lock()
+
+
+def glossary_store() -> GlossaryStore:
+    root = SESSION_ROOT.parent / "v2_glossaries"
+    with _GLOSSARY_STORE_LOCK:
+        key = str(root)
+        if key not in _GLOSSARY_STORES:
+            _GLOSSARY_STORES[key] = GlossaryStore(root)
+        return _GLOSSARY_STORES[key]
+
+
+def glossary_binding_path(session_id: str) -> Path:
+    return session_dir(session_id) / "work" / "glossary_binding.json"
+
+
+def session_glossary(session_id: str) -> dict | None:
+    binding = load_json(glossary_binding_path(session_id), default={})
+    return glossary_store().read(binding["work_id"]) if binding.get("work_id") else None
+
+
+def session_glossary_snapshot(session_id: str) -> dict:
+    data = session_glossary(session_id)
+    if data and data.get("status") == "researching":
+        raise ValueError("작품 용어집 조사 중입니다. 완료 후 번역을 시작하세요.")
+    return glossary_snapshot(data)
+
+
 ANALYSIS_CACHE_ARTIFACTS = {
     "cv_json": "cv.json",
     "text_groups_json": "text_groups.json",
@@ -111,6 +141,26 @@ class ImportPathRequest(BaseModel):
 class SessionMetaRequest(BaseModel):
     session_id: str
     project_name: str = ""
+
+
+class GlossaryConfirmRequest(BaseModel):
+    session_id: str
+    title: str = ""
+    author: str = ""
+    edition: str = ""
+    work_id: str | None = None
+
+
+class GlossaryResearchRequest(BaseModel):
+    session_id: str
+
+
+class GlossaryReviewRequest(BaseModel):
+    session_id: str
+    work_id: str
+    entry_id: str
+    decision: str
+    target: str | None = None
 
 
 class SessionDeleteRequest(BaseModel):
@@ -1843,7 +1893,10 @@ def run_final_for_item(
     log_callback=None,
     ocr_model: str | None = None,
     replace_overlay: bool = False,
+    glossary_context: dict | None = None,
 ) -> dict[str, Any]:
+    context = glossary_context if glossary_context is not None else session_glossary_snapshot(session_id)
+    translation_prompt = "\n\n".join(part for part in (context.get("prompt", ""), extra_prompt) if part)
     record = image_record(session_id, Path(item["input_path"]), item.get("image_sha256"))
     clusters = current_clusters_path(record, record["id"])
     font = font_path or DEFAULT_FONT
@@ -1883,7 +1936,7 @@ def run_final_for_item(
         "--ocr-sheet-json",
         record["regions_json"],
         # '-반말로'처럼 '-'로 시작하는 프롬프트도 값으로 넘어가도록 '=' 형식을 쓴다.
-        f"--extra-prompt={extra_prompt}",
+        f"--extra-prompt={translation_prompt}",
         *(["--model", ocr_model] if ocr_model else []),
     ]
     if log_callback is None:
@@ -1892,6 +1945,11 @@ def run_final_for_item(
         log_callback("Step 4 Gemini OCR/번역 시작")
         run_subprocess_stream(ocr_cmd, timeout=360, log_callback=log_callback)
         log_callback("Step 6 Text Overlay 시작")
+    write_json(Path(record["work_dir"]) / "json" / f"{record['id']}_glossary_snapshot.json", context)
+    integrated = load_json(record["integrated_json"], default={})
+    if integrated:
+        integrated["glossary"] = {key: value for key, value in context.items() if key != "prompt"}
+        write_json(record["integrated_json"], integrated)
     remap_overlay_guidance_for_record(record, log_callback=log_callback)
     render_overlay_for_record(record, font, tracking_offset, log_callback=log_callback)
     mark_ocr_status(record, "done", "OCR/번역 완료", "integrated.json 생성 완료")
@@ -1900,6 +1958,7 @@ def run_final_for_item(
 
 def stream_run_final(req: RunFinalRequest):
     event_queue: queue.Queue[dict[str, Any] | None] = queue.Queue()
+    glossary_context: dict = {}
 
     def emit(payload: dict[str, Any]) -> None:
         event_queue.put(payload)
@@ -1928,6 +1987,7 @@ def stream_run_final(req: RunFinalRequest):
                 log_callback=log_emit,
                 ocr_model=req.ocr_model,
                 replace_overlay=req.replace and req.image_id != "all",
+                glossary_context=glossary_context,
             )
             skip_detail = integrated_skip_detail(refreshed.get("integrated"))
             if skip_detail:
@@ -1959,7 +2019,10 @@ def stream_run_final(req: RunFinalRequest):
             return False
 
     def run() -> None:
+        nonlocal glossary_context
         try:
+            # 같은 배치 안에서는 조사/검토 시점에 따라 페이지별 용어가 달라지지 않는다.
+            glossary_context = session_glossary_snapshot(req.session_id)
             data = ensure_session(req.session_id)
             if req.image_id == "all":
                 targets = sorted_image_records(data.get("images", []))
@@ -2507,6 +2570,52 @@ class RevalidatingStaticFiles(StaticFiles):
 def create_app() -> FastAPI:
     app = FastAPI(title="Comic Translator Review UI")
 
+    @app.get("/api/glossary/{session_id}")
+    def read_glossary(session_id: str) -> dict:
+        try:
+            return {"glossary": session_glossary(session_id), "works": glossary_store().list_works()}
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @app.post("/api/glossary/confirm")
+    def confirm_glossary(req: GlossaryConfirmRequest) -> dict:
+        try:
+            ensure_session(req.session_id)
+            store = glossary_store()
+            if req.work_id:
+                data = store.read(req.work_id)
+                wid = data["work_id"]
+            else:
+                wid = store.confirm({"title": req.title, "author": req.author, "edition": req.edition})
+                data = store.read(wid)
+            write_json(glossary_binding_path(req.session_id), {"work_id": wid})
+            # 이미 조사한 작품은 재사용한다. 확인된 새 작품만 자동 조사를 시작한다.
+            if data["status"] == "idle":
+                data = store.start(wid)
+            return {"glossary": data, "works": store.list_works()}
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @app.post("/api/glossary/research")
+    def research_glossary(req: GlossaryResearchRequest) -> dict:
+        try:
+            data = session_glossary(req.session_id)
+            if not data:
+                raise ValueError("먼저 조사할 작품을 확인하세요.")
+            return {"glossary": glossary_store().start(data["work_id"])}
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @app.post("/api/glossary/review")
+    def review_glossary(req: GlossaryReviewRequest) -> dict:
+        try:
+            data = session_glossary(req.session_id)
+            if not data or data["work_id"] != req.work_id:
+                raise ValueError("작품이 변경됐습니다. 용어집을 다시 여세요.")
+            return {"glossary": glossary_store().review(req.work_id, req.entry_id, req.decision, req.target)}
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
     @app.post("/api/sessions/new")
     def create_session() -> dict[str, Any]:
         data = ensure_session()
@@ -2648,6 +2757,10 @@ def create_app() -> FastAPI:
 
     @app.post("/api/run-final")
     def run_final(req: RunFinalRequest) -> dict[str, Any]:
+        try:
+            context = session_glossary_snapshot(req.session_id)
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
         source = get_image(req.session_id, req.image_id)
         try:
             refreshed = run_final_for_item(
@@ -2660,6 +2773,7 @@ def create_app() -> FastAPI:
                 req.force,
                 ocr_model=req.ocr_model,
                 replace_overlay=req.replace,
+                glossary_context=context,
             )
         except Exception as exc:
             record = image_record(req.session_id, Path(source["input_path"]), source.get("image_sha256"))

@@ -6,6 +6,11 @@
     "record 문서는 특정 시점의 관찰 기록이라 staleness 검사에서 제외한다."
   ],
   "docs": {
+    "docs/WORK_GLOSSARY.md": {
+      "role": "canonical",
+      "topic": "작품별 번역 용어집의 확인·자동 조사·인용 검증·검토·번역 연결",
+      "sources": ["pipeline/work_glossary.py", "frontend/src/GlossaryPanel.jsx", "main_v2.py"]
+    },
     "docs/pipeline_guide.html": {
       "role": "canonical",
       "topic": "파이프라인 구조와 각 단계 내부 로직",

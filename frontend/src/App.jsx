@@ -6,6 +6,7 @@ import { TEXT_BASED, regionProcessingBasis, regionTypeLabel } from "./regionType
 import { RestoreControls, RestoreStage, useRestore } from "./RestorePanel.jsx";
 import ShortcutHelp from "./ShortcutHelp.jsx";
 import StartScreen from "./StartScreen.jsx";
+import GlossaryPanel from "./GlossaryPanel.jsx";
 import { KEYMAP, eventMatches, entryInContext, entryVisibleOnPlatform, shortcutFor, shortcutById } from "./keymap.js";
 import {
   TOOL_LABELS,
@@ -1050,6 +1051,7 @@ export default function App() {
   };
 
   function handleShortcutKeyDown(event) {
+    if (event.target?.closest?.("[role='dialog']")) return;
     // IME 조합 중(한글 입력 등)에는 어떤 단축키도 쓰지 않는다.
     if (event.isComposing || event.keyCode === 229) return;
     const target = event.target;
@@ -2013,6 +2015,7 @@ export default function App() {
             </button>
           ))}
         </nav>
+        <GlossaryPanel sessionId={sessionId} projectName={projectName} ocrBusy={ocrBusy} />
         <div className="file-navigator top-file-nav">
           <button onClick={() => selectImageByIndex(currentIndex - 1)} disabled={currentIndex <= 0}>‹</button>
           <select value={selected?.id || ""} onChange={(event) => selectImage(images.find((img) => img.id === event.target.value))}>

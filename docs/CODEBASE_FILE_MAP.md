@@ -3,7 +3,9 @@
 > 마지막 확인: 2026-10-06. 현재 구조 트리와 pipeline 파일 섹션을 실제 모듈 기준으로 정리하고, main_v2 안전성 보강(파일 서빙 제한, subprocess 공유, atomic JSON 쓰기 등)을 반영했다.
 > 표준 진입점은 `main_v2.py`(편집기)와 `run_pipeline.py`(CLI)다.
 
-작성일: 2026-05-05 / 최종 갱신: 2026-10-06
+작성일: 2026-05-05 / 최종 갱신: 2026-10-20
+
+2026-10-20: 작품별 자동 용어집 저장소, 조사·검토 API, 편집기 패널과 번역 버전 기록을 추가했다. 사용 흐름과 자동 적용 기준은 [WORK_GLOSSARY.md](WORK_GLOSSARY.md) 참고.
 
 영역 용어·호환 모듈 설명 갱신: 2026-10-19. 본문의 처리 분류는 경계 기반/텍스트 기반이며, 파일명·함수명·저장 키의 과거 이름은 호환을 위해 유지한다.
 
@@ -27,6 +29,7 @@ NEW_COMIC_TRANSLATOR/
 │       ├── main.jsx            # React 엔트리포인트
 │       ├── App.jsx              # 세션/이미지 목록/워크플로우 탭 전체 상태
 │       ├── StartScreen.jsx      # 홈: 파일·폴더 불러오기, 최근 프로젝트, 분석 방법
+│       ├── GlossaryPanel.jsx    # 작품 확인·백그라운드 조사 상태·충돌/불확실 용어 검토
 │       ├── EditorCanvas.jsx      # Step 3 영역 분석 캔버스 (Konva)
 │       ├── OverlayCanvas.jsx     # Step 5 텍스트 오버레이 편집 캔버스 (Konva)
 │       ├── RestorePanel.jsx      # 배경 복원 탭 (마스크 브러시 + LaMa 복원)
@@ -69,6 +72,7 @@ NEW_COMIC_TRANSLATOR/
     ├── editor_review_bridge.py # 세션 산출물 조회·이미지 crop·revision·미적용 검토 초안
     ├── geometry.py             # 사각형 좌표 유틸
     ├── gemini_ocr_translate_v5.py  # Step 4 (Gemini 기본, gpt-* 선택 가능)
+    ├── work_glossary.py        # 작품별 용어집 저장·검색 인용 검증·수동 결정·버전 고정
     ├── font_style_analyzer.py  # Step 4 직후 render_hint CV 보정
     ├── render_text_overlay.py  # Step 5
     ├── overlay_anchor.py       # 글자 입히기 수동값을 region 번호 대신 영역 위치로 재매칭
@@ -147,6 +151,7 @@ guidance(수동 보정)가 있는 이미지는 `guidance_digest`(guidance 내용
 | `POST /api/guidance`, `/api/guidance/clear` | 수동 보정(TG 삭제/split, edge barrier, manual region 등) 반영 후 Step 3 재실행 |
 | `POST /api/run-final(-stream)` | Step 4(OCR/번역) + Step 5(오버레이) 실행. body의 `ocr_model`로 모델 지정 |
 | `GET /api/ocr-models` | OCR/번역 모델 목록(`id`, `label`, `note`)과 기본값 |
+| `GET /api/glossary/{session_id}`, `POST /api/glossary/confirm`, `/api/glossary/research`, `/api/glossary/review` | 작품 확인·용어집 재사용·비동기 웹 조사·불확실/충돌 검토. 확정 용어집 버전을 Step 4에 주입 |
 | `POST /api/overlay/apply` | 오버레이 위치/폰트만 다시 렌더링 (OCR 재실행 없음). 저장한 수동값에 영역 위치(`_anchor`)를 기록 |
 | `GET /api/session/{id}/export`, `POST /api/export/generate-missing` | 결과 ZIP 내보내기, 실패 이미지 OpenAI 이미지 생성 fallback |
 | `GET /api/file` | 세션·입력 캐시·분석 캐시 폴더 아래 이미지 파일 서빙 |
