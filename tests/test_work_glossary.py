@@ -103,6 +103,7 @@ def test_confirm_once_reuse_across_sessions_and_review_only_uncertain(store):
 
 
 def test_research_does_not_block_editor_and_blocks_ocr_until_finished(store):
+    main_v2.ensure_session("one")
     entered, release = threading.Event(), threading.Event()
     calls = []
     def research(work):

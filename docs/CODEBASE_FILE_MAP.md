@@ -32,7 +32,7 @@ NEW_COMIC_TRANSLATOR/
 │       ├── PagePreparation.jsx  # 원본을 보존하는 페이지 분할 미리보기·별도 프로젝트 생성
 │       ├── ServerStatus.jsx     # 서버 연결 상태등 (작업 진행률과 별개)
 │       ├── ImagePreview.jsx     # 비교 이미지 확대·전체/너비 맞춤
-│       ├── GlossaryPanel.jsx    # 작품 확인·백그라운드 조사 상태·충돌/불확실 용어 검토
+│       ├── GlossaryPanel.jsx    # 프로젝트명 옆 작품 상태·CV 후보·검색어 재검색·용어 검토
 │       ├── EditorCanvas.jsx      # Step 3 영역 분석 캔버스 (Konva)
 │       ├── OverlayCanvas.jsx     # Step 5 텍스트 오버레이 편집 캔버스 (Konva)
 │       ├── RestorePanel.jsx      # 배경 복원 탭 (마스크 브러시 + LaMa 복원)
@@ -77,6 +77,7 @@ NEW_COMIC_TRANSLATOR/
     ├── geometry.py             # 사각형 좌표 유틸
     ├── gemini_ocr_translate_v5.py  # Step 4 (Gemini 기본, gpt-* 선택 가능)
     ├── work_glossary.py        # 작품별 용어집 저장·검색 인용 검증·수동 결정·버전 고정
+    ├── work_matching.py        # 기존 CV 작품 후보·확인 작품 재사용·비동기 재검색
     ├── font_style_analyzer.py  # Step 4 직후 render_hint CV 보정
     ├── render_text_overlay.py  # Step 5
     ├── overlay_anchor.py       # 글자 입히기 수동값을 region 번호 대신 영역 위치로 재매칭
@@ -461,3 +462,5 @@ indexed sheet crop의 획두께·ink density를 재서 Gemini가 준 `render_hin
 .venv/bin/python -m compileall -q main_v2.py run_pipeline.py run_debug_pipeline.py visualize_debug.py pipeline batch
 .venv/bin/python -m pytest -q    # pytest.ini가 tests/만 수집한다
 ```
+
+작품 연결 UI는 프로젝트명 옆에 표시하며 연결 전 후보/검색 상태와 연결 후 작품명/용어집 조사 상태를 구분한다. `POST /api/glossary/match`가 CV 기반 재사용 또는 웹 후보 검색을 시작한다. 검색 실패 중에도 기존 작품 연결을 유지한다.

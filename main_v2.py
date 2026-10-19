@@ -43,6 +43,7 @@ from pipeline.openai_image_redraw import redraw_image_with_openai
 from pipeline.pipeline_runner import DEFAULT_FONT, run_single_image, stream_subprocess
 from pipeline.render_text_overlay import apply_text_overlay
 from pipeline.work_glossary import GlossaryStore, glossary_snapshot
+from pipeline.work_matching import WorkMatcher, cv_hints, existing_candidates
 
 load_dotenv()
 
@@ -69,6 +70,7 @@ _LOAD_HYDRATE_LOCK = threading.Lock()
 _LOAD_HYDRATE_RUNNING: set[tuple[str, str]] = set()
 _GLOSSARY_STORES: dict[str, GlossaryStore] = {}
 _GLOSSARY_STORE_LOCK = threading.Lock()
+WORK_MATCHER = WorkMatcher()
 
 
 def glossary_store() -> GlossaryStore:
@@ -82,6 +84,23 @@ def glossary_store() -> GlossaryStore:
 
 def glossary_binding_path(session_id: str) -> Path:
     return session_dir(session_id) / "work" / "glossary_binding.json"
+
+
+def work_match_path(session_id: str) -> Path:
+    return session_dir(session_id) / "work" / "work_match.json"
+
+
+def work_match_inputs(session_id: str) -> tuple[dict, list]:
+    data = load_json(session_file(session_id), default={})
+    if not data:
+        raise ValueError("프로젝트를 찾을 수 없습니다.")
+    return cv_hints(data, session_dir(session_id) / "work"), glossary_store().list_works()
+
+
+def glossary_payload(session_id: str) -> dict:
+    hints, works = work_match_inputs(session_id)
+    return {"glossary": session_glossary(session_id), "works": works,
+            "matching": WORK_MATCHER.read(work_match_path(session_id), hints, works)}
 
 
 def session_glossary(session_id: str) -> dict | None:
@@ -160,6 +179,12 @@ class GlossaryConfirmRequest(BaseModel):
 
 class GlossaryResearchRequest(BaseModel):
     session_id: str
+
+
+class WorkMatchRequest(BaseModel):
+    session_id: str
+    query: str = ""
+    force_web: bool = False
 
 
 class GlossaryReviewRequest(BaseModel):
@@ -2580,7 +2605,7 @@ def create_app() -> FastAPI:
     @app.get("/api/glossary/{session_id}")
     def read_glossary(session_id: str) -> dict:
         try:
-            return {"glossary": session_glossary(session_id), "works": glossary_store().list_works()}
+            return glossary_payload(session_id)
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -2596,10 +2621,35 @@ def create_app() -> FastAPI:
                 wid = store.confirm({"title": req.title, "author": req.author, "edition": req.edition})
                 data = store.read(wid)
             write_json(glossary_binding_path(req.session_id), {"work_id": wid})
+            WORK_MATCHER.confirmed(work_match_path(req.session_id))
             # 이미 조사한 작품은 재사용한다. 확인된 새 작품만 자동 조사를 시작한다.
             if data["status"] == "idle":
                 data = store.start(wid)
-            return {"glossary": data, "works": store.list_works()}
+            return glossary_payload(req.session_id)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @app.post("/api/glossary/match")
+    def match_work(req: WorkMatchRequest) -> dict:
+        try:
+            hints, works = work_match_inputs(req.session_id)
+            path = work_match_path(req.session_id)
+            candidates = existing_candidates(hints, works)
+            if not req.force_web:
+                strong = [candidate for candidate in candidates if candidate["strong"]]
+                if len(strong) == 1 and not session_glossary(req.session_id):
+                    # 이미 확인받은 작품만 로컬 CV 근거로 재사용한다. 웹 후보는 자동 연결하지 않는다.
+                    write_json(glossary_binding_path(req.session_id), {"work_id": strong[0]["work_id"], "matched_by": "confirmed_work_cv"})
+                    write_json(path, {"status": "confirmed", "query": hints["query"], "hints": hints,
+                                      "candidates": candidates, "error": ""})
+                    return glossary_payload(req.session_id)
+                if candidates or not hints["has_cv"]:
+                    return glossary_payload(req.session_id)
+            query = req.query.strip()[:300] or hints["query"]
+            if not query:
+                raise ValueError("작품 검색어를 입력하세요.")
+            WORK_MATCHER.start(path, query, hints, works)
+            return glossary_payload(req.session_id)
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 

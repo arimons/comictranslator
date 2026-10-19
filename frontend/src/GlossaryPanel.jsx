@@ -23,10 +23,15 @@ function Term({ entry, busy, onReview }) {
   </article>;
 }
 
-export default function GlossaryPanel({ sessionId, projectName, ocrBusy }) {
+export default function GlossaryPanel({ sessionId, projectName, ocrBusy, analysisReady }) {
   const [open, setOpen] = useState(false);
   const [data, setData] = useState(null);
   const [works, setWorks] = useState([]);
+  const [matching, setMatching] = useState(null);
+  const [query, setQuery] = useState("");
+  const queryDirty = useRef(false);
+  const autoMatched = useRef("");
+  const mutation = useRef(0);
   const [loaded, setLoaded] = useState(false);
   const [title, setTitle] = useState("");
   const [author, setAuthor] = useState("");
@@ -47,56 +52,75 @@ export default function GlossaryPanel({ sessionId, projectName, ocrBusy }) {
     return () => previous?.isConnected && previous.focus();
   }, [open]);
 
+  function applyPayload(result) {
+    setData(result.glossary);
+    if (result.works) setWorks(result.works);
+    if (result.matching) {
+      setMatching(result.matching);
+      if (!queryDirty.current) setQuery(result.matching.query || "");
+    }
+  }
+
   useEffect(() => {
     const token = ++generation.current;
-    setData(null); setLoaded(false); setError(""); setChanging(false); setSavedId("");
+    setData(null); setMatching(null); setLoaded(false); setError(""); setChanging(false); setSavedId("");
+    queryDirty.current = false; autoMatched.current = ""; setQuery(""); mutation.current += 1;
     setAuthor(""); setEdition(""); setTitle(""); setOpen(false); setBusy(false);
     if (!sessionId) return;
     api(`/api/glossary/${encodeURIComponent(sessionId)}`).then((result) => {
       if (token !== generation.current) return;
-      setData(result.glossary); setWorks(result.works || []); setLoaded(true);
-      setOpen(!result.glossary);
+      applyPayload(result); setLoaded(true);
     }).catch((err) => { if (token === generation.current) { setError(err.message); setLoaded(true); } });
     return () => { generation.current += 1; };
   }, [sessionId]);
 
   useEffect(() => {
-    if (!open || !sessionId) return;
+    if (!open || !sessionId || !loaded) return;
     let alive = true;
+    const version = mutation.current;
     api(`/api/glossary/${encodeURIComponent(sessionId)}`).then((result) => {
-      if (alive) { setData(result.glossary); setWorks(result.works || []); }
+      if (alive && version === mutation.current) applyPayload(result);
     }).catch((err) => { if (alive) setError(err.message); });
     return () => { alive = false; };
-  }, [open, sessionId]);
+  }, [open, sessionId, loaded]);
 
   useEffect(() => {
-    if (data?.status !== "researching") return;
+    if (data?.status !== "researching" && matching?.status !== "searching") return;
     let alive = true;
     let timer;
     async function poll() {
       try {
+        const version = mutation.current;
         const result = await api(`/api/glossary/${encodeURIComponent(sessionId)}`);
-        if (!alive) return;
-        setData(result.glossary); setWorks(result.works || []); setError("");
-        if (result.glossary?.status === "researching") timer = setTimeout(poll, 2500);
+        if (!alive || version !== mutation.current) return;
+        applyPayload(result); setError("");
+        if (result.glossary?.status === "researching" || result.matching?.status === "searching") timer = setTimeout(poll, 2500);
       } catch (err) {
         if (alive) { setError(err.message); timer = setTimeout(poll, 5000); }
       }
     }
     timer = setTimeout(poll, 2000);
     return () => { alive = false; clearTimeout(timer); };
-  }, [sessionId, data?.status]);
+  }, [sessionId, data?.status, matching?.status]);
 
-  async function post(path, body) {
+  useEffect(() => {
+    if (!loaded || data || !sessionId || busy || matching?.status === "searching" || matching?.status === "failed" || matching?.status === "empty") return;
+    const key = `${sessionId}:${analysisReady ? "ready" : "pending"}`;
+    if (autoMatched.current === key) return;
+    autoMatched.current = key;
+    post("/api/glossary/match", {}, false);
+  }, [sessionId, loaded, analysisReady, Boolean(data), matching?.status]);
+
+  async function post(path, body, closeForm = true) {
     const sid = sessionId;
     const token = generation.current;
+    mutation.current += 1;
     setBusy(true); setError("");
     try {
       const result = await api(path, { method: "POST", body: JSON.stringify({ session_id: sid, ...body }) });
       if (sessionRef.current !== sid || generation.current !== token) return;
-      setData(result.glossary);
-      if (result.works) setWorks(result.works);
-      setChanging(false);
+      applyPayload(result);
+      if (closeForm) setChanging(false);
     } catch (err) {
       if (sessionRef.current === sid && generation.current === token) setError(err.message);
     } finally {
@@ -109,12 +133,17 @@ export default function GlossaryPanel({ sessionId, projectName, ocrBusy }) {
   const review = entries.filter((entry) => entry.status === "review");
   const applied = entries.filter((entry) => ["auto", "accepted"].includes(entry.status));
   const excluded = entries.filter((entry) => entry.status === "rejected");
+  const searching = matching?.status === "searching";
   const disabled = busy || ocrBusy || researching;
+  const matchLabel = !loaded || busy ? "작품 매칭 중…" : searching ? "작품 검색 중…" : matching?.status === "failed" ? "작품 검색 실패 · 재시도" : matching?.candidates?.length ? "작품 후보 확인" : matching?.status === "waiting_cv" ? "작품 확인 · CV 대기" : "작품 연결하기";
+  const workTitle = data?.work?.display_title || data?.work?.title;
+  const glossaryLabel = data?.status === "failed" ? "용어집 조사 실패 · 다시 시도" : researching ? "용어집 조사 중…" : `용어집 적용 ${applied.length} · 검토 ${review.length}`;
   const renderTerm = (entry) => <Term key={entry.id} entry={entry} busy={disabled} onReview={(id, decision, target) => post("/api/glossary/review", { work_id: data.work_id, entry_id: id, decision, target })} />;
 
   return <>
-    <button className="glossary-toggle" onClick={() => setOpen(true)} disabled={!sessionId}>
-      {researching ? "용어집 조사 중…" : !data ? "작품 확인 / 용어집" : `용어집 · 적용 ${applied.length}${review.length ? ` · 검토 ${review.length}` : ""}`}
+    <button className={`glossary-toggle ${data ? "linked" : ""}`} title={data ? `연결 작품: ${workTitle} · ${glossaryLabel}` : matchLabel} onClick={() => setOpen(true)} disabled={!sessionId} aria-label={data ? `연결 작품: ${workTitle}. ${glossaryLabel}` : matchLabel}>
+      <strong>{workTitle || matchLabel} ▾</strong>
+      {data ? <span>{searching ? "다른 작품 검색 중…" : matching?.status === "failed" ? "재검색 실패 · 현재 연결 유지" : glossaryLabel}</span> : null}
     </button>
     {open && <div className="glossary-backdrop" onClick={() => setOpen(false)}>
       <section ref={dialogRef} className="glossary-dialog" role="dialog" aria-modal="true" aria-label="작품별 번역 용어집" onClick={(event) => event.stopPropagation()} onKeyDown={(event) => {
@@ -129,7 +158,28 @@ export default function GlossaryPanel({ sessionId, projectName, ocrBusy }) {
         <header className="glossary-heading"><h2>작품별 번역 용어집</h2><button onClick={() => setOpen(false)} aria-label="용어집 닫기">닫기</button></header>
         {!loaded ? <p>용어집을 불러오는 중…</p> : null}
         {error ? <p role="alert" className="glossary-error">{error}</p> : null}
-        {loaded && (!data || changing) ? <form onSubmit={(event) => { event.preventDefault(); post("/api/glossary/confirm", savedId ? { work_id: savedId } : { title, author, edition }); }}>
+        {loaded ? <section className="work-search" aria-label="작품 후보와 검색">
+          <form onSubmit={(event) => { event.preventDefault(); post("/api/glossary/match", { query, force_web: true }, false); }}>
+            <label>작품 검색어<input maxLength={300} value={query} placeholder={projectName || "작품명·작가명·제목 일부"} onChange={(event) => { queryDirty.current = true; setQuery(event.target.value); }} /></label>
+            <div className="row"><button type="submit" disabled={busy || searching || !query.trim()}>{searching ? "웹 검색 중…" : "검색어로 웹 재검색"}</button>
+              <button type="button" disabled={busy} onClick={() => { queryDirty.current = false; setQuery(matching?.hints?.query || ""); }}>CV 키워드 가져오기</button></div>
+          </form>
+          <p>앞쪽 페이지의 기존 CV 키워드를 사용합니다. 웹 검색에는 검색어와 CV 텍스트 단서만 보내며 이미지 자체는 보내지 않습니다. API 비용이 발생할 수 있습니다.</p>
+          {matching?.hints?.pages?.length ? <details><summary>식별 근거 · {matching.hints.pages.join(", ")}페이지 CV</summary><p>{matching.hints.labels.join(" · ")}</p></details> : <p>CV가 준비되면 작품 매칭을 시도합니다. 검색어를 직접 입력해도 됩니다.</p>}
+          {matching?.error ? <p role="alert" className="glossary-error">{matching.error}{data ? " 현재 작품 연결은 유지됩니다." : ""}</p> : null}
+          {matching?.status === "empty" ? <p>작품 후보를 찾지 못했습니다. 작가나 제목 단어를 추가하거나 직접 지정하세요.</p> : null}
+          {matching?.candidates?.map((candidate) => <article className="work-candidate" key={candidate.id}>
+            <strong>{candidate.work.display_title || candidate.work.title}</strong><p>{candidate.work.author} · {candidate.work.edition}</p><p>{candidate.reason}</p>
+            {candidate.matched_keywords?.length ? <p>일치 단서: {candidate.matched_keywords.join(" · ")}</p> : null}
+            {candidate.sources?.map((cite, index) => <a key={index} href={cite.url} target="_blank" rel="noopener noreferrer">{cite.title} ↗ </a>)}
+            <button disabled={busy || ocrBusy || candidate.work_id === data?.work_id} onClick={() => post("/api/glossary/confirm", candidate.work_id ? { work_id: candidate.work_id } : candidate.work)}>
+              {candidate.work_id === data?.work_id ? "현재 연결된 작품" : candidate.work_id ? "이 작품 용어집 연결" : "이 작품으로 확인 · 연결"}
+            </button>
+          </article>)}
+          {matching?.search_suggestions ? <iframe className="glossary-search-suggestions" title="작품 검색 Google 제안" sandbox="allow-popups allow-popups-to-escape-sandbox" srcDoc={matching.search_suggestions} /> : null}
+          <button onClick={() => setChanging((value) => !value)} disabled={busy || ocrBusy}>{changing ? "직접 지정 닫기" : "다른 작품 직접 지정 / 기존 용어집 선택"}</button>
+        </section> : null}
+        {loaded && changing ? <form onSubmit={(event) => { event.preventDefault(); post("/api/glossary/confirm", savedId ? { work_id: savedId } : { title, author, edition }); }}>
           <p>작품을 한 번 확인하면 웹 조사를 시작합니다. 조사 중에도 창을 닫고 이미지를 편집할 수 있습니다.</p>
           {works.length ? <label>기존 작품 용어집 재사용<select value={savedId} onChange={(event) => setSavedId(event.target.value)}>
             <option value="">새 작품 조사</option>
@@ -141,11 +191,11 @@ export default function GlossaryPanel({ sessionId, projectName, ocrBusy }) {
             <label>원작 / 외전 / 판본 (선택)<input maxLength={200} value={edition} placeholder="예: 원작 만화, 특정 외전명" onChange={(event) => setEdition(event.target.value)} /></label>
           </> : null}
           <p>작품명·작가·판본만 외부 검색에 전달합니다. 이미지와 수동 번역 지시문은 보내지 않습니다. Gemini 검색 API 사용 비용이 발생할 수 있습니다.</p>
-          <div className="row"><button className="primary" disabled={disabled || (!savedId && !title.trim())}>{savedId ? "이 작품으로 확인 · 재사용" : "이 작품으로 확인 · 조사 시작"}</button>{changing ? <button type="button" onClick={() => setChanging(false)}>취소</button> : null}</div>
+          <div className="row"><button className="primary" disabled={busy || ocrBusy || (!savedId && !title.trim())}>{savedId ? "이 작품으로 확인 · 재사용" : "이 작품으로 확인 · 조사 시작"}</button>{changing ? <button type="button" onClick={() => setChanging(false)}>취소</button> : null}</div>
         </form> : null}
         {data && !changing ? <>
           <div className="glossary-work"><strong>{[data.work.title, data.work.author, data.work.edition].filter(Boolean).join(" · ")}</strong><span>{STATUS[data.status]} · v{data.version}</span></div>
-          <div className="row"><button disabled={disabled} onClick={() => setChanging(true)}>작품 변경</button><button disabled={disabled} onClick={() => post("/api/glossary/research", {})}>{data.status === "failed" ? "다시 조사" : "정보 다시 조사"}</button></div>
+          <div className="row"><button disabled={busy || ocrBusy} onClick={() => setChanging(true)}>작품 변경</button><button disabled={disabled} onClick={() => post("/api/glossary/research", {})}>{data.status === "failed" ? "다시 조사" : "정보 다시 조사"}</button></div>
           {researching ? <p role="status">웹에서 작품·등장인물·용어를 조사하고 있습니다. 번역은 조사가 끝난 뒤 시작할 수 있습니다.</p> : null}
           {data.error ? <p role="alert" className="glossary-error">{data.error}</p> : null}
           {data.status === "ready" && !data.work_matches ? <p className="glossary-error">작품 일치가 확인되지 않아 자동 적용을 보류했습니다. 작품명을 확인하거나 개별 용어를 검토하세요.</p> : null}

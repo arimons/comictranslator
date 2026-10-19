@@ -12,6 +12,7 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import urlparse
+from uuid import uuid4
 
 from pipeline.manual_guidance import load_json, write_json
 
@@ -29,6 +30,12 @@ def work_id(work: dict) -> str:
 
 def term_id(source: str, target: str) -> str:
     return hashlib.sha256((normalized(source) + "\0" + normalized(target)).encode()).hexdigest()[:20]
+
+
+def work_signature(work: dict) -> tuple:
+    author = re.sub(r"原作|漫画|作画|原著|작가|원작|만화|[:：]", "", work.get("author", ""))
+    names = sorted(normalized(part) for part in re.split(r"[/／、,;・\s]+", author) if part.strip())
+    return normalized(work.get("title", "")), tuple(names), normalized(work.get("edition", ""))
 
 
 def source_site(url: str) -> str:
@@ -215,10 +222,13 @@ class GlossaryStore:
         work = {k: str(work.get(k, "")).strip()[:200] for k in ("title", "author", "edition")}
         if not work["title"]:
             raise ValueError("조사할 작품명을 입력하세요.")
-        wid = work_id(work)
         with self.lock:
-            if not self.path(wid).exists():
-                write_json(self.path(wid), {"work_id": wid, "work": work, "status": "idle", "version": 0, "entries": []})
+            for saved in self.list_works():
+                if work_signature(saved["work"]) == work_signature(work):
+                    return saved["work_id"]
+            # 표시 문자열을 수정해도 ID는 변하지 않는다. 기존 해시 ID도 그대로 읽는다.
+            wid = uuid4().hex[:24]
+            write_json(self.path(wid), {"work_id": wid, "work": work, "status": "idle", "version": 0, "entries": []})
         return wid
 
     def start(self, wid):

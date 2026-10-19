@@ -2013,6 +2013,7 @@ export default function App() {
     <div className={`app workspace-mode ${toolsOpen ? "" : "tools-collapsed"} ${activeTab === "overlay" ? "overlay-mode" : ""} ${activeTab === "ocr" ? "ocr-mode" : ""} ${activeTab === "export" ? "export-mode" : ""} ${activeTab === "restore" ? "restore-mode" : ""}`}>
       <header className="workspace-global-topbar">
         <div className="workspace-brand-group"><button className="workspace-brand" type="button" onClick={returnToStartPage} title="홈으로 돌아가기">Comic Translator Studio</button><ServerStatus /></div>
+        <div className="project-identity">
         <input
           className="project-name-input"
           value={projectName}
@@ -2026,6 +2027,8 @@ export default function App() {
           }}
           placeholder="Untitled project"
         />
+        <GlossaryPanel sessionId={sessionId} projectName={projectName} ocrBusy={ocrBusy} analysisReady={images.some((image) => image.has_analysis)} />
+        </div>
         <nav className="workflow-tabs top-workflow-tabs">
           {WORKFLOW_TABS.map(([id, label]) => (
             <button key={id} className={activeTab === id ? "active" : ""} onClick={() => setActiveTab(id)} title={`${label} (${shortcutById(`tab.${id}`)})`}>
@@ -2033,7 +2036,6 @@ export default function App() {
             </button>
           ))}
         </nav>
-        <GlossaryPanel sessionId={sessionId} projectName={projectName} ocrBusy={ocrBusy} />
         <div className="file-navigator top-file-nav">
           {pagePreparationControl}
           <button onClick={() => selectImageByIndex(currentIndex - 1)} disabled={currentIndex <= 0}>‹</button>
