@@ -71,6 +71,55 @@ def test_list_recent_sessions_skips_empty_and_sorts_by_updated_time(tmp_path, mo
     assert "thumbnail_url" in sessions[0]
 
 
+def test_home_progress_counts_artifacts_and_reflects_manual_edits_without_writes(tmp_path, monkeypatch):
+    import os
+    monkeypatch.setattr(main_v2, "SESSION_ROOT", tmp_path / "sessions")
+    session = main_v2.ensure_session("progress")
+    session["images"] = [{"id": f"page{i}", "name": f"page{i}.jpg", "input_path": str(tmp_path / f"page{i}.jpg")} for i in (1, 2, 3)]
+    main_v2.save_session(session)
+    manifest = main_v2.session_file("progress")
+    os.utime(manifest, (1000, 1000))
+    base = manifest.parent
+    artifacts = {
+        "work/json/page1_regions.json": (b"{}", 2000),
+        "work/json/page2_regions.json": (b"{}", 2000),
+        "output/final/page1_final.jpg": (b"image", 3000),
+        "work/json/page2_manual_guidance.json": (b"{}", 4000),
+    }
+    for name, (content, timestamp) in artifacts.items():
+        path = base / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(content)
+        os.utime(path, (timestamp, timestamp))
+    before = {str(path): (path.read_bytes(), path.stat().st_mtime_ns) for path in base.rglob("*") if path.is_file()}
+
+    recent = main_v2.list_recent_sessions()[0]
+
+    assert recent["analysis_count"] == 2
+    assert recent["final_count"] == 1
+    assert recent["image_count"] == 3
+    assert recent["updated_at"] == main_v2.dt.datetime.fromtimestamp(4000).isoformat(timespec="seconds")
+    assert "manual_completed_count" not in recent
+    assert before == {str(path): (path.read_bytes(), path.stat().st_mtime_ns) for path in base.rglob("*") if path.is_file()}
+
+
+@pytest.mark.parametrize("existing_name", ["", "사용자가 정한 작품명"])
+def test_folder_upload_uses_folder_name_without_overwriting_project_name(tmp_path, monkeypatch, existing_name):
+    monkeypatch.setattr(main_v2, "SESSION_ROOT", tmp_path / "sessions")
+    monkeypatch.setattr(main_v2, "hydrate_load_cache_for_records", lambda *args, **kwargs: None)
+    session = main_v2.ensure_session("folder_upload")
+    session["project_name"] = existing_name
+    main_v2.save_session(session)
+    response = TestClient(main_v2.create_app()).post(
+        "/api/upload?session_id=folder_upload&source_folder_name=작품폴더",
+        files=[("files", ("page1.jpg", b"upload image", "image/jpeg"))],
+    )
+    assert response.status_code == 200
+    saved = main_v2.ensure_session("folder_upload")
+    assert saved["source_folder_name"] == "작품폴더"
+    assert saved["project_name"] == (existing_name or "작품폴더")
+
+
 def test_update_session_meta_persists_project_name(tmp_path, monkeypatch):
     session_id = "project_named"
     monkeypatch.setattr(main_v2, "SESSION_ROOT", tmp_path / "sessions")

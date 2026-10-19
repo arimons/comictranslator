@@ -5,6 +5,7 @@ import RegionTypeBadge from "./RegionTypeBadge.jsx";
 import { TEXT_BASED, regionProcessingBasis, regionTypeLabel } from "./regionTypes.js";
 import { RestoreControls, RestoreStage, useRestore } from "./RestorePanel.jsx";
 import ShortcutHelp from "./ShortcutHelp.jsx";
+import StartScreen from "./StartScreen.jsx";
 import { KEYMAP, eventMatches, entryInContext, entryVisibleOnPlatform, shortcutFor, shortcutById } from "./keymap.js";
 import {
   TOOL_LABELS,
@@ -51,6 +52,7 @@ export default function App() {
   // 선택한 페이지의 전체 레코드(regions, integrated 등). 목록(images)은 요약만 담는다.
   const [pageDetail, setPageDetail] = useState(null);
   const [recentSessions, setRecentSessions] = useState([]);
+  const [recentLoadState, setRecentLoadState] = useState("loading");
   const [selectedId, setSelectedId] = useState("");
   const [folderPath, setFolderPath] = useState("");
   const [status, setStatus] = useState("");
@@ -74,6 +76,7 @@ export default function App() {
   const [fonts, setFonts] = useState([]);
   const [fontPath, setFontPath] = useState("");
   const [analyzeWorkers, setAnalyzeWorkers] = useState(4);
+  const [analysisPolicy, setAnalysisPolicy] = useState("reuse");
   const [imageStatuses, setImageStatuses] = useState({});
   const [guidanceCompareMode, setGuidanceCompareMode] = useState("masked");
   const [autoOverlayPreview, setAutoOverlayPreview] = useState(true);
@@ -763,11 +766,17 @@ export default function App() {
     api("/api/sessions/recent").then((data) => setRecentSessions(data.sessions || [])).catch(() => {});
   }
 
-  useEffect(() => {
-    // 세션은 첫 import/업로드 때 서버가 만든다. 앱을 열 때마다 빈 세션이 쌓이지 않게 여기서는 만들지 않는다.
+  function loadRecentSessions() {
+    setRecentLoadState("loading");
     api("/api/sessions/recent").then((data) => {
       setRecentSessions(data.sessions || []);
-    }).catch(() => {});
+      setRecentLoadState("ready");
+    }).catch(() => setRecentLoadState("error"));
+  }
+
+  useEffect(() => {
+    // 세션은 첫 import/업로드 때 서버가 만든다. 앱을 열 때마다 빈 세션이 쌓이지 않게 여기서는 만들지 않는다.
+    loadRecentSessions();
     api("/api/fonts").then((data) => {
       setFonts(data.fonts || []);
       setFontPath(data.default || "");
@@ -1152,7 +1161,8 @@ export default function App() {
     await runTask("input", "업로드", async () => {
       const form = new FormData();
       files.forEach((file) => form.append("files", file));
-      const result = await api(`/api/upload?session_id=${requestSid}`, { method: "POST", body: form });
+      const folderName = files[0]?.webkitRelativePath?.split("/")[0] || "";
+      const result = await api(`/api/upload?session_id=${requestSid}&source_folder_name=${encodeURIComponent(folderName)}`, { method: "POST", body: form });
       adoptCreatedSession(requestSid, result.session_id);
       await refresh(result.session_id);
       if (result.imported > 0) scheduleLazyRefresh(result.session_id);
@@ -1217,20 +1227,24 @@ export default function App() {
   }
 
   function returnToStartPage() {
-    if (!window.confirm("Start page로 돌아가시겠습니까? 현재 작업 세션은 저장된 상태로 유지됩니다.")) return;
+    if (!window.confirm("홈으로 돌아가시겠습니까? 현재 프로젝트는 저장된 상태로 유지됩니다.")) return;
     setWorkspaceStarted(false);
     setActiveTab("guidance");
-    setStatus("Start page로 돌아왔습니다.");
+    setAnalysisPolicy("reuse");
+    api("/api/sessions/recent").then((data) => setRecentSessions(data.sessions || [])).catch(() => {});
+    setStatus("홈으로 돌아왔습니다.");
   }
 
   async function startRegionAnalysis() {
     if (!images.length || analyzeBusy || inputBusy) return;
+    const force = analysisPolicy === "refresh";
+    if (force && !window.confirm(`${images.length}개 이미지를 다시 분석합니다. 기존 분석결과를 활용하지 않으며 Cloud Vision API 호출 비용이 발생할 수 있습니다. 진행할까요?`)) return;
     setWorkspaceStarted(true);
     setActiveTab("guidance");
-    await analyze("all");
+    await analyze("all", { force });
   }
 
-  async function analyze(target = "all") {
+  async function analyze(target = "all", options = {}) {
     const requestSid = sessionId;
     await runTask("analyze", "OCR 직전 분석", async () => {
       const logLines = [];
@@ -1246,7 +1260,7 @@ export default function App() {
       };
       await apiStream(
         "/api/analyze-stream",
-        { method: "POST", body: JSON.stringify({ session_id: requestSid, image_id: target, force: target !== "all", max_workers: analyzeWorkers }) },
+        { method: "POST", body: JSON.stringify({ session_id: requestSid, image_id: target, force: options.force ?? (target !== "all"), max_workers: analyzeWorkers }) },
         (event) => {
           // 다른 세션으로 바뀐 뒤의 이벤트는 현재 세션 상태에 반영하지 않는다.
           if (sessionIdRef.current !== requestSid) return;
@@ -1945,163 +1959,26 @@ export default function App() {
   const guidanceHistory = guidanceHistoryItems();
 
   if (!workspaceStarted) {
-    return (
-      <div className="app-shell import-mode">
-        <header className="app-topbar">
-          <div className="app-brand">Comic Translator Studio</div>
-          <a className="app-manual-link" href="/manual" target="_blank" rel="noopener">사용 설명서</a>
-        </header>
-        <main className="import-screen">
-          <section className="import-primary">
-            <div className="import-title">
-              <h1>Start Project</h1>
-              <p>Load comic images to start analysis.</p>
-            </div>
-            <div className="import-card">
-              <div
-                className="import-drop"
-                onDragOver={(event) => {
-                  // 기본 동작(브라우저가 파일로 이동)을 막아야 drop 이벤트가 온다.
-                  event.preventDefault();
-                  event.dataTransfer.dropEffect = inputBusy ? "none" : "copy";
-                }}
-                onDrop={(event) => {
-                  event.preventDefault();
-                  if (inputBusy) return;
-                  uploadFiles(Array.from(event.dataTransfer.files || []));
-                }}
-              >
-                <strong>Drop files here</strong>
-                <span>or browse from your computer</span>
-                <button className="primary" onClick={() => fileRef.current?.click()} disabled={inputBusy}>Load Files</button>
-              </div>
-              <div className="import-folder">
-                <input value={folderPath} onChange={(e) => setFolderPath(e.target.value)} placeholder="/path/to/comic/folder" />
-                <button onClick={importPath} disabled={inputBusy || !folderPath}>Load Folder</button>
-              </div>
-              <input ref={fileRef} type="file" multiple accept="image/*" hidden onChange={(e) => uploadFromInput(e.currentTarget)} />
-            </div>
-          </section>
-          <aside className="import-config">
-            <div className="section compact-section">
-              <h2>Project Configuration</h2>
-              <div className="field">
-                <label>Project Name</label>
-                <input
-                  value={projectName}
-                  onChange={(event) => {
-                    projectNameDirtyRef.current = true;
-                    setProjectName(event.target.value);
-                  }}
-                  onBlur={() => saveProjectName()}
-                  onKeyDown={(event) => {
-                    if (event.key === "Enter") event.currentTarget.blur();
-                  }}
-                  placeholder="예: ORE2 1권"
-                />
-              </div>
-              <div className="field">
-                <label>Sorting Rule</label>
-                <select defaultValue="natural">
-                  <option value="natural">Natural Order (Name)</option>
-                </select>
-              </div>
-              <div className="field">
-                <label>Analyze Workers</label>
-                <input
-                  type="number"
-                  min="1"
-                  max="12"
-                  value={analyzeWorkers}
-                  onChange={(e) => setAnalyzeWorkers(Math.max(1, Math.min(12, Number(e.target.value) || 1)))}
-                />
-              </div>
-              <div className="toggles">
-                <label className="check"><input type="radio" name="cache-policy" defaultChecked /> Use Cache</label>
-                <label className="check"><input type="radio" name="cache-policy" /> Force Re-analyze</label>
-              </div>
-            </div>
-            <div className="section">
-              <div className="section-title-row">
-                <h2>Loaded Files</h2>
-              </div>
-              {images.length ? (
-                <div className="loaded-file-list">
-                  {images.map((img, index) => (
-                    <div key={img.id} className="loaded-file-row">
-                      <span>{index + 1}</span>
-                      <strong title={img.name}>
-                        {img.name}
-                        {img.page_side ? <em>{img.page_side}</em> : null}
-                      </strong>
-                      <div className="loaded-file-actions">
-                        <button className="icon-button" onClick={() => removeLoadedImage(img.id)} disabled={inputBusy || analyzeBusy} title="목록에서 제거">×</button>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              ) : (
-                <div className="empty compact-empty">아직 불러온 파일이 없습니다.</div>
-              )}
-            </div>
-            <div className="section">
-              <h2>Recent Projects</h2>
-              {recentSessions.length ? (
-                <div className="recent-session-list">
-                  {recentSessions.map((recent) => (
-                    <div key={recent.session_id} className="recent-session-row-wrap">
-                      <button className="recent-session-row" onClick={() => openRecentSession(recent)}>
-                        {recent.thumbnail_url ? <img src={recent.thumbnail_url} alt="" /> : <span className="recent-session-thumb" />}
-                        <strong>{recent.project_name || `${recent.image_count} images`}</strong>
-                        <span title={recent.updated_at || recent.created_at}>
-                          {recent.updated_at || recent.created_at}
-                        </span>
-                      </button>
-                      <button
-                        className="recent-session-menu-button"
-                        type="button"
-                        onClick={(event) => {
-                          event.stopPropagation();
-                          setRecentMenuId(recentMenuId === recent.session_id ? "" : recent.session_id);
-                        }}
-                        title="프로젝트 메뉴"
-                      >
-                        ...
-                      </button>
-                      {recentMenuId === recent.session_id ? (
-                        <div className="recent-session-menu">
-                          <button type="button" onClick={() => renameRecentSession(recent)}>Rename</button>
-                          <button type="button" className="danger-text" onClick={() => deleteRecentSession(recent)}>Delete</button>
-                        </div>
-                      ) : null}
-                    </div>
-                  ))}
-                </div>
-              ) : (
-                <div className="empty compact-empty">최근 작업 없음</div>
-              )}
-            </div>
-            <div className="import-action">
-              <div>
-                <strong>{images.length ? `${images.length} images loaded` : "No images loaded"}</strong>
-                <span>{images.length ? "캐시가 있으면 바로 시각화하고, 없으면 분석을 진행합니다." : "파일이나 폴더를 먼저 불러오세요."}</span>
-              </div>
-              <button className="primary wide" onClick={startRegionAnalysis} disabled={!images.length || inputBusy || analyzeBusy}>
-                Analyze & Open 영역 분석
-              </button>
-            </div>
-          </aside>
-        </main>
-        <footer className="status-bar">System Status: {inputBusy ? "Loading" : "Idle"} | Session: {sessionId || "-"}</footer>
-      </div>
-    );
+    return <StartScreen
+      images={images} recentSessions={recentSessions} projectName={projectName}
+      recentLoadState={recentLoadState} loadRecentSessions={loadRecentSessions}
+      onProjectNameChange={(value) => { projectNameDirtyRef.current = true; setProjectName(value); }}
+      saveProjectName={saveProjectName} folderPath={folderPath} setFolderPath={setFolderPath}
+      fileRef={fileRef} uploadFiles={uploadFiles} uploadFromInput={uploadFromInput} importPath={importPath}
+      inputBusy={inputBusy} analyzeBusy={analyzeBusy} analyzeWorkers={analyzeWorkers} setAnalyzeWorkers={setAnalyzeWorkers}
+      analysisPolicy={analysisPolicy} setAnalysisPolicy={setAnalysisPolicy} startRegionAnalysis={startRegionAnalysis}
+      removeLoadedImage={removeLoadedImage} openRecentSession={openRecentSession}
+      recentMenuId={recentMenuId} setRecentMenuId={setRecentMenuId}
+      renameRecentSession={renameRecentSession} deleteRecentSession={deleteRecentSession}
+      status={status} setStatus={setStatus}
+    />;
   }
 
   return (
     <div className={`app workspace-mode ${toolsOpen ? "" : "tools-collapsed"} ${activeTab === "overlay" ? "overlay-mode" : ""} ${activeTab === "ocr" ? "ocr-mode" : ""} ${activeTab === "export" ? "export-mode" : ""} ${activeTab === "restore" ? "restore-mode" : ""}`}>
       <header className="workspace-global-topbar">
-        <button className="workspace-brand" type="button" onClick={returnToStartPage} title="Start page로 돌아가기">
-          Comic Translator Studio
+        <button className="workspace-brand" type="button" onClick={returnToStartPage} title="홈으로 돌아가기">
+          만화 번역 스튜디오
         </button>
         <input
           className="project-name-input"

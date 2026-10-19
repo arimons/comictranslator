@@ -262,6 +262,35 @@ def delete_session(session_id: str) -> None:
         shutil.rmtree(base)
 
 
+def session_home_progress(base: Path, images: list[dict[str, Any]], updated_ts: float) -> dict[str, Any]:
+    """홈 요약은 파일 존재·시각만 읽는다. 결과 생성과 수동 검토 완료를 혼동하지 않는다."""
+    analysis_count = final_count = 0
+    for image in images:
+        stem = Path(image.get("input_path") or image.get("name") or image["id"]).stem
+        json_dir = base / "work" / "json"
+        tracked = {
+            "analysis": json_dir / f"{stem}_regions.json",
+            "final": base / "output" / "final" / f"{stem}_final.jpg",
+            "integrated": json_dir / f"{stem}_integrated.json",
+            "guidance": json_dir / f"{stem}_manual_guidance.json",
+            "overlay": json_dir / f"{stem}_overlay_guidance.json",
+            "restore": base / "work" / "restore" / stem / "state.json",
+        }
+        for kind, path in tracked.items():
+            try:
+                stat = path.stat()
+                if not path.is_file():
+                    continue
+            except OSError:
+                continue
+            updated_ts = max(updated_ts, stat.st_mtime)
+            if kind == "analysis":
+                analysis_count += 1
+            elif kind == "final":
+                final_count += 1
+    return {"analysis_count": analysis_count, "final_count": final_count, "_updated_ts": updated_ts}
+
+
 def list_recent_sessions(limit: int = 10) -> list[dict[str, Any]]:
     raw_sessions: list[dict[str, Any]] = []
     for session_json in SESSION_ROOT.glob("*/session.json"):
@@ -269,13 +298,15 @@ def list_recent_sessions(limit: int = 10) -> list[dict[str, Any]]:
         images = sorted_image_records(data.get("images", []))
         if not images:
             continue
-        mtime = session_json.stat().st_mtime
+        progress = session_home_progress(session_json.parent, images, session_json.stat().st_mtime)
+        mtime = progress["_updated_ts"]
         image_hashes = [item.get("image_sha256") for item in images if item.get("image_sha256")]
         image_hash_set = set(image_hashes)
         first_input = Path(images[0].get("input_path", ""))
         raw_sessions.append({
             "session_id": data.get("session_id") or session_json.parent.name,
             "project_name": data.get("project_name", ""),
+            "source_folder_name": data.get("source_folder_name", ""),
             "created_at": data.get("created_at", ""),
             "updated_at": dt.datetime.fromtimestamp(mtime).isoformat(timespec="seconds"),
             "image_count": len(images),
@@ -283,6 +314,7 @@ def list_recent_sessions(limit: int = 10) -> list[dict[str, Any]]:
             "thumbnail_url": file_url(first_input),
             "_updated_ts": mtime,
             "_image_hashes": image_hash_set,
+            **progress,
         })
     raw_sessions.sort(key=lambda item: item.get("_updated_ts", 0), reverse=True)
 
@@ -2513,10 +2545,16 @@ def create_app() -> FastAPI:
         src = Path(req.path).expanduser()
         paths = scan_images(src, req.recursive)
         records = copy_images_into_session(paths, data["session_id"])
+        if records and src.is_dir():
+            data = ensure_session(data["session_id"])
+            data["source_folder_name"] = src.name
+            if not data.get("project_name"):
+                data["project_name"] = src.name
+            save_session(data)
         return {"session_id": data["session_id"], "imported": len(records), "images": records}
 
     @app.post("/api/upload")
-    def upload_files(session_id: str | None = None, files: list[UploadFile] = File(...)) -> dict[str, Any]:
+    def upload_files(session_id: str | None = None, files: list[UploadFile] = File(...), source_folder_name: str = "") -> dict[str, Any]:
         # 동기 함수로 둬서 해시·이미지 처리 동안 이벤트 루프를 막지 않고 threadpool에서 실행되게 한다.
         data = ensure_session(session_id)
         input_dir = session_dir(data["session_id"]) / "input"
@@ -2535,6 +2573,10 @@ def create_app() -> FastAPI:
             copied.append(target)
         records = []
         current = ensure_session(data["session_id"])
+        if copied and source_folder_name.strip():
+            current["source_folder_name"] = source_folder_name.strip()[:120]
+            if not current.get("project_name"):
+                current["project_name"] = current["source_folder_name"]
         known = {item["id"] for item in current.get("images", [])}
         for path in copied:
             if path.stem in known:

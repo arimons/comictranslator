@@ -14,6 +14,8 @@
 
 에이전트의 프로젝트·페이지·영역 조회와 미적용 검토 초안은 [편집기 검토 MCP](docs/editor_mcp.md)를 사용한다. 진입점은 `run_editor_mcp.py`이며 UI 서버 없이 동작한다.
 
+편집기 UI/UX와 MCP 후속 작업은 [편집기 할 일](docs/EDITOR_TODO.md)에서 관리한다.
+
 ---
 
 ## 현재 실행 구조

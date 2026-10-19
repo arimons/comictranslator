@@ -26,6 +26,7 @@ NEW_COMIC_TRANSLATOR/
 │   └── src/
 │       ├── main.jsx            # React 엔트리포인트
 │       ├── App.jsx              # 세션/이미지 목록/워크플로우 탭 전체 상태
+│       ├── StartScreen.jsx      # 홈: 파일·폴더 불러오기, 최근 프로젝트, 분석 방법
 │       ├── EditorCanvas.jsx      # Step 3 영역 분석 캔버스 (Konva)
 │       ├── OverlayCanvas.jsx     # Step 5 텍스트 오버레이 편집 캔버스 (Konva)
 │       ├── RestorePanel.jsx      # 배경 복원 탭 (마스크 브러시 + LaMa 복원)

@@ -77,6 +77,8 @@ def _reference_exists(reference: str, doc_path: Path) -> bool:
 
 def _broken_references(path: Path) -> list[str]:
     text = _extract_text(path)
+    # 공식 도움말 같은 외부 URL의 .html은 리포지토리 파일 참조가 아니다.
+    text = re.sub(r"https?://[^\s<>\])]+", "", text)
     broken = []
     for reference in sorted(set(REFERENCE_PATTERN.findall(text))):
         if reference.startswith(("http", "www")) or reference.startswith("_"):
@@ -87,6 +89,12 @@ def _broken_references(path: Path) -> list[str]:
             continue
         broken.append(reference)
     return broken
+
+
+def test_external_html_links_are_not_local_references(tmp_path: Path) -> None:
+    doc = tmp_path / "external.md"
+    doc.write_text("[공식 도움말](https://helpx.adobe.com/photoshop/guide.html)\nmissing_local_file.py", encoding="utf-8")
+    assert _broken_references(doc) == ["missing_local_file.py"]
 
 
 @pytest.mark.parametrize("doc_path", [p for p in DOC_PATHS if p.exists()], ids=lambda p: p.name)

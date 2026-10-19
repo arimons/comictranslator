@@ -38,7 +38,8 @@
         "frontend/src/RestorePanel.jsx",
         "pipeline/region_types.py",
         "frontend/src/regionTypes.js",
-        "frontend/src/RegionTypeBadge.jsx"
+        "frontend/src/RegionTypeBadge.jsx",
+        "frontend/src/StartScreen.jsx"
       ]
     },
     "docs/editor_agent_bridge_review.md": {
@@ -153,6 +154,21 @@
         "pipeline/region_types.py",
         "tests/test_editor_mcp.py"
       ]
+    },
+    "docs/HOME_SCREEN_CHANGELOG.md": {
+      "role": "record",
+      "topic": "2026-10-20 홈 화면 개선 내역",
+      "sources": [
+        "frontend/src/StartScreen.jsx",
+        "frontend/src/App.jsx",
+        "main_v2.py",
+        "ui_v2/styles.css"
+      ]
+    },
+    "docs/EDITOR_TODO.md": {
+      "role": "hub",
+      "topic": "편집기 UI와 MCP 후속 할 일",
+      "sources": []
     }
   }
 }
