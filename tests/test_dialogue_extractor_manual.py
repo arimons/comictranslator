@@ -1,6 +1,7 @@
 # 수동 Bubble guidance가 Step 3 region 후보로 반영되는지 검증한다.
 
 import cv2
+import pytest
 import numpy as np
 from PIL import Image
 
@@ -1167,3 +1168,22 @@ def test_dedupe_prefers_edge_rescue_over_overlapping_bubble():
     crops = _dedupe_dialogue_crops([regular, edge])
 
     assert crops == [edge]
+
+
+def test_lama_process_slot_holds_exclusive_lock(tmp_path, monkeypatch):
+    fcntl = pytest.importorskip("fcntl")
+    import pipeline.dialogue_extractor as de
+
+    monkeypatch.setattr(de, "_LAMA_SLOT_DIR", tmp_path)
+    monkeypatch.setattr(de, "_lama_slot_handle", None)
+    monkeypatch.setenv("LAMA_MAX_PROCESSES", "1")
+
+    de._acquire_lama_process_slot()
+    try:
+        assert de._lama_slot_handle is not None
+        # 다른 프로세스처럼 같은 슬롯 파일을 따로 열면 잠글 수 없어야 한다.
+        with open(tmp_path / "slot0.lock", "a") as other:
+            with pytest.raises(OSError):
+                fcntl.flock(other.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+    finally:
+        de._lama_slot_handle.close()

@@ -3,7 +3,11 @@
 
 import cv2
 import json
+import os
+import sys
+import tempfile
 import threading
+import time
 import numpy as np
 from pathlib import Path
 from typing import Any, Dict, List, Tuple
@@ -1894,6 +1898,51 @@ def _load_simple_lama_class() -> Any | None:
     return SimpleLama
 
 
+# LaMa를 올린 프로세스는 2〜3.4GB를 쓴다. 분석은 페이지마다 Step 3 프로세스를 따로 띄우므로
+# 병렬 분석(기본 4장)에서 LaMa 페이지가 겹치면 16〜18GB Mac이 멈출 수 있다.
+# 그래서 LaMa를 올린 프로세스 수를 머신 전체에서 LAMA_MAX_PROCESSES개(기본 2)로 묶는다.
+# 모델은 프로세스가 끝날 때까지 메모리에 남으므로 슬롯도 프로세스가 끝날 때 OS가 푼다.
+# 상주 서버(main_v2)가 모델을 올리면 슬롯 하나를 계속 쓴다. 그래서 1로 줄이면 분석이 멈출 수 있다.
+_LAMA_SLOT_DIR = Path(tempfile.gettempdir()) / "comic_translator_lama_slots"
+_lama_slot_handle: Any = None
+
+
+def _lama_max_processes() -> int:
+    try:
+        return max(1, int(os.environ.get("LAMA_MAX_PROCESSES", "2")))
+    except ValueError:
+        return 2
+
+
+def _acquire_lama_process_slot() -> None:
+    """빈 슬롯 파일 하나에 배타 잠금을 걸 때까지 기다린다. fcntl이 없는 OS(Windows)에서는 제한하지 않는다."""
+    global _lama_slot_handle
+    if _lama_slot_handle is not None:
+        return
+    try:
+        import fcntl
+    except ImportError:
+        return
+    _LAMA_SLOT_DIR.mkdir(parents=True, exist_ok=True)
+    waited_since: float | None = None
+    while True:
+        for index in range(_lama_max_processes()):
+            handle = open(_LAMA_SLOT_DIR / f"slot{index}.lock", "a")
+            try:
+                fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except OSError:
+                handle.close()
+                continue
+            _lama_slot_handle = handle
+            if waited_since is not None:
+                print(f"[lama] 슬롯 {index} 확보 ({time.monotonic() - waited_since:.1f}s 대기)", file=sys.stderr, flush=True)
+            return
+        if waited_since is None:
+            waited_since = time.monotonic()
+            print(f"[lama] 다른 프로세스가 LaMa를 쓰는 중이라 대기 (최대 {_lama_max_processes()}개)", file=sys.stderr, flush=True)
+        time.sleep(0.5)
+
+
 def _get_lama() -> Any:
     """LaMa 모델을 처음 필요할 때 한 번만 올린다. 여러 스레드가 동시에 불러도 한 번만 로드한다."""
     global _lama
@@ -1901,6 +1950,8 @@ def _get_lama() -> Any:
         return _lama
     with _lama_lock:
         if _lama is None:
+            # torch import부터 메모리를 쓰므로 슬롯을 먼저 잡고 불러온다.
+            _acquire_lama_process_slot()
             lama_class = _load_simple_lama_class()
             if lama_class is None:
                 raise RuntimeError("simple_lama_inpainting is not installed. Install requirements.txt in .venv.")

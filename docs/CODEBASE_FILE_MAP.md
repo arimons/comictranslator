@@ -268,6 +268,7 @@ Step 3 진입점이다. `pipeline_runner`가 `python -m pipeline.dialogue_extrac
 - `build_dialogue_sheet()`: ① `bubble_detector.build_ocr_region_sheet()`로 말풍선 검출·흰색 마스킹 → ② 말풍선 밖 텍스트를 LaMa(`simple_lama_inpainting`)로 지움 → ③ 두 종류 crop을 읽기 순서로 모아 indexed OCR sheet + `regions.json` 저장
 - 편집기 guidance(`manual_regions`, `manual_seed_points`, `virtual_walls`, `split_guides`, suppressed region)를 인자로 받아 반영한다.
 - region별 `safe_text_rect`(`_compute_safe_text_rect`)와 `mask_centroid`(`_compute_mask_centroid`)를 계산해 `regions.json`에 기록한다. Step 5 배치의 기준값이다.
+- LaMa 동시 실행 제한(`_acquire_lama_process_slot`): 분석은 페이지마다 Step 3 프로세스를 따로 띄우고, LaMa를 올린 프로세스는 2〜3.7GB를 쓴다. 그래서 LaMa를 올리기 전에 임시 폴더의 슬롯 파일(`comic_translator_lama_slots/slotN.lock`)에 배타 잠금을 걸어, LaMa를 쓰는 프로세스를 머신 전체에서 `LAMA_MAX_PROCESSES`개(기본 2)로 묶는다. 자리가 없으면 기다리고, 슬롯은 프로세스가 끝날 때 풀린다. 상주 서버가 모델을 올리면 슬롯 하나를 계속 쓰므로 1로 줄이지 않는다. fcntl이 없는 Windows에서는 제한하지 않는다.
 - 수동 Ubox(`_apply_manual_ubox_lama`): 박스 안에서 글자 색 픽셀만 마스크로 잡고, 문맥은 박스 바깥 24px까지 본다. 박스가 어두우면 밝은 글자로 보고 마스크를 6px 넓힌다(흰 테두리가 남으면 LaMa가 글자 모양 얼룩을 되살린다). 엔진은 `_classify_inpaint_background` 배경 분류로 Telea/LaMa를 고르고, guidance의 `inpaint_engine: "lama"`가 있으면 그 값이 우선한다.
 
 ### `pipeline/bubble_detector.py`

@@ -836,7 +836,8 @@ python3 run_pipeline.py \
       <div class="sub-step-num">4</div>
       <div class="sub-step-body">
         <strong>SimpleLama inpainting</strong>
-        <p>텍스트 마스크 영역을 LaMa 모델로 배경 복원합니다. <code>bubble_protect_pad</code>로 말풍선 외곽을 보호해 이중 처리를 방지합니다.</p>
+        <p>텍스트 마스크 영역을 LaMa 모델로 배경 복원합니다. <code>bubble_protect_pad</code>로 말풍선 외곽을 보호해 이중 처리를 방지합니다.
+        LaMa를 올린 프로세스는 2〜3.7GB를 쓰므로, 병렬 분석에서 동시에 LaMa를 쓰는 프로세스를 <code>LAMA_MAX_PROCESSES</code>개(기본 2)로 제한합니다. 나머지는 자리가 날 때까지 기다립니다.</p>
       </div>
     </div>
   </div>
