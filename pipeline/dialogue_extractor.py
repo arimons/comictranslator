@@ -1945,8 +1945,26 @@ def _acquire_lama_process_slot() -> None:
         time.sleep(0.5)
 
 
+def _lama_device() -> Any:
+    """LaMa 실행 장치. LAMA_DEVICE(cpu|mps|cuda)가 있으면 따르고, 없으면 cuda → mps → cpu 순으로 고른다.
+
+    SimpleLama 기본값은 cuda가 없으면 cpu라서 Apple Silicon GPU를 쓰지 않는다.
+    M3 Pro 실측(ROI 약 128×320)에서 MPS는 CPU보다 약 3.3배 빠르고 결과 픽셀 차이는 최대 1/255였다.
+    """
+    import torch
+
+    name = os.environ.get("LAMA_DEVICE", "").strip().lower()
+    if not name:
+        mps = getattr(torch.backends, "mps", None)
+        name = "cuda" if torch.cuda.is_available() else ("mps" if mps is not None and mps.is_available() else "cpu")
+    return torch.device(name)
+
+
 def _get_lama() -> Any:
-    """LaMa 모델을 처음 필요할 때 한 번만 올린다. 여러 스레드가 동시에 불러도 한 번만 로드한다."""
+    """LaMa 모델을 처음 필요할 때 한 번만 올린다. 여러 스레드가 동시에 불러도 한 번만 로드한다.
+
+    상주 서버에서는 Step 3 재적용과 배경 복원 탭(background_restore)이 이 모델 하나를 같이 쓴다.
+    """
     global _lama
     if _lama is not None:
         return _lama
@@ -1957,7 +1975,16 @@ def _get_lama() -> Any:
             lama_class = _load_simple_lama_class()
             if lama_class is None:
                 raise RuntimeError("simple_lama_inpainting is not installed. Install requirements.txt in .venv.")
-            _lama = lama_class()
+            device = _lama_device()
+            try:
+                _lama = lama_class(device)
+            except Exception as exc:  # noqa: BLE001 - GPU 초기화 실패는 CPU로 대신한다
+                if device.type == "cpu":
+                    raise
+                print(f"[lama] {device.type} 초기화 실패, cpu로 실행: {exc}", file=sys.stderr, flush=True)
+                import torch
+
+                _lama = lama_class(torch.device("cpu"))
     return _lama
 
 

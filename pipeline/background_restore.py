@@ -336,11 +336,15 @@ def _get_lama() -> tuple[Any, float, bool]:
         if _lama_model is not None:
             return _lama_model, 0.0, False
         started = time.perf_counter()  # torch import까지 로딩 시간에 넣는다
+        # Step 3(dialogue_extractor)와 같은 모델 인스턴스를 쓴다. 서버가 LaMa를 두 번 올리면 2〜3GB가 중복된다.
         try:
-            from simple_lama_inpainting import SimpleLama
-        except ModuleNotFoundError as exc:
-            raise EngineError("simple_lama_inpainting이 설치되지 않았습니다 (.venv)") from exc
-        _lama_model = SimpleLama()
+            from pipeline.dialogue_extractor import _get_lama as _shared_lama
+        except ImportError:
+            from dialogue_extractor import _get_lama as _shared_lama
+        try:
+            _lama_model = _shared_lama()
+        except RuntimeError as exc:
+            raise EngineError(str(exc)) from exc
         _lama_load_sec = time.perf_counter() - started
         return _lama_model, _lama_load_sec, True
 
