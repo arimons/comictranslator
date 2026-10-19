@@ -42,6 +42,7 @@ NEW_COMIC_TRANSLATOR/
     ├── gemini_ocr_translate_v5.py  # Step 4
     ├── font_style_analyzer.py  # render_hint CV 보정
     ├── render_text_overlay.py  # Step 5
+    ├── overlay_anchor.py       # 글자 입히기 수동값 위치 기준 재매칭
     ├── background_restore.py   # 배경 복원 탭 엔진 (LaMa, 확정 패치 합성)
     ├── manual_guidance.py      # 편집기 guidance → 유효 TG
     └── openai_image_redraw.py  # 렌더 생략 페이지 OpenAI 이미지 재생성

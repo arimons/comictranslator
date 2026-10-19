@@ -1756,6 +1756,50 @@ def merge_overlay_guidance(existing: dict[str, Any], incoming: dict[str, Any]) -
     return merged
 
 
+def _integrated_region_rects(record: dict[str, Any]) -> dict[int, list[int]]:
+    from pipeline.overlay_anchor import region_rects_from_integrated
+
+    return region_rects_from_integrated(load_json(Path(record["integrated_json"]), default={}))
+
+
+def stamp_overlay_anchors_for_record(record: dict[str, Any]) -> int:
+    """글자 입히기 수동값에 현재 영역 위치를 기록한다. 기록한 개수를 돌려준다.
+
+    수동값은 integrated.json의 region 번호로 저장되므로, 그 integrated 이후에 저장된 수동값만
+    현재 위치로 기록한다(파일 시각 비교). 그보다 오래된 예전 수동값은 어느 번호 기준인지 알 수 없다.
+    """
+    from pipeline.overlay_anchor import stamp_overlay_anchors
+
+    overlay_path, integrated_path = Path(record["overlay_guidance_json"]), Path(record["integrated_json"])
+    if not overlay_path.exists() or not integrated_path.exists():
+        return 0
+    if overlay_path.stat().st_mtime < integrated_path.stat().st_mtime:
+        return 0
+    stamped_guidance, count = stamp_overlay_anchors(load_json(overlay_path, default={}), _integrated_region_rects(record))
+    if count:
+        write_json(overlay_path, stamped_guidance)
+    return count
+
+
+def remap_overlay_guidance_for_record(record: dict[str, Any], log_callback=None) -> dict[str, Any]:
+    """OCR이 region 번호를 새로 매긴 뒤, 수동값을 기록된 위치와 가장 많이 겹치는 영역 번호로 옮긴다."""
+    from pipeline.overlay_anchor import remap_overlay_guidance
+
+    overlay_path = Path(record["overlay_guidance_json"])
+    if not overlay_path.exists():
+        return {"moved": {}, "unmatched": []}
+    remapped, report = remap_overlay_guidance(load_json(overlay_path, default={}), _integrated_region_rects(record))
+    if report["moved"] or report["unmatched"]:
+        write_json(overlay_path, remapped)
+        message = f"글자 입히기 수동값 재매칭: 이동 {report['moved'] or '-'}"
+        if report["unmatched"]:
+            message += f", 짝 없음(보관) {report['unmatched']}"
+        print(f"[overlay] {record['id']} {message}", flush=True)
+        if log_callback is not None:
+            log_callback(message)
+    return report
+
+
 def run_final_for_item(
     session_id: str,
     item: dict[str, Any],
@@ -1777,6 +1821,8 @@ def run_final_for_item(
         else:
             existing_overlay_guidance = load_json(Path(record["overlay_guidance_json"]), default={})
             write_json(Path(record["overlay_guidance_json"]), merge_overlay_guidance(existing_overlay_guidance, overlay_guidance))
+    # OCR이 region 번호를 새로 매기기 전에, 지금 번호 기준 수동값의 위치를 기록해 둔다(force가 integrated를 지우기 전).
+    stamp_overlay_anchors_for_record(record)
     if force:
         for key in ("integrated_json", "final_jpg", "overlay_layout_json", "ocr_status_json", "export_recovery_json"):
             path = Path(record[key])
@@ -1814,6 +1860,7 @@ def run_final_for_item(
         log_callback("Step 4 Gemini OCR/번역 시작")
         run_subprocess_stream(ocr_cmd, timeout=360, log_callback=log_callback)
         log_callback("Step 6 Text Overlay 시작")
+    remap_overlay_guidance_for_record(record, log_callback=log_callback)
     render_overlay_for_record(record, font, tracking_offset, log_callback=log_callback)
     mark_ocr_status(record, "done", "OCR/번역 완료", "integrated.json 생성 완료")
     return image_record(session_id, Path(item["input_path"]))
@@ -2590,6 +2637,7 @@ def create_app() -> FastAPI:
             existing_overlay_guidance = load_json(Path(record["overlay_guidance_json"]), default={})
             next_overlay_guidance = merge_overlay_guidance(existing_overlay_guidance, req.overlay_guidance)
         write_json(Path(record["overlay_guidance_json"]), next_overlay_guidance)
+        stamp_overlay_anchors_for_record(record)
         render_overlay_for_record(record, req.font_path, req.tracking_offset)
         return {"ok": True, "image": page_record(req.session_id, req.image_id)}
 

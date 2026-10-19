@@ -70,6 +70,7 @@ NEW_COMIC_TRANSLATOR/
     ├── gemini_ocr_translate_v5.py  # Step 4 (Gemini 기본, gpt-* 선택 가능)
     ├── font_style_analyzer.py  # Step 4 직후 render_hint CV 보정
     ├── render_text_overlay.py  # Step 5
+    ├── overlay_anchor.py       # 글자 입히기 수동값을 region 번호 대신 영역 위치로 재매칭
     ├── background_restore.py   # 배경 복원 탭 엔진 (문맥 영역·마스크 분리, LaMa, 확정 패치 합성)
     ├── openai_image_redraw.py  # 렌더 생략 페이지 OpenAI 이미지 재생성 (main_v2 export)
     ├── vis/                    # pipeline 진단 시각화 도구
@@ -145,7 +146,7 @@ guidance(수동 보정)가 있는 이미지는 `guidance_digest`(guidance 내용
 | `POST /api/guidance`, `/api/guidance/clear` | 수동 보정(TG 삭제/split, edge barrier, manual region 등) 반영 후 Step 3 재실행 |
 | `POST /api/run-final(-stream)` | Step 4(OCR/번역) + Step 5(오버레이) 실행. body의 `ocr_model`로 모델 지정 |
 | `GET /api/ocr-models` | OCR/번역 모델 목록(`id`, `label`, `note`)과 기본값 |
-| `POST /api/overlay/apply` | 오버레이 위치/폰트만 다시 렌더링 (OCR 재실행 없음) |
+| `POST /api/overlay/apply` | 오버레이 위치/폰트만 다시 렌더링 (OCR 재실행 없음). 저장한 수동값에 영역 위치(`_anchor`)를 기록 |
 | `GET /api/session/{id}/export`, `POST /api/export/generate-missing` | 결과 ZIP 내보내기, 실패 이미지 OpenAI 이미지 생성 fallback |
 | `GET /api/file` | 세션·입력 캐시·분석 캐시 폴더 아래 이미지 파일 서빙 |
 | `/api/restore/*` | 배경 복원 탭: 상태·자동 마스크·마스크 저장·LaMa 작업 실행/조회·확정·패치 제거 (`pipeline/background_restore.py`) |
@@ -159,6 +160,7 @@ guidance(수동 보정)가 있는 이미지는 `guidance_digest`(guidance 내용
 - 업로드·폴더 import는 `allocate_input_path()`로 세션 `input/`에서 이미지 id(stem)와 파일이 모두 겹치지 않는 이름을 고른다. input 파일은 전역 입력 캐시를 가리키는 symlink라서, 기존 경로에 덮어쓰면 다른 이미지(다른 세션 포함)의 원본이 바뀌기 때문이다. `/api/upload`는 `"xb"` 모드로 써서 기존 파일을 따라가 덮어쓰지 않는다.
 - `/api/analyze-stream`은 한 장이 실패해도 나머지를 끝까지 처리한다. 실패한 이미지는 `image_id`가 붙은 `error` 이벤트로 알리고, 마지막 `complete` 이벤트를 `ok: false`로 보낸다.
 - subprocess 실행(`run_subprocess`, `run_subprocess_stream`)은 `pipeline_runner.stream_subprocess()`를 공유한다. 아래 `pipeline_runner.py` 항목 참고.
+- 글자 입히기 수동값(`overlay_guidance.json`)은 integrated의 region 번호(`"5"`, `"7:1"`)를 키로 쓴다. 번호는 Step 3가 돌 때마다 읽기 순서로 새로 매겨지고(Ubox 하나로도 크게 섞인다) OCR을 다시 돌리면 integrated도 새 번호를 쓴다. 그래서 수동값을 저장할 때와 OCR 직전에 영역 위치를 `_anchor`로 기록하고(`stamp_overlay_anchors_for_record`, integrated보다 나중에 저장된 수동값만), OCR 직후 겹침(IoU 0.6 이상)이 가장 큰 영역 번호로 옮긴다(`remap_overlay_guidance_for_record`). 짝이 없으면 지우지 않고 `unmatched_regions`에 보관한다. 판정 로직은 `pipeline/overlay_anchor.py`.
 - JSON 저장은 `manual_guidance.write_json()`을 쓴다. 임시 파일에 다 쓴 뒤 `os.replace`로 교체하므로 쓰는 도중 중단돼도 기존 JSON이 잘린 채 남지 않는다.
 - Step 4 모델은 편집기 OCR 탭의 선택 상자에서 고른다. 서버 기본값과 같으면 프론트가 `ocr_model: null`을 보내 `--model` 인자를 생략한다. 추가 프롬프트는 `--extra-prompt=값` 형식으로 넘겨 `-`로 시작하는 프롬프트도 옵션으로 오인되지 않는다.
 
