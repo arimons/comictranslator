@@ -252,3 +252,18 @@ def test_edit_to_existing_target_merges_duplicate_rows(store):
     result = store.review(wid, data["entries"][0]["id"], "accepted", data["entries"][1]["target"])
     assert len(result["entries"]) == 1
     assert result["entries"][0]["status"] == "accepted"
+
+
+def test_search_quota_failure_is_actionable_without_leaking_sdk_error(store):
+    class QuotaError(Exception):
+        code = 429
+    def fail(work):
+        raise QuotaError('request-with-secret-key')
+    store.researcher = fail
+    wid = store.confirm({'title': '작품'})
+    store.start(wid)
+    store.pool.shutdown(wait=True)
+    data = store.read(wid)
+    assert data['error_code'] == 'quota_exhausted'
+    assert '429' in data['error'] and '검색 한도' in data['error']
+    assert 'secret-key' not in store.path(wid).read_text()

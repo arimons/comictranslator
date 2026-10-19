@@ -244,11 +244,17 @@ class GlossaryStore:
                             researched_at=datetime.now(timezone.utc).isoformat())
                 data["version"] += 1
                 write_json(self.path(wid), data)
-        except Exception:
+        except Exception as exc:
             # SDK 예외에는 키/요청 URL이 들어갈 수 있어 원문을 UI나 파일에 남기지 않는다.
             with self.lock:
                 data = self.read(wid)
-                data.update(status="failed", error="작품 조사 실패: API 키·모델 접근 권한·네트워크를 확인하고 다시 조사하세요.")
+                quota_exhausted = getattr(exc, "code", None) == 429
+                message = (
+                    "Gemini 조사 할당량 초과(429). AI Studio의 사용량·요금제·검색 한도를 확인한 뒤 다시 조사하세요."
+                    if quota_exhausted else "작품 조사 실패: API 키·모델 접근 권한·네트워크를 확인하고 다시 조사하세요."
+                )
+                data.update(status="failed", error=message,
+                            error_code="quota_exhausted" if quota_exhausted else "research_failed")
                 write_json(self.path(wid), data)
         finally:
             with self.lock:
