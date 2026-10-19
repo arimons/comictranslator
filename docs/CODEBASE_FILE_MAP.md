@@ -140,6 +140,8 @@ guidance(수동 보정)가 있는 이미지는 `guidance_digest`(guidance 내용
 | `POST /api/overlay/apply` | 오버레이 위치/폰트만 다시 렌더링 (OCR 재실행 없음) |
 | `GET /api/session/{id}/export`, `POST /api/export/generate-missing` | 결과 ZIP 내보내기, 실패 이미지 OpenAI 이미지 생성 fallback |
 | `GET /api/file` | 세션·입력 캐시·분석 캐시 폴더 아래 이미지 파일 서빙 |
+| `/api/restore/*` | 배경 복원 탭: 상태·자동 마스크·마스크 저장·LaMa 작업 실행/조회·확정·패치 제거 (`pipeline/background_restore.py`) |
+| `GET /manual` | 사용자 매뉴얼 `docs/editor_manual.html`을 그대로 제공. 시작 화면과 `?` 도움말에서 링크 |
 
 **동작 메모**
 
