@@ -65,6 +65,8 @@
 
 ## 문서 관리 위치
 
+후속 문서 점검에서 현재 해설 본문의 옛 분류 표현도 정리했다. 대상은 `AGENTS.md`, `CLAUDE.md`, `docs/CODEBASE_FILE_MAP.md`, `docs/pipeline_guide.html`, `docs/editor_manual.html`, `docs/editor_agent_bridge_review.md`다. `README.md`는 현재 정본으로 연결하는 안내와 초기 구현 기록의 범위를 명시했다. 코드 식별자·JSON 예시·과거 기록을 일괄 치환하지 않으며, 검출기 내부 후보 분류와 최종 처리 기준을 별도로 설명한다.
+
 사용법과 구조는 `docs/`의 정본 문서에서 관리한다. 이번 기록은 같은 폴더의 시점 기록(`record`)으로 등록한다. 모든 최상위 docs 문서는 `docs/DOC_SOURCES.json`에 역할과 관련 소스를 선언한다.
 
 - 사용법: `docs/editor_manual.html`

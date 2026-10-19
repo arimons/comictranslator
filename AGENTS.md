@@ -6,7 +6,7 @@
 - 코드 주석: 한국어 허용
 - API 키: `.env` 파일로 분리, 하드코딩 금지
 - 가상환경: `.venv`
-- 현상/결과 판정: 시각화, CV 분류, split line, bubble/U/rescue 여부처럼 사람 눈의 도메인 판단이 필요한 경우 에이전트가 단정하지 않는다. 관찰값과 가능한 해석만 정리하고, 코드 변경이나 기준 확정 전에 반드시 사용자에게 더블체크한다.
+- 현상/결과 판정: 시각화, CV 분류, split line, 경계 기반/텍스트 기반/rescue 여부처럼 사람 눈의 도메인 판단이 필요한 경우 에이전트가 단정하지 않는다. 관찰값과 가능한 해석만 정리하고, 코드 변경이나 기준 확정 전에 반드시 사용자에게 더블체크한다.
 
 용어 정의(Glossary)와 파이프라인 흐름 요약은 `CLAUDE.md` 참고.
 
@@ -63,7 +63,7 @@ Step 5: Text Overlay            → output_dir/final/{name}_final.jpg
 ```
 
 - 각 단계는 subprocess로 실행되며, 어느 단계든 실패하면 그 이미지는 실패로 끝난다
-- Step 3이 말풍선 마스킹, 말풍선 밖 텍스트 LaMa 지우기, indexed OCR sheet 생성을 한 번에 한다
+- Step 3이 경계 기반 마스킹, 텍스트 기반 글자 지우기, indexed OCR sheet 생성을 한 번에 한다
 - Step 4는 indexed OCR sheet + `regions.json`을 입력으로 쓰고, `--ocr-model`로 모델을 고를 수 있다
 - Step 5는 `regions.json`의 bbox·safe rect·mask centroid로 배치한다
 - 검증 실행에서 `--work-dir proof`를 쓰면 보통 `--output proof`를 사용
@@ -81,7 +81,7 @@ Step 5: Text Overlay            → output_dir/final/{name}_final.jpg
 | `pipeline/pipeline_runner.py` | `run_single_image()` / `run_batch_images()` — 전 단계 subprocess 통일, `stream_subprocess()` 공용 실행기 |
 | `pipeline/cloud_vision_api.py` | Cloud Vision OCR (이미지 단위, 실패 시 exit 1) |
 | `pipeline/text_group_builder_v2.py` | CV block → Text Line → Text Group 병합 (Repair + X 확장) |
-| `pipeline/dialogue_extractor.py` | Step 3 진입점. 말풍선 검출 + unboxed LaMa + indexed OCR sheet |
+| `pipeline/dialogue_extractor.py` | Step 3 진입점. 경계 기반 검출 + 텍스트 기반 지우기 + indexed OCR sheet |
 | `pipeline/bubble_detector.py` | Anchor 기반 FloodFill, region_type 분류, flood mask 생성 |
 | `pipeline/gemini_ocr_translate_v5.py` | indexed OCR sheet 기반 OCR/번역/integrated JSON 생성 (Gemini/OpenAI) |
 | `pipeline/render_text_overlay.py` | split flood region 우선 bbox + DP 줄바꿈 텍스트 렌더링 |

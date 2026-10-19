@@ -135,6 +135,11 @@
         "pipeline/dialogue_extractor.py",
         "tests/test_region_processing_basis.py"
       ]
+    },
+    "README.md": {
+      "role": "hub",
+      "topic": "현재 정본 문서 연결 및 초기 구현 기록 안내",
+      "sources": []
     }
   }
 }

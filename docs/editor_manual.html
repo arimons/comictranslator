@@ -579,7 +579,7 @@
         흰 글자가 같은 흰 바탕과 맞닿아 있거나, 속도선이 글자를 가로지르는 경우처럼 사각형 안에서 글자와 배경을 색으로 나눌 수 없을 때 씁니다.
       </p>
       <ol>
-        <li><strong>자동 마스크</strong>를 누르면 말풍선 밖 글자 위치로 지울 영역(빨강)을 만듭니다.</li>
+        <li><strong>자동 마스크</strong>를 누르면 텍스트 기반 영역의 글자 위치로 지울 영역(빨강)을 만듭니다.</li>
         <li>지우개(<kbd>E</kbd>)로 배경까지 잡힌 부분을 걷어 내고, 칠하기(<kbd>B</kbd>)로 빠진 글자 부분을 더합니다.</li>
         <li>문맥 영역(<kbd>C</kbd>)으로 LaMa가 참고할 범위를 사각형으로 감쌉니다. 해당 컷 안으로만 잡고, 옆 컷이 섞이지 않게 합니다.</li>
         <li><strong>복원 실행</strong> 후 결과가 괜찮으면 <strong>이 결과 확정</strong>을 누릅니다. 확정한 패치는 글자 입히기 렌더 때 마스크 안쪽에만 합성됩니다.</li>
@@ -658,7 +658,7 @@
           <tr data-shortcut="guidance.tool.wall"><td><kbd>E</kbd></td><td>Edge Wall</td></tr>
           <tr data-shortcut="guidance.tool.region-split"><td><kbd>L</kbd></td><td>Region Split</td></tr>
           <tr data-shortcut="guidance.tool.ubox"><td><kbd>U</kbd></td><td>텍스트 기반 영역</td></tr>
-          <tr data-shortcut="guidance.tool.bubble"><td><kbd>B</kbd></td><td>경계 기반</td></tr>
+          <tr data-shortcut="guidance.tool.bubble"><td><kbd>B</kbd></td><td>경계 기반 seed</td></tr>
           <tr data-shortcut="guidance.tool.region-off"><td><kbd>X</kbd></td><td>Region Off</td></tr>
           <tr data-shortcut="edit.escape.guidance"><td><kbd>Esc</kbd></td><td>단계별 해제: 선택 해제 → Select 도구</td></tr>
           <tr data-shortcut="guidance.delete"><td><kbd>Delete</kbd>, <kbd>Backspace</kbd></td><td>선택한 TG를 끄기. 선택이 없으면 포인터 아래 guide/TG/region 삭제 (우클릭과 같음)</td></tr>
@@ -740,7 +740,7 @@
           <p>Edge는 실제 벽처럼 작동해야 합니다. 그래도 rescue가 실패하면 팝업의 실패 이유와 rect 정보를 보고 edge box가 너무 작거나 TG와 overlap이 없는지 확인합니다.</p>
         </article>
         <article class="card">
-          <h3>split bubble의 인접 region 영향</h3>
+          <h3>분할된 경계 기반 영역의 인접 영역 영향</h3>
           <p>수동 폰트, safe rect, 세로쓰기, 텍스트 override가 들어간 region은 자동 split sibling 보정에서 격리됩니다. 한 region 수정이 이웃 font를 바꾸면 버그로 보면 됩니다.</p>
         </article>
         <article class="card">

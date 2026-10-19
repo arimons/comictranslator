@@ -5,6 +5,8 @@
 
 작성일: 2026-05-05 / 최종 갱신: 2026-10-06
 
+영역 용어·호환 모듈 설명 갱신: 2026-10-19. 본문의 처리 분류는 경계 기반/텍스트 기반이며, 파일명·함수명·저장 키의 과거 이름은 호환을 위해 유지한다.
+
 `archive/`, 출력물, 이미지, 가상환경은 제외하고 현재 실행 경로의 소스만 정리했다.
 
 현재 연결 상태와 다음 작업은 [PIPELINE_STATUS.md](PIPELINE_STATUS.md) 참고.
@@ -22,7 +24,7 @@ NEW_COMIC_TRANSLATOR/
 │   └── src/
 │       ├── main.jsx            # React 엔트리포인트
 │       ├── App.jsx              # 세션/이미지 목록/워크플로우 탭 전체 상태
-│       ├── EditorCanvas.jsx      # Step 3 말풍선 분석 캔버스 (Konva)
+│       ├── EditorCanvas.jsx      # Step 3 영역 분석 캔버스 (Konva)
 │       ├── OverlayCanvas.jsx     # Step 5 텍스트 오버레이 편집 캔버스 (Konva)
 │       ├── RestorePanel.jsx      # 배경 복원 탭 (마스크 브러시 + LaMa 복원)
 │       ├── keymap.js             # 키보드·마우스 단축키 단일 정의
@@ -49,15 +51,15 @@ NEW_COMIC_TRANSLATOR/
     ├── input_preprocessor.py   # 입력 정리 (가로 2페이지 spread 자동 분할)
     ├── cloud_vision_api.py     # Step 1
     ├── text_group_builder_v2.py  # Step 2
-    ├── dialogue_extractor.py   # Step 3 진입점 (말풍선 검출 + unboxed LaMa + OCR sheet)
+    ├── dialogue_extractor.py   # Step 3 진입점 (경계 기반 검출 + 텍스트 기반 지우기 + OCR sheet)
     ├── bubble_detector.py      # 말풍선 FloodFill 검출 코어 (구 floodfill_anchor_probe.py)
     ├── flood_split.py          # shared flood region split 후보 평가
     ├── edge_barrier_flood_rescue.py  # 열린 말풍선 edge barrier 구제
     ├── bubble_text_filters.py  # 말풍선 후보 텍스트 필터 정책
-    ├── unboxed_text_detector.py  # 말풍선 밖 텍스트 후보 local mask 검증
-    ├── unboxed_grouping.py     # 말풍선 밖 TG 선별·인접 TG 묶기
+    ├── unboxed_text_detector.py  # 텍스트 기반 후보 local mask 검증
+    ├── unboxed_grouping.py     # 텍스트 기반 처리 대상 TG 선별·인접 TG 묶기
     ├── text_style_metrics.py   # TextFragment 기준 글꼴 스타일 지표
-    ├── run_masked_vis.py       # unboxed 추출·통합 마스킹 시각화 (dialogue_extractor가 import)
+    ├── run_masked_vis.py       # 텍스트 기반 추출·통합 마스킹 시각화 (dialogue_extractor가 import)
     ├── bubble_candidate_visualizer.py  # 말풍선 후보 검토 시각화 (*_bubble_vis.jpg)
     ├── manual_guidance.py      # 편집기 guidance → 유효 TG 생성, atomic JSON 쓰기
     ├── region_types.py         # 처리 기준 상수·기존 JSON 타입 호환·비파괴 projection
@@ -85,7 +87,7 @@ Step 1: Cloud Vision API (이미지 단위 호출, upscale2x_clahe 전처리, la
 Step 2: Text Grouping (text_group_builder_v2)
   → {work_dir}/json/{name}_text_groups.json
   ↓
-Step 3: 대사 추출 (dialogue_extractor — 말풍선 검출 + unboxed LaMa + OCR sheet)
+Step 3: 대사 추출 (dialogue_extractor — 경계 기반 검출 + 텍스트 기반 지우기 + OCR sheet)
   → {work_dir}/json/{name}_regions.json
   → {work_dir}/masked/{name}_masked.jpg
   → {work_dir}/sheets/{name}_indexed_sheet.jpg
@@ -164,13 +166,15 @@ guidance(수동 보정)가 있는 이미지는 `guidance_digest`(guidance 내용
 | 파일 | 역할 |
 | --- | --- |
 | `frontend/src/lib.js` | `api()`/`apiStream()` fetch 헬퍼, TG·region·guidance·overlay 관련 순수 함수와 상수, 세션별 OCR 설정(추가 프롬프트·모델) localStorage 저장 |
-| `frontend/src/EditorCanvas.jsx` | Step 3 캔버스 — TG on/off, edge barrier, manual bubble/ubox, bubble seed 등 guidance 편집 |
+| `frontend/src/regionTypes.js` | `regionProcessingBasis()`로 과거 타입을 경계 기반/텍스트 기반으로 해석. `regionTypeLabel()`은 배지 이름, `usesEdgeBarrier()`는 검출 방법에 따른 색상 구분 |
+| `frontend/src/RegionTypeBadge.jsx` | 공통 R 번호 옆에 표시하는 처리 기준 배지. 미확인 값은 미분류로 표시 |
+| `frontend/src/EditorCanvas.jsx` | Step 3 캔버스 — TG on/off, edge barrier, 경계 기반 seed·텍스트 기반 영역 등 guidance 편집 |
 | `frontend/src/OverlayCanvas.jsx` | Step 5 캔버스 — 오버레이 안전 영역 이동/리사이즈/회전, eraser rect 편집. 화면 기준 3px 이상 끌었을 때만 수동 위치로 저장 |
 | `frontend/src/keymap.js` | 단축키 단일 정의(키 조합, 탭 범위, 조건, 동작 id, 설명). App 디스패처·툴바 tooltip·도움말이 읽고, `tests/test_docs_sync.py`가 `docs/editor_manual.html` 단축키 표와 대조 |
 | `frontend/src/viewportControls.js` | 두 Konva 캔버스 공용 보기 조작 — 휠=이동, 핀치·Ctrl/Cmd+휠=확대, Space·휠버튼·Hand 도구 드래그 이동, 맞춤/100%/선택 확대 |
 | `frontend/src/ShortcutHelp.jsx` | `?`로 여는 단축키 도움말. 현재 탭의 keymap 항목을 묶어 표시 |
 | `frontend/src/RestorePanel.jsx` | 배경 복원 탭 — 제거 마스크 브러시·지우개, 문맥 영역 사각형, 자동 마스크, LaMa 작업 실행·확정·패치 제거. 자기 캔버스 키를 직접 처리한다(keymap의 `passive` 항목) |
-| `frontend/src/App.jsx` | 세션 관리, 이미지 목록, 워크플로우 탭(분석/OCR/오버레이/배경 복원/내보내기) 전체 상태. Action History의 Ubox 줄에서 LaMa 강제 토글(`manual_regions[].inpaint_engine = "lama"`) |
+| `frontend/src/App.jsx` | 세션 관리, 이미지 목록, 워크플로우 탭(분석/OCR/오버레이/배경 복원/내보내기) 전체 상태. Action History의 텍스트 기반 줄에서 LaMa 강제 토글(`manual_regions[].inpaint_engine = "lama"`) |
 | `frontend/src/main.jsx` | React 엔트리포인트 |
 
 프론트엔드 코드를 수정하면 `frontend/`에서 `npm install`(최초 1회) 후 `npm run build`로 `ui_v2/app.bundle.js`를 다시 생성해야 한다. `ui_v2/app.bundle.js`는 결과물이므로 커밋 대상이며, 앱을 실행만 할 때는 Node.js가 필요 없다.
@@ -268,13 +272,15 @@ Text Group이 FloodFill의 **Anchor Text Group** seed 후보로 사용된다.
 
 ### `pipeline/dialogue_extractor.py`
 
+이 파일을 포함한 최종 처리 기준 해석은 `pipeline/region_types.py`를 공통으로 사용한다. `region_processing_basis()`는 기존 `type: bubble/unboxed`를 각각 `boundary_based/text_based`로 읽으며, 기존 타입이 파생 필드보다 우선한다. `regions_with_processing_basis()`는 API 응답의 메모리 복사본에만 필드를 추가하므로 기존 캐시 파일은 수정하지 않는다. `source_method`와 검출기 내부 후보 분류는 이 두 처리 기준과 구분한다.
+
 Step 3 진입점이다. `pipeline_runner`가 `python -m pipeline.dialogue_extractor <image> <text_groups> <masked> <regions> <indexed_sheet> --output-vis-path <bubble_vis>`로 호출하고, `main_v2.py`는 guidance 재적용 때 `build_dialogue_sheet()`를 직접 import한다.
 
-- `build_dialogue_sheet()`: ① `bubble_detector.build_ocr_region_sheet()`로 말풍선 검출·흰색 마스킹 → ② 말풍선 밖 텍스트를 LaMa(`simple_lama_inpainting`)로 지움 → ③ 두 종류 crop을 읽기 순서로 모아 indexed OCR sheet + `regions.json` 저장
+- `build_dialogue_sheet()`: ① `bubble_detector.build_ocr_region_sheet()`로 경계 기반 검출·마스킹 → ② 텍스트 기반 영역의 글자를 LaMa(`simple_lama_inpainting`)로 지움 → ③ 두 종류 crop을 읽기 순서로 모아 indexed OCR sheet + `regions.json` 저장
 - 편집기 guidance(`manual_regions`, `manual_seed_points`, `virtual_walls`, `split_guides`, suppressed region)를 인자로 받아 반영한다.
 - region별 `safe_text_rect`(`_compute_safe_text_rect`)와 `mask_centroid`(`_compute_mask_centroid`)를 계산해 `regions.json`에 기록한다. Step 5 배치의 기준값이다.
 - LaMa 동시 실행 제한(`_acquire_lama_process_slot`): 분석은 페이지마다 Step 3 프로세스를 따로 띄우고, LaMa를 올린 프로세스는 2〜3.7GB를 쓴다. 그래서 LaMa를 올리기 전에 임시 폴더의 슬롯 파일(`comic_translator_lama_slots/slotN.lock`)에 배타 잠금을 걸어, LaMa를 쓰는 프로세스를 머신 전체에서 `LAMA_MAX_PROCESSES`개(기본 2)로 묶는다. 자리가 없으면 기다리고, 슬롯은 프로세스가 끝날 때 풀린다. 상주 서버가 모델을 올리면 슬롯 하나를 계속 쓰므로 1로 줄이지 않는다. fcntl이 없는 Windows에서는 제한하지 않는다.
-- 수동 Ubox(`_apply_manual_ubox_lama`): 박스 안에서 글자 색 픽셀만 마스크로 잡고, 문맥은 박스 바깥 24px까지 본다. 박스가 어두우면 밝은 글자로 보고 마스크를 6px 넓힌다(흰 테두리가 남으면 LaMa가 글자 모양 얼룩을 되살린다). 엔진은 `_classify_inpaint_background` 배경 분류로 Telea/LaMa를 고르고, guidance의 `inpaint_engine: "lama"`가 있으면 그 값이 우선한다.
+- 수동 텍스트 기반 영역(`_apply_manual_ubox_lama`): 박스 안에서 글자 색 픽셀만 마스크로 잡고, 문맥은 박스 바깥 24px까지 본다. 박스가 어두우면 밝은 글자로 보고 마스크를 6px 넓힌다(흰 테두리가 남으면 LaMa가 글자 모양 얼룩을 되살린다). 엔진은 `_classify_inpaint_background` 배경 분류로 Telea/LaMa를 고르고, guidance의 `inpaint_engine: "lama"`가 있으면 그 값이 우선한다.
 
 ### `pipeline/bubble_detector.py`
 
@@ -300,7 +306,7 @@ Step 3 진입점이다. `pipeline_runner`가 `python -m pipeline.dialogue_extrac
 Probe      TG 주변 흰 seed에서 FloodFill (magic-wand 방식)
 Validation bimodality·형태 점수로 bubble_region 승격 판정. 탈락은 삭제하지 않고 bbox_fallback으로 강등
 Rescue     비율 초과 anchor 합류, Edge Barrier(edge_barrier_flood_rescue.py) 등으로 탈락 후보 구제
-Finalize   is_valid 확정 후에만 region_type 부여. 남은 bbox_fallback은 unboxed 후처리 대상
+Finalize   is_valid 확정 후에만 region_type 부여. 남은 bbox_fallback은 텍스트 기반 후처리 대상
 split      2개 이상 anchor 공유 → inflection line (1차) → erosion CC (2차, disjoint bbox 조건)
 ```
 
@@ -314,11 +320,11 @@ region_type 분류 (`_classify_anchor_region`): `bubble`, `narration_like`, `noi
 | 파일 | 역할 |
 | --- | --- |
 | `pipeline/edge_barrier_flood_rescue.py` | 열린 말풍선 경계를 edge barrier 기반 flood로 구제 (`run_edge_barrier_rescue_auto()`). 수동 edge guidance도 이 경로를 탄다 |
-| `pipeline/unboxed_text_detector.py` | 말풍선 밖 배경 텍스트 후보를 TextGroup 기반 local mask로 검증 (`extract_unboxed_text_candidate()`) |
-| `pipeline/unboxed_grouping.py` | 말풍선 밖 TG 선별(효과음·noise 판정)과 인접 TG 묶기 (`cluster_adjacent_text_groups()`) |
+| `pipeline/unboxed_text_detector.py` | 텍스트 기반 처리 후보를 TextGroup 기반 local mask로 검증 (`extract_unboxed_text_candidate()`) |
+| `pipeline/unboxed_grouping.py` | 텍스트 기반 처리 대상 TG 선별(효과음·noise 판정)과 인접 TG 묶기 (`cluster_adjacent_text_groups()`) |
 | `pipeline/bubble_text_filters.py` | 말풍선 후보 판정용 텍스트 필터 (금지 문자열, symbol-only, 단독 효과음 등) |
 | `pipeline/text_style_metrics.py` | TextFragment 기준 글꼴 스타일 지표와 페이지 기준선 계산 |
-| `pipeline/run_masked_vis.py` | flood + unboxed 통합 마스킹 시각화. `dialogue_extractor`가 unboxed 추출 헬퍼(`_extract_with_lane_retry` 등)를 import한다 |
+| `pipeline/run_masked_vis.py` | 경계 기반 + 텍스트 기반 통합 마스킹 시각화. `dialogue_extractor`가 텍스트 기반 추출 헬퍼(`_extract_with_lane_retry` 등)를 import한다 |
 | `pipeline/bubble_candidate_visualizer.py` | 말풍선 후보 검토 시각화 `*_bubble_vis.jpg` 생성 (`render_candidate_review_vis()`) |
 | `pipeline/geometry.py` | `as_rect()`, `union_rect()` 사각형 좌표 유틸 |
 
@@ -405,7 +411,7 @@ indexed sheet crop의 획두께·ink density를 재서 Gemini가 준 `render_hin
 
 - 문맥 영역(`context_rect`)과 제거 마스크를 분리한다. 모델에는 문맥 영역을 잘라 넘기고, 바꾸는 것은 마스크 픽셀뿐이다(`composite_inside_mask`). 마스크 바깥 픽셀이 하나라도 바뀌면 결과를 버린다(`changed_pixels_outside_mask`).
 - 처리 해상도는 긴 변 512/768/원본 중 고르며 기본은 원본이다. 16의 배수 패딩과 역변환은 `prepare_model_input`/`restore_from_model_output`이 맡고, 이진 마스크는 최근접 보간만 쓴다.
-- 자동 마스크(`build_text_stroke_mask`)는 `regions.json`의 unboxed 영역과 CV 단어 bbox를 seed로 글자 획만 고른다.
+- 자동 마스크(`build_text_stroke_mask`)는 `regions.json`의 텍스트 기반 영역과 CV 단어 bbox를 seed로 글자 획만 고른다.
 - 확정 패치는 세션 작업 폴더의 `restore/<이미지>/`에 PNG로 저장해 페이지 JPEG를 다시 저장하지 않는다.
 
 ### 보관·폐기된 pipeline 모듈
@@ -428,7 +434,7 @@ indexed sheet crop의 획두께·ink density를 재서 Gemini가 준 `render_hin
 | Gemini가 Text Group id를 잘못 매칭함 | `pipeline/gemini_ocr_translate_v5.py` |
 | union bbox가 너무 크거나 작음 | `pipeline/gemini_ocr_translate_v5.py`, `pipeline/render_text_overlay.py` |
 | 마스킹이 말풍선 경계를 침범함 | `pipeline/dialogue_extractor.py`, `pipeline/bubble_detector.py` |
-| 말풍선 밖 텍스트 지우기가 이상함 | `pipeline/dialogue_extractor.py`, `pipeline/unboxed_text_detector.py` |
+| 텍스트 기반 글자 지우기가 이상함 | `pipeline/dialogue_extractor.py`, `pipeline/unboxed_text_detector.py` |
 | 번역 텍스트가 영역에 맞지 않음 | `pipeline/render_text_overlay.py` (safe rect는 `pipeline/dialogue_extractor.py`) |
 | flood가 배경으로 샘 / region 분류 오류 | `pipeline/bubble_detector.py`, `pipeline/edge_barrier_flood_rescue.py` |
 

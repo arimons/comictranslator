@@ -179,6 +179,9 @@ def main():
     text = text.replace('대상 처리 기준와 다른 결과 영역의 변화', '제외한 영역과 다른 결과 영역의 변화')
     text = text.replace('처리 기준 타입과', '처리 기준과')
     text = re.sub(r'__INLINE_IMAGE_(\d+)__', lambda m: embedded_images[int(m.group(1))], text)
+    text = text.replace('split bubble의 인접 region 영향', '분할된 경계 기반 영역의 인접 영역 영향')
+    text = text.replace('말풍선 밖 글자 위치로 지울 영역', '텍스트 기반 영역의 글자 위치로 지울 영역')
+    text = text.replace('data-shortcut="guidance.tool.bubble"><td><kbd>B</kbd></td><td>경계 기반</td>', 'data-shortcut="guidance.tool.bubble"><td><kbd>B</kbd></td><td>경계 기반 seed</td>')
     MANUAL.write_text(text)
     print(f'{MANUAL}: {MANUAL.stat().st_size:,} bytes')
 

@@ -17,7 +17,7 @@
 | **flood region** | 하나의 ATG anchor에서 floodfill로 확장된 실제 픽셀 영역. 말풍선 내부 전체를 커버. |
 | **flood_rect** | flood region의 최소 외접 직사각형. |
 | **flood_pre_masked.jpg** | `create_floodfill_fallback_outputs()`가 만드는 flood 기반 마스킹 결과. Step 5 masking의 입력 베이스. |
-| **region_type** | ATG의 분류: `in_bubble` (말풍선 내부) / `narration_like` (나레이션 박스) / `noise_like` (효과음·손글씨). |
+| **region_type** | 검출기 내부 후보 분류(최종 `processing_basis`와 별개): `in_bubble` (말풍선 내부) / `narration_like` (나레이션 박스) / `noise_like` (효과음·손글씨). |
 | **inflection split** | 하나의 flood region에 여러 ATG가 포함될 때 convexity defect 쌍으로 가르는 분리 방법. |
 | **erosion split** | inflection split 실패 시 fallback. 점진적 erosion으로 CC가 분리될 때까지 침식 후 Voronoi 할당. |
 | **integrated JSON** | `*_integrated.json`. Gemini OCR+번역 결과 + 각 ATG의 번역문·배치 정보를 담은 최종 JSON. |
