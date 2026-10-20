@@ -43,8 +43,7 @@ from pipeline.image_generation_bridge import ImageGenerationStore
 from pipeline.openai_image_redraw import redraw_image_with_openai
 from pipeline.pipeline_runner import DEFAULT_FONT, run_single_image, stream_subprocess
 from pipeline.render_text_overlay import apply_text_overlay
-from pipeline.work_glossary import GlossaryStore, glossary_snapshot
-from pipeline.work_matching import WorkMatcher, cv_hints, existing_candidates
+from pipeline.work_glossary import NARRATION, GlossaryStore, character_map, glossary_snapshot, page_speakers, speaker_prompt
 
 load_dotenv()
 
@@ -71,7 +70,6 @@ _LOAD_HYDRATE_LOCK = threading.Lock()
 _LOAD_HYDRATE_RUNNING: set[tuple[str, str]] = set()
 _GLOSSARY_STORES: dict[str, GlossaryStore] = {}
 _GLOSSARY_STORE_LOCK = threading.Lock()
-WORK_MATCHER = WorkMatcher()
 
 
 def glossary_store() -> GlossaryStore:
@@ -87,21 +85,21 @@ def glossary_binding_path(session_id: str) -> Path:
     return session_dir(session_id) / "work" / "glossary_binding.json"
 
 
-def work_match_path(session_id: str) -> Path:
-    return session_dir(session_id) / "work" / "work_match.json"
-
-
-def work_match_inputs(session_id: str) -> tuple[dict, list]:
-    data = load_json(session_file(session_id), default={})
-    if not data:
-        raise ValueError("프로젝트를 찾을 수 없습니다.")
-    return cv_hints(data, session_dir(session_id) / "work"), glossary_store().list_works()
-
-
 def glossary_payload(session_id: str) -> dict:
-    hints, works = work_match_inputs(session_id)
-    return {"glossary": session_glossary(session_id), "works": works,
-            "matching": WORK_MATCHER.read(work_match_path(session_id), hints, works)}
+    # 조회가 빈 프로젝트를 만들지 않도록 ensure_session을 쓰지 않는다.
+    if not session_file(session_id).is_file():
+        raise ValueError("프로젝트를 찾을 수 없습니다.")
+    return {"glossary": session_glossary(session_id), "works": glossary_store().list_works()}
+
+
+def speakers_path(session_id: str, image_id: str) -> Path:
+    if not re.fullmatch(r"[\w.-]+", image_id):
+        raise ValueError("잘못된 페이지 ID입니다.")
+    return session_dir(session_id) / "work" / "speakers" / f"{image_id}.json"
+
+
+def page_speaker_map(session_id: str, image_id: str) -> dict[str, str]:
+    return load_json(speakers_path(session_id, image_id), default={}).get("by_tg", {})
 
 
 def session_glossary(session_id: str) -> dict | None:
@@ -111,8 +109,6 @@ def session_glossary(session_id: str) -> dict | None:
 
 def session_glossary_snapshot(session_id: str) -> dict:
     data = session_glossary(session_id)
-    if data and data.get("status") == "researching":
-        raise ValueError("작품 용어집 조사 중입니다. 완료 후 번역을 시작하세요.")
     return glossary_snapshot(data)
 
 
@@ -170,39 +166,33 @@ class SessionMetaRequest(BaseModel):
     project_name: str = ""
 
 
-class GlossaryConfirmRequest(BaseModel):
+class GlossaryBindRequest(BaseModel):
     session_id: str
-    title: str = ""
-    author: str = ""
-    edition: str = ""
     work_id: str | None = None
+    title: str = ""
 
 
-class GlossaryResearchRequest(BaseModel):
+class GlossarySaveRequest(BaseModel):
     session_id: str
+    work_id: str
+    title: str | None = None
+    characters: list[dict] = []
+    terms: list[dict] = []
+    notes: str = ""
 
 
-class WorkSourceRequest(BaseModel):
+class GlossaryDraftRequest(BaseModel):
     session_id: str
     work_id: str
     url: str
     text: str = ""
-    refresh: bool = False
-    remove: bool = False
 
 
-class WorkMatchRequest(BaseModel):
+class SpeakerRequest(BaseModel):
     session_id: str
-    query: str = ""
-    force_web: bool = False
-
-
-class GlossaryReviewRequest(BaseModel):
-    session_id: str
-    work_id: str
-    entry_id: str
-    decision: str
-    target: str | None = None
+    image_id: str
+    tg_ids: list[int]
+    character_id: str | None = None
 
 
 class SessionDeleteRequest(BaseModel):
@@ -1973,8 +1963,10 @@ def run_final_for_item(
     if page_processing_excluded(session_id, item["id"]):
         return page_record(session_id, item["id"])
     context = glossary_context if glossary_context is not None else session_glossary_snapshot(session_id)
-    translation_prompt = "\n\n".join(part for part in (context.get("prompt", ""), extra_prompt) if part)
     record = image_record(session_id, Path(item["input_path"]), item.get("image_sha256"))
+    speakers = page_speakers(load_json(record["regions_json"], default={}).get("regions", []),
+                             page_speaker_map(session_id, record["id"]), context)
+    translation_prompt = "\n\n".join(part for part in (context.get("prompt", ""), speaker_prompt(speakers), extra_prompt) if part)
     clusters = current_clusters_path(record, record["id"])
     font = font_path or DEFAULT_FONT
     if overlay_guidance is not None:
@@ -2022,10 +2014,10 @@ def run_final_for_item(
         log_callback("Step 4 OpenAI OCR/번역 시작")
         run_subprocess_stream(ocr_cmd, timeout=360, log_callback=log_callback)
         log_callback("Step 6 Text Overlay 시작")
-    write_json(Path(record["work_dir"]) / "json" / f"{record['id']}_glossary_snapshot.json", context)
+    write_json(Path(record["work_dir"]) / "json" / f"{record['id']}_glossary_snapshot.json", {**context, "speakers": speakers})
     integrated = load_json(record["integrated_json"], default={})
     if integrated:
-        integrated["glossary"] = {key: value for key, value in context.items() if key != "prompt"}
+        integrated["glossary"] = {"work_id": context.get("work_id"), "version": context.get("version"), "speakers": speakers}
         write_json(record["integrated_json"], integrated)
     remap_overlay_guidance_for_record(record, log_callback=log_callback)
     render_overlay_for_record(record, font, tracking_offset, log_callback=log_callback)
@@ -2675,86 +2667,69 @@ def create_app() -> FastAPI:
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-    @app.post("/api/glossary/confirm")
-    def confirm_glossary(req: GlossaryConfirmRequest) -> dict:
+    @app.post("/api/glossary/bind")
+    def bind_glossary(req: GlossaryBindRequest) -> dict:
         try:
-            ensure_session(req.session_id)
+            if not session_file(req.session_id).is_file():
+                raise ValueError("프로젝트를 찾을 수 없습니다.")
             store = glossary_store()
-            if req.work_id:
-                data = store.read(req.work_id)
-                wid = data["work_id"]
-            else:
-                wid = store.confirm({"title": req.title, "author": req.author, "edition": req.edition})
-                data = store.read(wid)
+            wid = store.read(req.work_id)["work_id"] if req.work_id else store.create(req.title)
             write_json(glossary_binding_path(req.session_id), {"work_id": wid})
-            WORK_MATCHER.confirmed(work_match_path(req.session_id))
-            # 작품 연결은 수집·OpenAI 요청을 시작하지 않는다.
             return glossary_payload(req.session_id)
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-    @app.post("/api/glossary/match")
-    def match_work(req: WorkMatchRequest) -> dict:
+    def bound_work(session_id: str, work_id: str) -> None:
+        data = session_glossary(session_id)
+        if not data or data["work_id"] != work_id:
+            raise ValueError("연결된 작품이 바뀌었습니다. 작품 메모를 다시 여세요.")
+
+    @app.post("/api/glossary/save")
+    def save_glossary(req: GlossarySaveRequest) -> dict:
         try:
-            hints, works = work_match_inputs(req.session_id)
-            path = work_match_path(req.session_id)
-            candidates = existing_candidates(hints, works)
-            if req.force_web:
-                raise ValueError("유료 웹 검색은 사용하지 않습니다. 작품 URL을 자료로 추가하세요.")
-            if not req.query.strip():
-                strong = [candidate for candidate in candidates if candidate["strong"]]
-                if len(strong) == 1 and not session_glossary(req.session_id):
-                    # 이미 확인받은 작품만 로컬 CV 근거로 재사용한다. 웹 후보는 자동 연결하지 않는다.
-                    write_json(glossary_binding_path(req.session_id), {"work_id": strong[0]["work_id"], "matched_by": "confirmed_work_cv"})
-                    write_json(path, {"status": "confirmed", "query": hints["query"], "hints": hints,
-                                      "candidates": candidates, "error": ""})
-                    return glossary_payload(req.session_id)
-                if candidates or not hints["has_cv"]:
-                    return glossary_payload(req.session_id)
-            query = req.query.strip()[:300] or hints["query"]
-            if not query:
-                raise ValueError("작품 검색어를 입력하세요.")
-            WORK_MATCHER.start(path, query, hints, works)
+            bound_work(req.session_id, req.work_id)
+            glossary_store().save(req.work_id, req.model_dump())
             return glossary_payload(req.session_id)
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-    @app.post("/api/glossary/source")
-    def save_glossary_source(req: WorkSourceRequest) -> dict:
+    @app.post("/api/glossary/draft")
+    def draft_glossary(req: GlossaryDraftRequest) -> dict:
         try:
-            data = session_glossary(req.session_id)
-            if not data or data["work_id"] != req.work_id:
-                raise ValueError("연결된 작품을 확인하세요. 작품이 변경되면 자료를 다시 지정해야 합니다.")
+            bound_work(req.session_id, req.work_id)
             if len(req.text) > 16000:
                 raise ValueError("붙여 넣는 자료는 16000자 이내로 입력하세요.")
-            store = glossary_store()
-            if req.remove:
-                store.remove_source(req.work_id, req.url)
-            else:
-                store.save_source(req.work_id, req.url, req.text, req.refresh)
+            glossary_store().draft(req.work_id, req.url, req.text)
             return glossary_payload(req.session_id)
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
-        except Exception as exc:
-            raise HTTPException(status_code=400, detail="자료 수집에 실패했습니다. URL을 확인하거나 필요한 본문을 직접 붙여 넣으세요.") from None
+        except Exception:
+            # SDK 예외에는 키/요청 정보가 들어갈 수 있어 원문을 노출하지 않는다.
+            raise HTTPException(status_code=400, detail="초안 생성에 실패했습니다. URL 접근이 막히면 본문을 직접 붙여 넣고, OpenAI 키·한도를 확인하세요.") from None
 
-    @app.post("/api/glossary/research")
-    def research_glossary(req: GlossaryResearchRequest) -> dict:
+    @app.get("/api/speakers/{session_id}/{image_id}")
+    def read_speakers(session_id: str, image_id: str) -> dict:
         try:
-            data = session_glossary(req.session_id)
-            if not data:
-                raise ValueError("먼저 조사할 작품을 확인하세요.")
-            return {"glossary": glossary_store().start(data["work_id"])}
+            get_image(session_id, image_id)
+            return {"by_tg": page_speaker_map(session_id, image_id)}
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-    @app.post("/api/glossary/review")
-    def review_glossary(req: GlossaryReviewRequest) -> dict:
+    @app.post("/api/speakers")
+    def assign_speaker(req: SpeakerRequest) -> dict:
         try:
-            data = session_glossary(req.session_id)
-            if not data or data["work_id"] != req.work_id:
-                raise ValueError("작품이 변경됐습니다. 용어집을 다시 여세요.")
-            return {"glossary": glossary_store().review(req.work_id, req.entry_id, req.decision, req.target)}
+            get_image(req.session_id, req.image_id)
+            cid = req.character_id
+            if cid and cid != NARRATION and cid not in character_map(session_glossary(req.session_id)):
+                raise ValueError("작품 메모에 없는 인물입니다.")
+            by_tg = page_speaker_map(req.session_id, req.image_id)
+            for tg in req.tg_ids:
+                if cid:
+                    by_tg[str(int(tg))] = cid
+                else:
+                    by_tg.pop(str(int(tg)), None)
+            write_json(speakers_path(req.session_id, req.image_id), {"by_tg": by_tg})
+            return {"by_tg": by_tg}
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 

@@ -85,8 +85,6 @@ class ImageGenerationStore(ReviewStore):
             if path.stat().st_size > MAX_FILE_BYTES:
                 raise ValueError("용어집 크기 제한 초과")
             glossary = json.loads(path.read_text())
-            if glossary.get("status") == "researching":
-                raise ValueError("용어집 조사 중입니다. 완료 후 생성 요청을 준비하세요")
         context = {"page_revision": page["page_revision"], "original_sha256": page["original_sha256"],
                    "original_size": page["original_size"], "glossary": glossary_snapshot(glossary),
                    "integrated": page["payload"]["integrated"]}

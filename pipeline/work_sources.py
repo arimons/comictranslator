@@ -122,15 +122,3 @@ def fetch_source(value: str) -> dict:
             connection.close()
     raise ValueError('리디렉션이 너무 많습니다. 최종 문서 URL을 입력하세요.')
 
-
-def source_evidence(sources: list[dict]) -> list[dict]:
-    from pipeline.work_glossary import source_site
-    evidence = []
-    for source in sources:
-        # 모델이 자료 구간을 인용하도록 분할한다. 일본어·한국어 동시 출현은 요구하지 않는다.
-        text = source['text']
-        for start in range(0, len(text), 1200):
-            evidence.append({'text': text[start:start + 1400], 'url': source['url'], 'title': source['title'],
-                             'site': source_site(source['url']), 'manual': source.get('mode') == 'paste',
-                             'content_hash': source['content_hash']})
-    return evidence

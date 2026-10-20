@@ -5,7 +5,7 @@
 
 작성일: 2026-05-05 / 최종 갱신: 2026-10-20
 
-2026-10-20: 작품별 자동 용어집 저장소, 조사·검토 API, 편집기 패널과 번역 버전 기록을 추가했다. 사용 흐름과 자동 적용 기준은 [WORK_GLOSSARY.md](WORK_GLOSSARY.md) 참고.
+2026-10-20: 근거 검증형 용어집을 작품 메모(인물·말투·고유 용어)와 영역별 화자 지정으로 단순화했다. 흐름은 [WORK_GLOSSARY.md](WORK_GLOSSARY.md) 참고.
 
 영역 용어·호환 모듈 설명 갱신: 2026-10-19. 본문의 처리 분류는 경계 기반/텍스트 기반이며, 파일명·함수명·저장 키의 과거 이름은 호환을 위해 유지한다.
 
@@ -32,7 +32,7 @@ NEW_COMIC_TRANSLATOR/
 │       ├── PagePreparation.jsx  # 원본을 보존하는 페이지 분할 미리보기·별도 프로젝트 생성
 │       ├── ServerStatus.jsx     # 서버 연결 상태등 (작업 진행률과 별개)
 │       ├── ImagePreview.jsx     # 비교 이미지 확대·전체/너비 맞춤
-│       ├── GlossaryPanel.jsx    # 프로젝트명 옆 작품 상태·CV 후보·검색어 재검색·용어 검토
+│       ├── GlossaryPanel.jsx    # 프로젝트명 옆 작품 메모: 작품 연결·인물/용어 표 편집·URL 초안
 │       ├── EditorCanvas.jsx      # Step 3 영역 분석 캔버스 (Konva)
 │       ├── OverlayCanvas.jsx     # Step 5 텍스트 오버레이 편집 캔버스 (Konva)
 │       ├── RestorePanel.jsx      # 배경 복원 탭 (마스크 브러시 + LaMa 복원)
@@ -77,9 +77,8 @@ NEW_COMIC_TRANSLATOR/
     ├── geometry.py             # 사각형 좌표 유틸
     ├── gemini_ocr_translate_v5.py  # Step 4 (GPT-6.1 Sol 기본, OpenAI Responses API)
     ├── openai_tasks.py        # OpenAI 작업별 Sol/Luna 라우팅·JSON 출력·제한 승격
-    ├── work_glossary.py        # 작품별 URL 자료 저장·단일 OpenAI 용어 정리·수동 결정·버전 고정
-    ├── work_matching.py        # 기존 CV·로컬 작품 조회·확인 작품 재사용
-    ├── work_sources.py         # 공개 작품 URL의 제한 수집·본문 추출·자료 인용 구간
+    ├── work_glossary.py        # 작품 메모 저장·이전 형식 이관·URL 초안(OpenAI 1회)·번역 참고문·region 화자 프롬프트
+    ├── work_sources.py         # 공개 작품 URL의 제한 수집·본문 추출
     ├── font_style_analyzer.py  # Step 4 직후 render_hint CV 보정
     ├── render_text_overlay.py  # Step 5
     ├── overlay_anchor.py       # 글자 입히기 수동값을 region 번호 대신 영역 위치로 재매칭
@@ -158,7 +157,8 @@ guidance(수동 보정)가 있는 이미지는 `guidance_digest`(guidance 내용
 | `POST /api/guidance`, `/api/guidance/clear` | 수동 보정(TG 삭제/split, edge barrier, manual region 등) 반영 후 Step 3 재실행 |
 | `POST /api/run-final(-stream)` | Step 4(OCR/번역) + Step 5(오버레이) 실행. body의 `ocr_model`로 모델 지정 |
 | `GET /api/ocr-models` | OCR/번역 모델 목록(`id`, `label`, `note`)과 기본값 |
-| `GET /api/glossary/{session_id}`, `POST /api/glossary/confirm`, `/api/glossary/research`, `/api/glossary/review` | 작품 확인·용어집 재사용·비동기 웹 조사·불확실/충돌 검토. 확정 용어집 버전을 Step 4에 주입 |
+| `GET /api/glossary/{session_id}`, `POST /api/glossary/bind`, `/api/glossary/save`, `/api/glossary/draft` | 작품 메모 연결·저장·URL 초안. 메모 참고문을 Step 4 프롬프트에 붙인다 |
+| `GET /api/speakers/{session_id}/{image_id}`, `POST /api/speakers` | 페이지별 TG→화자 지정(`work/speakers/{image_id}.json`). Step 4가 region 화자 목록으로 바꿔 프롬프트에 붙인다 |
 | `POST /api/overlay/apply` | 오버레이 위치/폰트만 다시 렌더링 (OCR 재실행 없음). 저장한 수동값에 영역 위치(`_anchor`)를 기록 |
 | `GET /api/session/{id}/export`, `POST /api/export/generate-missing` | 결과 ZIP 내보내기, 실패 이미지 OpenAI 이미지 생성 fallback |
 | `GET /api/file` | 세션·입력 캐시·분석 캐시 폴더 아래 이미지 파일 서빙 |
@@ -465,9 +465,7 @@ indexed sheet crop의 획두께·ink density를 재서 OpenAI가 준 `render_hin
 .venv/bin/python -m pytest -q    # pytest.ini가 tests/만 수집한다
 ```
 
-작품 연결 UI는 프로젝트명 옆에 표시하며 연결 전 후보/검색 상태와 연결 후 작품명/용어집 조사 상태를 구분한다. `POST /api/glossary/match`가 CV 기반 재사용 또는 웹 후보 검색을 시작한다. 검색 실패 중에도 기존 작품 연결을 유지한다.
-
-작품 자료 수집은 `pipeline/work_sources.py`가 공개 URL 본문을 읽고, `pipeline/work_glossary.py`가 작품 ID별로 저장·재사용한다. 작품 매칭은 로컬 CV·저장 작품만 사용하며 OpenAI는 저장 자료 정리에만 한 번 사용한다. 유료 검색은 호출하지 않는다.
+작품 메모 버튼은 프로젝트명 옆에 있다. 메모는 `temp_output/v2_glossaries/{work_id}.json`(format `work-memo-v1`)에 작품별로 저장하고, 프로젝트는 `work/glossary_binding.json`으로 연결한다. 이전 형식 파일은 처음 읽을 때 인물·용어 표로 옮기고 원본을 `.legacy.json`으로 남긴다. URL 초안은 `pipeline/work_sources.py`로 본문 한 개를 읽어 OpenAI에 한 번 보낸다. 유료 검색은 호출하지 않는다.
 
 ## 이미지 생성 권장과 후보 등록 (2026-10-20)
 

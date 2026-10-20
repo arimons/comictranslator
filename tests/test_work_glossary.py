@@ -1,357 +1,84 @@
-"""검색 인용 검증, 충돌 격리, 작품 확인·재사용, 실제 번역 전달 계약."""
-import json
-import threading
+"""작품 메모(인물·말투·용어)와 region 화자 지정이 번역 프롬프트로 전달되는 계약."""
 from pathlib import Path
-from types import SimpleNamespace as NS
 
 import pytest
 from fastapi.testclient import TestClient
+from PIL import Image
 
-import main_v2
-from pipeline.manual_guidance import load_json, write_json
-from pipeline.work_glossary import GlossaryStore, build_entries, canonical_entries, glossary_snapshot, grounded_evidence, work_id
+import main_v2 as app
+from pipeline.manual_guidance import write_json
+from pipeline.work_glossary import GlossaryStore, glossary_snapshot, page_speakers, speaker_prompt
 
-
-def report(target="유키", **overrides):
-    data = {
-        "work_matches": True, "summary": "작품의 기본 정보", "model": "test",
-        "evidence": [
-            {"text": f"雪의 한국어 표기는 {target}이다.", "url": "https://publisher.example/characters", "title": "출판사"},
-            {"text": f"雪의 한국어 표기는 {target}이다.", "url": "https://wiki.test/characters", "title": "위키"},
-        ],
-        "entries": [{"source": "雪", "target": target, "uncertain": False, "evidence_indices": [0, 1]}],
-    }
-    return {**data, **overrides}
+LEGACY = {"work_id": "a" * 24, "work": {"title": "사망플래그"}, "status": "ready", "version": 3, "entries": [
+    {"kind": "인물", "target": "해롤드 스톡스", "aliases": ["해롤드"], "source_forms": ["ハロルド・ストークス"], "status": "auto"},
+    {"kind": "가문", "target": "스톡스 가", "aliases": ["스톡스"], "source_forms": ["ストークス家"], "status": "auto"},
+    {"kind": "인물", "target": "제외된 인물", "status": "rejected"},
+]}
 
 
-def test_identity_can_auto_apply_from_one_source_but_uncertain_mapping_cannot():
-    assert build_entries(report(), [])[0]["status"] == "auto"
-    data = report()
-    data["evidence"][1]["url"] = "https://sub.publisher.example/other"
-    assert build_entries(data, [])[0]["status"] == "auto"
-    data = report()
-    data["evidence"][1]["text"] = "雪라는 인물이 나온다."
-    assert build_entries(data, [])[0]["status"] == "auto"
-    assert build_entries(report(work_matches=False), [])[0]["status"] == "review"
-    data = report()
-    data["entries"][0]["uncertain"] = True
-    assert build_entries(data, [])[0]["status"] == "review"
+def test_legacy_glossary_migrates_once_and_protagonist_is_key_one(tmp_path):
+    store = GlossaryStore(tmp_path)
+    write_json(tmp_path / f"{'a' * 24}.json", LEGACY)
+    data = store.read("a" * 24)
+    assert [row["name"] for row in data["characters"]] == ["해롤드 스톡스"]
+    assert data["terms"][0]["korean"] == "스톡스 가" and "ストークス家" in data["terms"][0]["original"]
+    assert (tmp_path / f"{'a' * 24}.legacy.json").exists()
+
+    data["characters"].append({"name": "엘리", "speech": "존댓말", "protagonist": True})
+    saved = store.save("a" * 24, data)
+    # 주인공은 한 명이고 항상 1번(표 맨 앞)이다.
+    assert [(row["name"], row["protagonist"]) for row in saved["characters"]] == [("엘리", True), ("해롤드 스톡스", False)]
+    prompt = glossary_snapshot(saved)["prompt"]
+    assert "엘리 (주인공)" in prompt and "말투 존댓말" in prompt and "ストークス家 → 스톡스 가" in prompt
 
 
-def test_conflicting_spelling_is_removed_from_prompt():
-    previous = build_entries(report(), [])
-    uncertain_identity = report("설")
-    uncertain_identity['entries'][0]['identity_matches'] = False
-    entries = build_entries(uncertain_identity, previous)
-    assert len(entries) == 1
-    assert {e["status"] for e in entries} == {"review"}
-    assert not glossary_snapshot({"entries": entries})["prompt"]
+def test_speaker_priority_manual_then_narration_then_text_based_default():
+    snapshot = {"characters": [{"id": "c00000001", "name": "해롤드", "protagonist": True},
+                               {"id": "c00000002", "name": "엘리", "protagonist": False}]}
+    regions = [{"region_id": 1, "type": "bubble", "anchor_ids": [3]},
+               {"region_id": 2, "type": "bubble", "anchor_ids": [4]},
+               {"region_id": 3, "type": "unboxed", "anchor_ids": [5]},
+               {"region_id": 4, "type": "unboxed", "anchor_ids": [6]}]
+    speakers = page_speakers(regions, {"3": "c00000002", "6": "narration"}, snapshot)
+    assert [(row["region_id"], row["speaker"], row["source"]) for row in speakers] == [
+        (1, "엘리", "manual"), (3, "해롤드", "default"), (4, "내레이션", "narration")]
+    prompt = speaker_prompt(speakers)
+    assert "region_id 1: 엘리" in prompt and "중립적인 서술체" in prompt
+    assert "region_id 2" not in prompt
 
 
-def test_model_supplied_urls_or_invalid_indices_do_not_count():
-    data = report()
-    data["entries"][0]["evidence_indices"] = [-1, 99, "0", True]
-    data["entries"][0]["sources"] = ["https://invented.example"]
-    assert build_entries(data, []) == []
+def test_memo_api_binds_saves_drafts_and_assigns_speakers(tmp_path, monkeypatch):
+    monkeypatch.setattr(app, "ROOT", tmp_path)
+    monkeypatch.setattr(app, "SESSION_ROOT", tmp_path / "temp_output/v2_sessions")
+    data = app.ensure_session("book")
+    original = app.session_dir("book") / "input/page.png"
+    Image.new("RGB", (60, 80), "white").save(original)
+    data["images"] = [app.image_manifest_item(original, app.file_sha256(original))]
+    app.save_session(data)
+    image_id = data["images"][0]["id"]
+    client = TestClient(app.create_app())
 
+    assert client.get("/api/glossary/missing").status_code == 400
+    assert not app.session_dir("missing").exists()
+    bound = client.post("/api/glossary/bind", json={"session_id": "book", "title": "사망플래그"}).json()
+    wid = bound["glossary"]["work_id"]
+    saved = client.post("/api/glossary/save", json={"session_id": "book", "work_id": wid,
+                        "characters": [{"name": "해롤드", "speech": "거친 반말", "protagonist": True}], "terms": []}).json()
+    cid = saved["glossary"]["characters"][0]["id"]
 
-def test_grounding_links_are_from_metadata_and_proxy_domains_are_distinguished():
-    response = NS(candidates=[NS(grounding_metadata=NS(
-        grounding_chunks=[NS(web=NS(uri="https://vertexaisearch.cloud.google.com/a", title="출처", domain="publisher.example")), NS(web=None)],
-        grounding_supports=[NS(segment=NS(text="雪는 유키"), grounding_chunk_indices=[0, 1, 999])],
-    ))])
-    evidence = grounded_evidence(response)
-    assert len(evidence) == 1
-    assert evidence[0]["site"] == "publisher.example"
-    data = report(evidence=evidence)
-    data["entries"][0]["evidence_indices"] = [0]
-    assert build_entries(data, [])[0]["status"] == "auto"
+    # 초안은 새 항목만 더하고 사용자가 쓴 칸은 유지한다. 네트워크·OpenAI는 호출하지 않는다.
+    store = app.glossary_store()
+    monkeypatch.setattr(store, "drafter", lambda title, source, existing: {
+        "characters": [{"name": "해롤드", "speech": "덮어쓰면 안 됨", "personality": "오만"}, {"name": "엘리", "protagonist": True}],
+        "terms": [{"korean": "스톡스 가"}]})
+    drafted = client.post("/api/glossary/draft", json={"session_id": "book", "work_id": wid, "url": "https://example.com/w",
+                          "text": "작품 소개 본문입니다. 해롤드와 엘리가 등장하는 이야기입니다."}).json()["glossary"]
+    assert [(row["name"], row["protagonist"]) for row in drafted["characters"]] == [("해롤드", True), ("엘리", False)]
+    assert drafted["characters"][0]["personality"] == "오만" and drafted["characters"][0]["speech"] == "거친 반말"
 
-
-def test_identity_includes_author_and_edition():
-    assert work_id({"title": " My Work "}) == work_id({"title": "mywork"})
-    assert work_id({"title": "작품", "author": "갑"}) != work_id({"title": "작품", "author": "을"})
-    assert work_id({"title": "작품"}) != work_id({"title": "작품", "edition": "외전"})
-
-
-@pytest.fixture
-def store(tmp_path, monkeypatch):
-    monkeypatch.setattr(main_v2, "SESSION_ROOT", tmp_path / "sessions")
-    service = GlossaryStore(tmp_path / "glossaries", researcher=lambda work: report())
-    monkeypatch.setattr(main_v2, "glossary_store", lambda: service)
-    yield service
-    service.pool.shutdown(wait=True)
-
-
-def test_confirm_once_reuse_across_sessions_and_review_only_uncertain(store):
-    client = TestClient(main_v2.create_app())
-    assert client.post("/api/glossary/research", json={"session_id": "one"}).status_code == 400
-    assert list(store.root.glob("*.json")) == []
-    response = client.post("/api/glossary/confirm", json={"session_id": "one", "title": "작품", "author": "작가"})
-    assert response.status_code == 200
-    wid = response.json()["glossary"]["work_id"]
-    assert response.json()["glossary"]["status"] == "idle"
-    store.start(wid)
-    store.pool.shutdown(wait=True)
-    data = client.get("/api/glossary/one").json()["glossary"]
-    assert data["status"] == "ready"
-    assert data["entries"][0]["status"] == "auto"
-    second = client.post("/api/glossary/confirm", json={"session_id": "two", "work_id": wid})
-    assert second.json()["glossary"] == data
-    rejected = client.post("/api/glossary/review", json={"session_id": "two", "work_id": wid, "entry_id": data["entries"][0]["id"], "decision": "rejected"})
-    assert rejected.status_code == 200
-    assert not main_v2.session_glossary_snapshot("one")["entries"]
-    assert client.post("/api/glossary/confirm", json={"session_id": "two", "work_id": "../bad"}).status_code == 400
-
-
-def test_research_does_not_block_editor_and_blocks_ocr_until_finished(store):
-    main_v2.ensure_session("one")
-    entered, release = threading.Event(), threading.Event()
-    calls = []
-    def research(work):
-        calls.append(work)
-        entered.set()
-        assert release.wait(5)
-        return report()
-    store.researcher = research
-    wid = store.confirm({"title": "작품"})
-    write_json(main_v2.glossary_binding_path("one"), {"work_id": wid})
-    try:
-        assert store.start(wid)["status"] == "researching"
-        assert entered.wait(2)
-        store.start(wid)
-        assert len(calls) == 1
-        with pytest.raises(ValueError, match="조사 중"):
-            main_v2.session_glossary_snapshot("one")
-        assert TestClient(main_v2.create_app()).get("/api/glossary/one").status_code == 200
-        with pytest.raises(ValueError, match="조사 완료"):
-            store.review(wid, "missing", "accepted")
-    finally:
-        release.set()
-    store.pool.shutdown(wait=True)
-    assert main_v2.session_glossary_snapshot("one")["entries"]
-
-
-def test_review_survives_research_and_accepting_conflict_excludes_other(store):
-    wid = store.confirm({"title": "작품"})
-    data = store.read(wid)
-    data["entries"] = build_entries(report("설"), build_entries(report(), []))
-    write_json(store.path(wid), data)
-    chosen = data["entries"][0]
-    accepted = store.review(wid, chosen["id"], "accepted", "눈")
-    assert [e["status"] for e in accepted["entries"]] == ["accepted"]
-    store.start(wid)
-    store.pool.shutdown(wait=True)
-    entries = store.read(wid)["entries"]
-    assert len({e["id"] for e in entries}) == len(entries)
-    assert any(e["target"] == "눈" and e["status"] == "accepted" for e in entries)
-    # 새로 발견된 다른 표기도 같은 행에 합치며 수동 결정을 덮어쓰지 않는다.
-    assert len(entries) == 1
-    assert [e["target"] for e in glossary_snapshot({"entries": entries})["entries"]] == ["눈"]
-
-
-def test_failure_has_no_secret_and_restart_is_retryable(store):
-    def fail(work):
-        raise RuntimeError("secret-key-that-must-not-be-stored")
-    store.researcher = fail
-    wid = store.confirm({"title": "작품"})
-    store.start(wid)
-    store.pool.shutdown(wait=True)
-    data = store.read(wid)
-    assert data["status"] == "failed"
-    assert "secret-key" not in store.path(wid).read_text()
-    data["status"] = "researching"
-    write_json(store.path(wid), data)
-    assert store.read(wid)["status"] == "failed"
-
-
-def test_final_translation_receives_only_applied_terms_and_records_version(store, monkeypatch):
-    sid = "one"
-    wid = store.confirm({"title": "작품"})
-    data = store.read(wid)
-    data.update(status="ready", version=3, entries=build_entries(report(), []))
-    data['entries'].append(dict(keyword=True, source='', target='노먼', status='auto',
-                                aliases=['집사 노먼'], variants=[{'from':'노만','to':'노먼'}], source_forms=[]))
-    data["entries"].append({"source": "不確実", "target": "불확실", "status": "review"})
-    write_json(store.path(wid), data)
-    write_json(main_v2.glossary_binding_path(sid), {"work_id": wid})
-    image = main_v2.session_dir(sid) / "input" / "page.jpg"
-    image.parent.mkdir(parents=True, exist_ok=True)
-    image.write_bytes(b"test")
-    record = main_v2.image_record(sid, image)
-    write_json(record["regions_json"], {"regions": [{"region_id": 1}]})
-    Path(record["indexed_sheet_jpg"]).parent.mkdir(parents=True, exist_ok=True)
-    Path(record["indexed_sheet_jpg"]).write_bytes(b"sheet")
-    commands = []
-    def subprocess(cmd, **kwargs):
-        commands.append(cmd)
-        write_json(record["integrated_json"], {"clusters": []})
-    monkeypatch.setattr(main_v2, "run_subprocess", subprocess)
-    monkeypatch.setattr(main_v2, "render_overlay_for_record", lambda *a, **k: None)
-    main_v2.run_final_for_item(sid, {"id": "page", "input_path": str(image)}, "수동 지시: 말투 유지", None)
-    prompt = next(arg for arg in commands[0] if arg.startswith("--extra-prompt="))
-    assert "유키" in prompt and "불확실" not in prompt
-    assert '노먼' in prompt and '집사 노먼' in prompt and '노만' in prompt
-    assert prompt.endswith("수동 지시: 말투 유지")
-    assert load_json(record["integrated_json"])["glossary"]["version"] == 3
-    assert load_json(Path(record["work_dir"]) / "json/page_glossary_snapshot.json")["work_id"] == wid
-
-
-def test_batch_freezes_one_glossary_version(store, monkeypatch):
-    sid = "batch"
-    wid = store.confirm({"title": "작품"})
-    data = store.read(wid)
-    data.update(status="ready", version=3, entries=build_entries(report(), []))
-    write_json(store.path(wid), data)
-    write_json(main_v2.glossary_binding_path(sid), {"work_id": wid})
-    session = main_v2.ensure_session(sid)
-    session["images"] = [{"id": f"p{i}", "name": f"p{i}.jpg", "input_path": str(main_v2.session_dir(sid) / "input" / f"p{i}.jpg")} for i in range(2)]
-    main_v2.save_session(session)
-    seen = []
-    def run(sid, item, *args, glossary_context=None, **kwargs):
-        seen.append(glossary_context)
-        data["version"] = 4
-        data["entries"] = []
-        write_json(store.path(wid), data)
-        return {**item, "integrated": {"clusters": []}}
-    monkeypatch.setattr(main_v2, "run_final_for_item", run)
-    monkeypatch.setattr(main_v2, "session_image_summaries", lambda sid: [])
-    events = [json.loads(e) for e in main_v2.stream_run_final(main_v2.RunFinalRequest(session_id=sid, image_id="all", force=True))]
-    assert events[-1]["ok"] is True
-    assert len(seen) == 2
-    assert [context["version"] for context in seen] == [3, 3]
-    assert all(context["entries"][0]["target"] == "유키" for context in seen)
-
-
-def test_research_provider_uses_one_openai_generation_and_saved_evidence(monkeypatch):
-    import openai
-    from pipeline.work_glossary import research_work
-    monkeypatch.setenv("OPENAI_API_KEY", "fake-test-key")
-    calls = []
-    class Client:
-        def __init__(self, **kwargs):
-            assert kwargs["max_retries"] == 0
-            self.responses = self
-        def __enter__(self): return self
-        def __exit__(self, *args): pass
-        def create(self, **kwargs):
-            calls.append(kwargs)
-            return NS(output_text=json.dumps({"work_matches":True,"entries":report()["entries"]}))
-    monkeypatch.setattr(openai, "OpenAI", Client)
-    sources = [{"url":"https://publisher.example/characters","title":"出典","text":"雪의 표기는 유키입니다." * 4,"content_hash":"abc","mode":"url"}]
-    result = research_work({"title":"작품","sources":sources})
-    assert len(calls) == 1 and calls[0]["model"] == "gpt-6-luna"
-    assert "tools" not in calls[0] and "temperature" not in calls[0]
-    assert result["evidence"][0]["url"] == sources[0]["url"]
-    assert result["routing"]["model"] == "gpt-6-luna"
-
-
-def test_edit_to_existing_target_merges_duplicate_rows(store):
-    wid = store.confirm({"title": "작품"})
-    data = store.read(wid)
-    # 이전 버전에서 저장한 중복 행도 조회·검토 시 통합한다.
-    data["entries"] = build_entries(report("설"), []) + build_entries(report(), [])
-    write_json(store.path(wid), data)
-    entry = store.read(wid)["entries"][0]
-    result = store.review(wid, entry["id"], "accepted", "유키")
-    assert len(result["entries"]) == 1
-    assert result["entries"][0]["status"] == "accepted"
-
-
-def test_search_quota_failure_is_actionable_without_leaking_sdk_error(store):
-    class QuotaError(Exception):
-        code = 429
-    def fail(work):
-        raise QuotaError('request-with-secret-key')
-    store.researcher = fail
-    wid = store.confirm({'title': '작품'})
-    store.start(wid)
-    store.pool.shutdown(wait=True)
-    data = store.read(wid)
-    assert data['error_code'] == 'quota_exhausted'
-    assert '429' in data['error'] and '요청량 또는 할당량' in data['error']
-    assert 'secret-key' not in store.path(wid).read_text()
-
-
-def test_payment_error_is_distinct_from_rate_limit(store):
-    class PaymentError(Exception): code = 402
-    def fail(work): raise PaymentError('private-sdk-content')
-    store.researcher = fail
-    wid = store.confirm({'title':'작품'})
-    store.start(wid)
-    store.pool.shutdown(wait=True)
-    data = store.read(wid)
-    assert data['error_code'] == 'payment_required'
-    assert '결제 필요(402)' in data['error']
-    assert 'private-sdk' not in json.dumps(data)
-
-
-def test_cross_language_identity_is_auto_applied_and_unknown_identity_is_reviewed():
-    data = report(evidence=[
-        {'text':'雪は主人公の妹。','url':'https://publisher.example/characters','title':'원문'},
-        {'text':'유키는 주인공의 여동생이다.','url':'https://wiki.test/characters','title':'한국어 소개'},
-    ])
-    data['entries'][0]['identity_matches'] = True
-    entry = build_entries(data, [])[0]
-    assert entry['status'] == 'auto' and not entry['uncertain']
-    assert len(entry['evidence']) == 2
-    assert glossary_snapshot({'entries':[entry]})['entries']
-    data['entries'][0]['identity_matches'] = False
-    entry = build_entries(data, [])[0]
-    assert entry['status'] == 'review' and entry['uncertain']
-    assert len(entry['evidence']) == 2
-    assert all(not cite['explicit_pair'] for cite in entry['evidence'])
-    assert '동일 인물' in entry['reason']
-    assert not glossary_snapshot({'entries':[entry]})['entries']
-
-
-def test_namu_mirrors_are_one_origin_but_do_not_force_identity_review():
-    from pipeline.work_glossary import source_site
-    data = report()
-    data['evidence'][0]['url'] = 'https://namu.wiki/w/work'
-    data['evidence'][1]['url'] = 'https://d.namu.moe/w/work'
-    assert build_entries(data, [])[0]['status'] == 'auto'
-    data['evidence'][1]['url'] = 'https://readonly.wiki/w/work'
-    assert build_entries(data, [])[0]['status'] == 'auto'
-    data['evidence'][1]['url'] = 'https://seore.org/w/work'
-    assert build_entries(data, [])[0]['status'] == 'auto'
-    assert source_site(data['evidence'][0]['url']) == source_site(data['evidence'][1]['url'])
-
-
-def test_one_missing_language_in_saved_sources_cannot_create_a_candidate():
-    data = report(evidence=[{'text':'雪は主人公。','url':'https://publisher.example/book','title':'원문'}])
-    data['entries'][0]['evidence_indices'] = [0]
-    assert build_entries(data, []) == []
-
-
-def test_canonical_spelling_prefers_character_heading_over_variants_and_typos():
-    entries = []
-    for target in ['스토크스', '스톡스', '스톡쓰']:
-        entries.append({'source': 'ストークス', 'target': target, 'status': 'review', 'evidence': [
-            {'url': 'https://wiki.test/work', 'text': '3.1. 스톡스[편집]\n스토크스라고도 부른다. 스톡쓰는 오타다.'},
-        ]})
-    result = canonical_entries(entries)
-    assert len(result) == 1 and result[0]['target'] == '스톡스'
-    assert result[0]['status'] == 'review'
-    assert canonical_entries(result) == result
-    # 사용자가 다른 표기를 선택하면 표제보다 우선한다.
-    entries[0].update(decision='accepted', status='accepted')
-    result = canonical_entries(entries)
-    assert len(result) == 1 and result[0]['target'] == '스토크스'
-    assert result[0]['status'] == 'accepted'
-
-
-def test_spelling_variants_choose_namu_and_do_not_require_review():
-    data = report()
-    data['evidence'] = [
-        {'text': 'ストークスは主人公の家名。', 'url':'https://jp.example/work', 'title':'원문'},
-        {'text': '3.1. 스톡스[편집]\n주인공 가문의 이름.', 'url':'https://namu.wiki/w/work', 'title':'한국어 소개'},
-        {'text': '스토크스는 주인공의 가문이다.', 'url':'https://blog.example/work', 'title':'블로그'},
-    ]
-    data['entries'] = [dict(source='ストークス',target=target,identity_matches=True,
-                            uncertain=True,evidence_indices=indices) for target,indices in
-                       [('스토크스',[0,2]),('스톡스',[0,1])]]
-    entries = build_entries(data, [])
-    assert len(entries) == 1 and entries[0]['target'] == '스톡스'
-    assert entries[0]['status'] == 'auto'
-    assert len(glossary_snapshot({'entries': entries})['entries']) == 1
+    response = client.post("/api/speakers", json={"session_id": "book", "image_id": image_id, "tg_ids": [2, 3], "character_id": cid})
+    assert response.json()["by_tg"] == {"2": cid, "3": cid}
+    assert client.post("/api/speakers", json={"session_id": "book", "image_id": image_id, "tg_ids": [2], "character_id": "cffffffff"}).status_code == 400
+    cleared = client.post("/api/speakers", json={"session_id": "book", "image_id": image_id, "tg_ids": [2], "character_id": None}).json()
+    assert cleared["by_tg"] == {"3": cid}
+    assert client.get(f"/api/speakers/book/{image_id}").json()["by_tg"] == {"3": cid}

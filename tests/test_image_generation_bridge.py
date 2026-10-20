@@ -72,17 +72,16 @@ def test_glossary_change_invalidates_request_and_no_research_is_run(project):
     wid = "a" * 24
     directory = root / "temp_output/v2_glossaries"
     directory.mkdir()
-    glossary = {"work_id": wid, "status": "ready", "version": 2, "entries": [
-        {"source": "俺", "target": "나", "status": "accepted"},
-        {"source": "誰", "target": "누구", "status": "review"}]}
+    glossary = {"work_id": wid, "format": "work-memo-v1", "title": "작품", "updated_at": "v2",
+                "characters": [{"id": "c00000001", "name": "유키", "speech": "반말", "protagonist": True}], "terms": []}
     path = directory / f"{wid}.json"
     path.write_text(json.dumps(glossary))
     (base / "work").mkdir(exist_ok=True)
     (base / "work/glossary_binding.json").write_text(json.dumps({"work_id": wid}))
     request = prepare(store)
-    assert request["context"]["glossary"]["version"] == 2
-    assert len(request["context"]["glossary"]["entries"]) == 1
-    glossary["version"] = 3
+    assert request["context"]["glossary"]["version"] == "v2"
+    assert "유키" in request["prompt"]
+    glossary["updated_at"] = "v3"
     path.write_text(json.dumps(glossary))
     with pytest.raises(ValueError, match="revision"):
         store.register("book", "cover", request["request_id"], str(returned))

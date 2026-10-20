@@ -19,7 +19,7 @@
 export const IS_MAC = typeof navigator !== "undefined"
   && /Mac|iPhone|iPad|iPod/i.test(navigator.platform || navigator.userAgent || "");
 
-export const KEYMAP_GROUPS = ["보기/탐색", "탭·페이지", "도구", "편집", "스타일", "적용", "대사 편집", "도움말", "배경 복원"];
+export const KEYMAP_GROUPS = ["보기/탐색", "탭·페이지", "도구", "편집", "화자", "스타일", "적용", "대사 편집", "도움말", "배경 복원"];
 
 const DIGIT_CODES = (n) => [`Digit${n}`, `Numpad${n}`];
 
@@ -70,6 +70,11 @@ export const KEYMAP = [
   { id: "edit.redo", context: CANVAS, group: "편집", label: "다시 실행", kind: "key", keys: [["Ctrl", "Shift", "Z"]], match: { code: "KeyZ", mod: true, shift: true }, action: "redo" },
   { id: "edit.redo.y", context: CANVAS, group: "편집", label: "다시 실행 (Windows·Linux)", kind: "key", platform: "nonMac", keys: [["Ctrl", "Y"]], match: { code: "KeyY", mod: true }, action: "redo" },
   { id: "guidance.delete", context: "guidance", group: "편집", label: "선택한 TG를 끄기. 선택이 없으면 포인터 아래 guide/TG/region 삭제", kind: "key", keys: [["Delete"], ["Backspace"]], match: { code: ["Delete", "Backspace"] }, action: "delete" },
+  { id: "guidance.nextRegion", context: "guidance", group: "화자", label: "다음 영역 선택 (읽는 순서)", kind: "key", keys: [["Tab"]], match: { code: "Tab" }, action: "guidance.cycleRegion", arg: 1 },
+  { id: "guidance.prevRegion", context: "guidance", group: "화자", label: "이전 영역 선택", kind: "key", keys: [["Shift", "Tab"]], match: { code: "Tab", shift: true }, action: "guidance.cycleRegion", arg: -1 },
+  { id: "guidance.speaker", context: "guidance", group: "화자", label: "선택 영역의 화자를 작품 메모 n번 인물로 지정 후 다음 경계 기반 영역으로 이동 (주인공 1번)", kind: "key", keys: [["1-9"]], match: { code: [1, 2, 3, 4, 5, 6, 7, 8, 9].flatMap(DIGIT_CODES) }, action: "guidance.speaker", arg: "digit" },
+  { id: "guidance.speaker.narration", context: "guidance", group: "화자", label: "선택 영역을 내레이션으로 지정 (중립 서술체)", kind: "key", keys: [["N"]], match: { code: "KeyN" }, action: "guidance.speaker", arg: "narration" },
+  { id: "guidance.speaker.clear", context: "guidance", group: "화자", label: "화자 지정 해제 (텍스트 기반 영역은 주인공 기본값으로 돌아감)", kind: "key", keys: [["0"]], match: { code: DIGIT_CODES(0) }, action: "guidance.speaker", arg: 0 },
   { id: "guidance.rightClick", context: "guidance", group: "편집", label: "우클릭 메뉴: TG 제외·이 처리 영역 제외·가이드 삭제", kind: "pointer", keys: [["우클릭"]] },
   { id: "overlay.nudge", context: "overlay", group: "편집", label: "선택한 safe rect 1px 이동 (선택이 없으면 ←/→는 페이지 이동)", kind: "key", when: ["regionSelected"], keys: [["←"], ["→"], ["↑"], ["↓"]], match: { code: ["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"] }, action: "overlay.nudge", arg: 1 },
   { id: "overlay.nudge.big", context: "overlay", group: "편집", label: "선택한 safe rect 10px 이동", kind: "key", when: ["regionSelected"], keys: [["Shift", "←"], ["Shift", "→"], ["Shift", "↑"], ["Shift", "↓"]], match: { code: ["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"], shift: true }, action: "overlay.nudge", arg: 10 },

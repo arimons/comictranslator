@@ -44,7 +44,9 @@ import {
   readSessionSettings,
   writeSessionSettings,
   removeSessionSettings,
+  imageRegions,
 } from "./lib.js";
+import { regionIsExcluded } from "./regionExclusion.js";
 
 // 글자 입히기 편집 기록 상한과, 같은 종류의 연속 변경을 한 칸으로 묶는 시간
 const OVERLAY_HISTORY_LIMIT = 100;
@@ -112,6 +114,9 @@ export default function App() {
   // 글자 입히기 캔버스 도구: select | hand | eraser
   const [overlayTool, setOverlayTool] = useState("select");
   const [helpOpen, setHelpOpen] = useState(false);
+  // 작품 메모(인물 표)와 현재 페이지의 TG별 화자 지정
+  const [workMemo, setWorkMemo] = useState(null);
+  const [speakerByTg, setSpeakerByTg] = useState({});
   const [shortcutToast, setShortcutToast] = useState(null);
   const fileRef = useRef(null);
   const editorCanvasRef = useRef(null);
@@ -175,6 +180,37 @@ export default function App() {
   const textBasedGuideCount = (guidance.manual_regions || []).filter((item) => regionProcessingBasis(item) === TEXT_BASED).length;
   const suppressedCount = guidance.suppressed_regions?.length || 0;
   const overlayRegions = overlayControlItems(selected, overlayGuidance);
+  // 화자 단축키 1-9 = 작품 메모 인물 표 순서(주인공 1번)
+  const speakerCharacters = (workMemo?.characters || []).slice(0, 9);
+  const guidanceRegions = useMemo(() => imageRegions(selected)
+    .filter((region) => !regionIsExcluded(region, guidance))
+    .sort((a, b) => regionId(a) - regionId(b)), [selected, guidance]);
+  const speakerLabels = useMemo(() => {
+    const names = Object.fromEntries((workMemo?.characters || []).map((row) => [row.id, row.name]));
+    names.narration = "내레이션";
+    const lead = (workMemo?.characters || []).find((row) => row.protagonist);
+    const labels = {};
+    guidanceRegions.forEach((region) => {
+      const assigned = (region.anchor_ids || []).map((id) => speakerByTg[String(id)]).find((id) => names[id]);
+      // 텍스트 기반 영역의 자동 기본값은 괄호로 구분한다.
+      if (assigned) labels[regionId(region)] = names[assigned];
+      else if (lead && regionProcessingBasis(region) === TEXT_BASED) labels[regionId(region)] = `(${lead.name})`;
+    });
+    return labels;
+  }, [workMemo, speakerByTg, guidanceRegions]);
+  const selectedGuidanceRegion = selectedTg == null ? null
+    : guidanceRegions.find((region) => (region.anchor_ids || []).map(Number).includes(Number(selectedTg))) || null;
+  const selectedPageId = selected?.id || "";
+
+  useEffect(() => {
+    setSpeakerByTg({});
+    if (!sessionId || !selectedPageId) return undefined;
+    let alive = true;
+    api(`/api/speakers/${encodeURIComponent(sessionId)}/${encodeURIComponent(selectedPageId)}`)
+      .then((result) => { if (alive) setSpeakerByTg(result.by_tg || {}); })
+      .catch(() => {});
+    return () => { alive = false; };
+  }, [sessionId, selectedPageId]);
   const selectedRegion = selectedRegionId
     ? (overlayRegions.find((region) => overlayItemKey(region) === String(selectedRegionId)) || null)
     : null;
@@ -612,6 +648,75 @@ export default function App() {
     return true;
   }
 
+  function selectGuidanceRegion(region, index, total) {
+    const tg = Number(region.anchor_ids?.[0]);
+    if (!Number.isFinite(tg)) return false;
+    setSelectedTg(tg);
+    editorCanvasRef.current?.ensureTgVisible(tg);
+    setStatus(`R${regionId(region)} 선택 (${index + 1}/${total})`);
+    return true;
+  }
+
+  // 영역 분석 탭: 읽는 순서(region 번호)로 이동. onlyBoundary면 경계 기반 영역만 고른다.
+  function cycleGuidanceRegion(step, onlyBoundary = false) {
+    const list = guidanceRegions.filter((region) => region.anchor_ids?.length
+      && (!onlyBoundary || regionProcessingBasis(region) !== TEXT_BASED));
+    if (!list.length) return false;
+    const current = selectedGuidanceRegion ? regionId(selectedGuidanceRegion) : null;
+    let next;
+    if (current == null) next = step > 0 ? list[0] : list[list.length - 1];
+    else if (step > 0) next = list.find((region) => regionId(region) > current);
+    else next = [...list].reverse().find((region) => regionId(region) < current);
+    if (!next) {
+      if (onlyBoundary) return false;
+      next = step > 0 ? list[0] : list[list.length - 1];
+    }
+    return selectGuidanceRegion(next, list.indexOf(next), list.length);
+  }
+
+  async function assignSpeaker(slot) {
+    const region = selectedGuidanceRegion;
+    if (!region) {
+      setStatus("화자를 지정할 영역을 먼저 선택하세요");
+      return true;
+    }
+    let characterId = null;
+    let name = "자동";
+    if (slot === "narration") {
+      characterId = "narration";
+      name = "내레이션";
+    } else if (slot > 0) {
+      const row = speakerCharacters[slot - 1];
+      if (!row) {
+        setStatus(workMemo ? `${slot}번 인물이 없습니다. 작품 메모에서 인물을 추가하세요` : "작품 메모를 먼저 연결하세요");
+        return true;
+      }
+      characterId = row.id;
+      name = row.name;
+    }
+    const tgIds = (region.anchor_ids || []).map(Number);
+    const pageId = selectedPageId;
+    // 화면을 먼저 갱신하고 저장은 뒤에서 한다. 실패하면 서버 값으로 되돌린다.
+    setSpeakerByTg((current) => {
+      const next = { ...current };
+      tgIds.forEach((id) => { if (characterId) next[String(id)] = characterId; else delete next[String(id)]; });
+      return next;
+    });
+    setStatus(`R${regionId(region)} 화자: ${name}`);
+    if (slot !== 0) cycleGuidanceRegion(1, true);
+    try {
+      const result = await api("/api/speakers", { method: "POST", body: JSON.stringify({
+        session_id: sessionId, image_id: pageId, tg_ids: tgIds, character_id: characterId,
+      }) });
+      if (selectedIdRef.current === pageId || !selectedIdRef.current) setSpeakerByTg(result.by_tg || {});
+    } catch (err) {
+      setStatus(`화자 저장 실패: ${err.message}`);
+      api(`/api/speakers/${encodeURIComponent(sessionId)}/${encodeURIComponent(pageId)}`)
+        .then((result) => setSpeakerByTg(result.by_tg || {})).catch(() => {});
+    }
+    return true;
+  }
+
   function cycleOverlayRegion(step) {
     const keys = overlayRegions.map((item) => overlayItemKey(item));
     if (!keys.length) return false;
@@ -1033,6 +1138,11 @@ export default function App() {
       return true;
     },
     "overlay.cycleRegion": (_event, step) => cycleOverlayRegion(step),
+    "guidance.cycleRegion": (_event, step) => cycleGuidanceRegion(step),
+    "guidance.speaker": (event, slot) => {
+      assignSpeaker(slot === "digit" ? Number(event.code.slice(-1)) : slot);
+      return true;
+    },
     "overlay.openEditor": () => overlayCanvasRef.current?.openEditorForSelected() ?? false,
     "overlay.style": (_event, style) => {
       const rid = selectedRegionRefValue();
@@ -2062,7 +2172,7 @@ export default function App() {
           }}
           placeholder="Untitled project"
         />
-        <GlossaryPanel autoMatch={!generationReviewMode} sessionId={sessionId} projectName={projectName} ocrBusy={ocrBusy} analysisReady={images.some((image) => image.has_analysis)} />
+        <GlossaryPanel sessionId={sessionId} projectName={projectName} ocrBusy={ocrBusy} onMemoChange={setWorkMemo} />
         </div>
         <nav className="workflow-tabs top-workflow-tabs">
           {WORKFLOW_TABS.map(([id, label]) => (
@@ -2232,6 +2342,7 @@ export default function App() {
                   selectedTg={selectedTg}
                 setSelectedTg={setSelectedTg}
                 setStatus={setStatus}
+                speakerLabels={speakerLabels}
               />
               <div className="floating-toolbox" aria-label="영역 분석 도구">
                 {TOOL_LABELS.map(([id, label]) => (
@@ -2690,6 +2801,20 @@ export default function App() {
               On
             </button>
           </div>
+        </div>
+
+        <div className="section speaker-section">
+          <h2>화자 {selectedGuidanceRegion ? <small>R{regionId(selectedGuidanceRegion)} · {speakerLabels[regionId(selectedGuidanceRegion)] || "미지정"}</small> : null}</h2>
+          {speakerCharacters.length ? <div className="speaker-keys">
+            {speakerCharacters.map((row, index) => (
+              <button key={row.id} disabled={!selectedGuidanceRegion} onClick={() => assignSpeaker(index + 1)} title={row.speech || row.personality || ""}>
+                <kbd>{index + 1}</kbd>{row.name}{row.protagonist ? " ★" : ""}
+              </button>
+            ))}
+            <button disabled={!selectedGuidanceRegion} onClick={() => assignSpeaker("narration")}><kbd>N</kbd>내레이션</button>
+            <button disabled={!selectedGuidanceRegion} onClick={() => assignSpeaker(0)}><kbd>0</kbd>해제</button>
+          </div> : <p className="hint">상단 작품 메모에 인물을 추가하면 숫자키로 화자를 지정할 수 있습니다.</p>}
+          <p className="hint">영역 선택 → 숫자키로 지정하면 다음 경계 기반 영역으로 넘어갑니다. Tab으로 건너뛰기. 텍스트 기반 영역은 지정이 없으면 (주인공)으로 보냅니다.</p>
         </div>
 
         <div className="section">

@@ -3283,7 +3283,7 @@ button.wide {
 .glossary-toggle { white-space: nowrap; font-size: 12px; }
 .glossary-backdrop { position: fixed; inset: 0; z-index: 3000; display: flex; align-items: center; justify-content: center; padding: 24px; background: #0006; }
 .glossary-dialog { width: min(760px, 100%); max-height: 90vh; overflow: auto; background: var(--panel); color: var(--text); border: 1px solid var(--line); border-radius: 12px; padding: 24px; box-shadow: var(--shadow); text-align: left; }
-.glossary-heading, .glossary-work, .glossary-term-heading { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+.glossary-heading, .glossary-work { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
 .glossary-heading h2 { margin: 0; font-size: 20px; }
 .glossary-dialog label { display: grid; gap: 6px; margin: 14px 0; }
 .glossary-dialog input, .glossary-dialog select { width: 100%; min-width: 0; }
@@ -3292,16 +3292,8 @@ button.wide {
 .glossary-dialog p { line-height: 1.6; font-size: 13px; white-space: normal; }
 .glossary-dialog summary { cursor: pointer; padding: 10px 0; }
 .glossary-work { margin-top: 20px; flex-wrap: wrap; }
-.glossary-work span, .glossary-term-heading span { color: var(--muted); font-size: 12px; }
-.glossary-term { border: 1px solid var(--line); border-radius: 8px; padding: 14px; margin: 10px 0; }
-.glossary-term.review { border-left: 4px solid var(--orange); }
-.glossary-term.auto, .glossary-term.accepted { border-left: 4px solid var(--green); }
-.glossary-term p { margin: 6px 0; }
+.glossary-work span { color: var(--muted); font-size: 12px; }
 .glossary-error { color: var(--red); }
-.glossary-citation { padding: 8px; border-top: 1px solid var(--line); overflow-wrap: anywhere; }
-.glossary-citation a { color: var(--blue); }
-.glossary-summary { white-space: pre-wrap !important; }
-.glossary-search-suggestions { width: 100%; height: 180px; border: 0; margin-top: 12px; }
 @media (max-width: 800px) { .glossary-backdrop { padding: 8px; } .glossary-dialog { padding: 16px; } .glossary-toggle { max-width: 145px; overflow: hidden; text-overflow: ellipsis; } }
 
 /* 프로젝트 표시명 옆에 작품 연결과 용어집 조사 상태를 따로 표시한다. */
@@ -3312,11 +3304,6 @@ button.wide {
 .glossary-toggle strong, .glossary-toggle span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .glossary-toggle strong { font-size: 12px; font-weight: 600; color: var(--blue); }
 .glossary-toggle span { font-size: 10px; color: var(--muted); }
-.work-search { margin: 16px 0; padding: 14px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel-2); }
-.work-search > button { margin-top: 12px; }
-.work-candidate { padding: 12px; margin: 10px 0; background: var(--panel); border: 1px solid var(--line); border-radius: 6px; overflow-wrap: anywhere; }
-.work-candidate > button { display: block; margin-top: 10px; }
-.work-candidate a { color: var(--blue); font-size: 12px; }
 .workspace-global-topbar .top-workflow-tabs { width: 100%; min-width: 0; }
 .workspace-global-topbar .top-workflow-tabs button { min-width: 0; flex: 1 0 auto; padding: 0 6px; font-size: 12px; }
 .workspace-global-topbar .file-navigator.top-file-nav { grid-template-columns: 70px 26px minmax(70px, 1fr) 26px 26px 26px; width: 100%; max-width: 100%; gap: 4px; }
@@ -3357,3 +3344,24 @@ button.wide {
 .floating-toolbox button.tool-group-start {margin-top:5px;position:relative;}
 .floating-toolbox button.tool-group-start::before {content:"";position:absolute;left:0;right:0;top:-6px;border-top:1px solid #dbe2eb;}
 .floating-toolbox button span {display:flex;align-items:center;justify-content:center;}
+
+/* 작품 메모 표와 화자 지정 */
+.glossary-dialog.memo { width: min(1080px, 100%); }
+.glossary-dialog h3 small { font-weight: 400; font-size: 11px; color: var(--muted); margin-left: 8px; }
+.memo-title { flex: 1; font-size: 15px; font-weight: 600; }
+.memo-table { display: grid; gap: 4px; margin: 8px 0; }
+.memo-row { display: grid; gap: 4px; align-items: center; }
+.memo-table.characters .memo-row { grid-template-columns: 28px 1fr 1fr 1fr 1.6fr 1.6fr 44px 84px; }
+.memo-table.terms .memo-row { grid-template-columns: 1fr 1fr 2fr 32px; }
+.memo-row.head span { font-size: 11px; color: var(--muted); }
+.memo-row input:not([type="radio"]) { width: 100%; min-width: 0; padding: 4px 6px; font-size: 12px; }
+.memo-key { text-align: center; font-weight: 700; color: var(--blue); }
+.memo-actions { display: flex; gap: 2px; }
+.memo-actions button { padding: 2px 6px; }
+.memo-picker label { display: grid; gap: 6px; margin: 12px 0; }
+.speaker-section h2 small { font-weight: 400; color: var(--muted); margin-left: 6px; }
+.speaker-keys { display: flex; flex-wrap: wrap; gap: 4px; }
+.speaker-keys button { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; }
+.speaker-keys kbd { font-size: 10px; padding: 0 4px; border: 1px solid var(--line); border-radius: 3px; }
+.speaker-section .hint { font-size: 11px; color: var(--muted); line-height: 1.5; }
+@media (max-width: 800px) { .memo-table.characters .memo-row { grid-template-columns: 24px 1fr 1fr 70px; } .memo-table.characters .memo-row > :nth-child(3), .memo-table.characters .memo-row > :nth-child(4), .memo-table.characters .memo-row > :nth-child(5), .memo-table.characters .memo-row > :nth-child(7) { display: none; } }

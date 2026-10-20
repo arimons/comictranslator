@@ -7,7 +7,7 @@ import { placeCanvasLabels, promotedTgIds } from "./canvasLabels.js";
 import { regionIsExcluded, tgIsExcluded } from "./regionExclusion.js";
 import { TEXT_BASED, regionProcessingBasis, regionTypeLabel } from "./regionTypes.js";
 
-const EditorCanvas = forwardRef(function EditorCanvas({ image, baseUrl, guidance, setGuidance, tool, layers, selectedTg, setSelectedTg, setStatus }, ref) {
+const EditorCanvas = forwardRef(function EditorCanvas({ image, baseUrl, guidance, setGuidance, tool, layers, selectedTg, setSelectedTg, setStatus, speakerLabels }, ref) {
   const hostRef = useRef(null);
   const stageRef = useRef(null);
   const imageObjRef = useRef(null);
@@ -20,6 +20,9 @@ const EditorCanvas = forwardRef(function EditorCanvas({ image, baseUrl, guidance
   const guidanceRef = useRef(guidance);
   const layersRef = useRef(layers);
   const selectedTgRef = useRef(selectedTg);
+  // region_id → 화자 이름. 라벨에 붙여 지정 상태를 캔버스에서 바로 본다.
+  const speakerLabelsRef = useRef(speakerLabels);
+  speakerLabelsRef.current = speakerLabels;
   const dragPreviewRef = useRef(null);
   // stage 핸들러는 mount 시점 클로저라 baseUrl은 ref로 읽어야 현재 페이지 key가 나온다.
   const baseUrlRef = useRef(baseUrl);
@@ -312,6 +315,11 @@ const EditorCanvas = forwardRef(function EditorCanvas({ image, baseUrl, guidance
     zoom100: () => vpRef.current.zoom100(),
     zoomBy: (factor) => vpRef.current.zoomBy(factor),
     panBy: (dx, dy) => vpRef.current.panBy(dx, dy),
+    ensureTgVisible: (id) => {
+      const group = imageGroups(imageRef.current).find((item) => tgId(item) === Number(id));
+      const rect = group ? rectOf(group) : null;
+      return rect ? vpRef.current.ensureVisible(rect) : false;
+    },
     zoomToSelection: () => {
       const rect = selectedTgRect();
       if (!rect) {
@@ -557,19 +565,22 @@ const EditorCanvas = forwardRef(function EditorCanvas({ image, baseUrl, guidance
         const r = toStageRect(rect);
         const isTextBased = regionProcessingBasis(region) === TEXT_BASED;
         const color = isTextBased ? "#b45309" : "#0f766e";
+        const regionSelected = (region.anchor_ids || []).map(Number).includes(Number(selectedTgRef.current));
         overlay.add(new Konva.Rect({
           ...r,
           stroke: color,
-          strokeWidth: 1.2,
-          opacity: .65,
+          strokeWidth: regionSelected ? 3 : 1.2,
+          opacity: regionSelected ? 1 : .65,
           fill: "transparent",
           dash: isTextBased ? [6, 4] : undefined,
         }));
         const anchors = (region.anchor_ids || []).map(id => `TG${id}`);
         const id = `R${regionId(region)}`;
-        const gutterText = anchors.length ? `${id} · ${anchors.slice(0,3).join(",")}${anchors.length > 3 ? "…" : ""}` : id;
-        labels.push({id, text:id, gutterText,
-          kind:"region", rect:r, color, inlineWidth:labelWidth(id, true), width:Math.min(170, labelWidth(gutterText, true)), height:18});
+        const speaker = speakerLabelsRef.current?.[regionId(region)];
+        const text = speaker ? `${id} ${speaker}` : id;
+        const gutterText = anchors.length ? `${text} · ${anchors.slice(0,3).join(",")}${anchors.length > 3 ? "…" : ""}` : text;
+        labels.push({id, text, gutterText, selected:regionSelected,
+          kind:"region", rect:r, color, inlineWidth:labelWidth(text, true), width:Math.min(170, labelWidth(gutterText, true)), height:18});
         obstacles.push(r);
         if (region.safe_text_rect) {
           overlay.add(new Konva.Rect({ ...toStageRect(region.safe_text_rect), stroke: "#111827", strokeWidth: 1, opacity:.3, dash: [4, 3] }));
@@ -754,8 +765,10 @@ const EditorCanvas = forwardRef(function EditorCanvas({ image, baseUrl, guidance
       }
       if (currentTool !== "select" && currentTool !== "tg-toggle") return;
       const group = findTgAt(point);
-      if (!group) return;
-      const id = tgId(group);
+      // TG 밖의 말풍선 안쪽을 눌러도 그 영역의 첫 TG를 선택해 화자 지정 대상으로 삼는다.
+      const region = !group && currentTool === "select" ? findRegionAt(point) : null;
+      if (!group && !region?.anchor_ids?.length) return;
+      const id = group ? tgId(group) : Number(region.anchor_ids[0]);
       setSelectedTg(id);
       selectedTgRef.current = id;
       setStatus(`TG${id} 선택`);
@@ -797,7 +810,7 @@ const EditorCanvas = forwardRef(function EditorCanvas({ image, baseUrl, guidance
 
   useEffect(() => {
     redraw();
-  }, [image, guidance, tool, layers, selectedTg, dragPreview]);
+  }, [image, guidance, tool, layers, selectedTg, dragPreview, speakerLabels]);
 
   const menuAction = action => { setContextMenu(null); action(); };
   const automaticRegion = contextMenu?.region && !String(contextMenu.region.source_method || contextMenu.region.method || "").startsWith("manual_");

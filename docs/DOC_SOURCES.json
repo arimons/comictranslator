@@ -8,12 +8,11 @@
   "docs": {
     "docs/WORK_GLOSSARY.md": {
       "role": "canonical",
-      "topic": "작품별 번역 용어집의 확인·자동 조사·인용 검증·검토·번역 연결",
+      "topic": "작품 메모(인물·말투·고유 용어)와 영역 화자 지정의 번역 연결",
       "sources": [
         "pipeline/work_glossary.py",
         "frontend/src/GlossaryPanel.jsx",
         "main_v2.py",
-        "pipeline/work_matching.py",
         "pipeline/work_sources.py",
         "pipeline/openai_tasks.py"
       ]
