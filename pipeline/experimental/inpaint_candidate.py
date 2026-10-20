@@ -1,15 +1,20 @@
 # Flood 실패 후보에 inpaint를 적용하는 실험 모듈
 from __future__ import annotations
 
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+
 import json
 from pathlib import Path
+from pipeline.paths import DATA_HOME
 from typing import List, Tuple
 
 import cv2
 import numpy as np
 
 
-IMAGE_DIR = Path("test_image")
+IMAGE_DIR = (DATA_HOME / "samples/test_image")
 PROOF_DIR = Path("proof")
 SHEET_DIR = PROOF_DIR / "json"
 INPAINT_DIR = PROOF_DIR / "inpaint"

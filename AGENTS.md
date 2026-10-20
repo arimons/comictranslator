@@ -160,3 +160,5 @@ python3 batch/receive_batch_result.py
 - Gradio `main.py`, `run_test_pipeline.py`는 `archive/retired_gradio_ui/`, `floodfill_anchor_probe.py`, `apply_masking.py`, `difficulty_scorer.py`, `gemini_image_redraw.py`는 `pipeline/archive/`에 있다.
 - `*_ocr_v5.json`, `*_integrated_translated.json`은 현재 표준 산출물이 아니다.
 - `*_integrated.json`이 masking/overlay의 기준 JSON이다.
+
+저장 경로(2026-10-20): 기본 데이터 홈은 `~/ComicTranslator`입니다. 프로젝트 JSON은 상대 경로를 저장하고, 읽을 때 기존 절대 경로와 `session.json`도 지원합니다.

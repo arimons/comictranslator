@@ -1,10 +1,15 @@
 # 열린 말풍선 경계를 edge barrier 기반 flood로 구제합니다.
 from __future__ import annotations
 
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
 import argparse
 import json
 import sys
 from pathlib import Path
+from pipeline.paths import DATA_HOME
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 import cv2
@@ -827,7 +832,7 @@ def run_case(
     guard_thickness: int = 5,
     extra_dilate_px: Optional[int] = None,
 ) -> Dict[str, Any]:
-    image_path = ROOT_DIR / "test_image" / f"{img_num}.jpg"
+    image_path = DATA_HOME / "samples/test_image" / f"{img_num}.jpg"
     groups_path = ROOT_DIR / "experiment" / "proof" / "json" / f"{img_num}_text_groups.json"
     regions_path = ROOT_DIR / "experiment" / "proof" / "json" / f"{img_num}_bubble_regions.json"
 

@@ -21,7 +21,7 @@ def write_json(path, value):
 
 @pytest.fixture
 def project(tmp_path):
-    base = tmp_path / "temp_output/v2_sessions/example"
+    base = tmp_path / "data/projects/example"
     image = base / "input/page.jpg"
     image.parent.mkdir(parents=True)
     Image.new("RGB", (200, 300), "white").save(image)
@@ -133,7 +133,8 @@ def test_cache_root_cannot_be_retargeted_outside_repository_after_startup(projec
     external = root.parent / (root.name + "-other-cache")
     external.mkdir()
     Image.new("L", (200, 300), 255).save(external / "mask.png")
-    cache = root / "temp_output/v2_analysis_cache"
+    cache = root / "data/cache/analysis"
+    cache.parent.mkdir(parents=True, exist_ok=True)
     cache.symlink_to(external, target_is_directory=True)
     regions_path = base / "work/json/page_regions.json"
     regions = json.loads(regions_path.read_text())

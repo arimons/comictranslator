@@ -18,6 +18,8 @@ from pathlib import Path
 from typing import Any
 
 
+from pipeline.project_paths import runtime_json, storage_json
+
 Rect = list[int]
 Point = tuple[float, float]
 
@@ -28,7 +30,7 @@ def load_json(path: str | Path, default: Any = None) -> Any:
         return default
     try:
         with path.open("r", encoding="utf-8") as f:
-            return json.load(f)
+            return runtime_json(path, json.load(f))
     except json.JSONDecodeError:
         return default
 
@@ -40,7 +42,7 @@ def write_json(path: str | Path, data: Any) -> None:
     tmp = path.with_name(f".{path.name}.{os.getpid()}.{threading.get_ident()}.tmp")
     try:
         with tmp.open("w", encoding="utf-8") as f:
-            json.dump(data, f, ensure_ascii=False, indent=2)
+            json.dump(storage_json(path, data), f, ensure_ascii=False, indent=2)
         for attempt in range(5):
             try:
                 os.replace(tmp, path)

@@ -12,7 +12,7 @@
 | 고유 용어 | 원문, 한국어, 메모 | 가문·지명·기술 등 표기 통일 |
 | 작품 메모 | 자유 텍스트 | 배경·호칭 규칙 등 |
 
-- 저장: `temp_output/v2_glossaries/{work_id}.json`, `format: "work-memo-v1"`. 프로젝트 연결은 `work/glossary_binding.json`.
+- 저장: `~/ComicTranslator/glossaries/{work_id}.json`, `format: "work-memo-v1"`. 프로젝트 연결은 `work/glossary_binding.json`.
 - 주인공은 한 명이며 저장할 때 표 맨 앞(1번)으로 올라간다. 표 순서가 화자 단축키 순서다. 키 칸 드롭다운에서 2-8이나 9(기타)를 고르면 그 자리로 옮긴다. 표는 자동 저장한다. 입력칸에서 포커스가 빠질 때, 순서·주인공·삭제를 바꿀 때, 창을 닫을 때 저장하며 창 오른쪽 위에 저장 상태를 표시한다.
 - 이전 근거 기반 형식(`entries`)은 처음 읽을 때 인물(kind 인물)과 용어(나머지)로 옮긴다. 제외(rejected) 항목은 버리고 원본은 `{work_id}.legacy.json`으로 남긴다.
 
@@ -67,3 +67,5 @@ CV가 놓친 글자는 B/U/E 등으로 수동 R을 만들고 분석 적용한 �
 화자 버튼은 R을 직접 선택한 경우에만 활성화한다. TG만 선택했을 때 임의의 연결 R을 골라 저장하지 않는다. 같은 위치를 다시 클릭하거나 R 번호 라벨/우클릭으로 R을 선택한다.
 
 경로 통합(2026-10-20): 저장 위치는 `pipeline/paths.py`에서 정의하며 `COMIC_TRANSLATOR_HOME`으로 변경할 수 있습니다.
+
+저장 경로(2026-10-20): 기본 데이터 홈은 `~/ComicTranslator`입니다. 프로젝트 JSON은 상대 경로를 저장하고, 읽을 때 기존 절대 경로와 `session.json`도 지원합니다.

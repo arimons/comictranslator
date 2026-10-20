@@ -12,13 +12,13 @@ from pipeline.image_generation_bridge import ImageGenerationStore
 
 @pytest.fixture
 def project(tmp_path):
-    base = tmp_path / "temp_output/v2_sessions/book"
+    base = tmp_path / "data/projects/book"
     original = base / "input/cover.png"
     original.parent.mkdir(parents=True)
     Image.new("RGB", (200, 300), "yellow").save(original)
     (base / "session.json").write_text(json.dumps({"images": [{"id": "cover", "input_path": str(original)}]}))
-    inbox = tmp_path / "temp_output/image_generation_inbox"
-    inbox.mkdir()
+    inbox = tmp_path / "data/inbox/image_generation"
+    inbox.mkdir(parents=True)
     returned = inbox / "generated.png"
     Image.new("RGB", (400, 600), "blue").save(returned)
     return tmp_path, base, original, returned, ImageGenerationStore(tmp_path)
@@ -70,7 +70,7 @@ def test_revision_unknown_request_paths_and_ratio_rejected(project):
 def test_glossary_change_invalidates_request_and_no_research_is_run(project):
     root, base, _, returned, store = project
     wid = "a" * 24
-    directory = root / "temp_output/v2_glossaries"
+    directory = root / "data/glossaries"
     directory.mkdir()
     glossary = {"work_id": wid, "format": "work-memo-v1", "title": "작품", "updated_at": "v2",
                 "characters": [{"id": "c00000001", "name": "유키", "speech": "반말", "protagonist": True}], "terms": []}
@@ -132,7 +132,7 @@ def test_http_status_exposes_preview_without_analysis(project, monkeypatch):
     from fastapi.testclient import TestClient
     root, _, _, returned, store = project
     monkeypatch.setattr(app, "ROOT", root)
-    monkeypatch.setattr(app, "SESSION_ROOT", root / "temp_output/v2_sessions")
+    monkeypatch.setattr(app, "SESSION_ROOT", root / "data/projects")
     request = prepare(store)
     result = store.register("book", "cover", request["request_id"], str(returned))
     with TestClient(app.create_app()) as client:

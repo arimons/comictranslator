@@ -1,5 +1,6 @@
 import sys
 from pathlib import Path
+from pipeline.paths import DATA_HOME
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 #!/usr/bin/env python3
@@ -24,9 +25,9 @@ def resolve_debug_image_path(img_num: str) -> Path:
     """Debug 시각화에 사용할 원본 이미지 경로를 찾는다."""
     candidates = [
         Path("Debug") / img_num / f"{img_num}.jpg",
-        Path("test_image") / f"{img_num}.jpg",
-        Path("archive/temp_output/Ore6-NEW") / f"{img_num}.jpg",
-        Path("archive/temp_outputs/archive") / f"{img_num}.jpg",
+        (DATA_HOME / "samples/test_image") / f"{img_num}.jpg",
+        DATA_HOME / "legacy/temp_output/Ore6-NEW" / f"{img_num}.jpg",
+        DATA_HOME / "legacy/temp_outputs/archive" / f"{img_num}.jpg",
     ]
     for candidate in candidates:
         if candidate.exists():
@@ -329,7 +330,7 @@ def visualize_all(img_num: str):
     특정 이미지의 통합 시각화 수행
     (CV Clusters + Integrated 데이터를 하나의 파일로)
     """
-    base_dir = Path("temp_output/Debug")
+    base_dir = DATA_HOME / "legacy/debug"
     image_path = resolve_debug_image_path(img_num)
     clusters_json = base_dir / f"{img_num}_cv_clusters_v5.json"
     tight_groups_json = base_dir / f"{img_num}_cv_text_groups_tight.json"

@@ -15,8 +15,8 @@ from pipeline.image_generation_bridge import ImageGenerationStore
 @pytest.fixture
 def project(tmp_path, monkeypatch):
     monkeypatch.setattr(app, "ROOT", tmp_path)
-    monkeypatch.setattr(app, "SESSION_ROOT", tmp_path / "temp_output/v2_sessions")
-    monkeypatch.setattr(app, "ANALYSIS_CACHE_DIR", tmp_path / "temp_output/v2_analysis_cache")
+    monkeypatch.setattr(app, "SESSION_ROOT", tmp_path / "data/projects")
+    monkeypatch.setattr(app, "ANALYSIS_CACHE_DIR", tmp_path / "data/cache/analysis")
     data = app.ensure_session("book")
     original = app.session_dir("book") / "input/page.png"
     original.parent.mkdir(parents=True, exist_ok=True)

@@ -15,6 +15,7 @@ import tempfile
 from PIL import Image, ImageOps
 
 from pipeline.editor_review_bridge import MAX_FILE_BYTES, ReviewStore
+from pipeline.project_paths import storage_json
 from pipeline.work_glossary import glossary_snapshot
 
 
@@ -48,7 +49,7 @@ class ImageGenerationStore(ReviewStore):
     def _write(path, value):
         if path.is_symlink():
             raise ValueError("생성 파일 링크는 허용하지 않습니다")
-        raw = value if isinstance(value, bytes) else json.dumps(value, ensure_ascii=False, indent=2).encode()
+        raw = value if isinstance(value, bytes) else json.dumps(storage_json(path, value), ensure_ascii=False, indent=2).encode()
         temporary = None
         try:
             with tempfile.NamedTemporaryFile(dir=path.parent, delete=False) as stream:
@@ -209,8 +210,8 @@ class ImageGenerationStore(ReviewStore):
                         "source_sha256": context["original_sha256"], "context_digest": request["context_digest"],
                         "generated_sha256": hashlib.sha256(raw).hexdigest(), "size": size,
                         "original_size": [width, height], "aspect_ratio_warning": ratio_error > 0.02,
-                        "preview_path": str(preview.relative_to(self.root)),
-                        "returned_path": str(returned.relative_to(self.root)),
+                        "preview_path": str(preview),
+                        "returned_path": str(returned),
                         "execution": "codex_builtin_imagegen", "actual_model": None,
                         "quality_verdict": "unreviewed", "final_output_modified": False,
                         "created_at": datetime.now(timezone.utc).isoformat()}

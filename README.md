@@ -614,3 +614,5 @@ MIT License
 - Google Gemini API
 - Freesentation Font
 - OpenCV, Pillow, Gradio
+
+저장 경로(2026-10-20): 기본 데이터 홈은 `~/ComicTranslator`입니다. 프로젝트 JSON은 상대 경로를 저장하고, 읽을 때 기존 절대 경로와 `session.json`도 지원합니다.

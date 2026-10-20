@@ -25,14 +25,14 @@
 
 새 도구 목록은 MCP 클라이언트를 재연결해야 보일 수 있다. 실제 검증은 새 stdio 연결을 열어 수행한다.
 
-반환 파일은 `~/.codex/generated_images/` 또는 저장소 `temp_output/image_generation_inbox/` 내부만 읽는다. 생성 도구가 다른 위치에 반환하면 에이전트가 수신 폴더로 복사한 뒤 등록한다. 링크를 따라 허용 폴더 밖을 읽거나 다른 세션·캐시에 결과를 쓰는 동작은 거부한다. 외부 URL 다운로드는 하지 않는다.
+반환 파일은 `~/.codex/generated_images/` 또는 저장소 `~/ComicTranslator/inbox/image_generation/` 내부만 읽는다. 생성 도구가 다른 위치에 반환하면 에이전트가 수신 폴더로 복사한 뒤 등록한다. 링크를 따라 허용 폴더 밖을 읽거나 다른 세션·캐시에 결과를 쓰는 동작은 거부한다. 외부 URL 다운로드는 하지 않는다.
 
 생성 요청은 페이지·번역·용어집 내용 해시를 묶는다. 등록 직전 문맥이 달라졌으면 다시 준비해야 한다. 저장 후 문맥이 바뀐 후보는 편집기에서 재검토 대상으로 표시한다. 비율 오차 10% 초과는 등록 거부, 2% 초과는 경고다. 크기·비율을 맞추려고 자동으로 잘라내거나 늘리지 않으며 반환 이미지 해상도를 그대로 보관한다. 이 수치는 형식 검사이며 커버 여부를 판정하는 CV 기준이 아니다.
 
 ## 로컬 보관
 
 ```text
-temp_output/v2_sessions/{session_id}/work/image_generation/{image_id}/
+~/ComicTranslator/projects/{session_id}/work/image_generation/{image_id}/
   recommendation.json
   request-{request_id}.json
   result-{result_id}.json
@@ -83,3 +83,5 @@ UI 검증은 별도 headless Chromium에서 실행한다. `proof/src/run_headles
 일반 편집의 화자 저장은 새 R 직접 지정(by_region)을 사용하며 구 TG 지정을 호환한다. 이 변경은 생성 후보를 채택하거나 자동 생성하는 동작을 추가하지 않는다. 수동 R 제외는 범위/검출 방식 키로 해당 R만 제외하고 등록된 생성 결과는 보존한다.
 
 경로 통합(2026-10-20): 저장 위치는 `pipeline/paths.py`에서 정의하며 `COMIC_TRANSLATOR_HOME`으로 변경할 수 있습니다.
+
+저장 경로(2026-10-20): 기본 데이터 홈은 `~/ComicTranslator`입니다. 프로젝트 JSON은 상대 경로를 저장하고, 읽을 때 기존 절대 경로와 `session.json`도 지원합니다.

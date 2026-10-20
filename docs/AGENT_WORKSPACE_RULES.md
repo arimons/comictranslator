@@ -115,3 +115,5 @@ OpenAI 전환(2026-10-20): pipeline_runner의 Step 4 호출 로그와 모델 기
 사용자가 작업 중인 브라우저 창에 자동화 탭이 떴다 사라지지 않도록, UI 검증은 별도 headless 브라우저를 기본으로 사용한다. 현재 검증 실행기는 `proof/src/run_headless_browser_check.cjs`이다. 사용자의 기존 창·탭을 검증용으로 열거나 전환하지 않는다.
 
 경로 통합(2026-10-20): 저장 위치는 `pipeline/paths.py`에서 정의하며 `COMIC_TRANSLATOR_HOME`으로 변경할 수 있습니다.
+
+저장 경로(2026-10-20): 기본 데이터 홈은 `~/ComicTranslator`입니다. 프로젝트 JSON은 상대 경로를 저장하고, 읽을 때 기존 절대 경로와 `session.json`도 지원합니다.

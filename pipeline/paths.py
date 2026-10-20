@@ -14,17 +14,17 @@ class WorkspacePaths:
     home: Path
 
     @property
-    def projects(self): return self.home / "v2_sessions"
+    def projects(self): return self.home / "projects"
     @property
-    def input_cache(self): return self.home / "v2_input_cache"
+    def input_cache(self): return self.home / "cache/input"
     @property
-    def cv_cache(self): return self.home / "v2_cv_cache"
+    def cv_cache(self): return self.home / "cache/cv"
     @property
-    def analysis_cache(self): return self.home / "v2_analysis_cache"
+    def analysis_cache(self): return self.home / "cache/analysis"
     @property
-    def glossaries(self): return self.home / "v2_glossaries"
+    def glossaries(self): return self.home / "glossaries"
     @property
-    def image_generation_inbox(self): return self.home / "image_generation_inbox"
+    def image_generation_inbox(self): return self.home / "inbox/image_generation"
     @property
     def exports(self): return self.home / "exports"
     @property
@@ -33,7 +33,9 @@ class WorkspacePaths:
 
 def for_repo(root=REPO_ROOT):
     root = Path(root).resolve()
-    return WorkspacePaths(Path(os.environ.get("COMIC_TRANSLATOR_HOME", root / "temp_output")).expanduser().absolute())
+    default = Path.home() / "ComicTranslator" if root == REPO_ROOT else root / "data"
+    home = os.environ.get("COMIC_TRANSLATOR_HOME", default) if root == REPO_ROOT else default
+    return WorkspacePaths(Path(home).expanduser().absolute())
 
 PATHS = for_repo()
 DATA_HOME = PATHS.home

@@ -1,8 +1,12 @@
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 # 만화 대사 추출기 — 경계 기반 영역 검출 + 텍스트 기반 지우기 + OCR Sheet 생성
 #!/usr/bin/env python3
 
 import cv2
 import json
+from pipeline.project_paths import storage_json
 import os
 import sys
 import tempfile
@@ -1880,7 +1884,7 @@ def _write_cover_skip_outputs(
         "regions": [],
     }
     with open(output_json_path, "w", encoding="utf-8") as f:
-        json.dump(output_data, f, ensure_ascii=False, indent=2)
+        json.dump(storage_json(Path(f.name), output_data), f, ensure_ascii=False, indent=2)
     return output_data
 
 
@@ -3310,7 +3314,7 @@ def build_dialogue_sheet(
         "regions": output_regions,
     }
     with open(output_json_path, "w", encoding="utf-8") as f:
-        json.dump(output_data, f, ensure_ascii=False, indent=2)
+        json.dump(storage_json(Path(f.name), output_data), f, ensure_ascii=False, indent=2)
 
     return output_data
 

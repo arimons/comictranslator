@@ -37,6 +37,7 @@ from fastapi.staticfiles import StaticFiles
 from PIL import Image
 from pydantic import BaseModel
 
+from pipeline.project_paths import manifest_files, manifest_path
 from pipeline.manual_guidance import build_effective_text_groups, load_json, write_json
 from pipeline.region_types import regions_with_processing_basis
 from pipeline.page_preparation import build_plan, materialize_plan
@@ -323,7 +324,7 @@ def session_dir(session_id: str) -> Path:
 
 
 def session_file(session_id: str) -> Path:
-    return session_dir(session_id) / "session.json"
+    return manifest_path(session_dir(session_id))
 
 
 def ensure_session(session_id: str | None = None) -> dict[str, Any]:
@@ -343,7 +344,7 @@ def ensure_session(session_id: str | None = None) -> dict[str, Any]:
 
 def save_session(data: dict[str, Any]) -> None:
     data["images"] = sorted_image_records(data.get("images", []))
-    write_json(session_file(data["session_id"]), data)
+    write_json(session_dir(data["session_id"]) / "project.json", data)
 
 
 def delete_session(session_id: str) -> None:
@@ -383,7 +384,7 @@ def session_home_progress(base: Path, images: list[dict[str, Any]], updated_ts: 
 
 def list_recent_sessions(limit: int = 10) -> list[dict[str, Any]]:
     raw_sessions: list[dict[str, Any]] = []
-    for session_json in SESSION_ROOT.glob("*/session.json"):
+    for session_json in manifest_files(SESSION_ROOT):
         data = load_json(session_json, default={})
         images = sorted_image_records(data.get("images", []))
         if not images:
@@ -605,7 +606,7 @@ def _link_or_copy_file(src: Path, dest: Path) -> None:
     try:
         if dest.exists() or dest.is_symlink():
             dest.unlink()
-        dest.symlink_to(src.resolve())
+        dest.symlink_to(os.path.relpath(src.resolve(), dest.parent.absolute()))
     except OSError:
         try:
             if dest.exists() and src.samefile(dest):
@@ -780,7 +781,7 @@ def _guidance_outputs_in_place(record: dict[str, Any], cache_dir: Path) -> bool:
 def backfill_analysis_cache_from_sessions(image_hash: str) -> bool:
     if not SESSION_ROOT.exists():
         return False
-    for session_json in SESSION_ROOT.glob("*/session.json"):
+    for session_json in manifest_files(SESSION_ROOT):
         data = load_json(session_json, default={})
         session_id = data.get("session_id") or session_json.parent.name
         for item in data.get("images", []):
@@ -862,7 +863,7 @@ def backfill_guidance_cache_from_sessions(image_hash: str) -> bool:
     tombstone = guidance_cache_tombstone_path(image_hash)
     tombstone_mtime = tombstone.stat().st_mtime_ns if tombstone.exists() else 0
     candidates: list[Path] = []
-    for session_json in SESSION_ROOT.glob("*/session.json"):
+    for session_json in manifest_files(SESSION_ROOT):
         data = load_json(session_json, default={})
         session_id = data.get("session_id") or session_json.parent.name
         for item in data.get("images", []):
@@ -2804,7 +2805,7 @@ def create_app() -> FastAPI:
         try:
             result = ImageGenerationStore(ROOT).status(session_id, image_id)
             for item in result["results"]:
-                item["preview_url"] = file_url(ROOT / item["preview_path"])
+                item["preview_url"] = file_url(item["preview_path"])
             return result
         except (ValueError, OSError) as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc

@@ -6,7 +6,7 @@
 
 로컬 stdio MCP 서버 `comic-translator-review`를 구현했다. UI와 FastAPI 서버를 켜지 않아도 기존 세션·파이프라인 산출물을 읽고, 에이전트가 원본과 처리 결과를 보며 관찰·수정 후보를 남길 수 있다. 별도 모델 호출이나 API 키는 필요 없다. MCP는 도구 통로이며, 스스로 품질을 판정하는 별도 모델·무인 배치 실행기는 아니다.
 
-UI/UX가 바뀌어도 서버 코드는 React 컴포넌트·화면 좌표·버튼 이름에 의존하지 않는다. `session.json`, 영역 ID와 파이프라인 산출물의 위치·스키마가 달라지면 `pipeline/editor_review_bridge.py`의 어댑터를 함께 고친다.
+UI/UX가 바뀌어도 서버 코드는 React 컴포넌트·화면 좌표·버튼 이름에 의존하지 않는다. `project.json`, 영역 ID와 파이프라인 산출물의 위치·스키마가 달라지면 `pipeline/editor_review_bridge.py`의 어댑터를 함께 고친다.
 
 ## 설치와 연결
 
@@ -71,7 +71,7 @@ MCP 도구명은 프로토콜 계약이다. UI 문구가 바뀌어도 도구명�
 초안 경로:
 
 ```text
-temp_output/v2_sessions/{session_id}/work/reviews/{image_id}/{proposal_id}.json
+~/ComicTranslator/projects/{session_id}/work/reviews/{image_id}/{proposal_id}.json
 ```
 
 저장 전에 `base_revision`이 현재 페이지와 같은지 확인한다. 같은 revision·같은 관찰·같은 후보는 같은 proposal ID를 가져 중복 저장하지 않는다. 완성된 임시 파일을 독점 게시하므로 중간 JSON이 노출되거나 기존 제안이 덮어써지지 않는다.
@@ -125,3 +125,5 @@ inspect_page는 페이지별 processing_excluded를 함께 반환한다. work/pa
 편집기 UI의 새 화자 지정은 R 단위(by_region)이며 구 by_tg를 호환용으로 읽는다. CV가 없어도 분석 적용으로 만든 수동 R은 지정 가능하다. MCP의 기존 조회·검토 초안 도구가 곧바로 화자를 쓰거나 적용하는 것은 아니다. 새 target_key R 제외는 선택된 범위/검출 방식만 대상으로 하며 구 제외 기록도 계속 읽는다.
 
 경로 통합(2026-10-20): 저장 위치는 `pipeline/paths.py`에서 정의하며 `COMIC_TRANSLATOR_HOME`으로 변경할 수 있습니다.
+
+저장 경로(2026-10-20): 기본 데이터 홈은 `~/ComicTranslator`입니다. 프로젝트 JSON은 상대 경로를 저장하고, 읽을 때 기존 절대 경로와 `session.json`도 지원합니다.

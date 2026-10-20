@@ -2,9 +2,14 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+
 import argparse
 import json
 from pathlib import Path
+from pipeline.paths import DATA_HOME
 from typing import Any
 
 import cv2
@@ -17,7 +22,7 @@ from pipeline.archive.floodfill_anchor_probe import _erode_mask, _fill_mask_hole
 
 
 PROOF_DIR = Path("proof")
-IMAGE_DIR = Path("test_image")
+IMAGE_DIR = (DATA_HOME / "samples/test_image")
 JSON_DIR = PROOF_DIR / "json"
 FLOOD_VIS_DIR = PROOF_DIR / "flood_vis"
 DEFAULT_OUT_DIR = PROOF_DIR / "inflection_lines"

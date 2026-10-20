@@ -133,15 +133,15 @@ python3 app.py            # http://127.0.0.1:7870
 python3 app.py --no-browser --port 7870
 ```
 
-**세션 구조** — 이미지를 불러오면 `temp_output/v2_sessions/{session_id}/`에 `input/`, `work/`, `output/` 하위 폴더가 생기고, `session.json`이 이미지 목록·guidance·프로젝트명을 기록한다.
+**세션 구조** — 이미지를 불러오면 `~/ComicTranslator/projects/{session_id}/`에 `input/`, `work/`, `output/` 하위 폴더가 생기고, `project.json`이 이미지 목록·guidance·프로젝트명을 기록한다.
 
 **캐시 구조** — 이미지 `sha256` 해시를 키로 3단계 캐시를 둔다. 같은 이미지를 여러 세션에서 다시 불러와도 재계산하지 않는다.
 
 | 캐시 | 위치 | 대상 |
 | --- | --- | --- |
-| 입력 캐시 | `temp_output/v2_input_cache/` | 원본 이미지 파일 (심볼릭 링크로 세션에 연결) |
-| CV 캐시 | `temp_output/v2_cv_cache/` | Step 1 Cloud Vision 결과 (`*_cv.json`) |
-| 분석 캐시 | `temp_output/v2_analysis_cache/` | Step 3까지 결과 (`text_groups`, `regions`, `indexed_sheet`, `masked`, `bubble_vis`) + manual guidance 결과 |
+| 입력 캐시 | `~/ComicTranslator/cache/input/` | 원본 이미지 파일 (심볼릭 링크로 세션에 연결) |
+| CV 캐시 | `~/ComicTranslator/cache/cv/` | Step 1 Cloud Vision 결과 (`*_cv.json`) |
+| 분석 캐시 | `~/ComicTranslator/cache/analysis/` | Step 3까지 결과 (`text_groups`, `regions`, `indexed_sheet`, `masked`, `bubble_vis`) + manual guidance 결과 |
 
 guidance(수동 보정)가 있는 이미지는 `guidance_digest`(guidance 내용의 sha256)로 별도 하위 캐시를 둬서, 같은 guidance 조합이면 Step 3 재실행 없이 그대로 재사용한다.
 
@@ -467,7 +467,7 @@ indexed sheet crop의 획두께·ink density를 재서 OpenAI가 준 `render_hin
 .venv/bin/python -m pytest -q    # pytest.ini가 tests/만 수집한다
 ```
 
-작품 메모 버튼은 프로젝트명 옆에 있다. 메모는 `temp_output/v2_glossaries/{work_id}.json`(format `work-memo-v1`)에 작품별로 저장하고, 프로젝트는 `work/glossary_binding.json`으로 연결한다. 연결 전 프로젝트는 앞쪽 페이지 CV에서 메모 원문 표기를 세어 후보를 내고, 확실한 1개면 편집기가 자동 연결한다. 이전 형식 파일은 처음 읽을 때 인물·용어 표로 옮기고 원본을 `.legacy.json`으로 남긴다. URL 초안은 `pipeline/work_sources.py`로 본문 한 개를 읽어 OpenAI에 한 번 보낸다. 유료 검색은 호출하지 않는다.
+작품 메모 버튼은 프로젝트명 옆에 있다. 메모는 `~/ComicTranslator/glossaries/{work_id}.json`(format `work-memo-v1`)에 작품별로 저장하고, 프로젝트는 `work/glossary_binding.json`으로 연결한다. 연결 전 프로젝트는 앞쪽 페이지 CV에서 메모 원문 표기를 세어 후보를 내고, 확실한 1개면 편집기가 자동 연결한다. 이전 형식 파일은 처음 읽을 때 인물·용어 표로 옮기고 원본을 `.legacy.json`으로 남긴다. URL 초안은 `pipeline/work_sources.py`로 본문 한 개를 읽어 OpenAI에 한 번 보낸다. 유료 검색은 호출하지 않는다.
 
 ## 이미지 생성 권장과 후보 등록 (2026-10-20)
 
@@ -489,3 +489,5 @@ indexed sheet crop의 획두께·ink density를 재서 OpenAI가 준 `render_hin
 2026-10-20: EditorCanvas.jsx는 TG/R 독립 선택, 겹친 위치 순환, 선택 대상 D/Delete, 가이드 1회 입력 후 V 복귀를 처리한다. region_types.py와 regionTypes.js의 region_binding_key/regionBindingKey는 R 번호·TG anchor에 독립적인 범위/검출 경로 키이며 화자 저장과 새 정확한 R 제외에 사용한다. dialogue_extractor.py는 새 target_key 제외를 일반/수동/분할 R 및 수동 U 마스킹 전에 반영한다. 구 제외 JSON의 동작은 유지한다.
 
 경로 통합(2026-10-20): 저장 위치는 `pipeline/paths.py`에서 정의하며 `COMIC_TRANSLATOR_HOME`으로 변경할 수 있습니다.
+
+저장 경로(2026-10-20): 기본 데이터 홈은 `~/ComicTranslator`입니다. 프로젝트 JSON은 상대 경로를 저장하고, 읽을 때 기존 절대 경로와 `session.json`도 지원합니다.

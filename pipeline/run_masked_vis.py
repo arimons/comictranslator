@@ -1,9 +1,14 @@
 # flood fill + unboxed_text 통합 마스킹 시각화 이미지를 생성합니다.
 from __future__ import annotations
 
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
 import argparse
 import json
 from pathlib import Path
+from pipeline.paths import DATA_HOME
 from typing import Any, Dict, List, Optional, Tuple
 
 import cv2
@@ -248,7 +253,7 @@ def run(
             ore1처럼 사전 계산된 regions가 있을 때 이 경로를 전달하면 bubble/unboxed 분류가
             저장된 결과와 일치합니다.
     """
-    image_path = ROOT_DIR / "test_image" / f"{img_num}.jpg"
+    image_path = DATA_HOME / "samples/test_image" / f"{img_num}.jpg"
     tg_path = Path(tg_json_path) if tg_json_path is not None else (
         ROOT_DIR / "proof" / "json" / f"{img_num}_text_groups.json"
     )
@@ -464,7 +469,7 @@ def main() -> None:
     args = parser.parse_args()
 
     if args.all:
-        img_dir = ROOT_DIR / "test_image"
+        img_dir = DATA_HOME / "samples/test_image"
         targets = sorted(
             p.stem for p in img_dir.glob("*.jpg")
             if p.stem.isdigit() and args.start <= int(p.stem) <= args.end

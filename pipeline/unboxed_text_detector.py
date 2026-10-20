@@ -1,9 +1,14 @@
 # 말풍선 밖 배경 텍스트 후보를 TextGroup 기반 local mask로 검증합니다.
 from __future__ import annotations
 
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
 import argparse
 import json
 from pathlib import Path
+from pipeline.paths import DATA_HOME
 from typing import Any, Dict, List
 
 import cv2
@@ -609,7 +614,7 @@ def run(
     dark_threshold: int,
     out_dir: Path,
 ) -> None:
-    image_path = ROOT_DIR / "test_image" / f"{img_num}.jpg"
+    image_path = DATA_HOME / "samples/test_image" / f"{img_num}.jpg"
     groups_path = ROOT_DIR / "experiment" / "proof" / "json" / f"{img_num}_text_groups.json"
     regions_path = ROOT_DIR / "experiment" / "proof" / "json" / f"{img_num}_bubble_regions.json"
 

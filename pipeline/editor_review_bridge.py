@@ -16,6 +16,7 @@ from PIL import Image
 from pydantic import BaseModel, ConfigDict, Field
 
 from pipeline.paths import for_repo
+from pipeline.project_paths import manifest_path, manifest_files, runtime_json, transform_paths
 from pipeline.region_types import regions_with_processing_basis
 
 Artifact = Literal["original", "masked", "final", "analysis", "ocr_sheet", "region_mask"]
@@ -81,7 +82,7 @@ class ReviewStore:
         value = json.loads(raw)
         if not isinstance(value, dict):
             raise ValueError("세션 manifest 형식이 올바르지 않습니다")
-        return value
+        return runtime_json(path, value)
 
     def _session(self, session_id: str) -> tuple[Path, dict]:
         if not re.fullmatch(r"[\w-]{1,160}", session_id):
@@ -89,12 +90,12 @@ class ReviewStore:
         base = self.sessions / session_id
         # 프로젝트 폴더 자체의 외부 symlink도 거부한다.
         self._safe(base, proposals=True)
-        return base, self._json(base / "session.json")
+        return base, self._json(manifest_path(base))
 
     def list_projects(self, offset=0, limit=30) -> dict:
         self._pagination(offset, limit)
         entries, skipped = [], []
-        for path in self.sessions.glob("*/session.json"):
+        for path in manifest_files(self.sessions):
             try:
                 _, manifest = self._session(path.parent.name)
                 pages = manifest.get("images", [])
@@ -124,7 +125,7 @@ class ReviewStore:
             raise ValueError("프로젝트에 등록되지 않은 페이지입니다")
         original = Path(page["input_path"])
         if not original.is_absolute():
-            original = self.root / original
+            original = base / original
         if original.suffix.lower() not in {".jpg", ".jpeg", ".png", ".webp", ".bmp", ".tif", ".tiff"}:
             raise ValueError("원본 이미지 확장자가 올바르지 않습니다")
         paths = {key: base / "work/json" / f"{image_id}_{suffix}.json" for key, suffix in JSON_SUFFIXES.items()}
@@ -160,7 +161,7 @@ class ReviewStore:
             paths = dict(base_paths)
             raw_regions = self._read(paths["regions"])
             try:
-                discovered = json.loads(raw_regions) if raw_regions is not None else None
+                discovered = runtime_json(paths["regions"], json.loads(raw_regions)) if raw_regions is not None else None
             except (ValueError, UnicodeError):
                 discovered = None
             for region in self._regions(discovered):
@@ -168,7 +169,7 @@ class ReviewStore:
                     mask = Path(region["mask_ref"])
                     if mask.suffix.lower() != ".png":
                         raise ValueError("경계 마스크는 PNG만 지원합니다")
-                    paths[f"region_mask:{region['region_id']}"] = mask if mask.is_absolute() else self.root / mask
+                    paths[f"region_mask:{region['region_id']}"] = mask if mask.is_absolute() else base / mask
             before = signature()
             blobs = {key: self._read(path) for key, path in paths.items()}
             if before == signature() and blobs["regions"] == raw_regions:
@@ -188,7 +189,7 @@ class ReviewStore:
                 payload[key] = None
                 continue
             try:
-                payload[key] = json.loads(raw)
+                payload[key] = runtime_json(paths[key], json.loads(raw))
             except (ValueError, UnicodeError):
                 payload[key] = None
                 issues.append({"kind": "invalid_json", "artifact": key})
