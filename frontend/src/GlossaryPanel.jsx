@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { api } from "./lib.js";
 
 // 작품 메모: 등장인물(성격·말투)과 고유 용어. 번역 프롬프트의 참고 정보로만 쓴다.
-// 인물 표 순서가 영역 분석 탭의 화자 단축키 순서다(주인공 1번, 나머지 2-9번).
+// 인물 표 순서가 영역 분석 탭의 화자 단축키 순서다(주인공 1번, 나머지 2-8번, 9번은 기타 목록).
 
 const EMPTY_CHARACTER = { name: "", original: "", aliases: "", personality: "", speech: "", protagonist: false };
 const EMPTY_TERM = { korean: "", original: "", note: "" };
@@ -150,11 +150,11 @@ export default function GlossaryPanel({ sessionId, projectName, ocrBusy, onMemoC
             <button disabled={Boolean(busy)} onClick={() => setChanging(true)}>다른 작품 연결</button>
           </div>
 
-          <h3>등장인물 · 말투 <small>번호 = 영역 분석 탭 화자 단축키 · N 내레이션 · 0 해제</small></h3>
+          <h3>등장인물 · 말투 <small>번호 = 영역 분석 탭 화자 단축키 · 9 기타(전체 목록) · N 내레이션 · 0 해제</small></h3>
           <div className="memo-table characters">
             <div className="memo-row head"><span>키</span><span>이름</span><span>원문</span><span>호칭·약칭</span><span>성격</span><span>말투</span><span>주인공</span><span /></div>
             {characters.map((row, index) => <div className="memo-row" key={row.id || `new-${index}`}>
-              <span className="memo-key">{index < 9 ? index + 1 : ""}</span>
+              <span className="memo-key">{index < 8 ? index + 1 : "9"}</span>
               <TableInput label="이름" value={row.name} onChange={(value) => updateRow("characters", index, "name", value)} />
               <TableInput label="원문 표기" value={row.original} onChange={(value) => updateRow("characters", index, "original", value)} />
               <TableInput label="호칭·약칭" value={row.aliases} onChange={(value) => updateRow("characters", index, "aliases", value)} />

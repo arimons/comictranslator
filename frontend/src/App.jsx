@@ -12,6 +12,7 @@ import ImageGenerationPanel from "./ImageGenerationPanel.jsx";
 import ServerStatus from "./ServerStatus.jsx";
 import PagePreparation from "./PagePreparation.jsx";
 import GlossaryPanel from "./GlossaryPanel.jsx";
+import SpeakerPicker from "./SpeakerPicker.jsx";
 import { KEYMAP, eventMatches, entryInContext, entryVisibleOnPlatform, shortcutFor, shortcutById } from "./keymap.js";
 import {
   TOOL_LABELS,
@@ -117,6 +118,7 @@ export default function App() {
   // 작품 메모(인물 표)와 현재 페이지의 TG별 화자 지정
   const [workMemo, setWorkMemo] = useState(null);
   const [speakerByTg, setSpeakerByTg] = useState({});
+  const [speakerPickerOpen, setSpeakerPickerOpen] = useState(false);
   const [shortcutToast, setShortcutToast] = useState(null);
   const fileRef = useRef(null);
   const editorCanvasRef = useRef(null);
@@ -180,8 +182,9 @@ export default function App() {
   const textBasedGuideCount = (guidance.manual_regions || []).filter((item) => regionProcessingBasis(item) === TEXT_BASED).length;
   const suppressedCount = guidance.suppressed_regions?.length || 0;
   const overlayRegions = overlayControlItems(selected, overlayGuidance);
-  // 화자 단축키 1-9 = 작품 메모 인물 표 순서(주인공 1번)
-  const speakerCharacters = (workMemo?.characters || []).slice(0, 9);
+  // 화자 단축키 1-8 = 작품 메모 인물 표 순서(주인공 1번), 9 = 기타(전체 목록 팝업)
+  const allSpeakerCharacters = workMemo?.characters || [];
+  const speakerCharacters = allSpeakerCharacters.slice(0, 8);
   const guidanceRegions = useMemo(() => imageRegions(selected)
     .filter((region) => !regionIsExcluded(region, guidance))
     .sort((a, b) => regionId(a) - regionId(b)), [selected, guidance]);
@@ -685,6 +688,16 @@ export default function App() {
     if (slot === "narration") {
       characterId = "narration";
       name = "내레이션";
+    } else if (slot === 9) {
+      if (!allSpeakerCharacters.length) {
+        setStatus(workMemo ? "작품 메모에 인물이 없습니다" : "작품 메모를 먼저 연결하세요");
+        return true;
+      }
+      setSpeakerPickerOpen(true);
+      return true;
+    } else if (typeof slot === "object" && slot) {
+      characterId = slot.id;
+      name = slot.name;
     } else if (slot > 0) {
       const row = speakerCharacters[slot - 1];
       if (!row) {
@@ -1170,6 +1183,11 @@ export default function App() {
 
   function handleShortcutKeyDown(event) {
     if (event.target?.closest?.("[role='dialog']")) return;
+    // 화자 목록 팝업이 열려 있으면 포커스가 밖에 있어도 캔버스 단축키를 쓰지 않는다.
+    if (speakerPickerOpen) {
+      if (event.code === "Escape") setSpeakerPickerOpen(false);
+      return;
+    }
     // IME 조합 중(한글 입력 등)에는 어떤 단축키도 쓰지 않는다.
     if (event.isComposing || event.keyCode === 229) return;
     const target = event.target;
@@ -2811,6 +2829,7 @@ export default function App() {
                 <kbd>{index + 1}</kbd>{row.name}{row.protagonist ? " ★" : ""}
               </button>
             ))}
+            {allSpeakerCharacters.length > 0 ? <button disabled={!selectedGuidanceRegion} onClick={() => assignSpeaker(9)}><kbd>9</kbd>기타{allSpeakerCharacters.length > 8 ? ` (${allSpeakerCharacters.length - 8})` : ""}…</button> : null}
             <button disabled={!selectedGuidanceRegion} onClick={() => assignSpeaker("narration")}><kbd>N</kbd>내레이션</button>
             <button disabled={!selectedGuidanceRegion} onClick={() => assignSpeaker(0)}><kbd>0</kbd>해제</button>
           </div> : <p className="hint">상단 작품 메모에 인물을 추가하면 숫자키로 화자를 지정할 수 있습니다.</p>}
@@ -2970,6 +2989,13 @@ export default function App() {
             : `System Status: ${guidanceBusy || analyzeBusy ? "Active" : "Idle"} | Tool: ${TOOL_LABELS.find(([id]) => id === tool)?.[1] || tool} | File: ${selected?.name || "-"}`}
       </footer>
       {shortcutToast ? <div className="shortcut-toast" role="status" aria-live="polite">{shortcutToast}</div> : null}
+      <SpeakerPicker
+        open={speakerPickerOpen}
+        characters={allSpeakerCharacters}
+        regionLabel={selectedGuidanceRegion ? `R${regionId(selectedGuidanceRegion)}` : ""}
+        onClose={() => setSpeakerPickerOpen(false)}
+        onPick={(row) => { setSpeakerPickerOpen(false); assignSpeaker(row); }}
+      />
       <ShortcutHelp open={helpOpen} activeTab={activeTab} onClose={() => setHelpOpen(false)} />
       {guidanceNotice ? (
         <div className="notice-backdrop" role="presentation" onClick={() => setGuidanceNotice(null)}>

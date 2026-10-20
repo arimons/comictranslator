@@ -145,7 +145,7 @@ NARRATION = "narration"
 
 
 def ordered_characters(characters: list[dict]) -> list[dict]:
-    """단축키 순서. 주인공이 항상 1번이고 나머지는 표 순서대로 2-9번."""
+    """단축키 순서. 주인공이 항상 1번이고 나머지는 표 순서대로 2-8번, 9번은 기타 목록."""
     return sorted(characters, key=lambda row: not row.get("protagonist"))
 
 
