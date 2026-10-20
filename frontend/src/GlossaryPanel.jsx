@@ -221,7 +221,7 @@ export default function GlossaryPanel({ sessionId, projectName, ocrBusy, analysi
           {data.routing ? <p>용어 정리 모델: {data.routing.model} · {data.routing.reason}</p> : null}
           {data.summary ? <details><summary>작품·등장인물 참고 정보 (번역에 자동 전달하지 않음)</summary><p className="glossary-summary">{data.summary}</p></details> : null}
           <p>적용 {applied.length}개 · 검토 필요 {review.length}개 · 제외 {excluded.length}개. 수동 번역 지시문을 우선합니다. 기존 번역은 그대로이며, 변경된 용어집은 다음 번역부터 사용합니다.</p>
-          <p>원문 하나당 대표 한국어 표기 하나로 통합합니다. 사용자 확정 → 직접 대응 출처 → 한국어 소개 표제 → 출처 수·등장 빈도 순으로 선택하며, 변형 표기는 별도 용어로 늘리지 않습니다.</p>
+          <p>같은 인물·용어로 확인되면 나무위키 대표 표기로 통일해 자동 적용합니다. 사용자 확정 표기를 우선하며, 누구를 가리키는지 불확실한 항목만 검토합니다. 전체 이름과 약칭도 각각 같은 표기 기준을 사용합니다.</p>
           {review.length ? <div><h3>충돌·불확실 항목만 검토</h3>{review.map(renderTerm)}</div> : null}
           <details><summary>적용 중인 용어 {applied.length}개</summary>{applied.map(renderTerm)}</details>
           {excluded.length ? <details><summary>제외한 용어 {excluded.length}개</summary>{excluded.map(renderTerm)}</details> : null}

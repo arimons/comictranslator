@@ -96,7 +96,7 @@ def test_shared_source_cache_compile_once_and_failed_refresh_preserves_data(tmp_
     assert store.read(wid)['sources'] == []
 
 
-def test_pasted_content_cannot_be_automatically_applied():
+def test_pasted_content_with_clear_identity_can_be_automatically_applied():
     evidence = [dict(text=TEXT, url=url, title='소개', manual=True) for url in [URL,'https://wiki.example/work']]
     data = {'work_matches':True,'evidence':evidence,'entries':[{'source':'雪','target':'유키','uncertain':False,'evidence_indices':[0,1]}]}
-    assert build_entries(data, [])[0]['status'] == 'review'
+    assert build_entries(data, [])[0]['status'] == 'auto'

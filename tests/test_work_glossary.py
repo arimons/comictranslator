@@ -24,14 +24,14 @@ def report(target="유키", **overrides):
     return {**data, **overrides}
 
 
-def test_auto_requires_explicit_pair_and_two_sites():
+def test_identity_can_auto_apply_from_one_source_but_uncertain_mapping_cannot():
     assert build_entries(report(), [])[0]["status"] == "auto"
     data = report()
     data["evidence"][1]["url"] = "https://sub.publisher.example/other"
-    assert build_entries(data, [])[0]["status"] == "review"
+    assert build_entries(data, [])[0]["status"] == "auto"
     data = report()
     data["evidence"][1]["text"] = "雪라는 인물이 나온다."
-    assert build_entries(data, [])[0]["status"] == "review"
+    assert build_entries(data, [])[0]["status"] == "auto"
     assert build_entries(report(work_matches=False), [])[0]["status"] == "review"
     data = report()
     data["entries"][0]["uncertain"] = True
@@ -40,7 +40,9 @@ def test_auto_requires_explicit_pair_and_two_sites():
 
 def test_conflicting_spelling_is_removed_from_prompt():
     previous = build_entries(report(), [])
-    entries = build_entries(report("설"), previous)
+    uncertain_identity = report("설")
+    uncertain_identity['entries'][0]['identity_matches'] = False
+    entries = build_entries(uncertain_identity, previous)
     assert len(entries) == 1
     assert {e["status"] for e in entries} == {"review"}
     assert not glossary_snapshot({"entries": entries})["prompt"]
@@ -63,7 +65,7 @@ def test_grounding_links_are_from_metadata_and_proxy_domains_are_distinguished()
     assert evidence[0]["site"] == "publisher.example"
     data = report(evidence=evidence)
     data["entries"][0]["evidence_indices"] = [0]
-    assert build_entries(data, [])[0]["status"] == "review"
+    assert build_entries(data, [])[0]["status"] == "auto"
 
 
 def test_identity_includes_author_and_edition():
@@ -281,28 +283,36 @@ def test_payment_error_is_distinct_from_rate_limit(store):
     assert 'private-sdk' not in json.dumps(data)
 
 
-def test_cross_language_candidates_keep_both_evidence_and_never_auto_apply():
+def test_cross_language_identity_is_auto_applied_and_unknown_identity_is_reviewed():
     data = report(evidence=[
         {'text':'雪は主人公の妹。','url':'https://publisher.example/characters','title':'원문'},
         {'text':'유키는 주인공의 여동생이다.','url':'https://wiki.test/characters','title':'한국어 소개'},
     ])
+    data['entries'][0]['identity_matches'] = True
+    entry = build_entries(data, [])[0]
+    assert entry['status'] == 'auto' and not entry['uncertain']
+    assert len(entry['evidence']) == 2
+    assert glossary_snapshot({'entries':[entry]})['entries']
+    data['entries'][0]['identity_matches'] = False
     entry = build_entries(data, [])[0]
     assert entry['status'] == 'review' and entry['uncertain']
     assert len(entry['evidence']) == 2
     assert all(not cite['explicit_pair'] for cite in entry['evidence'])
-    assert '교차 대조' in entry['reason']
+    assert '동일 인물' in entry['reason']
     assert not glossary_snapshot({'entries':[entry]})['entries']
 
 
-def test_namu_mirrors_are_one_origin_not_two_independent_sources():
+def test_namu_mirrors_are_one_origin_but_do_not_force_identity_review():
+    from pipeline.work_glossary import source_site
     data = report()
     data['evidence'][0]['url'] = 'https://namu.wiki/w/work'
     data['evidence'][1]['url'] = 'https://d.namu.moe/w/work'
-    assert build_entries(data, [])[0]['status'] == 'review'
+    assert build_entries(data, [])[0]['status'] == 'auto'
     data['evidence'][1]['url'] = 'https://readonly.wiki/w/work'
-    assert build_entries(data, [])[0]['status'] == 'review'
+    assert build_entries(data, [])[0]['status'] == 'auto'
     data['evidence'][1]['url'] = 'https://seore.org/w/work'
-    assert build_entries(data, [])[0]['status'] == 'review'
+    assert build_entries(data, [])[0]['status'] == 'auto'
+    assert source_site(data['evidence'][0]['url']) == source_site(data['evidence'][1]['url'])
 
 
 def test_one_missing_language_in_saved_sources_cannot_create_a_candidate():
@@ -326,3 +336,19 @@ def test_canonical_spelling_prefers_character_heading_over_variants_and_typos():
     result = canonical_entries(entries)
     assert len(result) == 1 and result[0]['target'] == '스토크스'
     assert result[0]['status'] == 'accepted'
+
+
+def test_spelling_variants_choose_namu_and_do_not_require_review():
+    data = report()
+    data['evidence'] = [
+        {'text': 'ストークスは主人公の家名。', 'url':'https://jp.example/work', 'title':'원문'},
+        {'text': '3.1. 스톡스[편집]\n주인공 가문의 이름.', 'url':'https://namu.wiki/w/work', 'title':'한국어 소개'},
+        {'text': '스토크스는 주인공의 가문이다.', 'url':'https://blog.example/work', 'title':'블로그'},
+    ]
+    data['entries'] = [dict(source='ストークス',target=target,identity_matches=True,
+                            uncertain=True,evidence_indices=indices) for target,indices in
+                       [('스토크스',[0,2]),('스톡스',[0,1])]]
+    entries = build_entries(data, [])
+    assert len(entries) == 1 and entries[0]['target'] == '스톡스'
+    assert entries[0]['status'] == 'auto'
+    assert len(glossary_snapshot({'entries': entries})['entries']) == 1

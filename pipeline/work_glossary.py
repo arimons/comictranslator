@@ -27,6 +27,16 @@ def glossary_route(work):
                       source_count=len(sources), override=os.getenv("GLOSSARY_RESEARCH_MODEL", DEFAULT_RESEARCH_MODEL))
 
 
+def compilation_fingerprint(data):
+    context = {**data["work"], "sources": data.get("sources", [])}
+    return hashlib.sha256(json.dumps({
+        "work": data["work"],
+        "sources": sorted((s["url"], s["title"], s["content_hash"], s["mode"]) for s in data.get("sources", [])),
+        "routing": glossary_route(context),
+        "evidence_policy": "identity-and-canonical-v3",
+    }, ensure_ascii=False, sort_keys=True).encode()).hexdigest()
+
+
 def normalized(value: str) -> str:
     return re.sub(r"\s+", "", unicodedata.normalize("NFKC", value)).casefold()
 
@@ -98,15 +108,17 @@ def research_work(work: dict) -> dict:
                 "work_matches는 제목/작가/판본이 요청 작품과 일치할 때만 true. "
                 "summary는 기본 정보·인물 문맥(1000자 이내). entries는 핵심 용어 최대 30개. "
                 "entries는 등장인물·가문·조직·지명을 중심으로 만들고 작품 제목과 작가는 summary에만 적으세요. "
-                "각 entry: source(일본어), target(한국어), kind, note, uncertain(boolean), "
+                "각 entry: source(일본어), target(한국어), kind, note, identity_matches(boolean), "
                 "evidence_indices(원문과 한국어 표기를 직접 뒷받침하는 citations의 0부터 시작하는 번호 배열). "
                 "음역을 새로 만들거나 추측하지 마세요. 원문과 한국어 표기가 자료에 각각 실제로 있는 경우만 추출하세요. "
                 "같은 문서 구간의 명시적 대응을 우선하세요. 언어가 다른 두 문서를 대조할 때는 같은 작품·인물의 "
-                "역할과 관계가 구체적으로 일치하는 경우만 검토 후보를 만들고 반드시 uncertain=true로 두세요. "
+                "역할과 관계가 구체적으로 일치하면 identity_matches=true로 두세요. "
                 "이 경우 일본어 원문 근거와 한국어 표기 근거의 인용 번호를 모두 연결하고 note에 교차 대조임을 명시하세요. "
                 "원작 소개와 만화 소개의 구분, 추천 목록의 다른 작품, 위키 오타에 주의하세요. "
                 "원문 하나당 대표 한국어 표기 하나만 선택하세요. 한국어 인물 소개의 표제를 본문 오타보다 우선하세요. "
-                "표기가 엇갈리면 대표 표기를 선택하되 uncertain=true로 두고 선택 기준을 note에 설명하세요. "
+                "표기 차이·약칭·다른 언어의 문서라는 이유만으로 불확실하다고 판단하지 마세요. "
+                "같은 인물·용어인지 불확실할 때만 identity_matches=false로 두고 이유를 note에 설명하세요. "
+                "한국어 표기는 나무위키 인물 소개의 대표 표기를 우선하고 없으면 다른 한국어 자료를 사용하세요. "
                 "자료 밖 URL과 근거를 만들지 마세요. "
                 '형식: {"work_matches":true,"summary":"","entries":[]}\n'
                 + json.dumps({"work": {k: work.get(k, "") for k in ("title", "author", "edition")},
@@ -129,13 +141,14 @@ def canonical_entries(entries: list[dict]) -> list[dict]:
     def rank(entry):
         target = normalized(entry["target"])
         citations = entry.get("evidence", [])
-        direct_sites, headings, sites, mentions = set(), set(), set(), 0
+        direct_sites, headings, sites, mentions, namu = set(), set(), set(), 0, False
         for cite in citations:
             text = normalized(cite["text"])
             if target not in text:
                 continue
             site = source_site(cite["url"]) or cite.get("site", "")
             sites.add(site)
+            namu |= site == "namu.wiki"
             if normalized(entry["source"]) in text and not cite.get("manual"):
                 direct_sites.add(site)
             for line in cite["text"].splitlines():
@@ -146,22 +159,23 @@ def canonical_entries(entries: list[dict]) -> list[dict]:
                     headings.add(site)
             mentions += text.count(target)
         return (entry.get("decision") == "accepted", entry.get("decision") != "rejected",
-                len(direct_sites - {""}), len(headings - {""}), len(sites - {""}), mentions,
+                namu, len(headings - {""}), len(direct_sites - {""}), len(sites - {""}), mentions,
                 -len(target), target)
 
     canonical = []
     for candidates in groups.values():
         chosen = copy.deepcopy(max(candidates, key=rank))
         if len(candidates) > 1:
-            chosen["canonical_reason"] = "동일 원문 통합: 사용자 확정 → 직접 대응 출처 → 한국어 소개 표제 → 출처 수·등장 빈도 순"
+            chosen["canonical_reason"] = "동일 원문 통합: 사용자 확정 → 나무위키 대표 표기 → 한국어 소개 표제 → 출처 수·등장 빈도 순"
             # 다른 표기를 독립 용어로 저장하지 않는다. 인용 원문에서 확인할 수 있다.
             for candidate in candidates:
                 for cite in candidate.get("evidence", []):
                     if cite not in chosen.setdefault("evidence", []):
                         chosen["evidence"].append(copy.deepcopy(cite))
-            if chosen.get("decision") not in {"accepted", "rejected"}:
-                chosen.update(status="review", uncertain=True,
-                              reason="대표 표기 통합 · 표기 근거 확인 필요")
+            if chosen.get("decision") not in {"accepted", "rejected"} and any(
+                    candidate.get("identity_matches") is False for candidate in candidates):
+                chosen.update(status="review", uncertain=True, identity_matches=False,
+                              reason="동일 인물·용어인지 확인 필요")
         canonical.append(chosen)
     return canonical
 
@@ -182,6 +196,8 @@ def build_entries(result: dict, previous: list[dict]) -> list[dict]:
             "note": str(raw.get("note", ""))[:500], "evidence": [], "uncertain": False,
         })
         entry["uncertain"] |= raw.get("uncertain") is not False
+        if type(raw.get("identity_matches")) is bool:
+            entry["identity_matches"] = entry.get("identity_matches", True) and raw["identity_matches"]
         indices = raw.get("evidence_indices", [])
         for index in indices if isinstance(indices, list) else []:
             if type(index) is int and 0 <= index < len(evidence):
@@ -202,28 +218,25 @@ def build_entries(result: dict, previous: list[dict]) -> list[dict]:
         key = (normalized(old["source"]), normalized(old["target"]))
         if key not in grouped or old.get("decision") in {"accepted", "rejected"}:
             grouped[key] = copy.deepcopy(old)
-    targets = {}
     for entry in grouped.values():
         entry["id"] = term_id(entry["source"], entry["target"])
-        if entry.get("decision") != "rejected":
-            targets.setdefault(normalized(entry["source"]), set()).add(normalized(entry["target"]))
     for entry in grouped.values():
         if entry.get("decision") in {"accepted", "rejected"}:
             entry["status"] = entry["decision"]
             continue
-        sites = {source_site(cite["url"]) or cite.get("site", "") for cite in entry["evidence"]
-                 if normalized(entry["source"]) in normalized(cite["text"])
-                 and normalized(entry["target"]) in normalized(cite["text"])} - {""}
-        if not sites:
-            entry["uncertain"] = True
-        conflict = len(targets.get(normalized(entry["source"]), set())) > 1
-        ready = result.get("work_matches") is True and not entry["uncertain"] and len(sites) >= 2 and not conflict and not any(cite.get("manual") for cite in entry["evidence"])
+        supported = all(any(normalized(entry[key]) in normalized(cite["text"])
+                            for cite in entry["evidence"]) for key in ("source", "target"))
+        # 구 캐시는 명시적 대응이며 불확실하지 않았던 항목만 호환한다.
+        identity = entry.get("identity_matches")
+        if identity is None:
+            identity = not entry.get("uncertain", True) and any(
+                normalized(entry["source"]) in normalized(cite["text"]) and
+                normalized(entry["target"]) in normalized(cite["text"]) for cite in entry["evidence"])
+        ready = result.get("work_matches") is True and identity is True and supported
+        entry["uncertain"] = not ready
         entry["status"] = "auto" if ready else "review"
-        entry["reason"] = ("원문·한국어 표기를 서로 다른 사이트 2곳 이상에서 인용" if ready else
-                           "한국어 표기 충돌" if conflict else
-                           "일본어·한국어 자료 교차 대조: 사용자 확인 필요" if not sites else
-                           "직접 입력한 자료: 사용자 확인 필요" if any(cite.get("manual") for cite in entry["evidence"]) else
-                           "작품 일치 또는 표기 근거 추가 확인 필요")
+        entry["reason"] = ("동일 인물·용어 확인 · 대표 표기 자동 적용" if ready else
+                           "작품 또는 동일 인물·용어인지 확인 필요")
     return canonical_entries(list(grouped.values()))
 
 
@@ -330,12 +343,7 @@ class GlossaryStore:
             if self.requires_sources and not data.get("sources"):
                 raise ValueError("먼저 작품 URL 자료를 저장하세요. 자료 수집에는 AI를 사용하지 않습니다.")
             context = {**data["work"], "sources": data.get("sources", [])}
-            fingerprint = hashlib.sha256(json.dumps({
-                "work": data["work"],
-                "sources": sorted((s["url"], s["title"], s["content_hash"], s["mode"]) for s in data.get("sources", [])),
-                "routing": glossary_route(context),
-                "evidence_policy": "direct-pair-or-cross-review-v2",
-            }, ensure_ascii=False, sort_keys=True).encode()).hexdigest()
+            fingerprint = compilation_fingerprint(data)
             if self.requires_sources and data.get("compiled_hash") == fingerprint:
                 data.update(status="ready", error="", error_code="")
                 write_json(self.path(wid), data)
