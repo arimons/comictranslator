@@ -40,7 +40,16 @@ async(page)=>{
    return {x:box.x+(box.width-image.naturalWidth*s)/2+(rect[0]+rect[2]/2)*s,y:box.y+(box.height-image.naturalHeight*s)/2+(rect[1]+rect[3]/2)*s};
   },rect);
   const initial=await pixels();
-  await preview.mouse.click(target.x,target.y);await preview.keyboard.press('Backspace');
+  const labels=await preview.locator('.floating-toolbox button em').allTextContents();
+  if(labels.join()!=='V,H,D,T,E,B,S,U')throw new Error('도구 순서 '+labels);
+  await preview.keyboard.press('s');
+  if(await preview.getByRole('button',{name:'영역 분할',exact:true}).getAttribute('aria-pressed')!=='true')throw new Error('S 모드 진입 실패');
+  await preview.keyboard.press('l');
+  if(await preview.getByRole('button',{name:'영역 분할',exact:true}).getAttribute('aria-pressed')!=='true')throw new Error('L이 모드를 변경함');
+  await preview.keyboard.press('v');await preview.mouse.move(target.x,target.y);await preview.keyboard.press('d');
+  if((await read()).disabled_tg_ids.length)throw new Error('D가 포인터 아래 TG를 삭제함');
+  if(await preview.getByRole('button',{name:'선택',exact:true}).getAttribute('aria-pressed')!=='true')throw new Error('D가 모드를 변경함');
+  await preview.mouse.click(target.x,target.y);await preview.keyboard.press('d');
   await preview.getByText(/미적용 변경/).waitFor();
   if((await read()).disabled_tg_ids.join()!=='3')throw new Error('TG 삭제 미반영');
   const deleted=await pixels();if(initial===deleted)throw new Error('캔버스 삭제 미반영');
@@ -65,7 +74,7 @@ async(page)=>{
   if(applyCount!==1)throw new Error(`명시적 적용 횟수 ${applyCount}`);
   if(await preview.locator('.floating-toolbox button').count()!==8)throw new Error('R 제거 도구가 툴바에 남음');
   if(errors.length||unexpected.length)throw new Error(JSON.stringify({errors,unexpected}));
-  return {ok:true,applyCount,checks:['TG 삭제와 R 숨김','Cmd+Z 픽셀 복원','우클릭만으로 삭제 안 함','R 제외와 연결 TG 숨김','일반 Enter 차단','Cmd+Enter 한 번만 실행','툴바 8개'],errors,unexpected};
+  return {ok:true,applyCount,checks:['E B S U 순서','S 모드 진입','D는 선택 TG에만 적용하고 모드 유지','TG 삭제와 R 숨김','Cmd+Z 픽셀 복원','우클릭만으로 삭제 안 함','R 제외와 연결 TG 숨김','일반 Enter 차단','Cmd+Enter 한 번만 실행','툴바 8개'],errors,unexpected};
  }finally{
   await preview.close();
   for(const p of page.context().pages()){p.removeAllListeners('filechooser');const c=await p.context().newCDPSession(p);await c.send('Page.setInterceptFileChooserDialog',{enabled:false});await c.detach();}

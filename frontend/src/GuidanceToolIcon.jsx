@@ -3,7 +3,7 @@ export default function GuidanceToolIcon({ tool }) {
   const paths = {
     select:<path d="M5 3v17l5-5 4 7 3-2-4-7h8Z" />,
     hand:<><path d="M8 12V6a1.5 1.5 0 0 1 3 0v5-7a1.5 1.5 0 0 1 3 0v7-5a1.5 1.5 0 0 1 3 0v6-3a1.5 1.5 0 0 1 3 0v7c0 4-3 6-6 6h-2c-2 0-3-1-4-3l-4-5a1.5 1.5 0 0 1 2-2l2 2" /></>,
-    'tg-toggle':<><rect x="3" y="4" width="15" height="15" rx="2" /><path d="M6 8h8M6 12h5M15 17h7" /></>,
+    'tg-delete':<><rect x="3" y="4" width="15" height="15" rx="2" /><path d="M6 8h8M6 12h5M15 17h7" /></>,
     'tg-split':<><rect x="3" y="4" width="18" height="16" rx="2" /><path d="M12 2v20" strokeDasharray="2 3" /><path d="M6 9h3m6 0h3M6 15h3m6 0h3" /></>,
     wall:<><path d="M6 3v18M9 3v18M3 7h3m-3 5h3m-3 5h3M14 6h6v12h-6" /><path d="m14 10-3 2 3 2" /></>,
     'region-split':<><rect x="3" y="4" width="18" height="16" rx="4" /><path d="m17 2-10 20" strokeDasharray="3 3" /></>,

@@ -4,19 +4,19 @@ export { BOUNDARY_BASED, TEXT_BASED, regionProcessingBasis, regionTypeLabel } fr
 export const TOOL_LABELS = [
   ["select", "선택"],
   ["hand", "화면 이동"],
-  ["tg-toggle", "TG 제외"],
+  ["tg-delete", "선택한 TG 제외"],
   ["tg-split", "TG 분할"],
   ["wall", "Edge 장벽"],
+  ["bubble", "경계 기반 시작점"],
   ["region-split", "영역 분할"],
   ["ubox", "텍스트 기반 영역"],
-  ["bubble", "경계 기반 seed"],
 ];
 
 // 단축키는 keymap.js가 단일 정의다.
 export const TOOL_ICONS = {
   select: "⌖",
   hand: "✋",
-  "tg-toggle": "T×",
+  "tg-delete": "T×",
   "tg-split": "T/",
   wall: "▱",
   "region-split": "╱",

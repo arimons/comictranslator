@@ -1138,6 +1138,7 @@ export default function App() {
     },
     undo: () => (activeTab === "overlay" ? stepOverlayHistory(-1) : undoGuidance()),
     redo: () => (activeTab === "overlay" ? stepOverlayHistory(1) : redoGuidance()),
+    "guidance.tg.delete": () => editorCanvasRef.current?.excludeSelectedTg() ?? false,
     delete: () => {
       if (activeTab === "guidance") return editorCanvasRef.current?.deleteSelection() ?? false;
       if (overlayCanvasRef.current?.hasSelectedEraser()) return overlayCanvasRef.current.deleteSelectedEraser();
@@ -2366,13 +2367,15 @@ export default function App() {
                 {TOOL_LABELS.map(([id, label]) => (
                   <button
                     key={id}
-                    className={`${tool === id ? "active" : ""} ${["tg-toggle","wall","ubox"].includes(id) ? "tool-group-start" : ""}`}
-                    onClick={() => setTool(id)}
+                    className={`${tool === id ? "active" : ""} ${["tg-delete","wall"].includes(id) ? "tool-group-start" : ""}`}
+                    onClick={() => id === "tg-delete" ? editorCanvasRef.current?.excludeSelectedTg() : setTool(id)}
+                    disabled={id === "tg-delete" && selectedTg == null}
+                    aria-pressed={id === "tg-delete" ? undefined : tool === id}
                     aria-label={label}
-                    title={`${label} (${shortcutFor("guidance", "tool", id)})`}
+                    title={`${label} (${(id === "tg-delete" ? shortcutById("guidance.tg.delete") : shortcutFor("guidance", "tool", id))})`}
                   >
                     <span><GuidanceToolIcon tool={id} /></span>
-                    <em>{shortcutFor("guidance", "tool", id)}</em>
+                    <em>{(id === "tg-delete" ? shortcutById("guidance.tg.delete") : shortcutFor("guidance", "tool", id))}</em>
                   </button>
                 ))}
               </div>

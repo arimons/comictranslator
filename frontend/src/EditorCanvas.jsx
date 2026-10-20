@@ -286,6 +286,16 @@ const EditorCanvas = forwardRef(function EditorCanvas({ image, baseUrl, guidance
     disableTg(tgId(group));
   }
 
+  // D는 선택 항목에만 작용한다. 포인터 아래 다른 항목을 지우지 않는다.
+  function excludeSelectedTg() {
+    if (imageRef.current?.processing_excluded) return false;
+    if (selectedTgRef.current == null) {
+      setStatus("제외할 TG를 먼저 선택하세요");
+      return false;
+    }
+    return disableTg(Number(selectedTgRef.current));
+  }
+
   // Delete/Backspace: 선택한 TG가 있으면 끄고, 없으면 포인터 아래 항목을 지운다.
   function deleteSelection() {
     if (imageRef.current?.processing_excluded) return false;
@@ -329,18 +339,8 @@ const EditorCanvas = forwardRef(function EditorCanvas({ image, baseUrl, guidance
       return vpRef.current.zoomToRect(rect);
     },
     deleteSelection,
+    excludeSelectedTg,
   }));
-
-  function toggleTg(id) {
-    const latest = guidanceRef.current || defaultGuidance(null);
-    const current = new Set(latest.disabled_tg_ids || []);
-    if (current.has(id)) current.delete(id);
-    else current.add(id);
-    const next = { ...latest, disabled_tg_ids: Array.from(current).sort((a, b) => a - b) };
-    guidanceRef.current = next;
-    setGuidance(next);
-    setStatus(current.has(id) ? `TG${id} 제외` : `TG${id} 포함`);
-  }
 
   function addLine(kind, start, end, tg) {
     if (Math.hypot(end.x - start.x, end.y - start.y) < 8) return;
@@ -548,7 +548,6 @@ const EditorCanvas = forwardRef(function EditorCanvas({ image, baseUrl, guidance
           setSelectedTg(id);
           selectedTgRef.current = id;
           setStatus(`TG${id} 선택`);
-          if (toolRef.current === "tg-toggle") toggleTg(id);
         });
         overlay.add(rect);
         obstacles.push(r);
@@ -763,7 +762,7 @@ const EditorCanvas = forwardRef(function EditorCanvas({ image, baseUrl, guidance
         addBoundarySeed(point);
         return;
       }
-      if (currentTool !== "select" && currentTool !== "tg-toggle") return;
+      if (currentTool !== "select") return;
       const group = findTgAt(point);
       // TG 밖의 말풍선 안쪽을 눌러도 그 영역의 첫 TG를 선택해 화자 지정 대상으로 삼는다.
       const region = !group && currentTool === "select" ? findRegionAt(point) : null;
@@ -772,7 +771,6 @@ const EditorCanvas = forwardRef(function EditorCanvas({ image, baseUrl, guidance
       setSelectedTg(id);
       selectedTgRef.current = id;
       setStatus(`TG${id} 선택`);
-      if (currentTool === "tg-toggle") toggleTg(id);
     });
 
     return () => {
