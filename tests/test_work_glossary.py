@@ -89,8 +89,10 @@ def test_confirm_once_reuse_across_sessions_and_review_only_uncertain(store):
     assert list(store.root.glob("*.json")) == []
     response = client.post("/api/glossary/confirm", json={"session_id": "one", "title": "작품", "author": "작가"})
     assert response.status_code == 200
-    store.pool.shutdown(wait=True)
     wid = response.json()["glossary"]["work_id"]
+    assert response.json()["glossary"]["status"] == "idle"
+    store.start(wid)
+    store.pool.shutdown(wait=True)
     data = client.get("/api/glossary/one").json()["glossary"]
     assert data["status"] == "ready"
     assert data["entries"][0]["status"] == "auto"
@@ -217,32 +219,28 @@ def test_batch_freezes_one_glossary_version(store, monkeypatch):
     assert all(context["entries"][0]["target"] == "유키" for context in seen)
 
 
-def test_research_provider_uses_search_then_structured_extraction(monkeypatch):
+def test_research_provider_uses_one_plain_generation_and_only_saved_evidence(monkeypatch):
     from google import genai
     from pipeline.work_glossary import research_work
     monkeypatch.setenv("GEMINI_API_KEY", "fake-test-key")
-    monkeypatch.delenv("GLOSSARY_RESEARCH_MODEL", raising=False)
-    responses = [NS(text="雪의 표기는 유키", candidates=[NS(grounding_metadata=NS(
-        grounding_chunks=[NS(web=NS(uri="https://publisher.example/characters", title="출처", domain="publisher.example"))],
-        grounding_supports=[NS(segment=NS(text="雪의 표기는 유키"), grounding_chunk_indices=[0])],
-        search_entry_point=NS(rendered_content="<div>search suggestions</div>"),
-    ))]), NS(text=json.dumps({"work_matches": True, "summary": "정보", "entries": report()["entries"]}))]
     calls = []
     class Client:
         def __init__(self, **kwargs):
-            assert kwargs["http_options"].timeout == 120_000
+            assert kwargs["http_options"].retry_options.attempts == 1
             self.models = self
         def __enter__(self): return self
         def __exit__(self, *args): pass
         def generate_content(self, **kwargs):
             calls.append(kwargs)
-            return responses.pop(0)
+            return NS(text=json.dumps({"work_matches":True,"entries":report()["entries"]}))
     monkeypatch.setattr(genai, "Client", Client)
-    result = research_work({"title": "작품", "author": "작가", "edition": "원작"})
-    assert calls[0]["config"].tools[0].google_search is not None
-    assert calls[1]["config"].response_mime_type == "application/json"
-    assert len(result["evidence"]) == 1
-    assert result["search_suggestions"] == "<div>search suggestions</div>"
+    sources = [{"url":"https://publisher.example/characters","title":"출처","text":"雪의 표기는 유키입니다." * 4,"content_hash":"abc","mode":"url"}]
+    result = research_work({"title":"작품","sources":sources})
+    assert len(calls) == 1
+    assert not calls[0]["config"].tools
+    assert calls[0]["config"].response_mime_type == "application/json"
+    assert result["evidence"][0]["url"] == sources[0]["url"]
+    assert result["search_suggestions"] == ""
 
 
 def test_edit_to_existing_target_merges_duplicate_rows(store):
@@ -266,5 +264,18 @@ def test_search_quota_failure_is_actionable_without_leaking_sdk_error(store):
     store.pool.shutdown(wait=True)
     data = store.read(wid)
     assert data['error_code'] == 'quota_exhausted'
-    assert '429' in data['error'] and '검색 한도' in data['error']
+    assert '429' in data['error'] and '요청량 또는 할당량' in data['error']
     assert 'secret-key' not in store.path(wid).read_text()
+
+
+def test_payment_error_is_distinct_from_rate_limit(store):
+    class PaymentError(Exception): code = 402
+    def fail(work): raise PaymentError('private-sdk-content')
+    store.researcher = fail
+    wid = store.confirm({'title':'작품'})
+    store.start(wid)
+    store.pool.shutdown(wait=True)
+    data = store.read(wid)
+    assert data['error_code'] == 'payment_required'
+    assert '크레딧 소진(402)' in data['error']
+    assert 'private-sdk' not in json.dumps(data)

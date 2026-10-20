@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { api } from "./lib.js";
 
-const STATUS = { idle: "조사 대기", researching: "웹 조사 중", ready: "사용 준비 완료", failed: "조사 실패" };
+const STATUS = { idle: "조사 대기", researching: "저장 자료 정리 중", ready: "사용 준비 완료", failed: "조사 실패" };
 const TERM_STATUS = { auto: "자동 적용", accepted: "수동 확정", rejected: "제외", review: "검토 필요" };
 
 function Term({ entry, busy, onReview }) {
@@ -15,11 +15,11 @@ function Term({ entry, busy, onReview }) {
       <button onClick={() => onReview(entry.id, "rejected")} disabled={busy || entry.status === "rejected"}>제외</button>
     </div>
     <p>{entry.reason}{entry.note ? ` · ${entry.note}` : ""}</p>
-    {entry.evidence?.length ? <details><summary>검색 인용 근거 {entry.evidence.length}개</summary>
+    {entry.evidence?.length ? <details><summary>자료 인용 근거 {entry.evidence.length}개</summary>
       {entry.evidence.map((cite, index) => <div className="glossary-citation" key={`${cite.url}-${index}`}>
         <a href={cite.url} target="_blank" rel="noopener noreferrer">{cite.title}</a><p>{cite.text}</p>
       </div>)}
-    </details> : <p>원문·한국어 표기를 함께 뒷받침하는 검색 인용이 없습니다.</p>}
+    </details> : <p>원문·한국어 표기를 함께 뒷받침하는 자료 인용이 없습니다.</p>}
   </article>;
 }
 
@@ -29,6 +29,8 @@ export default function GlossaryPanel({ sessionId, projectName, ocrBusy, analysi
   const [works, setWorks] = useState([]);
   const [matching, setMatching] = useState(null);
   const [query, setQuery] = useState("");
+  const [sourceUrl, setSourceUrl] = useState("");
+  const [sourceText, setSourceText] = useState("");
   const queryDirty = useRef(false);
   const autoMatched = useRef("");
   const mutation = useRef(0);
@@ -65,7 +67,7 @@ export default function GlossaryPanel({ sessionId, projectName, ocrBusy, analysi
     const token = ++generation.current;
     setData(null); setMatching(null); setLoaded(false); setError(""); setChanging(false); setSavedId("");
     queryDirty.current = false; autoMatched.current = ""; setQuery(""); mutation.current += 1;
-    setAuthor(""); setEdition(""); setTitle(""); setOpen(false); setBusy(false);
+    setSourceUrl(""); setSourceText(""); setAuthor(""); setEdition(""); setTitle(""); setOpen(false); setBusy(false);
     if (!sessionId) return;
     api(`/api/glossary/${encodeURIComponent(sessionId)}`).then((result) => {
       if (token !== generation.current) return;
@@ -135,7 +137,7 @@ export default function GlossaryPanel({ sessionId, projectName, ocrBusy, analysi
   const excluded = entries.filter((entry) => entry.status === "rejected");
   const searching = matching?.status === "searching";
   const disabled = busy || ocrBusy || researching;
-  const matchLabel = !loaded || busy ? "작품 매칭 중…" : searching ? "작품 검색 중…" : matching?.status === "failed" ? "작품 검색 실패 · 재시도" : matching?.candidates?.length ? "작품 후보 확인" : matching?.status === "waiting_cv" ? "작품 확인 · CV 대기" : "작품 연결하기";
+  const matchLabel = !loaded || busy ? "작품 매칭 중…" : searching ? "작품 검색 중…" : matching?.status === "failed" ? "작품 연결 확인" : matching?.candidates?.length ? "작품 후보 확인" : matching?.status === "waiting_cv" ? "작품 확인 · CV 대기" : "작품 연결 · URL 자료 추가";
   const workTitle = data?.work?.display_title || data?.work?.title;
   const glossaryLabel = data?.status === "failed" ? "용어집 조사 실패 · 다시 시도" : researching ? "용어집 조사 중…" : `용어집 적용 ${applied.length} · 검토 ${review.length}`;
   const renderTerm = (entry) => <Term key={entry.id} entry={entry} busy={disabled} onReview={(id, decision, target) => post("/api/glossary/review", { work_id: data.work_id, entry_id: id, decision, target })} />;
@@ -149,7 +151,7 @@ export default function GlossaryPanel({ sessionId, projectName, ocrBusy, analysi
       <section ref={dialogRef} className="glossary-dialog" role="dialog" aria-modal="true" aria-label="작품별 번역 용어집" onClick={(event) => event.stopPropagation()} onKeyDown={(event) => {
         if (event.key === "Escape") { event.stopPropagation(); setOpen(false); }
         if (event.key === "Tab") {
-          const focusable = [...dialogRef.current.querySelectorAll("button, input, select, summary, a[href], iframe")].filter((el) => !el.disabled && el.getClientRects().length);
+          const focusable = [...dialogRef.current.querySelectorAll("button, input, textarea, select, summary, a[href], iframe")].filter((el) => !el.disabled && el.getClientRects().length);
           const first = focusable[0], last = focusable[focusable.length - 1];
           if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last?.focus(); }
           else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus(); }
@@ -159,15 +161,15 @@ export default function GlossaryPanel({ sessionId, projectName, ocrBusy, analysi
         {!loaded ? <p>용어집을 불러오는 중…</p> : null}
         {error ? <p role="alert" className="glossary-error">{error}</p> : null}
         {loaded ? <section className="work-search" aria-label="작품 후보와 검색">
-          <form onSubmit={(event) => { event.preventDefault(); post("/api/glossary/match", { query, force_web: true }, false); }}>
-            <label>작품 검색어<input maxLength={300} value={query} placeholder={projectName || "작품명·작가명·제목 일부"} onChange={(event) => { queryDirty.current = true; setQuery(event.target.value); }} /></label>
-            <div className="row"><button type="submit" disabled={busy || searching || !query.trim()}>{searching ? "웹 검색 중…" : "검색어로 웹 재검색"}</button>
+          <form onSubmit={(event) => { event.preventDefault(); post("/api/glossary/match", { query }, false); }}>
+            <label>저장된 작품 검색어<input maxLength={300} value={query} placeholder={projectName || "작품명·작가명·제목 일부"} onChange={(event) => { queryDirty.current = true; setQuery(event.target.value); }} /></label>
+            <div className="row"><button type="submit" disabled={busy || searching || !query.trim()}>저장된 작품 찾기</button>
               <button type="button" disabled={busy} onClick={() => { queryDirty.current = false; setQuery(matching?.hints?.query || ""); }}>CV 키워드 가져오기</button></div>
           </form>
-          <p>앞쪽 페이지의 기존 CV 키워드를 사용합니다. 웹 검색에는 검색어와 CV 텍스트 단서만 보내며 이미지 자체는 보내지 않습니다. API 비용이 발생할 수 있습니다.</p>
+          <p>앞쪽 페이지의 기존 CV와 저장된 작품만 대조합니다. 유료 웹 검색은 하지 않습니다. 새 작품은 직접 지정한 뒤 자료 URL을 추가하세요.</p>
           {matching?.hints?.pages?.length ? <details><summary>식별 근거 · {matching.hints.pages.join(", ")}페이지 CV</summary><p>{matching.hints.labels.join(" · ")}</p></details> : <p>CV가 준비되면 작품 매칭을 시도합니다. 검색어를 직접 입력해도 됩니다.</p>}
           {matching?.error ? <p role="alert" className="glossary-error">{matching.error}{data ? " 현재 작품 연결은 유지됩니다." : ""}</p> : null}
-          {matching?.status === "empty" ? <p>작품 후보를 찾지 못했습니다. 작가나 제목 단어를 추가하거나 직접 지정하세요.</p> : null}
+          {matching?.status === "empty" ? <p>저장된 작품 후보가 없습니다. 작품을 직접 지정하고 자료 URL을 추가하세요.</p> : null}
           {matching?.candidates?.map((candidate) => <article className="work-candidate" key={candidate.id}>
             <strong>{candidate.work.display_title || candidate.work.title}</strong><p>{candidate.work.author} · {candidate.work.edition}</p><p>{candidate.reason}</p>
             {candidate.matched_keywords?.length ? <p>일치 단서: {candidate.matched_keywords.join(" · ")}</p> : null}
@@ -176,11 +178,11 @@ export default function GlossaryPanel({ sessionId, projectName, ocrBusy, analysi
               {candidate.work_id === data?.work_id ? "현재 연결된 작품" : candidate.work_id ? "이 작품 용어집 연결" : "이 작품으로 확인 · 연결"}
             </button>
           </article>)}
-          {matching?.search_suggestions ? <iframe className="glossary-search-suggestions" title="작품 검색 Google 제안" sandbox="allow-popups allow-popups-to-escape-sandbox" srcDoc={matching.search_suggestions} /> : null}
+
           <button onClick={() => setChanging((value) => !value)} disabled={busy || ocrBusy}>{changing ? "직접 지정 닫기" : "다른 작품 직접 지정 / 기존 용어집 선택"}</button>
         </section> : null}
         {loaded && changing ? <form onSubmit={(event) => { event.preventDefault(); post("/api/glossary/confirm", savedId ? { work_id: savedId } : { title, author, edition }); }}>
-          <p>작품을 한 번 확인하면 웹 조사를 시작합니다. 조사 중에도 창을 닫고 이미지를 편집할 수 있습니다.</p>
+          <p>작품을 연결한 뒤 자료 URL을 추가하세요. 작품 연결만으로는 API를 호출하지 않습니다.</p>
           {works.length ? <label>기존 작품 용어집 재사용<select value={savedId} onChange={(event) => setSavedId(event.target.value)}>
             <option value="">새 작품 조사</option>
             {works.map((item) => <option key={item.work_id} value={item.work_id}>{[item.work.title, item.work.author, item.work.edition].filter(Boolean).join(" · ")}</option>)}
@@ -190,13 +192,30 @@ export default function GlossaryPanel({ sessionId, projectName, ocrBusy, analysi
             <label>작가 (동명 작품 구분)<input maxLength={200} value={author} onChange={(event) => setAuthor(event.target.value)} /></label>
             <label>원작 / 외전 / 판본 (선택)<input maxLength={200} value={edition} placeholder="예: 원작 만화, 특정 외전명" onChange={(event) => setEdition(event.target.value)} /></label>
           </> : null}
-          <p>작품명·작가·판본만 외부 검색에 전달합니다. 이미지와 수동 번역 지시문은 보내지 않습니다. Gemini 검색 API 사용 비용이 발생할 수 있습니다.</p>
-          <div className="row"><button className="primary" disabled={busy || ocrBusy || (!savedId && !title.trim())}>{savedId ? "이 작품으로 확인 · 재사용" : "이 작품으로 확인 · 조사 시작"}</button>{changing ? <button type="button" onClick={() => setChanging(false)}>취소</button> : null}</div>
+          <p>작품명·작가·판본으로 용어집을 구분합니다. Gemini는 저장한 자료의 용어 정리를 직접 실행할 때만 사용합니다.</p>
+          <div className="row"><button className="primary" disabled={busy || ocrBusy || (!savedId && !title.trim())}>{savedId ? "이 작품으로 확인 · 재사용" : "이 작품으로 확인 · 연결"}</button>{changing ? <button type="button" onClick={() => setChanging(false)}>취소</button> : null}</div>
         </form> : null}
         {data && !changing ? <>
           <div className="glossary-work"><strong>{[data.work.title, data.work.author, data.work.edition].filter(Boolean).join(" · ")}</strong><span>{STATUS[data.status]} · v{data.version}</span></div>
-          <div className="row"><button disabled={busy || ocrBusy} onClick={() => setChanging(true)}>작품 변경</button><button disabled={disabled} onClick={() => post("/api/glossary/research", {})}>{data.status === "failed" ? "다시 조사" : "정보 다시 조사"}</button></div>
-          {researching ? <p role="status">웹에서 작품·등장인물·용어를 조사하고 있습니다. 번역은 조사가 끝난 뒤 시작할 수 있습니다.</p> : null}
+          <div className="row"><button disabled={busy || ocrBusy} onClick={() => setChanging(true)}>작품 변경</button></div>
+          <section className="work-search" aria-label="작품 URL 자료">
+            <h3>작품 URL 자료 · {data.sources?.length || 0}/6</h3>
+            <form onSubmit={(event) => { event.preventDefault(); post("/api/glossary/source", { work_id: data.work_id, url: sourceUrl, text: sourceText }, false); }}>
+              <label>자료 URL<input type="url" required maxLength={2000} value={sourceUrl} onChange={(event) => setSourceUrl(event.target.value)} placeholder="https://… 작품·등장인물 소개" /></label>
+              <details><summary>자동 수집이 안 되면 본문 직접 붙여 넣기</summary><label>출처에서 복사한 본문<textarea maxLength={16000} rows={5} value={sourceText} onChange={(event) => setSourceText(event.target.value)} /></label><p>붙여 넣은 자료에서 만든 용어는 자동 적용하지 않고 검토에 둡니다.</p></details>
+              <button disabled={disabled || !sourceUrl.trim()}>{busy ? "자료 처리 중…" : sourceText.trim() ? "본문 저장" : "URL 자료 수집 · 저장"}</button>
+            </form>
+            <p>작품당 최대 6개, 문서당 본문 16,000자. URL 수집에는 Gemini를 사용하지 않습니다. 같은 자료는 저장본을 재사용합니다.</p>
+            {data.sources?.map((source) => <article className="work-candidate" key={source.url}>
+              <a href={source.url} target="_blank" rel="noopener noreferrer">{source.title}</a>
+              <p>{source.mode === "paste" ? "직접 저장" : "URL 수집"} · {source.text.length.toLocaleString()}자{source.truncated ? " · 일부만 저장" : ""} · {new Date(source.fetched_at).toLocaleString()}</p>
+              <details><summary>저장한 본문 확인</summary><p className="glossary-summary">{source.text}</p></details>
+              <div className="row"><button disabled={disabled} onClick={() => post("/api/glossary/source", { work_id: data.work_id, url: source.requested_url || source.url, refresh: true }, false)}>URL에서 다시 수집</button><button disabled={disabled} onClick={() => post("/api/glossary/source", { work_id: data.work_id, url: source.url, remove: true }, false)}>자료 삭제</button></div>
+            </article>)}
+            <button disabled={disabled || !data.sources?.length} onClick={() => post("/api/glossary/research", {}, false)}>저장 자료로 용어 정리</button>
+            <p>저장한 본문과 작품 정보만 Gemini에 전달합니다. 정리 시 일반 생성 비용·할당량이 적용됩니다. 같은 자료와 모델의 성공 결과가 있으면 API 없이 재사용합니다.</p>
+          </section>
+          {researching ? <p role="status">저장한 자료의 작품·등장인물·용어를 정리하고 있습니다. 번역은 조사가 끝난 뒤 시작할 수 있습니다.</p> : null}
           {data.error ? <p role="alert" className="glossary-error">{data.error}</p> : null}
           {data.status === "ready" && !data.work_matches ? <p className="glossary-error">작품 일치가 확인되지 않아 자동 적용을 보류했습니다. 작품명을 확인하거나 개별 용어를 검토하세요.</p> : null}
           {data.summary ? <details><summary>작품·등장인물 참고 정보 (번역에 자동 전달하지 않음)</summary><p className="glossary-summary">{data.summary}</p></details> : null}
@@ -204,8 +223,8 @@ export default function GlossaryPanel({ sessionId, projectName, ocrBusy, analysi
           {review.length ? <div><h3>충돌·불확실 항목만 검토</h3>{review.map(renderTerm)}</div> : null}
           <details><summary>적용 중인 용어 {applied.length}개</summary>{applied.map(renderTerm)}</details>
           {excluded.length ? <details><summary>제외한 용어 {excluded.length}개</summary>{excluded.map(renderTerm)}</details> : null}
-          {data.status === "ready" && !entries.length ? <p>확인된 용어가 없습니다. 작품 정보를 보완해 다시 조사하거나 기존 번역 지시문에 직접 입력하세요.</p> : null}
-          {data.search_suggestions ? <iframe className="glossary-search-suggestions" title="Google 검색 제안" sandbox="allow-popups allow-popups-to-escape-sandbox" srcDoc={data.search_suggestions} /> : null}
+          {data.status === "ready" && !entries.length ? <p>확인된 용어가 없습니다. 일본어 원문과 한국어 표기를 함께 확인할 수 있는 자료를 추가하세요.</p> : null}
+
         </> : null}
       </section>
     </div>}

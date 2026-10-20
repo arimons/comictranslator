@@ -76,8 +76,9 @@ NEW_COMIC_TRANSLATOR/
     ├── editor_review_bridge.py # 세션 산출물 조회·이미지 crop·revision·미적용 검토 초안
     ├── geometry.py             # 사각형 좌표 유틸
     ├── gemini_ocr_translate_v5.py  # Step 4 (Gemini 기본, gpt-* 선택 가능)
-    ├── work_glossary.py        # 작품별 용어집 저장·검색 인용 검증·수동 결정·버전 고정
-    ├── work_matching.py        # 기존 CV 작품 후보·확인 작품 재사용·비동기 재검색
+    ├── work_glossary.py        # 작품별 URL 자료 저장·단일 Gemini 용어 정리·수동 결정·버전 고정
+    ├── work_matching.py        # 기존 CV·로컬 작품 조회·확인 작품 재사용
+    ├── work_sources.py         # 공개 작품 URL의 제한 수집·본문 추출·자료 인용 구간
     ├── font_style_analyzer.py  # Step 4 직후 render_hint CV 보정
     ├── render_text_overlay.py  # Step 5
     ├── overlay_anchor.py       # 글자 입히기 수동값을 region 번호 대신 영역 위치로 재매칭
@@ -464,3 +465,5 @@ indexed sheet crop의 획두께·ink density를 재서 Gemini가 준 `render_hin
 ```
 
 작품 연결 UI는 프로젝트명 옆에 표시하며 연결 전 후보/검색 상태와 연결 후 작품명/용어집 조사 상태를 구분한다. `POST /api/glossary/match`가 CV 기반 재사용 또는 웹 후보 검색을 시작한다. 검색 실패 중에도 기존 작품 연결을 유지한다.
+
+작품 자료 수집은 `pipeline/work_sources.py`가 공개 URL 본문을 읽고, `pipeline/work_glossary.py`가 작품 ID별로 저장·재사용한다. 작품 매칭은 로컬 CV·저장 작품만 사용하며 Gemini는 저장 자료 정리에만 한 번 사용한다. 유료 검색은 호출하지 않는다.

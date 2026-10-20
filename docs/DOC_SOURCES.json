@@ -13,7 +13,8 @@
         "pipeline/work_glossary.py",
         "frontend/src/GlossaryPanel.jsx",
         "main_v2.py",
-        "pipeline/work_matching.py"
+        "pipeline/work_matching.py",
+        "pipeline/work_sources.py"
       ]
     },
     "docs/pipeline_guide.html": {

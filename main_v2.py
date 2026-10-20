@@ -181,6 +181,15 @@ class GlossaryResearchRequest(BaseModel):
     session_id: str
 
 
+class WorkSourceRequest(BaseModel):
+    session_id: str
+    work_id: str
+    url: str
+    text: str = ""
+    refresh: bool = False
+    remove: bool = False
+
+
 class WorkMatchRequest(BaseModel):
     session_id: str
     query: str = ""
@@ -2622,9 +2631,7 @@ def create_app() -> FastAPI:
                 data = store.read(wid)
             write_json(glossary_binding_path(req.session_id), {"work_id": wid})
             WORK_MATCHER.confirmed(work_match_path(req.session_id))
-            # 이미 조사한 작품은 재사용한다. 확인된 새 작품만 자동 조사를 시작한다.
-            if data["status"] == "idle":
-                data = store.start(wid)
+            # 작품 연결은 수집·Gemini 요청을 시작하지 않는다.
             return glossary_payload(req.session_id)
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -2635,7 +2642,9 @@ def create_app() -> FastAPI:
             hints, works = work_match_inputs(req.session_id)
             path = work_match_path(req.session_id)
             candidates = existing_candidates(hints, works)
-            if not req.force_web:
+            if req.force_web:
+                raise ValueError("유료 웹 검색은 사용하지 않습니다. 작품 URL을 자료로 추가하세요.")
+            if not req.query.strip():
                 strong = [candidate for candidate in candidates if candidate["strong"]]
                 if len(strong) == 1 and not session_glossary(req.session_id):
                     # 이미 확인받은 작품만 로컬 CV 근거로 재사용한다. 웹 후보는 자동 연결하지 않는다.
@@ -2652,6 +2661,25 @@ def create_app() -> FastAPI:
             return glossary_payload(req.session_id)
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @app.post("/api/glossary/source")
+    def save_glossary_source(req: WorkSourceRequest) -> dict:
+        try:
+            data = session_glossary(req.session_id)
+            if not data or data["work_id"] != req.work_id:
+                raise ValueError("연결된 작품을 확인하세요. 작품이 변경되면 자료를 다시 지정해야 합니다.")
+            if len(req.text) > 16000:
+                raise ValueError("붙여 넣는 자료는 16000자 이내로 입력하세요.")
+            store = glossary_store()
+            if req.remove:
+                store.remove_source(req.work_id, req.url)
+            else:
+                store.save_source(req.work_id, req.url, req.text, req.refresh)
+            return glossary_payload(req.session_id)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except Exception as exc:
+            raise HTTPException(status_code=400, detail="자료 수집에 실패했습니다. URL을 확인하거나 필요한 본문을 직접 붙여 넣으세요.") from None
 
     @app.post("/api/glossary/research")
     def research_glossary(req: GlossaryResearchRequest) -> dict:
