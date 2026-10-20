@@ -471,3 +471,5 @@ indexed sheet crop의 획두께·ink density를 재서 Gemini가 준 `render_hin
 ## 이미지 생성 권장과 후보 등록 (2026-10-20)
 
 `pipeline/image_generation_bridge.py`는 원본·번역·용어집 revision을 묶어 생성 요청과 미검토 결과를 보관한다. `run_editor_mcp.py`에 권장·요청·등록 도구가 있고, `main_v2.py`의 읽기 API와 `frontend/src/ImageGenerationPanel.jsx`가 원본/후보 비교를 제공한다. 모델 호출은 호스트 내장 도구가 담당하며 최종 출력은 변경하지 않는다. [기록](IMAGE_GENERATION_REVIEW.md).
+
+분석 캔버스의 TG/Region 번호 배치는 `frontend/src/canvasLabels.js`가 화면 좌표에서 계산한다. `frontend/src/EditorCanvas.jsx`는 승격 TG 번호 중복을 줄이고 여백 목록·연한 번호를 그린다. 데이터 ID나 좌표는 변경하지 않는다.

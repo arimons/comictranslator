@@ -77,3 +77,9 @@
 - `reports/`에도 보고서가 있지만 현재 기술 문서의 정본·변경 기록 관리 위치는 `docs/`다.
 
 Claude와 다른 에이전트는 `AGENTS.md`, `CLAUDE.md`의 링크를 통해 이 기록을 읽고 새 용어를 사용한다. 새 처리 기준을 추가하는 변경과 단순 표시 이름 변경을 구분하고, 기존 JSON 문자열·캐시 경로를 일괄 치환하지 않는다.
+
+## 2026-10-20 분석 캔버스 라벨 정리
+
+캔버스의 R 번호 옆 타입 이름 배지를 없애고 청록(경계 기반)·주황(텍스트 기반)으로 구분한다. Region의 anchor_ids에 연결된 TG 번호는 기본 중복 표시하지 않고 선택할 때만 나타낸다. 오른쪽 실제 빈 여백이 있으면 R↔TG 연결 번호를 모으고 이미지 안 번호는 연하게 남긴다. 여백이 없으면 화면 좌표 기준으로 영역 상자와 라벨 충돌을 줄여 배치한다. 기존 JSON·캐시·TG/Region ID 및 선택·삭제 동작은 변경하지 않는다.
+
+구현: `frontend/src/EditorCanvas.jsx`, `frontend/src/canvasLabels.js`. 배치 검증: `proof/src/test_canvas_labels.mjs`, 실제 Ore_3 페이지 읽기 전용 점검: `proof/src/check_canvas_labels.js`. 폭 1600/3000의 캔버스에서 확인했으며 분석·번역 요청과 파일 수정 없이 화면만 점검했다.

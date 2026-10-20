@@ -2,6 +2,7 @@ import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from "re
 import Konva from "konva";
 import { rectOf, tgId, imageGroups, defaultGuidance, regionId, imageRegions, regionDisplayRect } from "./lib.js";
 import { createViewport } from "./viewportControls.js";
+import { placeCanvasLabels, promotedTgIds } from "./canvasLabels.js";
 import { TEXT_BASED, regionProcessingBasis, regionTypeLabel } from "./regionTypes.js";
 
 const EditorCanvas = forwardRef(function EditorCanvas({ image, baseUrl, guidance, setGuidance, tool, layers, selectedTg, setSelectedTg, setStatus }, ref) {
@@ -495,6 +496,12 @@ const EditorCanvas = forwardRef(function EditorCanvas({ image, baseUrl, guidance
     base.add(new Konva.Image({ image: img, x: view.x, y: view.y, width: img.width * view.scale, height: img.height * view.scale }));
 
     const disabled = new Set(currentGuidance.disabled_tg_ids || []);
+    const visibleRegions = currentLayers.regions ? (currentImage?.regions?.regions || []) : [];
+    const promoted = promotedTgIds(visibleRegions);
+    const labels = [];
+    const labelWidth = (text, bold = false) => Math.ceil(new Konva.Text({text, fontSize:11, fontStyle:bold ? "bold" : "normal"}).getTextWidth()) + 10;
+    const obstacles = [];
+    const imageBounds = {x:view.x, y:view.y, width:img.width * view.scale, height:img.height * view.scale};
     if (currentLayers.tg) {
       imageGroups(currentImage).forEach((group) => {
         const id = tgId(group);
@@ -504,8 +511,9 @@ const EditorCanvas = forwardRef(function EditorCanvas({ image, baseUrl, guidance
         const rect = new Konva.Rect({
           ...r,
           stroke: selected ? "#111827" : "#2563eb",
-          strokeWidth: selected ? 3 : 1.6,
-          fill: "rgba(37,99,235,0.06)",
+          strokeWidth: selected ? 2.5 : 1,
+          opacity: selected ? 1 : promoted.has(id) ? .35 : .6,
+          fill: "rgba(37,99,235,0.015)",
           listening: true,
         });
         rect.on("click tap", (evt) => {
@@ -516,19 +524,15 @@ const EditorCanvas = forwardRef(function EditorCanvas({ image, baseUrl, guidance
           if (toolRef.current === "tg-toggle") toggleTg(id);
         });
         overlay.add(rect);
-        overlay.add(new Konva.Text({
-          text: `TG${id}`,
-          x: r.x,
-          y: Math.max(2, r.y - 18),
-          fontSize: 12,
-          fill: "#111827",
-          listening: false,
-        }));
+        obstacles.push(r);
+        // Region에 연결된 TG 번호는 중복 표시하지 않고, 선택한 TG만 따로 확인한다.
+        if (!promoted.has(id) || selected) labels.push({id:`TG${id}`, text:`TG${id}`, kind:"tg", rect:r,
+          color:"#2563eb", selected, width:labelWidth(`TG${id}`), height:18});
       });
     }
 
     if (currentLayers.regions) {
-      (currentImage?.regions?.regions || []).forEach((region) => {
+      visibleRegions.forEach((region) => {
         const rect = region.bubble_rect || region.unboxed_rect || region.erase_rect;
         if (!rect) return;
         const r = toStageRect(rect);
@@ -537,30 +541,23 @@ const EditorCanvas = forwardRef(function EditorCanvas({ image, baseUrl, guidance
         overlay.add(new Konva.Rect({
           ...r,
           stroke: color,
-          strokeWidth: 1.5,
-          fill: isTextBased ? "rgba(180,83,9,0.035)" : "rgba(15,118,110,0.035)",
+          strokeWidth: 1.2,
+          opacity: .65,
+          fill: "transparent",
           dash: isTextBased ? [6, 4] : undefined,
         }));
-        overlay.add(new Konva.Label({ x: r.x, y: Math.max(2, r.y - 20), listening: false }).add(
-          new Konva.Tag({ fill: color, cornerRadius: 2 }),
-          new Konva.Text({
-            text: `R${regionId(region)}`,
-            fontSize: 12,
-            fontStyle: "bold",
-            fill: "#ffffff",
-            padding: 3,
-          }),
-        ));
-        overlay.add(new Konva.Label({ x: r.x + 30, y: Math.max(2, r.y - 20), listening: false }).add(
-          new Konva.Tag({ fill: color, cornerRadius: 3 }),
-          new Konva.Text({ text: regionTypeLabel(region), fontSize: 11, fill: "#ffffff", padding: 3 }),
-        ));
+        const anchors = (region.anchor_ids || []).map(id => `TG${id}`);
+        const id = `R${regionId(region)}`;
+        const gutterText = anchors.length ? `${id} · ${anchors.slice(0,3).join(",")}${anchors.length > 3 ? "…" : ""}` : id;
+        labels.push({id, text:id, gutterText,
+          kind:"region", rect:r, color, inlineWidth:labelWidth(id, true), width:Math.min(170, labelWidth(gutterText, true)), height:18});
+        obstacles.push(r);
         if (region.safe_text_rect) {
-          overlay.add(new Konva.Rect({ ...toStageRect(region.safe_text_rect), stroke: "#111827", strokeWidth: 1, dash: [4, 3] }));
+          overlay.add(new Konva.Rect({ ...toStageRect(region.safe_text_rect), stroke: "#111827", strokeWidth: 1, opacity:.3, dash: [4, 3] }));
         }
         if (Array.isArray(region.contour) && region.contour.length > 1) {
           const points = region.contour.flatMap((pt) => toStagePoint(pt));
-          overlay.add(new Konva.Line({ points, closed: true, stroke: "#0f766e", strokeWidth: 1.4, opacity: 0.8 }));
+          overlay.add(new Konva.Line({ points, closed: true, stroke: color, strokeWidth: 1.2, opacity: 0.55 }));
         }
       });
     }
@@ -639,6 +636,24 @@ const EditorCanvas = forwardRef(function EditorCanvas({ image, baseUrl, guidance
 
     splitGuidesToDraw.forEach((item) => drawGuideLine(overlay, item.line, item.color, item.label, { prominent: true }));
 
+    placeCanvasLabels(labels, obstacles, imageBounds, {width, height}).forEach(label => {
+      if (label.outside) {
+        const anchorX = Math.max(0, Math.min(width, imageBounds.x + imageBounds.width + 2));
+        const anchorY = Math.max(0, Math.min(height, label.rect.y + label.rect.height / 2));
+        overlay.add(new Konva.Line({points:[anchorX,anchorY,label.x-4,label.y+label.height/2],
+          stroke:label.color, strokeWidth:.8, opacity:.24, listening:false}));
+        if (label.kind === "region") overlay.add(new Konva.Text({text:label.text,
+          x:label.rect.x, y:Math.max(2,label.rect.y-16), fontSize:11, fontStyle:"bold",
+          fill:label.color, opacity:.25, listening:false}));
+      }
+      const text = label.outside ? label.gutterText || label.text : label.text;
+      const node = new Konva.Label({x:label.x, y:label.y, listening:false, name:"annotation-label",
+        opacity:label.outside || label.selected ? .95 : .46});
+      node.add(new Konva.Tag({fill:label.outside ? "#f8fafc" : "#ffffff", opacity:label.outside ? .95 : .35, cornerRadius:3}));
+      node.add(new Konva.Text({text, fontSize:11, fontStyle:label.kind === "region" ? "bold" : "normal",
+        fill:label.color, padding:3, width:label.width, height:label.height, ellipsis:true, wrap:"none"}));
+      overlay.add(node);
+    });
     stage.draw();
   }
 
