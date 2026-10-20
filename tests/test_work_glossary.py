@@ -9,7 +9,7 @@ from fastapi.testclient import TestClient
 
 import main_v2
 from pipeline.manual_guidance import load_json, write_json
-from pipeline.work_glossary import GlossaryStore, build_entries, glossary_snapshot, grounded_evidence, work_id
+from pipeline.work_glossary import GlossaryStore, build_entries, canonical_entries, glossary_snapshot, grounded_evidence, work_id
 
 
 def report(target="유키", **overrides):
@@ -41,7 +41,7 @@ def test_auto_requires_explicit_pair_and_two_sites():
 def test_conflicting_spelling_is_removed_from_prompt():
     previous = build_entries(report(), [])
     entries = build_entries(report("설"), previous)
-    assert len(entries) == 2
+    assert len(entries) == 1
     assert {e["status"] for e in entries} == {"review"}
     assert not glossary_snapshot({"entries": entries})["prompt"]
 
@@ -50,9 +50,7 @@ def test_model_supplied_urls_or_invalid_indices_do_not_count():
     data = report()
     data["entries"][0]["evidence_indices"] = [-1, 99, "0", True]
     data["entries"][0]["sources"] = ["https://invented.example"]
-    entry = build_entries(data, [])[0]
-    assert entry["status"] == "review"
-    assert not entry["evidence"]
+    assert build_entries(data, []) == []
 
 
 def test_grounding_links_are_from_metadata_and_proxy_domains_are_distinguished():
@@ -139,13 +137,14 @@ def test_review_survives_research_and_accepting_conflict_excludes_other(store):
     write_json(store.path(wid), data)
     chosen = data["entries"][0]
     accepted = store.review(wid, chosen["id"], "accepted", "눈")
-    assert [e["status"] for e in accepted["entries"]] == ["accepted", "rejected"]
+    assert [e["status"] for e in accepted["entries"]] == ["accepted"]
     store.start(wid)
     store.pool.shutdown(wait=True)
     entries = store.read(wid)["entries"]
     assert len({e["id"] for e in entries}) == len(entries)
     assert any(e["target"] == "눈" and e["status"] == "accepted" for e in entries)
-    # 새로 발견된 다른 표기는 검토에 남고 수동 결정을 덮어쓰지 않는다.
+    # 새로 발견된 다른 표기도 같은 행에 합치며 수동 결정을 덮어쓰지 않는다.
+    assert len(entries) == 1
     assert [e["target"] for e in glossary_snapshot({"entries": entries})["entries"]] == ["눈"]
 
 
@@ -185,7 +184,7 @@ def test_final_translation_receives_only_applied_terms_and_records_version(store
         write_json(record["integrated_json"], {"clusters": []})
     monkeypatch.setattr(main_v2, "run_subprocess", subprocess)
     monkeypatch.setattr(main_v2, "render_overlay_for_record", lambda *a, **k: None)
-    main_v2.run_final_for_item(sid, {"input_path": str(image)}, "수동 지시: 말투 유지", None)
+    main_v2.run_final_for_item(sid, {"id": "page", "input_path": str(image)}, "수동 지시: 말투 유지", None)
     prompt = next(arg for arg in commands[0] if arg.startswith("--extra-prompt="))
     assert "유키" in prompt and "불확실" not in prompt
     assert prompt.endswith("수동 지시: 말투 유지")
@@ -245,9 +244,11 @@ def test_research_provider_uses_one_openai_generation_and_saved_evidence(monkeyp
 def test_edit_to_existing_target_merges_duplicate_rows(store):
     wid = store.confirm({"title": "작품"})
     data = store.read(wid)
-    data["entries"] = build_entries(report("설"), build_entries(report(), []))
+    # 이전 버전에서 저장한 중복 행도 조회·검토 시 통합한다.
+    data["entries"] = build_entries(report("설"), []) + build_entries(report(), [])
     write_json(store.path(wid), data)
-    result = store.review(wid, data["entries"][0]["id"], "accepted", data["entries"][1]["target"])
+    entry = store.read(wid)["entries"][0]
+    result = store.review(wid, entry["id"], "accepted", "유키")
     assert len(result["entries"]) == 1
     assert result["entries"][0]["status"] == "accepted"
 
@@ -278,3 +279,50 @@ def test_payment_error_is_distinct_from_rate_limit(store):
     assert data['error_code'] == 'payment_required'
     assert '결제 필요(402)' in data['error']
     assert 'private-sdk' not in json.dumps(data)
+
+
+def test_cross_language_candidates_keep_both_evidence_and_never_auto_apply():
+    data = report(evidence=[
+        {'text':'雪は主人公の妹。','url':'https://publisher.example/characters','title':'원문'},
+        {'text':'유키는 주인공의 여동생이다.','url':'https://wiki.test/characters','title':'한국어 소개'},
+    ])
+    entry = build_entries(data, [])[0]
+    assert entry['status'] == 'review' and entry['uncertain']
+    assert len(entry['evidence']) == 2
+    assert all(not cite['explicit_pair'] for cite in entry['evidence'])
+    assert '교차 대조' in entry['reason']
+    assert not glossary_snapshot({'entries':[entry]})['entries']
+
+
+def test_namu_mirrors_are_one_origin_not_two_independent_sources():
+    data = report()
+    data['evidence'][0]['url'] = 'https://namu.wiki/w/work'
+    data['evidence'][1]['url'] = 'https://d.namu.moe/w/work'
+    assert build_entries(data, [])[0]['status'] == 'review'
+    data['evidence'][1]['url'] = 'https://readonly.wiki/w/work'
+    assert build_entries(data, [])[0]['status'] == 'review'
+    data['evidence'][1]['url'] = 'https://seore.org/w/work'
+    assert build_entries(data, [])[0]['status'] == 'review'
+
+
+def test_one_missing_language_in_saved_sources_cannot_create_a_candidate():
+    data = report(evidence=[{'text':'雪は主人公。','url':'https://publisher.example/book','title':'원문'}])
+    data['entries'][0]['evidence_indices'] = [0]
+    assert build_entries(data, []) == []
+
+
+def test_canonical_spelling_prefers_character_heading_over_variants_and_typos():
+    entries = []
+    for target in ['스토크스', '스톡스', '스톡쓰']:
+        entries.append({'source': 'ストークス', 'target': target, 'status': 'review', 'evidence': [
+            {'url': 'https://wiki.test/work', 'text': '3.1. 스톡스[편집]\n스토크스라고도 부른다. 스톡쓰는 오타다.'},
+        ]})
+    result = canonical_entries(entries)
+    assert len(result) == 1 and result[0]['target'] == '스톡스'
+    assert result[0]['status'] == 'review'
+    assert canonical_entries(result) == result
+    # 사용자가 다른 표기를 선택하면 표제보다 우선한다.
+    entries[0].update(decision='accepted', status='accepted')
+    result = canonical_entries(entries)
+    assert len(result) == 1 and result[0]['target'] == '스토크스'
+    assert result[0]['status'] == 'accepted'
