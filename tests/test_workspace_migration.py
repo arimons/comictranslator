@@ -50,3 +50,20 @@ def test_destination_collision_stops_before_backup(tmp_path,monkeypatch):
     (home/'projects/book').mkdir(parents=True)
     with pytest.raises(RuntimeError,match='충돌'):apply(repo,home,plan(repo,home))
     assert base.is_dir() and not (home/'backups').exists()
+
+
+def test_rollback_keeps_current_proof_sources(tmp_path,monkeypatch):
+    import scripts.migrate_workspace as migration
+    monkeypatch.setattr(migration,'assert_stopped',lambda:None)
+    repo=tmp_path/'repo';home=tmp_path/'home';backup=home/'backups/old'
+    for p in [repo/'proof/src',backup/'proof/src']:
+        p.mkdir(parents=True)
+    (repo/'proof/src/tool.py').write_text('current code')
+    (backup/'proof/src/tool.py').write_text('old code')
+    (backup/'proof/generated.txt').write_text('old data')
+    journal=home/'migration.json'
+    migration.write(journal,{'repo':str(repo),'home':str(home),'backup':str(backup),
+                             'completed_moves':[],'roots':[str(repo/'proof')]})
+    rollback(journal)
+    assert (repo/'proof/src/tool.py').read_text()=='current code'
+    assert (repo/'proof/generated.txt').read_text()=='old data'

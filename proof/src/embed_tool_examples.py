@@ -1,8 +1,13 @@
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+from pipeline.paths import DATA_HOME, PROJECTS_DIR, PROOF_DIR
+from pipeline.project_paths import manifest_path
 """현재 도구의 실제 전/후 캡처와 코드에서 확인한 동작을 매뉴얼에 내장한다."""
 from pathlib import Path
 import base64,html,io,json,re
 from PIL import Image
-ROOT=Path(__file__).resolve().parents[2]; CAP=ROOT/'proof/misc/tool_examples'; MANUAL=ROOT/'docs/editor_manual.html'
+ROOT=Path(__file__).resolve().parents[2]; CAP=PROOF_DIR / 'misc/tool_examples'; MANUAL=ROOT/'docs/editor_manual.html'
 
 def figure(key,phase,title):
  with Image.open(CAP/f'{key}-{phase}.png') as im:

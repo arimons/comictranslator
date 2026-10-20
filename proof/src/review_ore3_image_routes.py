@@ -1,3 +1,9 @@
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+from pipeline.paths import DATA_HOME, PROJECTS_DIR, PROOF_DIR
+from pipeline.project_paths import manifest_path, manifest_files
+from pipeline.manual_guidance import load_json
 """유료 처리 없이 3권 전체의 색·에지 관찰값과 검토용 축소 이미지를 만든다. 경로를 확정하지 않는다."""
 from pathlib import Path
 import base64
@@ -11,7 +17,7 @@ from PIL import Image, ImageDraw, ImageFont
 
 ROOT = Path(__file__).resolve().parents[2]
 SID = "20261020_083312_pages_13ba97f6"
-OUT = ROOT / "proof/misc/ore3-route-review"
+OUT = PROOF_DIR / 'misc/ore3-route-review'
 
 # 사용자가 이 책의 개별 페이지에 확인한 선택이다. 범용 자동 분류 기준이나 생성 실행 승인이 아니다.
 PROPOSALS = {
@@ -30,7 +36,7 @@ USER_REVIEWED = {1, 2, 3, 5, 162, 163, 164, 165}
 
 
 def main():
-    session = json.loads((ROOT / "temp_output/v2_sessions" / SID / "session.json").read_text())
+    session = json.loads((manifest_path(PROJECTS_DIR / SID)).read_text())
     OUT.mkdir(parents=True, exist_ok=True)
     pages = []
     thumbs = []

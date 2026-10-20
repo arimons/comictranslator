@@ -1,3 +1,9 @@
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+from pipeline.paths import DATA_HOME, PROJECTS_DIR, PROOF_DIR
+from pipeline.project_paths import manifest_path, manifest_files
+from pipeline.manual_guidance import load_json
 """Ore_3를 유료 처리 없이 기존 페이지 정리 API로 별도 프로젝트에 생성한다."""
 from pathlib import Path
 import json
@@ -31,7 +37,7 @@ def main():
         plan = response.json()
         assert (plan["source_count"], plan["output_count"]) == (83, 165)
         existing = []
-        for path in app.SESSION_ROOT.glob("*/session.json"):
+        for path in manifest_files(app.SESSION_ROOT):
             data = json.loads(path.read_text())
             if data.get("project_name") == TITLE and data.get("parent_session_id") == SOURCE and data.get("page_preparation", {}).get("revision") == plan["revision"]:
                 existing.append(data)
@@ -56,7 +62,7 @@ def main():
     report = {"session_id": target["session_id"], "project_name": TITLE, "parent_session_id": SOURCE,
               "image_count": 165, "original_files_unchanged": len(before), "analysis_started": False,
               "image_generation_started": False, "first_pages": target["images"][:3]}
-    output = ROOT / "proof/misc/ore3-created-project.json"
+    output = PROOF_DIR / 'misc/ore3-created-project.json'
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text(json.dumps(report, ensure_ascii=False, indent=2))
     print(json.dumps({key: value for key, value in report.items() if key != "first_pages"}, ensure_ascii=False))

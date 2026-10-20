@@ -8,14 +8,16 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import subprocess
 from pathlib import Path
 
+from pipeline.paths import PROOF_DIR
+from pipeline.paths import PROOF_DIR
 from pipeline.pipeline_runner import run_single_image
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 DEBUG_IMAGES = ["00013", "00014", "00016", "00019"]
 
 # 중간 파일 및 최종 결과 모두 proof/Debug에 저장
-WORK_DIR = PROJECT_ROOT / "proof" / "Debug"
-OUTPUT_DIR = PROJECT_ROOT / "proof" / "Debug"
+WORK_DIR = PROOF_DIR / "Debug"
+OUTPUT_DIR = PROOF_DIR / "Debug"
 
 
 def run_debug_pipeline():

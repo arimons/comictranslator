@@ -41,7 +41,7 @@ async(page)=>{
   }
   await p.keyboard.press('b');await click(500,1000);if(await p.getByRole('button',{name:'선택',exact:true}).getAttribute('aria-pressed')!=='true')throw Error('B V 복귀 실패');
   await p.keyboard.press('Escape');await click(680,470);await p.keyboard.press('t');await drag([675,440],[675,520]);if(await p.getByRole('button',{name:'선택',exact:true}).getAttribute('aria-pressed')!=='true')throw Error('T V 복귀 실패');
-  if(errors.length)throw Error(errors.join());await p.screenshot({path:'proof/misc/independent-region-selection.png',scale:'css'});
+  if(errors.length)throw Error(errors.join());await p.screenshot({path:(process.env.COMIC_TRANSLATOR_HOME||process.env.HOME+'/ComicTranslator')+'/legacy/proof_outputs/misc/independent-region-selection.png',scale:'css'});
   return {ok:true,checks:['V에서 TG/R 독립 선택·겹친 위치 순환','R Delete·수동 R D·Undo','CV 누락 R 화자','TG 제외 후 남은 R 화자','E U S B T 1회 입력 후 V'],speakerRequests:posts.map(x=>x.body.region_id),errors};
  }finally{await p.close();}
 }

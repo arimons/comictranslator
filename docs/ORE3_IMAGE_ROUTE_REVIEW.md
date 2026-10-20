@@ -37,10 +37,10 @@ P 번호는 원본 파일명이 아니라 **자동분할 프로젝트의 1부터
 ## 재현과 산출물
 
 - 소스: `proof/src/review_ore3_image_routes.py`.
-- `proof/misc/ore3-route-review/index.html`: 165장 이미지·근거·수치와 제안별 필터. 썸네일을 누르면 원본 파일을 연다.
-- `proof/misc/ore3-route-review/shortlist.jpg`: 후보와 비교군 10장.
-- `proof/misc/ore3-route-review/all_1.jpg` ~ `all_5.jpg`: 전체 이미지 순서표.
-- `proof/misc/ore3-route-review/observations.json`: 모든 관찰값·미확정 제안·입력 ID 매핑.
+- `~/ComicTranslator/legacy/proof_outputs/misc/ore3-route-review/index.html`: 165장 이미지·근거·수치와 제안별 필터. 썸네일을 누르면 원본 파일을 연다.
+- `~/ComicTranslator/legacy/proof_outputs/misc/ore3-route-review/shortlist.jpg`: 후보와 비교군 10장.
+- `~/ComicTranslator/legacy/proof_outputs/misc/ore3-route-review/all_1.jpg` ~ `all_5.jpg`: 전체 이미지 순서표.
+- `~/ComicTranslator/legacy/proof_outputs/misc/ore3-route-review/observations.json`: 모든 관찰값·미확정 제안·입력 ID 매핑.
 
 중간 산출물은 scratch 영역이므로 생성 스크립트와 이 검토 기록을 보존한다. 원본 프로젝트, 자동분할 입력, 가이드와 캐시는 변경하지 않는다.
 

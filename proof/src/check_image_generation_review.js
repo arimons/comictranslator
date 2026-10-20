@@ -23,7 +23,7 @@ async (page) => {
     await preview.waitForFunction(()=>Array.from(document.querySelectorAll('.generation-compare img')).length===2 && Array.from(document.querySelectorAll('.generation-compare img')).every(i=>i.naturalWidth>0));
     const images = await dialog.locator('img').evaluateAll(nodes => nodes.map(node=>({width:node.naturalWidth,height:node.naturalHeight,visible:node.getBoundingClientRect().height})));
     if(images.some(i=>i.visible < 200)) throw new Error('비교 이미지 표시 크기가 너무 작음');
-    await preview.screenshot({path:'proof/misc/ore3-cover-generation/editor-comparison.png',scale:'css'});
+    await preview.screenshot({path:(process.env.COMIC_TRANSLATOR_HOME||process.env.HOME+'/ComicTranslator')+'/legacy/proof_outputs/misc/ore3-cover-generation/editor-comparison.png',scale:'css'});
     await preview.setViewportSize({width:600,height:900});
     const overflow = await dialog.evaluate(node => node.scrollWidth > node.clientWidth+2);
     if(overflow) throw new Error('생성 비교 팝업 가로 넘침');

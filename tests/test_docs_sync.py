@@ -80,6 +80,8 @@ def _broken_references(path: Path) -> list[str]:
     text = _extract_text(path)
     # 공식 도움말 같은 외부 URL의 .html은 리포지토리 파일 참조가 아니다.
     text = re.sub(r"https?://[^\s<>\])]+", "", text)
+    # 데이터 홈의 생성 산출물은 코드 파일 참조가 아니며 clone 직후 없어도 된다.
+    text = re.sub(r"`~/ComicTranslator/[^`]+`", "", text)
     broken = []
     for reference in sorted(set(REFERENCE_PATTERN.findall(text))):
         if reference.startswith(("http", "www")) or reference.startswith("_"):

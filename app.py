@@ -37,7 +37,7 @@ from fastapi.staticfiles import StaticFiles
 from PIL import Image
 from pydantic import BaseModel
 
-from pipeline.project_paths import manifest_files, manifest_path
+from pipeline.project_paths import manifest_files, manifest_path, project_base
 from pipeline.manual_guidance import build_effective_text_groups, load_json, write_json
 from pipeline.region_types import regions_with_processing_basis
 from pipeline.page_preparation import build_plan, materialize_plan
@@ -576,6 +576,14 @@ def analysis_cache_dir(image_hash: str) -> Path:
 
 
 def _copy_file(src: Path, dest: Path) -> None:
+    # 임시 작업 폴더에서 완성한 JSON도 프로젝트 저장 경계에서 상대 경로로 바꾼다.
+    # byte 복사만 하면 임시 출력 단계의 절대 경로가 프로젝트에 다시 유입된다.
+    if src.suffix == ".json" and (project_base(src) is not None or project_base(dest) is not None):
+        sentinel = object()
+        payload = load_json(src, sentinel)
+        if payload is not sentinel:
+            write_json(dest, payload)
+            return
     dest.parent.mkdir(parents=True, exist_ok=True)
     try:
         if dest.exists() and src.samefile(dest):
@@ -606,7 +614,7 @@ def _link_or_copy_file(src: Path, dest: Path) -> None:
     try:
         if dest.exists() or dest.is_symlink():
             dest.unlink()
-        dest.symlink_to(os.path.relpath(src.resolve(), dest.parent.absolute()))
+        dest.symlink_to(os.path.relpath(src.resolve(), dest.parent.resolve()))
     except OSError:
         try:
             if dest.exists() and src.samefile(dest):
@@ -771,7 +779,13 @@ def _guidance_outputs_in_place(record: dict[str, Any], cache_dir: Path) -> bool:
                 return False
         else:
             try:
-                if dest.is_symlink() or not filecmp.cmp(src, dest, shallow=False):
+                if dest.is_symlink():
+                    return False
+                if src.suffix == ".json":
+                    # 저장 표현(상대/절대)과 들여쓰기는 달라도 실행 내용이 같으면 재복사하지 않는다.
+                    if load_json(src) != load_json(dest):
+                        return False
+                elif not filecmp.cmp(src, dest, shallow=False):
                     return False
             except OSError:
                 return False

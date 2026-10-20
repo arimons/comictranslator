@@ -47,6 +47,10 @@ GLOSSARY_DIR = PATHS.glossaries
 IMAGE_GENERATION_INBOX = PATHS.image_generation_inbox
 EXPORTS_DIR = PATHS.exports
 LEGACY_DIR = PATHS.legacy
+PROOF_DIR = LEGACY_DIR / "proof_outputs"
+SAMPLES_DIR = DATA_HOME / "samples"
+PROOF_DIR = LEGACY_DIR / "proof_outputs"
+SAMPLES_DIR = DATA_HOME / "samples"
 
 
 def export_directory(home=None):

@@ -50,3 +50,29 @@ def test_generated_candidate_metadata_uses_project_paths(tmp_path):
     meta.parent.mkdir(parents=True, exist_ok=True)
     ImageGenerationStore._write(meta, {"preview_path": str(meta.with_suffix('.png'))})
     assert json.loads(meta.read_text())["preview_path"] == "work/image_generation/page/result-123.png"
+
+
+def test_temp_analysis_json_copy_encodes_destination_context(tmp_path):
+    import app
+    base=tmp_path/'book'
+    write_json(base/'project.json',{'images':[]})
+    temporary=tmp_path/'temporary/regions.json';temporary.parent.mkdir()
+    temporary.write_text(json.dumps({'image':str(base/'input/page.png'),
+                                    'regions':[{'mask_ref':str(base/'work/masks/page_R1_mask.png')}]}))
+    destination=base/'work/json/page_regions.json'
+    app._copy_file(temporary,destination)
+    raw=json.loads(destination.read_text())
+    assert raw['image']=='input/page.png'
+    assert raw['regions'][0]['mask_ref']=='work/masks/page_R1_mask.png'
+    assert load_json(destination)['image']==str(base/'input/page.png')
+
+
+def test_relative_input_link_through_directory_alias(tmp_path):
+    import app
+    real=tmp_path/'real';real.mkdir()
+    cache=real/'cache/page.png';cache.parent.mkdir();cache.write_bytes(b'pixels')
+    alias=tmp_path/'alias';alias.symlink_to(real,target_is_directory=True)
+    dest=alias/'projects/book/input/page.png'
+    app._link_or_copy_file(cache,dest)
+    assert not dest.readlink().is_absolute()
+    assert dest.read_bytes()==b'pixels'

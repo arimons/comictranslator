@@ -22,6 +22,6 @@ async(page)=>{
    const pixel=await p.locator('#stageHost canvas').last().evaluate((canvas,target)=>{const b=canvas.getBoundingClientRect();return Array.from(canvas.getContext('2d').getImageData((target.x-b.x)*canvas.width/b.width,(target.y-b.y)*canvas.height/b.height,1,1).data);},target);
    if(pixel[3]<25||pixel[3]>80||pixel.slice(0,3).some((v,j)=>Math.abs(v-cases[i].rgb[j])>24))throw Error(cases[i].label+' tint '+pixel);
   }
-  await p.screenshot({path:'proof/misc/region-color-palette.png',scale:'css'});if(errors.length)throw Error(errors.join());return {ok:true,checks:['Bubble 파랑','Edge 초록','Unboxed 노랑','투명 채움/선택 정보'],errors};
+  await p.screenshot({path:(process.env.COMIC_TRANSLATOR_HOME||process.env.HOME+'/ComicTranslator')+'/legacy/proof_outputs/misc/region-color-palette.png',scale:'css'});if(errors.length)throw Error(errors.join());return {ok:true,checks:['Bubble 파랑','Edge 초록','Unboxed 노랑','투명 채움/선택 정보'],errors};
  }finally{await p.close();}
 }

@@ -66,7 +66,7 @@ def plan(repo, home):
         data = read(metadata)
         images = data.get("images", [])
         hashes = tuple(p.get("image_sha256") for p in images)
-        has_work = any((directory / "output/final").glob("*_final.*")) or any((directory / "work/json").glob("*_manual_guidance.json"))
+        has_work = any((directory / "output/final").glob("*_final.*"))
         duplicate_candidate = not data.get("project_name") and len(images) == 171 and all(hashes) and not has_work
         if duplicate_candidate:
             groups[hashes].append(directory)
@@ -175,6 +175,10 @@ def apply(repo, home, moves):
             mapped=new/f.relative_to(old) if f != old else new
             if f.is_symlink():
                 target=Path(os.path.abspath(f.parent/os.readlink(f)))
+                renamed = {repo/'ui_v2':repo/'web', repo/'main_v2.py':repo/'app.py'}
+                for name in ['run_editor_mcp.py','configure_editor_mcp.py','run_debug_pipeline.py','visualize_debug.py']:
+                    renamed[repo/name] = repo/'scripts'/name
+                target = renamed.get(target,target)
                 links.append((mapped,relocate(target,moves)))
             elif f.suffix=='.json': json_files.append((f,mapped))
     manifest['status']='moving';write(journal,manifest)
@@ -215,6 +219,16 @@ def rollback(journal):
         if target.exists() or target.is_symlink():
             dst=keep/str(index)/target.name;dst.parent.mkdir(parents=True,exist_ok=True);target.rename(dst)
     for source in map(Path,record['roots']):
+        if source.name == 'proof':
+            # 검증 소스는 코드이므로 데이터 rollback으로 되돌리지 않는다.
+            source.mkdir(parents=True,exist_ok=True)
+            for child in (backup/'proof').iterdir():
+                if child.name == 'src':continue
+                destination=source/child.name
+                if destination.exists() or destination.is_symlink():
+                    saved=keep/'original-location/proof'/child.name;saved.parent.mkdir(parents=True,exist_ok=True);destination.rename(saved)
+                clone(child,destination)
+            continue
         if source.exists():
             dst=keep/'original-location'/source.name;dst.parent.mkdir(parents=True,exist_ok=True);source.rename(dst)
         clone(backup/source.name,source)

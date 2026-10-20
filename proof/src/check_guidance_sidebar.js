@@ -22,7 +22,7 @@ async(page)=>{
   if(await p.locator('.workspace > .page-processing-bar,.workspace > .image-generation-bar').count())throw Error('캔버스 위 상태 행이 남음');
   if(await tools.locator('.image-generation-control').count())throw Error('일반 페이지에 생성 안내 노출');
   const bounds=await p.locator('#stageHost').boundingBox();if(bounds.height<800)throw Error('편집 높이 부족 '+bounds.height);
-  await p.screenshot({path:'proof/misc/guidance-sidebar-idle.png',scale:'css'});
+  await p.screenshot({path:(process.env.COMIC_TRANSLATOR_HOME||process.env.HOME+'/ComicTranslator')+'/legacy/proof_outputs/misc/guidance-sidebar-idle.png',scale:'css'});
   const target=await p.evaluate(async rect=>{
    const {image}=await fetch('/api/session/20261020_075649/page/00002').then(r=>r.json());
    const n=await new Promise(resolve=>{const i=new Image();i.onload=()=>resolve(i);i.src=image.input_url;});
@@ -36,7 +36,7 @@ async(page)=>{
   if(await cv.inputValue()!=='CV原文（認識誤りあり）'||!await cv.evaluate(n=>n.readOnly))throw Error('CV 읽기 전용 표시 실패 '+await cv.inputValue());
   const fillAlpha=await p.locator('#stageHost canvas').last().evaluate((c,target)=>{const b=c.getBoundingClientRect();return c.getContext('2d').getImageData((target.x-b.x)*c.width/b.width,(target.y-b.y)*c.height/b.height,1,1).data[3];},target);
   if(fillAlpha<20)throw Error('선택 R 색칠 없음 '+fillAlpha);
-  await p.screenshot({path:'proof/misc/guidance-sidebar-selected.png',scale:'css'});
+  await p.screenshot({path:(process.env.COMIC_TRANSLATOR_HOME||process.env.HOME+'/ComicTranslator')+'/legacy/proof_outputs/misc/guidance-sidebar-selected.png',scale:'css'});
   await tools.getByText('표시 설정',{exact:true}).click();
   const regions=tools.getByLabel('처리 영역 (R)',{exact:true});await regions.uncheck();await regions.check();
   await tools.getByText('표시 설정',{exact:true}).click();

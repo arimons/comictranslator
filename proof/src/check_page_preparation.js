@@ -14,11 +14,11 @@ async (page) => {
     await preview.getByText("원본 83장 → 정리 후 165장",{exact:true}).waitFor();
     await preview.waitForLoadState("networkidle");
     check(await preview.getByRole("img",{name:"001.jpeg 1번째 결과",exact:true}).count() === 1,"표지는 중앙 한 장");
-    await preview.screenshot({path:"proof/misc/ore3-cover-preview.png",scale:"css"});
+    await preview.screenshot({path:(process.env.COMIC_TRANSLATOR_HOME||process.env.HOME+'/ComicTranslator')+'/legacy/proof_outputs/misc/ore3-cover-preview.png',scale:"css"});
     await preview.getByRole("combobox",{name:"분할 미리보기 페이지"}).selectOption("1");
     await preview.waitForLoadState("networkidle");
     check(await preview.getByRole("img",{name:"002.jpeg 2번째 결과",exact:true}).count() === 1,"본문은 두 장");
-    await preview.screenshot({path:"proof/misc/ore3-spread-preview.png",scale:"css"});
+    await preview.screenshot({path:(process.env.COMIC_TRANSLATOR_HOME||process.env.HOME+'/ComicTranslator')+'/legacy/proof_outputs/misc/ore3-spread-preview.png',scale:"css"});
     await preview.setViewportSize({width:390,height:844});
     check(await preview.evaluate(()=>document.documentElement.scrollWidth <= innerWidth),"미리보기 모바일 가로 넘침");
     let mode = "ok";

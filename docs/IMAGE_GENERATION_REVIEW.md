@@ -87,3 +87,5 @@ UI 검증은 별도 headless Chromium에서 실행한다. `proof/src/run_headles
 저장 경로(2026-10-20): 기본 데이터 홈은 `~/ComicTranslator`입니다. 프로젝트 JSON은 상대 경로를 저장하고, 읽을 때 기존 절대 경로와 `session.json`도 지원합니다.
 
 저장 구조·이전·맥 미니 실행은 [저장 위치 안내](STORAGE_LAYOUT.md)를 참고합니다. 내보낸 zip 기본 위치는 데이터 홈의 exports입니다.
+
+이전 후 검증(2026-10-21): 원본·등록 후보·편집 값은 보존되며 임시 분석 복사본도 프로젝트 상대 경로로 저장합니다. 검증 스크립트의 출력은 데이터 홈 legacy/proof_outputs에 둡니다.

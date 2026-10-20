@@ -54,7 +54,7 @@ async (page) => {
     await testPage.getByRole("button",{name:"폴더 선택",exact:true}).click();
     check((await folderEvent).isMultiple(), "폴더 선택은 여러 파일을 받을 수 있어야 한다");
     await upload();
-    await testPage.screenshot({path:"proof/misc/home-name-focus.png",scale:"css"});
+    await testPage.screenshot({path:(process.env.COMIC_TRANSLATOR_HOME||process.env.HOME+'/ComicTranslator')+'/legacy/proof_outputs/misc/home-name-focus.png',scale:"css"});
     await testPage.getByText("선택한 이미지 확인·제외",{exact:true}).click();
     await testPage.getByRole("button",{name:"page1.jpg 목록에서 제외"}).waitFor();
     await testPage.getByRole("button",{name:"분석하고 작업 시작"}).click();

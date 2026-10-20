@@ -59,7 +59,7 @@ async(page)=>{
   await preview.mouse.click(target.x,target.y,{button:'right'});
   await preview.getByRole('menu',{name:'영역 편집 메뉴'}).waitFor();
   if((await read()).suppressed_regions.length)throw new Error('우클릭만으로 삭제됨');
-  await preview.screenshot({path:'proof/misc/toolbar-contextmenu.png',scale:'css'});
+  await preview.screenshot({path:(process.env.COMIC_TRANSLATOR_HOME||process.env.HOME+'/ComicTranslator')+'/legacy/proof_outputs/misc/toolbar-contextmenu.png',scale:'css'});
   await preview.getByRole('menuitem',{name:'이 처리 영역 제외',exact:true}).click();
   if((await read()).suppressed_regions.length!==1)throw new Error('R 제외 미반영');
   if((await pixels())===deleted)throw new Error('R만 제외했는데 독립 TG까지 숨김');

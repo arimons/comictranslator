@@ -14,7 +14,7 @@ async(page)=>{
    return {regions:data.image.regions.regions.length,ocr_count:data.image.ocr_region_count,disabled:data.image.guidance.disabled_tg_ids,suppressed:data.image.guidance.suppressed_regions.length};
   });
   if(payload.regions!==0||payload.ocr_count!==0)throw new Error(JSON.stringify(payload));
-  await preview.locator('.guidance-editor-card').screenshot({path:'proof/misc/volume7-page2-no-regions.png'});
+  await preview.locator('.guidance-editor-card').screenshot({path:(process.env.COMIC_TRANSLATOR_HOME||process.env.HOME+'/ComicTranslator')+'/legacy/proof_outputs/misc/volume7-page2-no-regions.png'});
   if(errors.length||writes.length)throw new Error(JSON.stringify({errors,writes}));
   return {ok:true,...payload,errors,writes};
  }finally{

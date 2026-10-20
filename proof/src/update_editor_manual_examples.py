@@ -1,3 +1,8 @@
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+from pipeline.paths import DATA_HOME, PROJECTS_DIR, PROOF_DIR
+from pipeline.project_paths import manifest_path
 """실제 앱 캡처를 매뉴얼에 내장한다. 기존 디자인과 본문은 유지한다."""
 from pathlib import Path
 import base64
@@ -8,7 +13,7 @@ import re
 from PIL import Image
 
 ROOT = Path(__file__).resolve().parents[2]
-CAPTURES = ROOT / "proof/misc/editor_manual"
+CAPTURES = PROOF_DIR / 'misc/editor_manual'
 MANUAL = ROOT / "docs/editor_manual.html"
 
 
@@ -151,7 +156,7 @@ def main():
     restore += figure('14_restore_context.png', '실제 실행 전: U4에서 만든 제거 마스크와 C로 지정한 문맥. 선택 범위의 적절성은 별도 검토 대상입니다.')
     restore += '''<p>실행 기록은 마스크 <strong>4,959px</strong>, 문맥 밖 제외 마스크 <strong>0px</strong>, 마스크 밖 변경 픽셀 <strong>0px</strong>입니다.
       이 값은 픽셀 보존 검사이며 복원 품질의 합격 판정은 아닙니다. 아래는 앱이 저장한 실제 산출물입니다. <strong>이 결과 확정</strong>은 누르지 않았습니다.</p>'''
-    job = next((ROOT/'temp_output/v2_sessions/20261019_222000_manual/work/restore/00008/jobs').glob('*/meta.json')).parent
+    job = next((PROJECTS_DIR / '20261019_222000_manual/work/restore/00008/jobs').glob('*/meta.json')).parent
     for file, label in [('crop_before.png','복원 전 원본 문맥'),('crop_mask.png','제거 마스크 · 흰 픽셀만 제거 대상'),('crop_after.png','LaMa 실행 결과 · 품질 확인 전, 미확정')]:
         # 캡처 파일과 동일하게 실제 산출물 자체를 문서에 내장한다.
         with Image.open(job/file) as image:

@@ -1,3 +1,8 @@
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+from pipeline.paths import DATA_HOME, PROJECTS_DIR, PROOF_DIR
+from pipeline.project_paths import manifest_path
 """Ore_3 커버의 MCP 준비/등록 왕복. 생성 호출은 대화의 내장 도구에서 별도로 수행한다."""
 import argparse
 import asyncio
@@ -13,13 +18,13 @@ from mcp.client.stdio import stdio_client
 
 SESSION = "20261020_083312_pages_13ba97f6"
 PAGE = "00001_001_p01_C"
-REPORT = ROOT / "proof/misc/ore3-cover-generation"
+REPORT = PROOF_DIR / 'misc/ore3-cover-generation'
 
 
 def hashes(session):
-    base = ROOT / "temp_output/v2_sessions" / session
+    base = PROJECTS_DIR / session
     # 생성 요청/후보를 제외한 원본 프로젝트와 입력·기존 최종 출력의 내용 보존 검사.
-    return {str(p.relative_to(ROOT)): hashlib.sha256(p.read_bytes()).hexdigest()
+    return {str(p.relative_to(DATA_HOME)): hashlib.sha256(p.read_bytes()).hexdigest()
             for p in base.rglob("*") if p.is_file() and "image_generation" not in p.parts}
 
 

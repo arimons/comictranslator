@@ -24,7 +24,7 @@ async(page)=>{
    if(!state.excluded||!state.originalOutput)throw new Error(JSON.stringify(state));
    const box=await preview.locator('.guidance-editor-card').boundingBox();
    if(box.height<200)throw new Error('편집기 높이 부족');
-   await preview.screenshot({path:'proof/misc/page-processing-excluded.png',scale:'css'});
+   await preview.screenshot({path:(process.env.COMIC_TRANSLATOR_HOME||process.env.HOME+'/ComicTranslator')+'/legacy/proof_outputs/misc/page-processing-excluded.png',scale:'css'});
   }
   await preview.getByRole('button',{name:original?'페이지 처리 제외':'처리 대상으로 복원',exact:true}).click();
   await preview.getByRole('button',{name:original?'처리 대상으로 복원':'페이지 처리 제외',exact:true}).waitFor();

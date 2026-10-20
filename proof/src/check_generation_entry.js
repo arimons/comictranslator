@@ -34,7 +34,7 @@ async(page)=>{
   await candidate.waitFor();await p.waitForFunction(()=>Array.from(document.querySelectorAll('.guidance-preview-card img')).some(i=>i.complete&&i.naturalWidth&&i.src.includes('result-')));
   await card.locator('.generation-result-strip').waitFor();
   if(await card.locator('.generation-preview-notice').count())throw Error('결과가 있는데 큰 안내가 남음');
-  await p.screenshot({path:'proof/misc/generation-entry-preview.png',scale:'css'});
+  await p.screenshot({path:(process.env.COMIC_TRANSLATOR_HOME||process.env.HOME+'/ComicTranslator')+'/legacy/proof_outputs/misc/generation-entry-preview.png',scale:'css'});
   // 캐시된 원본/후보를 여러 번 바꿔도 영구 로딩 상태가 남지 않는다.
   for(let i=0;i<4;i++){
    await card.getByRole('button',{name:'원본',exact:true}).click();

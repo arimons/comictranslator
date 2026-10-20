@@ -1,3 +1,8 @@
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+from pipeline.paths import DATA_HOME, PROJECTS_DIR, PROOF_DIR
+from pipeline.project_paths import manifest_path
 """매뉴얼용 독립 프로젝트 준비/로컬 Step 3 실행. 유료 분석·공유 캐시 쓰기 없음."""
 import json
 import shutil
@@ -6,16 +11,16 @@ from pathlib import Path
 ROOT=Path(__file__).resolve().parents[2]
 sys.path.insert(0,str(ROOT))
 SID='20261020_manual_tools'
-BASE=ROOT/'temp_output/v2_sessions'/SID
-SOURCE=ROOT/'temp_output/v2_sessions/20261019_222000_manual'
-CAP=ROOT/'proof/misc/tool_examples'
+BASE=PROJECTS_DIR/SID
+SOURCE=PROJECTS_DIR / '20261019_222000_manual'
+CAP=PROOF_DIR / 'misc/tool_examples'
 
 def dump(path,data):
  path.parent.mkdir(parents=True,exist_ok=True);path.write_text(json.dumps(data,ensure_ascii=False,indent=2))
 
 def prepare():
  from app import ensure_session,save_session
- if (BASE/'session.json').exists():
+ if (manifest_path(BASE)).exists():
   raise SystemExit('이미 있는 검증 프로젝트는 덮어쓰지 않습니다. 새 촬영 시 SID를 새 값으로 지정하세요.')
  data=ensure_session(SID);data.update(project_name='매뉴얼 도구 전후 · 검증 복사본',images=[])
  for key,source in [('d','00006'),('t','00006'),('e','00006'),('b','00006'),('s','00008'),('u','00006')]:
