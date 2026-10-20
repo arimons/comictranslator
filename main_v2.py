@@ -14,6 +14,7 @@ import datetime as dt
 import filecmp
 import hashlib
 import json
+import os
 import queue
 import re
 import shutil
@@ -2653,17 +2654,30 @@ class RevalidatingStaticFiles(StaticFiles):
 _CODE_MTIMES: dict[str, int] = {}
 
 
+_PROJECT_MODULES: dict[str, Any] = {"count": -1, "root": None, "files": []}
+
+
+def project_module_files() -> list[tuple[str, Path]]:
+    # 모듈 수가 바뀔 때만 다시 훑는다. 상태등이 5초마다 부르므로 매번 수천 개 경로를 풀지 않는다.
+    if _PROJECT_MODULES["count"] != len(sys.modules) or _PROJECT_MODULES["root"] != ROOT:
+        files = []
+        for module in list(sys.modules.values()):
+            path = getattr(module, "__file__", None)
+            if not path or not path.endswith(".py"):
+                continue
+            file = Path(path).resolve()
+            if not file.is_relative_to(ROOT) or any(part.startswith(".venv") for part in file.relative_to(ROOT).parts):
+                continue
+            files.append((str(file.relative_to(ROOT)), file))
+        _PROJECT_MODULES.update(count=len(sys.modules), root=ROOT, files=files)
+    return _PROJECT_MODULES["files"]
+
+
 def loaded_code_mtimes() -> dict[str, int]:
     result = {}
-    for module in list(sys.modules.values()):
-        path = getattr(module, "__file__", None)
-        if not path or not path.endswith(".py"):
-            continue
-        file = Path(path).resolve()
-        if not file.is_relative_to(ROOT) or any(part.startswith(".venv") for part in file.relative_to(ROOT).parts):
-            continue
+    for name, file in project_module_files():
         try:
-            result[str(file.relative_to(ROOT))] = file.stat().st_mtime_ns
+            result[name] = file.stat().st_mtime_ns
         except OSError:
             continue
     return result
@@ -2678,15 +2692,67 @@ def stale_code_files() -> list[str]:
     return sorted(changed)
 
 
-def bundle_version() -> int:
+def bundle_version() -> str:
+    # 문자열로 보낸다. 나노초 정수는 JS 숫자 정밀도를 넘는다.
     try:
-        return (ROOT / "ui_v2" / "app.bundle.js").stat().st_mtime_ns
+        return str((ROOT / "ui_v2" / "app.bundle.js").stat().st_mtime_ns)
     except OSError:
-        return 0
+        return ""
+
+
+# 처리 중인 /api 요청 수. 스트리밍 응답은 마지막 body를 보낼 때까지 센다. 서버 재시작 전 확인용.
+_INFLIGHT = {"count": 0}
+_INFLIGHT_LOCK = threading.Lock()
+_UNCOUNTED_PATHS = {"/api/health", "/api/server/restart"}
+
+
+class InflightCounter:
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        path = scope.get("path", "")
+        if scope["type"] != "http" or not path.startswith("/api/") or path in _UNCOUNTED_PATHS:
+            await self.app(scope, receive, send)
+            return
+        with _INFLIGHT_LOCK:
+            _INFLIGHT["count"] += 1
+        finished = False
+
+        def finish():
+            nonlocal finished
+            if not finished:
+                finished = True
+                with _INFLIGHT_LOCK:
+                    _INFLIGHT["count"] -= 1
+
+        async def counted_send(message):
+            if message["type"] == "http.response.body" and not message.get("more_body"):
+                finish()
+            await send(message)
+
+        try:
+            await self.app(scope, receive, counted_send)
+        finally:
+            finish()
+
+
+def busy_job_count() -> int:
+    with _INFLIGHT_LOCK:
+        requests = _INFLIGHT["count"]
+    return requests + len(_LOAD_HYDRATE_RUNNING)
+
+
+def restart_current_process(delay: float = 0.4) -> None:
+    """같은 명령으로 프로세스를 갈아 끼운다. PID·포트·작업 폴더는 유지된다."""
+    time.sleep(delay)  # 재시작 요청의 응답이 브라우저에 도착한 뒤 교체한다.
+    os.environ["COMIC_TRANSLATOR_RESTARTED"] = "1"
+    os.execv(sys.executable, [sys.executable, *sys.argv])
 
 
 def create_app() -> FastAPI:
     app = FastAPI(title="Comic Translator Review UI")
+    app.add_middleware(InflightCounter)
 
     @app.post("/api/page-processing")
     def set_page_processing(req: PageProcessingRequest) -> dict:
@@ -2801,6 +2867,14 @@ def create_app() -> FastAPI:
         return {"sessions": list_recent_sessions()}
 
     _CODE_MTIMES.update(loaded_code_mtimes())
+
+    @app.post("/api/server/restart")
+    def restart_server(force: bool = False) -> dict[str, Any]:
+        busy = busy_job_count()
+        if busy and not force:
+            raise HTTPException(status_code=409, detail=f"진행 중인 작업 {busy}개가 있습니다. 재시작하면 중단됩니다.")
+        threading.Thread(target=restart_current_process, daemon=True, name="server-restart").start()
+        return {"ok": True, "interrupted": busy}
 
     @app.get("/api/health")
     def server_health() -> dict[str, Any]:
@@ -3147,7 +3221,8 @@ def main() -> None:
     import uvicorn
 
     url = f"http://{args.host}:{args.port}"
-    if not args.no_browser:
+    # 앱 안에서 재시작한 경우에는 브라우저 탭을 새로 열지 않는다.
+    if not args.no_browser and not os.environ.get("COMIC_TRANSLATOR_RESTARTED"):
         webbrowser.open(url)
     uvicorn.run(app, host=args.host, port=args.port)
 

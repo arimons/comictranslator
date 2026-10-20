@@ -141,3 +141,43 @@ def test_health_reports_python_files_changed_after_start(tmp_path, monkeypatch):
     stat = module_file.stat()
     os.utime(module_file, ns=(stat.st_atime_ns, stat.st_mtime_ns + 1_000_000_000))
     assert client.get("/api/health").json()["stale_code"] == ["loaded_mod.py"]
+
+
+def test_restart_requires_confirmation_while_jobs_run(monkeypatch):
+    import main_v2
+    from fastapi.testclient import TestClient
+
+    calls = []
+    monkeypatch.setattr(main_v2, "restart_current_process", lambda *args, **kwargs: calls.append("restart"))
+    client = TestClient(main_v2.create_app())
+    monkeypatch.setattr(main_v2, "busy_job_count", lambda: 2)
+    response = client.post("/api/server/restart")
+    assert response.status_code == 409 and "2개" in response.json()["detail"]
+    assert client.post("/api/server/restart?force=true").json() == {"ok": True, "interrupted": 2}
+    monkeypatch.setattr(main_v2, "busy_job_count", lambda: 0)
+    assert client.post("/api/server/restart").json()["ok"] is True
+    import time
+    time.sleep(0.05)
+    assert calls == ["restart", "restart"]
+
+
+def test_inflight_counter_counts_streaming_until_last_chunk():
+    import asyncio
+
+    import main_v2
+
+    seen = []
+
+    async def app(scope, receive, send):
+        await send({"type": "http.response.start", "status": 200, "headers": []})
+        await send({"type": "http.response.body", "body": b"a", "more_body": True})
+        seen.append(main_v2._INFLIGHT["count"])
+        await send({"type": "http.response.body", "body": b"b"})
+        seen.append(main_v2._INFLIGHT["count"])
+
+    async def send(message):
+        pass
+
+    before = main_v2._INFLIGHT["count"]
+    asyncio.run(main_v2.InflightCounter(app)({"type": "http", "path": "/api/run-final-stream"}, None, send))
+    assert seen == [before + 1, before] and main_v2._INFLIGHT["count"] == before
