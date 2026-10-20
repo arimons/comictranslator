@@ -113,3 +113,17 @@ def test_cv_match_counts_memo_originals_and_auto_links_only_clear_winner(tmp_pat
     assert bound["binding"]["matched_by"] == "cv" and bound["match"]["candidates"]
     unbound = client.post("/api/glossary/unbind", json={"session_id": "vol"}).json()
     assert unbound["glossary"] is None and unbound["binding"]["matched_by"] == "none"
+
+
+def test_japanese_draft_merges_by_original_form_instead_of_duplicating():
+    from pipeline.work_glossary import merge_draft
+    memo = {"characters": [{"id": "c00000001", "name": "해롤드 스톡스", "original": "ハロルド・ストークス", "protagonist": True}],
+            "terms": [{"korean": "스톡스 가", "original": "ストークス家"}]}
+    draft = {"characters": [{"name": "해럴드 스토크스", "original": "ハロルド・ストークス, ハロルド", "personality": "주인공"},
+                            {"name": "리타", "original": "リタ"}],
+             "terms": [{"korean": "스토크스 가문", "original": "ストークス家"}]}
+    merged = merge_draft(memo, draft)
+    assert [row["name"] for row in merged["characters"]] == ["해롤드 스톡스", "리타"]
+    assert merged["characters"][0]["original"] == "ハロルド・ストークス, ハロルド"
+    assert merged["characters"][0]["personality"] == "주인공"
+    assert [row["korean"] for row in merged["terms"]] == ["스톡스 가"]
