@@ -1,0 +1,11 @@
+import assert from 'node:assert/strict';
+import {readFileSync} from 'node:fs';
+const {pendingRegionExclusions,regionIsExcluded} = await import(`data:text/javascript;base64,${readFileSync('frontend/src/regionExclusion.js').toString('base64')}`);
+const exclusion={id:'off1',rect:[10,10,50,50]};
+const guidance={suppressed_regions:[exclusion]};
+assert.equal(pendingRegionExclusions({},guidance).length,1);
+assert.equal(pendingRegionExclusions({guidance},guidance).length,0);
+assert.equal(regionIsExcluded({unboxed_rect:[20,20,20,20]},guidance),true);
+assert.equal(regionIsExcluded({bubble_rect:[120,120,20,20]},guidance),false);
+assert.equal(pendingRegionExclusions({guidance},{suppressed_regions:[]}).length,0);
+console.log('Region 제외: 미적용 표시·적용 후 숨김·삭제 영역 즉시 숨김·다른 영역 유지 통과');

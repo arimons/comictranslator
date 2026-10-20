@@ -1871,3 +1871,15 @@ def test_run_final_for_item_replace_drops_removed_overlay_keys(tmp_path, monkeyp
     guidance_path.write_text('{"regions": {"1": {"safe_text_rect": [1, 2, 30, 40]}}}', encoding="utf-8")
     main_v2.run_final_for_item(session_id, item, "", None, overlay_guidance={"regions": {"1": {}}})
     assert main_v2.load_json(guidance_path, default={})["regions"]["1"].get("safe_text_rect") == [1, 2, 30, 40]
+
+
+def test_old_region_suppression_cache_is_not_reused(tmp_path, monkeypatch):
+    monkeypatch.setattr(main_v2, "ANALYSIS_CACHE_DIR", tmp_path)
+    guidance = {"suppressed_regions": [{"anchor_ids": [3], "rect": [10, 10, 20, 30]}]}
+    cache = main_v2.guidance_output_cache_dir("imagehash", guidance)
+    cache.mkdir(parents=True)
+    main_v2.write_json(cache / "meta.json", {
+        "analysis_cache_version": main_v2.ANALYSIS_CACHE_VERSION,
+        "guidance_digest": main_v2.guidance_digest(guidance)})
+    # 옛 캐시는 같은 guidance라도 텍스트 기반 복구로 R이 되살아난 결과일 수 있다.
+    assert main_v2.hydrate_guidance_output_cache({}, "imagehash", guidance, lambda text: None) is False

@@ -923,6 +923,7 @@ def store_guidance_output_cache(record: dict[str, Any], image_hash: str, guidanc
         {
             "analysis_cache_version": ANALYSIS_CACHE_VERSION,
             "guidance_digest": guidance_digest(guidance),
+            "region_suppression_version": regions.get("region_suppression_version", 0) if isinstance(regions, dict) else 0,
         },
     )
     return changed
@@ -936,6 +937,8 @@ def hydrate_guidance_output_cache(record: dict[str, Any], image_hash: str, guida
     if meta.get("analysis_cache_version") not in ANALYSIS_CACHE_COMPATIBLE_VERSIONS:
         return False
     if meta.get("guidance_digest") != guidance_digest(guidance):
+        return False
+    if guidance.get("suppressed_regions") and meta.get("region_suppression_version") != 1:
         return False
     if not all((cache_dir / GUIDANCE_OUTPUT_ARTIFACTS[key]).exists() for key in GUIDANCE_OUTPUT_REQUIRED):
         return False

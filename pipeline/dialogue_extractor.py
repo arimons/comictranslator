@@ -1559,6 +1559,30 @@ def _invalidate_suppressed_regions(
                 break
 
 
+def _suppressed_text_group_ids(groups, regions, suppressed_regions) -> set[int]:
+    """수동 제외한 자동 Region의 TG가 텍스트 기반 fallback으로 되살아나지 않게 한다."""
+    excluded: set[int] = set()
+    for region in regions:
+        if "manual_region_suppressed" in region.get("quality_flags", []):
+            excluded.update(int(aid) for aid in region.get("anchor_ids", []))
+    # 최종 unboxed Region은 bubble 후보에 없을 수도 있어 저장된 anchor+좌표도 확인한다.
+    for item in suppressed_regions:
+        if not isinstance(item, dict):
+            continue
+        rect = _suppression_rect(item)
+        if rect is None:
+            continue
+        anchors = {str(aid) for aid in item.get("anchor_ids", [])}
+        for idx, group in enumerate(groups, start=1):
+            tid = _tg_id(group, idx)
+            if anchors and str(tid) not in anchors:
+                continue
+            group_rect = group.get("fallback_rect") or group.get("tight_rect") or group.get("bounding_rect")
+            if group_rect and _rect_replaces_region(rect, {"bubble_rect": group_rect}):
+                excluded.add(tid)
+    return excluded
+
+
 def _largest_rect_in_binary_mask(binary: np.ndarray) -> list[int] | None:
     """binary mask 내부의 최대 axis-aligned rect를 로컬 좌표로 찾는다."""
     if binary.size == 0:
@@ -1824,6 +1848,7 @@ def _write_cover_skip_outputs(
         "clusters": clusters_json,
         "page_type": "cover",
         "analysis_status": "complete",
+        "region_suppression_version": 1,
         "ocr_region_count": 0,
         "skip_reason": "cover_image_gen_redraw",
         "sheet_size": [1, 1],
@@ -2804,6 +2829,7 @@ def build_dialogue_sheet(
     _invalidate_regions_replaced_by_manual_edge(regions)
     _invalidate_regions_replaced_by_manual_overrides(regions, manual_regions or [], manual_virtual_walls or [])
     _invalidate_suppressed_regions(regions, suppressed_regions or [])
+    suppressed_tg_ids = _suppressed_text_group_ids(groups, regions, suppressed_regions or [])
     regions = _split_manual_seed_regions(regions, groups, manual_split_guides or [], image_shape=image.shape[:2])
     source_meta_by_anchor: Dict[int, Dict[str, Any]] = {}
     for source_region in sheet.get("regions", []):
@@ -2959,7 +2985,7 @@ def build_dialogue_sheet(
     eligible: List[Tuple[int, Dict]] = []
     for idx, group in enumerate(groups, start=1):
         tid = _tg_id(group, idx)
-        if tid in valid_bubble_tg_ids or tid in non_ocr_tg_ids or tid in manual_unboxed_tg_ids:
+        if tid in suppressed_tg_ids or tid in valid_bubble_tg_ids or tid in non_ocr_tg_ids or tid in manual_unboxed_tg_ids:
             continue
         if _is_noise(_tg_text(group)):
             continue
@@ -3241,6 +3267,7 @@ def build_dialogue_sheet(
         "image": image_path,
         "clusters": clusters_json,
         "analysis_status": "complete",
+        "region_suppression_version": 1,
         "ocr_region_count": len(output_regions),
         "sheet_size": [int(idx_total_w), int(idx_total_h)],
         "bubble_protect_pad": bubble_protect_pad,

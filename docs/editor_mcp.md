@@ -117,3 +117,5 @@ python proof/src/smoke_editor_mcp.py SESSION_ID IMAGE_ID --region REGION_ID
 완료 시점 검사: MCP 전용 15개 통과, 전체 pytest **440 passed, 13 subtests passed**. 프로젝트 설정에서도 Codex가 서버를 enabled로 읽는 것을 확인했다.
 
 후속 단계는 독립 work_dir의 preview와 사용자가 확인한 초안 적용이다. 이때도 UI 컴포넌트 대신 같은 ID·revision·원본 좌표 계약을 사용한다. 초기 검토 배경은 [MCP 연결 검토](editor_agent_bridge_review.md), 용어 계약은 [처리 기준 변경 기록](REGION_PROCESSING_BASIS_CHANGELOG.md)을 참고한다.
+
+자동 Region 제외 기록은 suppressed_regions에 남는다. 이는 실제 처리 대상이 남았다는 뜻이 아니다. 최신 Step 3은 해당 TG를 텍스트 기반 fallback에서도 제외하며, inspect_page의 regions·ocr_region_count와 기록을 구분해 읽는다.

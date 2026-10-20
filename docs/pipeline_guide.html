@@ -1330,6 +1330,7 @@ python3 run_pipeline.py \
     레거시 참고용으로 의도적으로 보존. 삭제 대상 아님.
   </div>
 
+<section id="manual-region-exclusion"><h2>수동 Region 제외와 fallback</h2><p>자동 Region의 suppressed_regions 기록은 경계 검출뿐 아니라 원본 anchor_ids와 좌표에 대응하는 텍스트 기반 fallback 후보도 제외합니다. 모든 TG가 제외되면 OCR Region 0개와 원본 마스킹 이미지를 저장합니다. 새 산출물과 guidance 결과 캐시의 region_suppression_version은 1이며, 제외 기록이 있는 옛 결과 캐시는 재사용하지 않습니다. 수동 가이드는 별도 삭제합니다.</p></section>
 </main>
 
 <script>

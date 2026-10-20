@@ -1917,7 +1917,7 @@ export default function App() {
       items.push({ key: `tg-off-${id}`, kind: "disabled_tg_ids", id, label: `TG${id} off`, detail: "" });
     });
     (guidance.suppressed_regions || []).forEach((item, index) => {
-      items.push({ key: `region-off-${index}`, kind: "suppressed_regions", index, label: `R${item.region_id || "?"} off`, detail: item.source || "" });
+      items.push({ key: `region-off-${index}`, kind: "suppressed_regions", index, label: `R${item.display_region_id || item.region_id || item.source_region_id || "?"} 제외 기록`, detail: "자동 처리 대상에서 제외" });
     });
     return items;
   }
@@ -2195,8 +2195,8 @@ export default function App() {
                   <strong>{selectedTg ? `TG${selectedTg}` : selectedToolLabel}</strong>
                 </div>
                 <div className="editor-meta">
-                  <span>Original + live analysis overlay</span>
-                  <span>{guidanceHistory.length} guides</span>
+                  <span>{selected?.has_analysis && selected?.ocr_region_count === 0 ? "처리 대상 없음 · 원본 유지" : "Original + live analysis overlay"}</span>
+                  <span>편집 기록 {guidanceHistory.length}개</span>
                 </div>
               </div>
                 <EditorCanvas

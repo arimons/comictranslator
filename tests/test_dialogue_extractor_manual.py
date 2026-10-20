@@ -1209,3 +1209,41 @@ def test_lama_process_slot_holds_exclusive_lock(tmp_path, monkeypatch):
                 fcntl.flock(other.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
     finally:
         de._lama_slot_handle.close()
+
+
+@pytest.mark.parametrize("valid", [True, False])
+def test_region_exclusion_never_resurrects_as_unboxed(tmp_path, monkeypatch, valid):
+    """Region Off는 경계 검출과 텍스트 기반 fallback 모두에서 제외한다."""
+    import json
+    import pipeline.dialogue_extractor as de
+    image = np.full((180, 180, 3), 255, dtype=np.uint8)
+    image_path = tmp_path / "page.png"
+    cv2.imwrite(str(image_path), image)
+    groups = [{"text_group_id": 3, "fallback_rect": [40, 40, 30, 60], "text": "こんにちは"}]
+    groups_path = tmp_path / "groups.json"
+    (tmp_path / "json").mkdir()
+    groups_path.write_text(json.dumps(groups))
+    region = {"region_id": 8, "anchor_ids": [3], "is_valid": valid,
+              "method": "bbox_fallback", "bubble_rect": [35, 35, 40, 70]}
+    monkeypatch.setattr(de, "build_ocr_region_sheet", lambda **kwargs: {"regions": [region]})
+    monkeypatch.setattr(de, "_classify_text_group_style", lambda *args: {"include_policy": "include"})
+    captured = []
+    def cluster(items, **kwargs):
+        captured.extend(items)
+        return []
+    monkeypatch.setattr(de, "_cluster_adjacent_tgs", cluster)
+    monkeypatch.setattr(de, "_get_lama", lambda: pytest.fail("삭제한 영역에 LaMa를 호출하면 안 됩니다"))
+    result = de.build_dialogue_sheet(str(image_path), str(groups_path), str(tmp_path / "masked.png"),
+        str(tmp_path / "json/regions.json"), str(tmp_path / "sheet.png"), str(tmp_path / "vis.png"),
+        suppressed_regions=[{"source_region_id": 8, "anchor_ids": [3], "rect": [35, 35, 40, 70]}])
+    assert captured == []
+    assert result["regions"] == [] and result["ocr_region_count"] == 0
+    assert np.array_equal(cv2.imread(str(tmp_path / "masked.png")), image)
+
+
+def test_unboxed_exclusion_uses_saved_anchors_and_geometry():
+    from pipeline.dialogue_extractor import _suppressed_text_group_ids
+    groups = [{"text_group_id": 3, "fallback_rect": [20, 20, 30, 40]},
+              {"text_group_id": 4, "fallback_rect": [20, 20, 30, 40]},
+              {"text_group_id": 5, "fallback_rect": [130, 20, 30, 40]}]
+    assert _suppressed_text_group_ids(groups, [], [{"anchor_ids": [3, 5], "rect": [10, 10, 60, 60]}]) == {3}

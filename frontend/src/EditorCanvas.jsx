@@ -3,6 +3,7 @@ import Konva from "konva";
 import { rectOf, tgId, imageGroups, defaultGuidance, regionId, imageRegions, regionDisplayRect } from "./lib.js";
 import { createViewport } from "./viewportControls.js";
 import { placeCanvasLabels, promotedTgIds } from "./canvasLabels.js";
+import { pendingRegionExclusions, regionIsExcluded } from "./regionExclusion.js";
 import { TEXT_BASED, regionProcessingBasis, regionTypeLabel } from "./regionTypes.js";
 
 const EditorCanvas = forwardRef(function EditorCanvas({ image, baseUrl, guidance, setGuidance, tool, layers, selectedTg, setSelectedTg, setStatus }, ref) {
@@ -146,7 +147,7 @@ const EditorCanvas = forwardRef(function EditorCanvas({ image, baseUrl, guidance
       if (rectContains(rect, point)) return { kind: "manual_regions", item };
     }
 
-    const suppressed = [...(current.suppressed_regions || [])].reverse();
+    const suppressed = [...pendingRegionExclusions(imageRef.current, current)].reverse();
     for (const item of suppressed) {
       const rect = item.rect || item.bubble_rect || item.unboxed_rect || item.source_rect;
       if (rectContains(rect, point)) return { kind: "suppressed_regions", item };
@@ -170,6 +171,7 @@ const EditorCanvas = forwardRef(function EditorCanvas({ image, baseUrl, guidance
   function findRegionAt(point) {
     if (layersRef.current?.regions === false) return null;
     return [...imageRegions(imageRef.current)].reverse().find((region) => {
+      if (regionIsExcluded(region, guidanceRef.current)) return false;
       const rect = regionDisplayRect(region);
       return rectContains(rect, point);
     });
@@ -496,7 +498,7 @@ const EditorCanvas = forwardRef(function EditorCanvas({ image, baseUrl, guidance
     base.add(new Konva.Image({ image: img, x: view.x, y: view.y, width: img.width * view.scale, height: img.height * view.scale }));
 
     const disabled = new Set(currentGuidance.disabled_tg_ids || []);
-    const visibleRegions = currentLayers.regions ? (currentImage?.regions?.regions || []) : [];
+    const visibleRegions = currentLayers.regions ? (currentImage?.regions?.regions || []).filter(region => !regionIsExcluded(region, currentGuidance)) : [];
     const promoted = promotedTgIds(visibleRegions);
     const labels = [];
     const labelWidth = (text, bold = false) => Math.ceil(new Konva.Text({text, fontSize:11, fontStyle:bold ? "bold" : "normal"}).getTextWidth()) + 10;
@@ -517,6 +519,7 @@ const EditorCanvas = forwardRef(function EditorCanvas({ image, baseUrl, guidance
           listening: true,
         });
         rect.on("click tap", (evt) => {
+          if (toolRef.current === "region-off") return;
           evt.cancelBubble = true;
           setSelectedTg(id);
           selectedTgRef.current = id;
@@ -587,7 +590,7 @@ const EditorCanvas = forwardRef(function EditorCanvas({ image, baseUrl, guidance
           fill: isTextBased ? "rgba(180,83,9,0.08)" : "rgba(17,24,39,0.06)",
         }));
       });
-      (currentGuidance.suppressed_regions || []).forEach((item) => {
+      pendingRegionExclusions(currentImage, currentGuidance).forEach((item) => {
         const rect = item.rect || item.bubble_rect || item.unboxed_rect || item.source_rect;
         if (!rect) return;
         const stageRect = toStageRect(rect);

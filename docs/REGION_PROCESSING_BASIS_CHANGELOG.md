@@ -83,3 +83,7 @@ Claude와 다른 에이전트는 `AGENTS.md`, `CLAUDE.md`의 링크를 통해 �
 캔버스의 R 번호 옆 타입 이름 배지를 없애고 청록(경계 기반)·주황(텍스트 기반)으로 구분한다. Region의 anchor_ids에 연결된 TG 번호는 기본 중복 표시하지 않고 선택할 때만 나타낸다. 오른쪽 실제 빈 여백이 있으면 R↔TG 연결 번호를 모으고 이미지 안 번호는 연하게 남긴다. 여백이 없으면 화면 좌표 기준으로 영역 상자와 라벨 충돌을 줄여 배치한다. 기존 JSON·캐시·TG/Region ID 및 선택·삭제 동작은 변경하지 않는다.
 
 구현: `frontend/src/EditorCanvas.jsx`, `frontend/src/canvasLabels.js`. 배치 검증: `proof/src/test_canvas_labels.mjs`, 실제 Ore_3 페이지 읽기 전용 점검: `proof/src/check_canvas_labels.js`. 폭 1600/3000의 캔버스에서 확인했으며 분석·번역 요청과 파일 수정 없이 화면만 점검했다.
+
+2026-10-20 삭제 수정: Region Off는 경계/텍스트 기반 모두 처리 대상에서 제외한다. 자동 Region 무효화 후 TG가 unboxed fallback으로 재생성되던 경로를 막았다. 적용한 제외 기록은 유지하되 캔버스 삭제 상자는 숨기고 Region 0개를 명시한다. 검증은 `tests/test_dialogue_extractor_manual.py`, `tests/test_main_v2.py`, `proof/src/test_region_exclusion.mjs`에 남긴다.
+
+삭제 회귀 확인: 전체 pytest 511개·하위 검사 13개 통과. `proof/src/check_region_off_click.js`는 같은 위치의 TG가 Region Off 클릭을 가로채지 않는지 응답 fixture로 검사했고, `proof/src/check_empty_region_page.js`는 실제 사망플래그 7권 2페이지의 Region/OCR 0개와 처리 대상 없음 표시를 읽기 전용으로 확인했다. 두 브라우저 검사 모두 분석·번역·저장 POST 0건이다.
