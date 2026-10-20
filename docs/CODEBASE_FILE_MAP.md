@@ -301,6 +301,7 @@ Step 3 진입점이다. `pipeline_runner`가 `python -m pipeline.dialogue_extrac
 - region별 `safe_text_rect`(`_compute_safe_text_rect`)와 `mask_centroid`(`_compute_mask_centroid`)를 계산해 `regions.json`에 기록한다. Step 5 배치의 기준값이다.
 - LaMa 실행 장치(`_lama_device`): `LAMA_DEVICE`(cpu|mps|cuda)가 없으면 cuda → mps → cpu 순으로 고른다. M3 Pro에서 MPS는 첫 호출(GPU 준비)이 CPU보다 조금 느리고 이후 호출은 약 3배 빠르며, 결과 차이는 최대 수 단계(0〜255)다. MPS 초기화가 실패하면 CPU로 돈다. 상주 서버에서는 `background_restore`도 이 모델 하나를 같이 쓴다.
 - LaMa 동시 실행 제한(`_acquire_lama_process_slot`): 분석은 페이지마다 Step 3 프로세스를 따로 띄우고, LaMa를 올린 프로세스는 2〜3.7GB를 쓴다. 그래서 LaMa를 올리기 전에 임시 폴더의 슬롯 파일(`comic_translator_lama_slots/slotN.lock`)에 배타 잠금을 걸어, LaMa를 쓰는 프로세스를 머신 전체에서 `LAMA_MAX_PROCESSES`개(기본 2)로 묶는다. 자리가 없으면 기다리고, 슬롯은 프로세스가 끝날 때 풀린다. 상주 서버가 모델을 올리면 슬롯 하나를 계속 쓰므로 1로 줄이지 않는다. fcntl이 없는 Windows에서는 제한하지 않는다.
+- 컬러 영역의 엔진(`_engine_for_color`): 배경 분류가 Telea를 골라도, 지울 영역이 컬러이고 완전히 흰 평면(`white_flat`)이 아니면 LaMa로 지운다. Telea는 흑백 원고의 흰 바탕 나레이션용이고, 컬러 무늬·반투명 말풍선에서는 색 덩어리 모자이크가 된다. 사용자가 엔진을 지정한 영역은 그대로 둔다.
 - 자동 텍스트 기반 영역(`_select_unboxed_inpaint_mask`): 배경이 선화 섞임·어두움이면 TG 사각형(+8px)을 박스로 보고 수동 텍스트 기반 영역과 같은 글자 마스크로 지운다(`_ubox_style_mask_in_roi`). 글자가 안 잡힐 때만 사각형 전체로 지운다. 사각형 전체를 지우면 머리카락 같은 그림을 LaMa가 통째로 다시 그려 뭉개졌다. 위치마다 글자 색을 따로 정하는 마스크는 흰 글자+검은 외곽선에서 외곽선이 남아 흰 얼룩이 생겨 쓰지 않는다.
 - 수동 텍스트 기반 영역(`_apply_manual_ubox_lama`): 박스 안에서 글자 색 픽셀만 마스크로 잡고, 문맥은 박스 바깥 24px까지 본다. 박스가 어두우면 밝은 글자로 보고 마스크를 6px 넓힌다(흰 테두리가 남으면 LaMa가 글자 모양 얼룩을 되살린다). 엔진은 `_classify_inpaint_background` 배경 분류로 Telea/LaMa를 고르고, guidance의 `inpaint_engine: "lama"`가 있으면 그 값이 우선한다.
 

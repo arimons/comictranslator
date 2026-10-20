@@ -346,6 +346,26 @@ def _padded_context_rect(base_rect: List[int], image_shape: Tuple[int, ...], pad
     return [x1, y1, x2 - x1, y2 - y1]
 
 
+def _is_color_roi(roi: np.ndarray, spread: int = 20, ratio: float = 0.05) -> bool:
+    """채널 차이가 큰 픽셀이 일정 비율 이상이면 컬러 영역으로 본다."""
+    if roi.ndim != 3 or roi.size == 0:
+        return False
+    b, g, r = (roi[..., i].astype(np.int16) for i in range(3))
+    diff = np.maximum(np.maximum(np.abs(b - g), np.abs(g - r)), np.abs(b - r))
+    return float(np.count_nonzero(diff > spread)) / diff.size >= ratio
+
+
+def _engine_for_color(engine: str, roi: np.ndarray, background_class: str | None) -> str:
+    """컬러 영역은 완전히 흰 평면(white_flat)이 아니면 Telea 대신 LaMa로 지운다.
+
+    Telea는 주변 색을 안쪽으로 번지게 칠한다. 흑백 원고의 흰 바탕(나레이션·독백)에는 깔끔하지만,
+    컬러 무늬나 반투명 말풍선 위에서는 색 덩어리 모자이크가 된다(사망플래그 3권 2쪽 실측).
+    """
+    if engine == "telea" and background_class != "white_flat" and _is_color_roi(roi):
+        return "lama"
+    return engine
+
+
 def _apply_manual_ubox_lama(
     image: np.ndarray,
     masked_image: np.ndarray,
@@ -396,6 +416,8 @@ def _apply_manual_ubox_lama(
 
     roi = image[cy:cy + ch, cx:cx + cw].copy()
     engine = str(item.get("inpaint_engine_override") or background_meta.get("recommended_inpaint_engine") or "lama")
+    if not item.get("inpaint_engine_override"):
+        engine = _engine_for_color(engine, roi, background_meta.get("background_class"))
     if engine == "telea":
         inpaint_roi = cv2.inpaint(roi, context_mask, 5, cv2.INPAINT_TELEA)
     else:
@@ -3048,6 +3070,7 @@ def build_dialogue_sheet(
         safe_text_mask = np.where((text_mask > 0) & (roi_protected == 0), 255, 0).astype(np.uint8)
         if safe_text_mask.max() > 0 and not reused_unboxed_inpaint:
             engine = str(mask_strategy_meta.get("recommended_inpaint_engine_override") or cand.get("recommended_inpaint_engine") or "lama")
+            engine = _engine_for_color(engine, cand["roi"], cand.get("background_class"))
             if engine == "telea":
                 inpaint_roi = cv2.inpaint(
                     cand["roi"],

@@ -1247,3 +1247,16 @@ def test_unboxed_exclusion_uses_saved_anchors_and_geometry():
               {"text_group_id": 4, "fallback_rect": [20, 20, 30, 40]},
               {"text_group_id": 5, "fallback_rect": [130, 20, 30, 40]}]
     assert _suppressed_text_group_ids(groups, [], [{"anchor_ids": [3, 5], "rect": [10, 10, 60, 60]}]) == {3}
+
+
+def test_color_region_uses_lama_instead_of_telea_unless_white_flat():
+    from pipeline.dialogue_extractor import _engine_for_color
+
+    color = np.zeros((40, 40, 3), dtype=np.uint8)
+    color[..., 2] = 200  # 빨간 무늬
+    gray = np.full((40, 40, 3), 230, dtype=np.uint8)
+
+    assert _engine_for_color("telea", color, "fallback_lightish") == "lama"
+    assert _engine_for_color("telea", color, "white_flat") == "telea"
+    assert _engine_for_color("telea", gray, "fallback_lightish") == "telea"  # 흑백 원고는 그대로
+    assert _engine_for_color("lama", gray, "light_flat") == "lama"
