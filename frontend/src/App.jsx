@@ -95,6 +95,7 @@ export default function App() {
   const [analysisPolicy, setAnalysisPolicy] = useState("reuse");
   const [importNameFocusRequest, setImportNameFocusRequest] = useState(0);
   const [imageStatuses, setImageStatuses] = useState({});
+  const [clearOutputsConfirm, setClearOutputsConfirm] = useState(false);
   const [routeBusy, setRouteBusy] = useState(false);
   const [generationStatus, setGenerationStatus] = useState(null);
   const [guidanceCompareMode, setGuidanceCompareMode] = useState("auto");
@@ -185,7 +186,7 @@ export default function App() {
   const guidanceCompareTab = guidanceCompareTabs.find(([id, _label, url]) => id === preferredCompareMode && url) || guidanceCompareTabs.find(([_id, _label, url]) => url) || guidanceCompareTabs[0];
   const effectiveGuidanceCompareMode = guidanceCompareTab?.[0] || guidanceCompareMode;
   const guidanceCompareUrl = guidanceCompareTab?.[2] || selected?.masked_url || selected?.input_url || null;
-  useEffect(() => { setGuidanceCompareMode("auto"); }, [selectedKey]);
+  useEffect(() => { setGuidanceCompareMode("auto"); setClearOutputsConfirm(false); }, [selectedKey]);
   const selectedToolLabel = TOOL_LABELS.find(([id]) => id === tool)?.[1] || tool;
   const disabledCount = guidance.disabled_tg_ids?.length || 0;
   const splitCount = guidance.tg_splits?.length || 0;
@@ -2176,9 +2177,9 @@ export default function App() {
 
   function clearUnsavedGuidance() {
     if (!selected) return;
-    setGuidanceTracked(defaultGuidance({ ...selected, guidance: {} }), "Clear unsaved");
+    setGuidanceTracked(defaultGuidance({ ...selected, guidance: {} }), "가이드 전체 비우기");
     setSelectedTg(null);
-    setStatus("화면 guidance 초기화. 저장하려면 Apply Analysis 필요");
+    setStatus("화면의 가이드를 모두 비웠습니다. 저장 결과는 분석 적용 시 변경되며, 적용 전에는 실행 취소로 되돌릴 수 있습니다.");
   }
 
   const guidanceHistory = guidanceHistoryItems();
@@ -2684,7 +2685,7 @@ export default function App() {
 
       <aside className={`tools ${toolsOpen ? "open" : "collapsed"}`}>
         <div className="tools-head">
-          <h2>{toolsOpen ? "Workspace" : "Work"}</h2>
+          <h2>{activeTab === "guidance" ? "영역 편집" : "작업"}</h2>
           <button className="icon-button" onClick={() => setToolsOpen(!toolsOpen)} title={toolsOpen ? "패널 접기" : "패널 열기"}>
             {toolsOpen ? "›" : "‹"}
           </button>
@@ -2821,24 +2822,34 @@ export default function App() {
         {activeTab === "restore" ? (selected?.processing_excluded ? <p>페이지 처리 제외 중입니다. 복원 후 편집할 수 있습니다.</p> : <RestoreControls restore={restore} />) : null}
 
         {activeTab === "guidance" ? <>
-        <div className="section compact-section">
-          <h2>Actions</h2>
-          <div className="side-action-grid">
-            <button onClick={clearUnsavedGuidance} disabled={guidanceBusy || analyzeBusy || !selected}>Clear Unsaved</button>
-            <button className="danger" onClick={clearGuidanceOutputs} disabled={guidanceBusy || analyzeBusy || !selected}>Delete Outputs</button>
-            <button className="primary wide" onClick={applyGuidance} onKeyDown={preventPlainAnalysisEnter} disabled={guidanceBusy || analyzeBusy || !selected || selected.processing_excluded} title={`영역 분석 적용 (${shortcutById("guidance.apply")})`}>분석 적용 ({shortcutById("guidance.apply")})</button>
+        <div className="section compact-section guidance-primary-actions">
+          <button className="primary wide" onClick={applyGuidance} onKeyDown={preventPlainAnalysisEnter} disabled={anyBusy || !selected?.detail_loaded || selected.processing_excluded} title="현재 페이지의 가이드를 저장하고 마스크·OCR 영역을 다시 계산합니다. 번역은 실행하지 않습니다.">분석 적용 ({shortcutById("guidance.apply")})</button>
+          <div className="guidance-edit-status">
+            <span>{guidanceDirty ? "미적용 변경 있음" : "적용할 변경 없음"}</span>
+            <div>
+              <button className="icon-button" onClick={undoGuidance} disabled={anyBusy || (!guidanceUndoStack.length && !guidanceHistory.length)} aria-label="편집 실행 취소" title={`실행 취소 (${shortcutById("edit.undo")})`}>↶</button>
+              <button className="icon-button" onClick={redoGuidance} disabled={anyBusy || !guidanceRedoStack.length} aria-label="편집 다시 실행" title={`다시 실행 (${shortcutById("edit.redo")})`}>↷</button>
+            </div>
           </div>
         </div>
 
-        <div className="section">
-          <div className="history-head side-history-head">
-            <strong>Action History</strong>
-            <div>
-              <button className="icon-button" onClick={undoGuidance} disabled={!guidanceUndoStack.length && !guidanceHistory.length} title={`Undo (${shortcutById("edit.undo")})`}>↶</button>
-              <button className="icon-button" onClick={redoGuidance} disabled={!guidanceRedoStack.length} title={`Redo (${shortcutById("edit.redo")})`}>↷</button>
-              <button className="icon-button" onClick={clearUnsavedGuidance} title="화면 guidance 초기화">×</button>
-            </div>
-          </div>
+        <div className="section speaker-section">
+          <h2>화자 지정 {selectedGuidanceRegion ? <small>R{regionId(selectedGuidanceRegion)} · {speakerLabels[regionId(selectedGuidanceRegion)] || "미지정"}</small> : null}</h2>
+          {!selectedGuidanceRegion ? <p className="hint">화자를 지정할 영역을 선택하세요.</p> : speakerCharacters.length ? <div className="speaker-keys">
+            {speakerCharacters.map((row, index) => (
+              <button key={row.id} disabled={!selectedGuidanceRegion} onClick={() => assignSpeaker(index + 1)} title={row.speech || row.personality || ""}>
+                <kbd>{index + 1}</kbd>{row.name}{row.protagonist ? " ★" : ""}
+              </button>
+            ))}
+            {allSpeakerCharacters.length > 0 ? <button disabled={!selectedGuidanceRegion} onClick={() => assignSpeaker(9)}><kbd>9</kbd>기타{allSpeakerCharacters.length > 8 ? ` (${allSpeakerCharacters.length - 8})` : ""}…</button> : null}
+            <button disabled={!selectedGuidanceRegion} onClick={() => assignSpeaker("narration")}><kbd>N</kbd>내레이션</button>
+            <button disabled={!selectedGuidanceRegion} onClick={() => assignSpeaker(0)}><kbd>0</kbd>해제</button>
+          </div> : <p className="hint">상단 작품 메모에 인물을 추가하면 숫자키로 화자를 지정할 수 있습니다.</p>}
+          {selectedGuidanceRegion ? <p className="hint" title="화자를 지정하면 다음 경계 기반 영역으로 이동합니다. 텍스트 기반 영역의 미지정 화자는 주인공으로 처리합니다.">숫자키로 지정 · Tab으로 다음 영역</p> : null}
+        </div>
+
+        <details className="section guidance-disclosure">
+          <summary>편집 내역 <span>{guidanceHistory.length}개</span></summary>
           {guidanceHistory.length ? (
             <div className="history-list side-history-list">
               {guidanceHistory.slice().reverse().map((item) => (
@@ -2860,56 +2871,27 @@ export default function App() {
               ))}
             </div>
           ) : (
-            <div className="history-empty side-history-empty">No guidance yet</div>
+            <div className="history-empty side-history-empty">아직 추가한 가이드가 없습니다.</div>
           )}
-        </div>
+        </details>
 
-        <div className="section">
-          <h2>Layers</h2>
+        <details className="section guidance-disclosure">
+          <summary>표시 설정{Object.values(layers).some((visible) => !visible) ? <span>일부 숨김</span> : null}</summary>
+          <p className="hint">겹친 표시를 확인할 때만 끕니다. 분석·출력 결과는 바뀌지 않습니다.</p>
           <div className="toggles">
-            {Object.entries({ tg: "TG", regions: "Regions", guidance: "가이드" }).map(([key, label]) => (
+            {Object.entries({ tg: "텍스트 묶음 (TG)", regions: "처리 영역 (R)", guidance: "가이드" }).map(([key, label]) => (
               <label className="check" key={key}>
                 <input type="checkbox" checked={layers[key]} onChange={(e) => setLayers({ ...layers, [key]: e.target.checked })} />
                 {label}
               </label>
             ))}
           </div>
-        </div>
+        </details>
 
-        <div className="section">
-          <h2>Selection</h2>
-          <div className="metric">
-            <strong>{selectedTg ? `TG${selectedTg}` : "-"}</strong>
-            <span>selected TG</span>
-          </div>
-          <div className="row" style={{ marginTop: 8 }}>
-            <button onClick={() => selectedTg && setGuidanceTracked({ ...guidance, disabled_tg_ids: Array.from(new Set([...(guidance.disabled_tg_ids || []), selectedTg])).sort((a, b) => a - b) }, `TG${selectedTg} off`)}>
-              Off
-            </button>
-            <button onClick={() => selectedTg && setGuidanceTracked({ ...guidance, disabled_tg_ids: (guidance.disabled_tg_ids || []).filter((id) => id !== selectedTg) }, `TG${selectedTg} on`)}>
-              On
-            </button>
-          </div>
-        </div>
-
-        <div className="section speaker-section">
-          <h2>화자 {selectedGuidanceRegion ? <small>R{regionId(selectedGuidanceRegion)} · {speakerLabels[regionId(selectedGuidanceRegion)] || "미지정"}</small> : null}</h2>
-          {speakerCharacters.length ? <div className="speaker-keys">
-            {speakerCharacters.map((row, index) => (
-              <button key={row.id} disabled={!selectedGuidanceRegion} onClick={() => assignSpeaker(index + 1)} title={row.speech || row.personality || ""}>
-                <kbd>{index + 1}</kbd>{row.name}{row.protagonist ? " ★" : ""}
-              </button>
-            ))}
-            {allSpeakerCharacters.length > 0 ? <button disabled={!selectedGuidanceRegion} onClick={() => assignSpeaker(9)}><kbd>9</kbd>기타{allSpeakerCharacters.length > 8 ? ` (${allSpeakerCharacters.length - 8})` : ""}…</button> : null}
-            <button disabled={!selectedGuidanceRegion} onClick={() => assignSpeaker("narration")}><kbd>N</kbd>내레이션</button>
-            <button disabled={!selectedGuidanceRegion} onClick={() => assignSpeaker(0)}><kbd>0</kbd>해제</button>
-          </div> : <p className="hint">상단 작품 메모에 인물을 추가하면 숫자키로 화자를 지정할 수 있습니다.</p>}
-          <p className="hint">영역 선택 → 숫자키로 지정하면 다음 경계 기반 영역으로 넘어갑니다. Tab으로 건너뛰기. 텍스트 기반 영역은 지정이 없으면 (주인공)으로 보냅니다.</p>
-        </div>
-
-        <div className="section">
-          <h2>영역 분석 JSON</h2>
-          <textarea
+        <details className="section guidance-disclosure guidance-advanced">
+          <summary>고급 편집·초기화</summary>
+          <details className="guidance-json-editor"><summary>가이드 JSON 직접 편집</summary>
+          <textarea aria-label="영역 분석 JSON"
             value={JSON.stringify(guidance, null, 2)}
             onChange={(e) => {
               try {
@@ -2920,7 +2902,18 @@ export default function App() {
             }}
             style={{ minHeight: 280 }}
           />
-        </div>
+          </details>
+          <div className="guidance-reset-actions">
+            <p className="hint">저장된 가이드도 포함해 화면의 가이드를 모두 비웁니다. 분석 적용 전에는 저장 결과가 유지되고 실행 취소로 되돌릴 수 있습니다.</p>
+            <button onClick={clearUnsavedGuidance} disabled={anyBusy || !selected?.detail_loaded || selected.processing_excluded}>가이드 전체 비우기</button>
+            <p className="hint">이 페이지의 가이드·분석·번역·최종 이미지를 삭제합니다. 원본 이미지·CV·TG·등록된 생성 결과는 유지합니다.</p>
+            {!clearOutputsConfirm ? <button className="danger" onClick={() => setClearOutputsConfirm(true)} disabled={anyBusy || !selected?.detail_loaded || selected.processing_excluded}>이 페이지 작업 결과 삭제…</button> : <div className="guidance-delete-confirm" role="group" aria-label="작업 결과 삭제 확인">
+              <p>이 페이지의 저장된 작업 결과를 삭제할까요?</p>
+              <button className="danger" onClick={() => { setClearOutputsConfirm(false); clearGuidanceOutputs(); }} disabled={anyBusy}>작업 결과 삭제</button>
+              <button onClick={() => setClearOutputsConfirm(false)}>취소</button>
+            </div>}
+          </div>
+        </details>
         </> : null}
 
         {activeTab === "ocr" ? <>

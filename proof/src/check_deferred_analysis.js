@@ -50,7 +50,7 @@ async(page)=>{
   if((await read()).disabled_tg_ids.length)throw new Error('D가 포인터 아래 TG를 삭제함');
   if(await preview.getByRole('button',{name:'선택',exact:true}).getAttribute('aria-pressed')!=='true')throw new Error('D가 모드를 변경함');
   await preview.mouse.click(target.x,target.y);await preview.keyboard.press('d');
-  await preview.getByText(/미적용 변경/).waitFor();
+  await preview.locator('.editor-meta [role="status"]').filter({hasText:'미적용 변경'}).waitFor();
   if((await read()).disabled_tg_ids.join()!=='3')throw new Error('TG 삭제 미반영');
   const deleted=await pixels();if(initial===deleted)throw new Error('캔버스 삭제 미반영');
   await preview.keyboard.press('Meta+z');

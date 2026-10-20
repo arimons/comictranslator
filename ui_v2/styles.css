@@ -3417,3 +3417,19 @@ select.memo-key { width: 100%; padding: 2px; font-size: 12px; }
 .generation-result-strip summary {cursor:pointer;color:#0b57d0;}
 .generation-result-strip details[open] > div {position:absolute;right:0;top:22px;z-index:20;width:min(320px,65vw);padding:12px;border:1px solid var(--line);border-radius:8px;background:var(--panel);box-shadow:var(--shadow);color:var(--text);line-height:1.5;}
 .generation-result-strip p {margin:0 0 8px;}
+
+/* 영역 분석은 적용/실행 취소와 화자 지정만 기본 노출한다. */
+.guidance-primary-actions > .primary {width:100%;}
+.guidance-edit-status {display:flex;align-items:center;justify-content:space-between;gap:8px;margin-top:8px;font-size:11px;color:var(--muted);}
+.guidance-edit-status > div {display:flex;gap:4px;}
+.guidance-disclosure > summary {cursor:pointer;font-size:12px;font-weight:600;color:var(--muted);padding:2px 0;}
+.guidance-disclosure > summary span {font-size:11px;font-weight:400;margin-left:6px;}
+.guidance-disclosure[open] > summary {margin-bottom:12px;color:var(--text);}
+.guidance-json-editor > summary {cursor:pointer;font-size:12px;margin:8px 0;}
+.guidance-reset-actions {border-top:1px solid var(--line);margin-top:12px;padding-top:8px;}
+.guidance-reset-actions > button {width:100%;}
+.guidance-reset-actions .hint {margin:10px 0 6px;}
+.guidance-delete-confirm {padding:10px;border:1px solid #f0caca;border-radius:6px;background:#fff5f5;font-size:12px;}
+.guidance-delete-confirm p {margin:0 0 8px;}
+/* 비교 탭이 두 줄이면 제목 행도 늘려 확대 버튼과 겹치지 않게 한다. */
+.guidance-preview-card {grid-template-rows:auto minmax(0,1fr);}
