@@ -119,3 +119,5 @@ python proof/src/smoke_editor_mcp.py SESSION_ID IMAGE_ID --region REGION_ID
 후속 단계는 독립 work_dir의 preview와 사용자가 확인한 초안 적용이다. 이때도 UI 컴포넌트 대신 같은 ID·revision·원본 좌표 계약을 사용한다. 초기 검토 배경은 [MCP 연결 검토](editor_agent_bridge_review.md), 용어 계약은 [처리 기준 변경 기록](REGION_PROCESSING_BASIS_CHANGELOG.md)을 참고한다.
 
 자동 Region 제외 기록은 suppressed_regions에 남는다. 이는 실제 처리 대상이 남았다는 뜻이 아니다. 최신 Step 3은 해당 TG를 텍스트 기반 fallback에서도 제외하며, inspect_page의 regions·ocr_region_count와 기록을 구분해 읽는다.
+
+inspect_page는 페이지별 processing_excluded를 함께 반환한다. work/page_policy의 내용도 revision에 포함한다. 페이지 전체 제외는 TG/Region 개별 편집 기록을 삭제하지 않으며, 생성 요청은 처리 대상으로 복원한 뒤 준비해야 한다.

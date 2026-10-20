@@ -152,7 +152,7 @@ export default function App() {
     }
     return baseSelected;
   }, [baseSelected, pageDetail]);
-  const restore = useRestore({ sessionId, image: selected, active: activeTab === "restore", setStatus });
+  const restore = useRestore({ sessionId, image: selected, active: activeTab === "restore" && !selected?.processing_excluded, setStatus });
   // id는 파일명 stem이라 세션이 달라도 겹칠 수 있다. 세션별 input_path로 페이지를 구분한다.
   const selectedKey = selected ? (selected.input_path || selected.id) : "";
   // 페이지 전환 직후 요약만 있을 때와 상세가 도착했을 때를 구분해, 상세 도착 시 편집 상태를 다시 초기화한다.
@@ -201,7 +201,7 @@ export default function App() {
   });
   const ocrReadyImages = images.filter((img) => {
     const state = ocrStateForImage(img);
-    return state === "idle" && Boolean(img.indexed_sheet_url) && !img.final_url;
+    return !img.processing_excluded && state === "idle" && Boolean(img.indexed_sheet_url) && !img.final_url;
   });
   const ocrInProgressImages = images.filter((img) => {
     const state = ocrStateForImage(img);
@@ -222,7 +222,7 @@ export default function App() {
   );
   const finalImages = images.filter((img) => Boolean(img.final_url));
   const unresolvedFinalImages = images.filter((img) => !img.final_url);
-  const missingFinalImages = images.filter((img) => !img.final_url || isImageGenerationFallback(img));
+  const missingFinalImages = images.filter((img) => !img.processing_excluded && (!img.final_url || isImageGenerationFallback(img)));
   const selectedExportMissingIds = exportGenerateIds.filter((id) => missingFinalImages.some((img) => img.id === id));
   const exportFocusedImage = images.find((img) => img.id === exportFocusedId) || missingFinalImages[0] || selected;
   const exportFocusedIsGenerated = isImageGenerationFallback(exportFocusedImage);
@@ -1338,8 +1338,20 @@ export default function App() {
     return false;
   }
 
+  async function togglePageProcessing() {
+    if (!selected || anyBusy) return;
+    const sid = sessionId, id = selected.id;
+    await runTask("guidance", "페이지 처리 상태 변경", async () => {
+      const result = await api("/api/page-processing", {method:"POST", body:JSON.stringify({session_id:sid, image_id:id, excluded:!selected.processing_excluded})});
+      if (sessionIdRef.current !== sid) return {};
+      autoAnalysisRequestedRef.current.add(`${id}:${selected.image_sha256 || ""}`);
+      applyImageRecord(result.image);
+      return {logs:result.image.processing_excluded ? "페이지 처리에서 제외했습니다. 원본 그대로 출력합니다." : "처리 대상으로 복원했습니다. 기존 TG 편집과 분석 결과는 유지됩니다."};
+    });
+  }
+
   async function applyGuidance() {
-    if (!selected || !pageDetailReady()) return;
+    if (!selected || selected.processing_excluded || !pageDetailReady()) return;
     const requestSid = sessionId;
     const requestImageId = selected.id;
     await runTask("guidance", "영역 분석 적용", async () => {
@@ -1667,6 +1679,7 @@ export default function App() {
   }
 
   function ocrStateForImage(img) {
+    if (img.processing_excluded) return "skipped";
     const liveStatus = imageStatuses[img.id];
     const state = liveStatus?.phase === "ocr" ? liveStatus.status : null;
     if (state === "failed" || state === "running" || state === "queued" || state === "skipped") return state;
@@ -2122,8 +2135,8 @@ export default function App() {
             <textarea value={extraPrompt} onChange={(e) => updateExtraPrompt(e.target.value)} />
           </div>
           <div className="row">
-            <button className="primary" onClick={applyGuidance} disabled={guidanceBusy || analyzeBusy || !selected}>Apply Analysis</button>
-            <button onClick={() => runFinal()} disabled={ocrBusy || !selected}>Run Final</button>
+            <button className="primary" onClick={applyGuidance} disabled={guidanceBusy || analyzeBusy || !selected || selected.processing_excluded}>Apply Analysis</button>
+            <button onClick={() => runFinal()} disabled={ocrBusy || !selected || selected.processing_excluded}>Run Final</button>
           </div>
           <button className="wide" onClick={() => setActiveTab("export")} disabled={!sessionId || !images.length}>Export Page</button>
         </div>
@@ -2170,6 +2183,10 @@ export default function App() {
       </aside>
 
       <main className="workspace">
+        <div className="page-processing-bar">
+          <span>{selected?.processing_excluded ? "페이지 처리 제외 · 원본 그대로 출력" : "페이지 처리 대상"}</span>
+          <button type="button" disabled={!selected || anyBusy} onClick={togglePageProcessing}>{selected?.processing_excluded ? "처리 대상으로 복원" : "이 페이지 처리 제외"}</button>
+        </div>
         <ImageGenerationPanel key={`${sessionId}:${selected?.id}`} sessionId={sessionId} image={selected} />
         {activeTab === "guidance" ? (
         <div className="guidance-workspace">
@@ -2195,7 +2212,7 @@ export default function App() {
                   <strong>{selectedTg ? `TG${selectedTg}` : selectedToolLabel}</strong>
                 </div>
                 <div className="editor-meta">
-                  <span>{selected?.has_analysis && selected?.ocr_region_count === 0 ? "처리 대상 없음 · 원본 유지" : "Original + live analysis overlay"}</span>
+                  <span>{selected?.processing_excluded ? "페이지 처리 제외 · 원본 출력" : selected?.has_analysis && selected?.ocr_region_count === 0 ? "처리 대상 없음 · 원본 유지" : "Original + live analysis overlay"}</span>
                   <span>편집 기록 {guidanceHistory.length}개</span>
                 </div>
               </div>
@@ -2249,8 +2266,8 @@ export default function App() {
                       onChange={(e) => setAnalyzeWorkers(Math.max(1, Math.min(12, Number(e.target.value) || 1)))}
                     />
                   </label>
-                  <button onClick={() => selected && runFinalStream(selected.id)} disabled={ocrBusy || !selected || !selected.indexed_sheet_url}>Run Current</button>
-                  <button onClick={() => selected && runFinalStream(selected.id, true)} disabled={ocrBusy || !selected || !selected.indexed_sheet_url} title="현재 파일의 기존 OCR 결과를 무시하고 다시 실행">Force Current</button>
+                  <button onClick={() => selected && runFinalStream(selected.id)} disabled={ocrBusy || !selected || selected.processing_excluded || !selected.indexed_sheet_url}>Run Current</button>
+                  <button onClick={() => selected && runFinalStream(selected.id, true)} disabled={ocrBusy || !selected || selected.processing_excluded || !selected.indexed_sheet_url} title="현재 파일의 기존 OCR 결과를 무시하고 다시 실행">Force Current</button>
                   <button className="danger" onClick={() => runFinalStream("failed")} disabled={ocrBusy || !ocrNeedsAttentionImages.length}>Retry Failed</button>
                   <button className="primary" onClick={() => runFinalStream("all")} disabled={ocrBusy || !images.length} title="이미 OCR 결과가 있는 파일은 건너뛰고 미완료 파일만 실행">Run Unfinished</button>
                 </div>
@@ -2377,7 +2394,7 @@ export default function App() {
           </div>
         ) : null}
 
-        {activeTab === "restore" ? <RestoreStage restore={restore} setStatus={setStatus} /> : null}
+        {activeTab === "restore" ? (selected?.processing_excluded ? <ImagePreview src={selected.input_url} /> : <RestoreStage restore={restore} setStatus={setStatus} />) : null}
 
         {activeTab === "export" ? (
           <div className="export-workspace">
@@ -2473,7 +2490,7 @@ export default function App() {
         <div className="section compact-section">
           <div className="row">
             <button className="primary" onClick={applyOverlay} disabled={overlayBusy || !canRenderOverlayImage(selected)} title={`Overlay 적용 (${shortcutById("overlay.apply")})`}>Apply Overlay</button>
-            <button onClick={() => runFinal(true)} disabled={ocrBusy || !selected} title="현재 Additional Translation Prompt를 사용해 OCR/번역부터 다시 실행합니다.">Re-run OCR</button>
+            <button onClick={() => runFinal(true)} disabled={ocrBusy || !selected || selected.processing_excluded} title="현재 Additional Translation Prompt를 사용해 OCR/번역부터 다시 실행합니다.">Re-run OCR</button>
           </div>
           <label className="auto-preview-toggle">
             <input
@@ -2596,7 +2613,7 @@ export default function App() {
         </div>
         </> : null}
 
-        {activeTab === "restore" ? <RestoreControls restore={restore} /> : null}
+        {activeTab === "restore" ? (selected?.processing_excluded ? <p>페이지 처리 제외 중입니다. 복원 후 편집할 수 있습니다.</p> : <RestoreControls restore={restore} />) : null}
 
         {activeTab === "guidance" ? <>
         <div className="section compact-section">
@@ -2604,7 +2621,7 @@ export default function App() {
           <div className="side-action-grid">
             <button onClick={clearUnsavedGuidance} disabled={guidanceBusy || analyzeBusy || !selected}>Clear Unsaved</button>
             <button className="danger" onClick={clearGuidanceOutputs} disabled={guidanceBusy || analyzeBusy || !selected}>Delete Outputs</button>
-            <button className="primary wide" onClick={applyGuidance} disabled={guidanceBusy || analyzeBusy || !selected} title={`영역 분석 적용 (${shortcutById("guidance.apply")})`}>Apply Analysis</button>
+            <button className="primary wide" onClick={applyGuidance} disabled={guidanceBusy || analyzeBusy || !selected || selected.processing_excluded} title={`영역 분석 적용 (${shortcutById("guidance.apply")})`}>Apply Analysis</button>
           </div>
         </div>
 

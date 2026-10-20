@@ -9,7 +9,7 @@ export default function ImageGenerationPanel({ sessionId, image }) {
   const [open, setOpen] = useState(false);
   const [resultId, setResultId] = useState("");
   useEffect(() => {
-    if (!sessionId || !image?.id) return;
+    if (!sessionId || !image?.id || image.processing_excluded) return;
     let alive = true;
     let timer;
     async function read() {
@@ -21,7 +21,7 @@ export default function ImageGenerationPanel({ sessionId, image }) {
     }
     read();
     return () => { alive = false; window.clearTimeout(timer); };
-  }, [sessionId, image?.id]);
+  }, [sessionId, image?.id, image?.processing_excluded]);
   useEffect(() => {
     if (!open) return;
     const previous = document.activeElement;
@@ -29,7 +29,7 @@ export default function ImageGenerationPanel({ sessionId, image }) {
     window.addEventListener("keydown", escape);
     return () => { window.removeEventListener("keydown", escape); previous?.isConnected && previous.focus(); };
   }, [open]);
-  if (!image) return null;
+  if (!image || image.processing_excluded) return null;
   const recommendation = data?.recommendation;
   const results = data?.results || [];
   const result = results.find((item) => item.result_id === resultId) || results.at(-1);

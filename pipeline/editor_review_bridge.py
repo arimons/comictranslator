@@ -128,6 +128,7 @@ class ReviewStore:
         paths = {key: base / "work/json" / f"{image_id}_{suffix}.json" for key, suffix in JSON_SUFFIXES.items()}
         paths.update({
             "restore_state": base / "work/restore" / image_id / "state.json",
+            "page_policy": base / "work/page_policy" / f"{image_id}.json",
             "original": original,
             "masked": base / "work/masked" / f"{image_id}_masked.jpg",
             "final": base / "output/final" / f"{image_id}_final.jpg",
@@ -179,7 +180,7 @@ class ReviewStore:
         hashes = {key: hashlib.sha256(blob).hexdigest() if blob is not None else None for key, blob in blobs.items()}
         revision = hashlib.sha256(json.dumps(hashes, sort_keys=True).encode()).hexdigest()
         payload, issues = {}, []
-        for key in [*JSON_SUFFIXES, "restore_state"]:
+        for key in [*JSON_SUFFIXES, "restore_state", "page_policy"]:
             raw = blobs[key]
             if raw is None:
                 payload[key] = None
@@ -220,6 +221,7 @@ class ReviewStore:
                 "coordinate_space": "original_pixels", "payload": payload, "issues": issues,
                 "artifacts": {key: {"available": blobs[key] is not None, "sha256": hashes[key]}
                               for key in ["original", "masked", "final", "analysis", "ocr_sheet"]},
+                "processing_excluded": (payload["page_policy"] or {}).get("excluded") is True,
                 "review_proposals": proposals, "quality_verdict": "unreviewed"}
 
     def view_region(self, session_id: str, image_id: str, region_id: int | None = None,

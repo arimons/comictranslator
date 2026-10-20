@@ -87,3 +87,7 @@ Claude와 다른 에이전트는 `AGENTS.md`, `CLAUDE.md`의 링크를 통해 �
 2026-10-20 삭제 수정: Region Off는 경계/텍스트 기반 모두 처리 대상에서 제외한다. 자동 Region 무효화 후 TG가 unboxed fallback으로 재생성되던 경로를 막았다. 적용한 제외 기록은 유지하되 캔버스 삭제 상자는 숨기고 Region 0개를 명시한다. 검증은 `tests/test_dialogue_extractor_manual.py`, `tests/test_main_v2.py`, `proof/src/test_region_exclusion.mjs`에 남긴다.
 
 삭제 회귀 확인: 전체 pytest 511개·하위 검사 13개 통과. `proof/src/check_region_off_click.js`는 같은 위치의 TG가 Region Off 클릭을 가로채지 않는지 응답 fixture로 검사했고, `proof/src/check_empty_region_page.js`는 실제 사망플래그 7권 2페이지의 Region/OCR 0개와 처리 대상 없음 표시를 읽기 전용으로 확인했다. 두 브라우저 검사 모두 분석·번역·저장 POST 0건이다.
+
+2026-10-20 페이지 전체 제외 추가: TG(분석 입력), Region(묶인 처리 영역)과 별도로 페이지의 processing_excluded 상태를 둔다. 제외 페이지는 원본 출력, 복원은 기존 TG·Region 편집을 유지한다. 활성 TG만 Region 생성 입력이 되므로 TG를 끄면 그 TG가 자동 복원되는 것은 아니지만, 같은 Region에 남은 TG로 새 Region이 만들어지거나 번호가 바뀔 수 있다.
+
+페이지 제외 검증은 `tests/test_page_processing.py`와 `proof/src/check_page_processing.js`로 수행한다. 원본 PNG의 ZIP 바이트 일치, 기존 final이 있어도 원본 우선, 복원 시 기존 final·TG 편집 보존, 제외 시 유료 호출 차단, MCP 생성 차단을 검사했다. 실제 7권 2페이지에서 버튼을 왕복하고 이전 상태로 복원했으며 분석·번역 요청은 없었다.

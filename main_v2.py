@@ -1012,6 +1012,8 @@ def store_cv_cache(record: dict[str, Any], image_hash: str) -> bool:
 
 
 def hydrate_load_cache_for_item(session_id: str, item: dict[str, Any], allow_backfill: bool) -> None:
+    if page_processing_excluded(session_id, item["id"]):
+        return
     image_hash = item.get("image_sha256") or ensure_record_hash(item)
     record = image_record(session_id, Path(item["input_path"]), image_hash)
     if hydrate_analysis_cache(record, image_hash, False, lambda _message: None, allow_backfill=allow_backfill):
@@ -1104,6 +1106,19 @@ def export_zip_filename(project_name: str, session_id: str) -> str:
     return f"{clean}.zip"
 
 
+def page_processing_excluded(session_id: str, image_id: str) -> bool:
+    if not image_id or any(ch in image_id for ch in ("/", chr(92), chr(0))) or image_id in {".", ".."}:
+        raise HTTPException(status_code=400, detail="Invalid image id")
+    policy = load_json(session_dir(session_id) / "work/page_policy" / f"{image_id}.json", default={})
+    return policy.get("excluded") is True
+
+
+class PageProcessingRequest(BaseModel):
+    session_id: str
+    image_id: str
+    excluded: bool
+
+
 def image_record(
     session_id: str,
     path: Path,
@@ -1118,6 +1133,7 @@ def image_record(
     목록(세션 요약)에는 가벼운 레코드를, 선택한 페이지에는 전체 레코드를 쓴다.
     """
     stem = path.stem
+    excluded = page_processing_excluded(session_id, stem)
     spread_metadata = spread_candidate_from_manifest(manifest_item or {})
     if spread_metadata is None:
         if probe_image:
@@ -1139,6 +1155,7 @@ def image_record(
     has_image_generation_fallback = isinstance(export_recovery, dict) and export_recovery.get("status") == "generated"
     record = {
         "id": stem,
+        "processing_excluded": excluded,
         "name": path.name,
         "image_sha256": image_hash,
         "input_path": str(path),
@@ -1165,14 +1182,14 @@ def image_record(
         "bubble_vis_url": file_url(vis_dir / f"{stem}_bubble_vis.jpg"),
         "indexed_sheet_url": file_url(sheets_dir / f"{stem}_indexed_sheet.jpg"),
         "masked_url": file_url(masked_dir / f"{stem}_masked.jpg"),
-        "final_url": file_url(final_path),
+        "final_url": file_url(path if excluded else final_path),
         "restore_dir": str(restore_dir),
         "restore_state_json": str(restore_dir / "state.json"),
         "restore_mask_png": str(restore_dir / "mask.png"),
         "restore_mask_url": file_url(restore_dir / "mask.png"),
         "restore_patch_count": len(load_json(restore_dir / "state.json", default={}).get("patches", [])),
         "has_effective_text_groups": (json_dir / f"{stem}_text_groups_effective.json").exists(),
-        "has_integrated_json": (json_dir / f"{stem}_integrated.json").exists(),
+        "has_integrated_json": not excluded and (json_dir / f"{stem}_integrated.json").exists(),
         "ocr_status": load_json(json_dir / f"{stem}_ocr_status.json", default={}),
         "image_generation_recommendation": load_json(work / "image_generation" / stem / "recommendation.json", default={}),
         "export_recovery": export_recovery,
@@ -1203,6 +1220,7 @@ def image_record(
 
 # 세션 요약 목록에 들어가는 키. 전체 레코드도 같은 키를 같은 의미로 가진다(프론트에서 병합).
 IMAGE_SUMMARY_KEYS = (
+    "processing_excluded",
     "id",
     "name",
     "image_sha256",
@@ -1532,15 +1550,16 @@ def session_images(session_id: str, include_detail: bool = True) -> list[dict[st
         input_path = Path(item["input_path"])
         # hydrate 함수들은 경로만 쓰므로 큰 JSON을 읽지 않는 가벼운 레코드로 충분하다.
         record = image_record(session_id, input_path, image_hash, item, probe_image=False, include_detail=False)
-        if image_hash:
+        if image_hash and not record["processing_excluded"]:
             hydrate_analysis_cache(record, image_hash, False, noop, allow_backfill=False)
             hydrate_guidance_cache(record, image_hash, noop, allow_backfill=False)
         guidance = load_json(record["guidance_json"], default={})
-        if guidance_has_edits(guidance):
+        if guidance_has_edits(guidance) and not record["processing_excluded"]:
             output_ready = bool(image_hash) and hydrate_guidance_output_cache(record, image_hash, guidance, noop)
             if not output_ready and analysis_outputs_are_cache_links(record) and _claim_guidance_reapply(session_id, record):
                 pending_reapply.append(item)
-        _normalize_empty_region_visual(record)
+        if not record["processing_excluded"]:
+            _normalize_empty_region_visual(record)
         record = merge_manifest_metadata(
             image_record(session_id, input_path, image_hash, item, probe_image=False, include_detail=include_detail),
             item,
@@ -1589,6 +1608,9 @@ def page_record(session_id: str, image_id: str) -> dict[str, Any]:
 
 
 def analyze_one_image(session_id: str, item: dict[str, Any], index: int, total: int, force: bool, emit) -> bool:
+    if page_processing_excluded(session_id, item["id"]):
+        emit({"type":"image_status", "image_id":item["id"], "status":"skipped", "detail":"페이지 처리 제외 · 원본 출력"})
+        return True
     image_hash = ensure_record_hash(item)
     record = image_record(session_id, Path(item["input_path"]), image_hash)
 
@@ -1768,6 +1790,8 @@ def guidance_allows_unboxed_mask_reuse(previous: dict[str, Any], current: dict[s
 
 
 def run_step3_with_effective_text_groups(session_id: str, image_id: str, guidance: dict[str, Any]) -> dict[str, Any]:
+    if page_processing_excluded(session_id, image_id):
+        raise HTTPException(status_code=409, detail="처리 제외 페이지입니다. 처리 대상으로 복원한 뒤 편집하세요.")
     try:
         from pipeline.dialogue_extractor import build_dialogue_sheet
     except ModuleNotFoundError as exc:
@@ -1824,6 +1848,8 @@ def run_step3_with_effective_text_groups(session_id: str, image_id: str, guidanc
 
 
 def reapply_guidance_if_present(session_id: str, record: dict[str, Any], log_callback) -> dict[str, Any] | None:
+    if page_processing_excluded(session_id, record["id"]):
+        return None
     guidance = load_json(record["guidance_json"], default={})
     if not guidance_has_edits(guidance):
         return None
@@ -1840,6 +1866,8 @@ def reapply_guidance_if_present(session_id: str, record: dict[str, Any], log_cal
 
 
 def render_overlay_for_record(record: dict[str, Any], font_path: str | None, tracking_offset: int | None = None, log_callback=None) -> None:
+    if record.get("processing_excluded"):
+        return
     if not Path(record["integrated_json"]).exists():
         raise HTTPException(status_code=400, detail="OCR/translation result is missing. Run OCR/Final first.")
     skip_detail = integrated_skip_detail(load_json(record["integrated_json"], default={}))
@@ -1942,6 +1970,8 @@ def run_final_for_item(
     replace_overlay: bool = False,
     glossary_context: dict | None = None,
 ) -> dict[str, Any]:
+    if page_processing_excluded(session_id, item["id"]):
+        return page_record(session_id, item["id"])
     context = glossary_context if glossary_context is not None else session_glossary_snapshot(session_id)
     translation_prompt = "\n\n".join(part for part in (context.get("prompt", ""), extra_prompt) if part)
     record = image_record(session_id, Path(item["input_path"]), item.get("image_sha256"))
@@ -2069,7 +2099,6 @@ def stream_run_final(req: RunFinalRequest):
         nonlocal glossary_context
         try:
             # 같은 배치 안에서는 조사/검토 시점에 따라 페이지별 용어가 달라지지 않는다.
-            glossary_context = session_glossary_snapshot(req.session_id)
             data = ensure_session(req.session_id)
             if req.image_id == "all":
                 targets = sorted_image_records(data.get("images", []))
@@ -2080,6 +2109,9 @@ def stream_run_final(req: RunFinalRequest):
                 ]
             else:
                 targets = [get_image(req.session_id, req.image_id)]
+            targets = [item for item in targets if not page_processing_excluded(req.session_id, item["id"])]
+            if targets:
+                glossary_context = session_glossary_snapshot(req.session_id)
             total = len(targets)
             if req.image_id == "all" and not req.force:
                 pending_targets = []
@@ -2187,7 +2219,7 @@ def build_session_export_zip(session_id: str) -> Path:
             input_path = Path(item["input_path"])
             record = image_record(data["session_id"], input_path, item.get("image_sha256"))
             final_path = Path(record["final_jpg"])
-            source_path = final_path if final_path.exists() else input_path
+            source_path = final_path if final_path.exists() and not record["processing_excluded"] else input_path
             if not source_path.exists():
                 continue
             zf.write(source_path, export_name_for(item, source_path))
@@ -2199,7 +2231,7 @@ def generate_missing_finals_with_openai(req: GenerateMissingFinalRequest) -> dic
     requested_ids = set(req.image_ids or [])
     targets = [
         item for item in sorted_image_records(data.get("images", []))
-        if (not requested_ids or item.get("id") in requested_ids)
+        if (not requested_ids or item.get("id") in requested_ids) and not page_processing_excluded(req.session_id, item["id"])
     ]
     logs: list[str] = []
     generated: list[str] = []
@@ -2267,7 +2299,7 @@ def stream_generate_missing_finals(req: GenerateMissingFinalRequest):
             requested_ids = set(req.image_ids or [])
             targets = [
                 item for item in sorted_image_records(data.get("images", []))
-                if (not requested_ids or item.get("id") in requested_ids)
+                if (not requested_ids or item.get("id") in requested_ids) and not page_processing_excluded(req.session_id, item["id"])
             ]
             generated: list[str] = []
             failed: list[dict[str, str]] = []
@@ -2371,6 +2403,8 @@ _RESTORE_STATE_LOCK = threading.Lock()
 
 
 def _restore_record(session_id: str, image_id: str) -> dict[str, Any]:
+    if page_processing_excluded(session_id, image_id):
+        raise HTTPException(status_code=409, detail="처리 제외 페이지입니다. 처리 대상으로 복원한 뒤 편집하세요.")
     source = get_image(session_id, image_id)
     return image_record(session_id, Path(source["input_path"]), source.get("image_sha256"))
 
@@ -2617,6 +2651,13 @@ class RevalidatingStaticFiles(StaticFiles):
 def create_app() -> FastAPI:
     app = FastAPI(title="Comic Translator Review UI")
 
+    @app.post("/api/page-processing")
+    def set_page_processing(req: PageProcessingRequest) -> dict:
+        get_image(req.session_id, req.image_id)
+        write_json(session_dir(req.session_id) / "work/page_policy" / f"{req.image_id}.json",
+                   {"excluded": req.excluded, "updated_at": dt.datetime.now().isoformat()})
+        return {"image": page_record(req.session_id, req.image_id)}
+
     @app.get("/api/image-generation/{session_id}/{image_id}")
     def read_image_generation(session_id: str, image_id: str) -> dict:
         try:
@@ -2858,6 +2899,9 @@ def create_app() -> FastAPI:
         targets = sorted_image_records(data.get("images", [])) if req.image_id == "all" else [get_image(req.session_id, req.image_id)]
         logs: list[str] = []
         for item in targets:
+            if page_processing_excluded(req.session_id, item["id"]):
+                logs.append(f"[{item['id']}] 페이지 처리 제외 · 원본 출력")
+                continue
             image_hash = ensure_record_hash(item)
             record = image_record(req.session_id, Path(item["input_path"]), image_hash)
             if hydrate_analysis_cache(record, image_hash, req.force, logs.append, allow_backfill=True):
@@ -2903,6 +2947,8 @@ def create_app() -> FastAPI:
 
     @app.post("/api/run-final")
     def run_final(req: RunFinalRequest) -> dict[str, Any]:
+        if page_processing_excluded(req.session_id, req.image_id):
+            return {"ok": True, "image": page_record(req.session_id, req.image_id)}
         try:
             context = session_glossary_snapshot(req.session_id)
         except ValueError as exc:
@@ -2933,6 +2979,8 @@ def create_app() -> FastAPI:
 
     @app.post("/api/overlay/apply")
     def apply_overlay(req: OverlayRequest) -> dict[str, Any]:
+        if page_processing_excluded(req.session_id, req.image_id):
+            raise HTTPException(status_code=409, detail="처리 제외 페이지입니다. 처리 대상으로 복원한 뒤 편집하세요.")
         source = get_image(req.session_id, req.image_id)
         # 렌더에는 경로만 필요하다. 원본 전체를 여는 여백 probe는 하지 않고 manifest 크기 정보를 쓴다.
         record = image_record(req.session_id, Path(source["input_path"]), source.get("image_sha256"), source, probe_image=False, include_detail=False)

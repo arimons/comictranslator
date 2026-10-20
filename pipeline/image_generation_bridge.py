@@ -69,6 +69,8 @@ class ImageGenerationStore(ReviewStore):
 
     def _context(self, session_id, image_id):
         page = super().inspect_page(session_id, image_id)
+        if page.get("processing_excluded"):
+            raise ValueError("처리 제외 페이지입니다. 처리 대상으로 복원한 뒤 생성 요청을 준비하세요")
         base, _, paths = self._page_paths(session_id, image_id)
         binding_path = self._safe(base / "work/glossary_binding.json")
         binding = self._json(binding_path) if binding_path.exists() else {}

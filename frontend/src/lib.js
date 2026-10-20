@@ -144,6 +144,7 @@ export function tgId(group) {
 }
 
 export function imageGroups(image) {
+  if (image?.processing_excluded) return [];
   return image?.has_effective_text_groups ? (image?.effective_text_groups || []) : (image?.text_groups || []);
 }
 
@@ -210,6 +211,7 @@ export function guidanceEdgeNotices(report) {
 }
 
 export function imageRegions(image) {
+  if (image?.processing_excluded) return [];
   return image?.regions?.regions || [];
 }
 
@@ -296,6 +298,7 @@ export function segmentRenderRect(cluster, siblings, baseRegion) {
 }
 
 export function overlayControlItems(image, overlayGuidanceOverride = null) {
+  if (image?.processing_excluded) return [];
   const layoutRegions = image?.overlay_layout?.regions;
   const guidanceRegions = (overlayGuidanceOverride || image?.overlay_guidance || {})?.regions || {};
   const baseRegions = imageRegions(image);
@@ -456,7 +459,7 @@ export function hasAnalysisResult(image) {
 }
 
 export function imageNeedsAnalysis(image) {
-  return Boolean(image && !hasAnalysisResult(image));
+  return Boolean(image && !image.processing_excluded && !hasAnalysisResult(image));
 }
 
 export function regionCluster(image, region) {

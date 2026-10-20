@@ -131,7 +131,7 @@ const EditorCanvas = forwardRef(function EditorCanvas({ image, baseUrl, guidance
   }
 
   function findGuideAt(point) {
-    if (layersRef.current?.guidance === false) return null;
+    if (imageRef.current?.processing_excluded || layersRef.current?.guidance === false) return null;
     const current = guidanceRef.current || defaultGuidance(null);
     const radius = imageHitRadius();
     const seeds = [...(current.manual_seed_points || [])].reverse();
@@ -226,6 +226,7 @@ const EditorCanvas = forwardRef(function EditorCanvas({ image, baseUrl, guidance
   }
 
   function rightClickDelete(stage, evt) {
+    if (imageRef.current?.processing_excluded) return;
     evt.evt?.preventDefault();
     evt.evt?.stopPropagation?.();
     evt.cancelBubble = true;
@@ -268,6 +269,7 @@ const EditorCanvas = forwardRef(function EditorCanvas({ image, baseUrl, guidance
 
   // Delete/Backspace: 선택한 TG가 있으면 끄고, 없으면 포인터 아래 항목을 우클릭처럼 지운다.
   function deleteSelection() {
+    if (imageRef.current?.processing_excluded) return false;
     const selectedId = Number(selectedTgRef.current);
     if (selectedTgRef.current != null && Number.isFinite(selectedId)) {
       disableTg(selectedId);
@@ -498,13 +500,13 @@ const EditorCanvas = forwardRef(function EditorCanvas({ image, baseUrl, guidance
     base.add(new Konva.Image({ image: img, x: view.x, y: view.y, width: img.width * view.scale, height: img.height * view.scale }));
 
     const disabled = new Set(currentGuidance.disabled_tg_ids || []);
-    const visibleRegions = currentLayers.regions ? (currentImage?.regions?.regions || []).filter(region => !regionIsExcluded(region, currentGuidance)) : [];
+    const visibleRegions = currentLayers.regions && !currentImage.processing_excluded ? (currentImage?.regions?.regions || []).filter(region => !regionIsExcluded(region, currentGuidance)) : [];
     const promoted = promotedTgIds(visibleRegions);
     const labels = [];
     const labelWidth = (text, bold = false) => Math.ceil(new Konva.Text({text, fontSize:11, fontStyle:bold ? "bold" : "normal"}).getTextWidth()) + 10;
     const obstacles = [];
     const imageBounds = {x:view.x, y:view.y, width:img.width * view.scale, height:img.height * view.scale};
-    if (currentLayers.tg) {
+    if (currentLayers.tg && !currentImage.processing_excluded) {
       imageGroups(currentImage).forEach((group) => {
         const id = tgId(group);
         if (disabled.has(id)) return;
@@ -566,7 +568,7 @@ const EditorCanvas = forwardRef(function EditorCanvas({ image, baseUrl, guidance
     }
 
     const splitGuidesToDraw = [];
-    if (currentLayers.guidance) {
+    if (currentLayers.guidance && !currentImage.processing_excluded) {
       (currentGuidance.tg_splits || []).forEach((item) => splitGuidesToDraw.push({
         line: item.line,
         color: "#7c2d12",
@@ -720,7 +722,7 @@ const EditorCanvas = forwardRef(function EditorCanvas({ image, baseUrl, guidance
       }
       if (button === 1) return;
       const currentTool = toolRef.current;
-      if (!["tg-split", "wall", "region-split", "ubox"].includes(currentTool)) return;
+      if (imageRef.current?.processing_excluded || !["tg-split", "wall", "region-split", "ubox"].includes(currentTool)) return;
       const point = pointerToImage(stage);
       const group = findTgAt(point);
       dragRef.current = { mode: "draw", start: point, tg: group ? tgId(group) : selectedTgRef.current };
@@ -729,7 +731,7 @@ const EditorCanvas = forwardRef(function EditorCanvas({ image, baseUrl, guidance
     stage.on("mousemove touchmove", () => {
       if (!dragRef.current) return;
       const currentTool = toolRef.current;
-      if (!["tg-split", "wall", "region-split", "ubox"].includes(currentTool)) return;
+      if (imageRef.current?.processing_excluded || !["tg-split", "wall", "region-split", "ubox"].includes(currentTool)) return;
       setDragPreview({ tool: currentTool, start: dragRef.current.start, end: pointerToImage(stage) });
     });
     stage.on("mouseup touchend", () => {
@@ -751,6 +753,7 @@ const EditorCanvas = forwardRef(function EditorCanvas({ image, baseUrl, guidance
         return;
       }
       const currentTool = toolRef.current;
+      if (imageRef.current?.processing_excluded) return;
       const point = pointerToImage(stage);
       if (currentTool === "bubble") {
         addBoundarySeed(point);

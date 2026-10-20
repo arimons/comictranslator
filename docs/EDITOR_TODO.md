@@ -47,3 +47,5 @@
 이번 홈 변경 내역과 화면 결정: [홈 화면 개선 기록](HOME_SCREEN_CHANGELOG.md).
 
 - [x] 작품 URL 자료 수집·본문 직접 저장·작품별 재사용, 단일 Gemini 용어 정리 및 결과 캐시. 유료 검색 제거.
+
+- [x] 페이지 전체 처리 제외·복원 버튼. 제외 시 분석·번역·생성 건너뛰기와 ZIP 원본 우선 출력, 복원 시 기존 편집·결과 유지. 검증: `tests/test_page_processing.py`, `proof/src/check_page_processing.js`.

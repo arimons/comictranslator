@@ -39,6 +39,7 @@ work_dir/
   merge/         masked 이미지와 overlay 결과 비교 이미지
   inpaint/       inpaint 실험 산출물
   restore/       편집기 배경 복원 탭 상태 (restore/{name}/state.json, 마스크·확정 패치 PNG, jobs/)
+  page_policy/   페이지 전체 제외·복원 설정 (캐시와 독립, 원본/기존 결과 유지)
   image_generation/ 이미지 생성 권장·요청·미검토 후보 (원본/최종 출력과 분리)
   reviews/       MCP 검토 초안 (reviews/{image_id}/{proposal_id}.json; guidance와 별도, 미적용 상태)
   misc/          기타 임시 디버그 산출물
