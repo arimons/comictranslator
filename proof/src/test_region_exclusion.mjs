@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
-const {pendingRegionExclusions,regionIsExcluded} = await import(`data:text/javascript;base64,${readFileSync('frontend/src/regionExclusion.js').toString('base64')}`);
+const {pendingRegionExclusions,regionIsExcluded,tgIsExcluded} = await import(`data:text/javascript;base64,${readFileSync('frontend/src/regionExclusion.js').toString('base64')}`);
 const exclusion={id:'off1',rect:[10,10,50,50]};
 const guidance={suppressed_regions:[exclusion]};
 assert.equal(pendingRegionExclusions({},guidance).length,1);
@@ -9,3 +9,15 @@ assert.equal(regionIsExcluded({unboxed_rect:[20,20,20,20]},guidance),true);
 assert.equal(regionIsExcluded({bubble_rect:[120,120,20,20]},guidance),false);
 assert.equal(pendingRegionExclusions({guidance},{suppressed_regions:[]}).length,0);
 console.log('Region 제외: 미적용 표시·적용 후 숨김·삭제 영역 즉시 숨김·다른 영역 유지 통과');
+
+const region={anchor_ids:[3,4],unboxed_rect:[20,20,20,20]};
+assert.equal(regionIsExcluded(region,{disabled_tg_ids:[3]}),false);
+assert.equal(regionIsExcluded(region,{disabled_tg_ids:[3,4]}),true);
+assert.equal(regionIsExcluded(region,{disabled_tg_ids:[]}),false);
+assert.equal(regionIsExcluded({...region,source_method:'manual_bubble_guide'},{disabled_tg_ids:[3,4]}),false);
+const group={text_group_id:3,fallback_rect:[20,20,20,20]};
+assert.equal(tgIsExcluded(group,{disabled_tg_ids:[3]}),true);
+assert.equal(tgIsExcluded(group,{disabled_tg_ids:[]}),false);
+assert.equal(tgIsExcluded(group,{suppressed_regions:[{rect:[10,10,50,50],anchor_ids:[3]}]}),true);
+assert.equal(tgIsExcluded({...group,text_group_id:4},{suppressed_regions:[{rect:[10,10,50,50],anchor_ids:[3]}]}),false);
+console.log('삭제/Undo 미리보기: 일부 TG는 R 유지, 모든 TG 제외 시 R 숨김, 지시 복원 시 재표시, 수동 영역 유지, R 제외 시 연결 TG 숨김 통과');

@@ -2,15 +2,14 @@ import { BOUNDARY_BASED, TEXT_BASED, regionProcessingBasis, usesEdgeBarrier } fr
 export { BOUNDARY_BASED, TEXT_BASED, regionProcessingBasis, regionTypeLabel } from "./regionTypes.js";
 
 export const TOOL_LABELS = [
-  ["select", "Select"],
-  ["hand", "Hand"],
-  ["tg-toggle", "TG Off"],
-  ["tg-split", "TG Split"],
-  ["wall", "Edge"],
-  ["region-split", "Split"],
+  ["select", "선택"],
+  ["hand", "화면 이동"],
+  ["tg-toggle", "TG 제외"],
+  ["tg-split", "TG 분할"],
+  ["wall", "Edge 장벽"],
+  ["region-split", "영역 분할"],
   ["ubox", "텍스트 기반 영역"],
   ["bubble", "경계 기반 seed"],
-  ["region-off", "R Off"],
 ];
 
 // 단축키는 keymap.js가 단일 정의다.
@@ -23,7 +22,6 @@ export const TOOL_ICONS = {
   "region-split": "╱",
   ubox: "□",
   bubble: "●",
-  "region-off": "R×",
 };
 
 export const OVERLAY_HANDLE_NAMES = ["nw", "n", "ne", "e", "se", "s", "sw", "w"];

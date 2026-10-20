@@ -3347,3 +3347,13 @@ button.wide {
 .page-processing-bar button {white-space:nowrap;}
 .app.workspace-mode .workspace {grid-template-rows:auto auto minmax(0,1fr);}
 .app.workspace-mode .workspace:has(.page-processing-bar):not(:has(.image-generation-bar)) {grid-template-rows:auto minmax(0,1fr);}
+
+.canvas-context-menu {position:fixed;z-index:180;width:242px;max-width:calc(100vw - 16px);padding:6px;background:#fff;color:#172033;border:1px solid #cbd5e1;border-radius:8px;box-shadow:0 8px 28px #182a4933;}
+.canvas-context-heading {padding:5px 9px;font-size:11px;color:#64748b;border-bottom:1px solid #e2e8f0;margin-bottom:4px;}
+.canvas-context-menu button {display:block;width:100%;text-align:left;border:0;background:transparent;padding:9px;font-size:13px;border-radius:4px;color:inherit;}
+.canvas-context-menu button:hover:not(:disabled),.canvas-context-menu button:focus-visible {background:#eaf1ff;outline:2px solid #8eb3ff;outline-offset:-2px;}
+.canvas-context-menu button:disabled {color:#9ba6b8;cursor:default;}
+.guidance-dirty {color:#a16207;font-weight:600;}
+.floating-toolbox button.tool-group-start {margin-top:5px;position:relative;}
+.floating-toolbox button.tool-group-start::before {content:"";position:absolute;left:0;right:0;top:-6px;border-top:1px solid #dbe2eb;}
+.floating-toolbox button span {display:flex;align-items:center;justify-content:center;}

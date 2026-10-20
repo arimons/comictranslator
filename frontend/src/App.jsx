@@ -7,6 +7,7 @@ import { RestoreControls, RestoreStage, useRestore } from "./RestorePanel.jsx";
 import ShortcutHelp from "./ShortcutHelp.jsx";
 import StartScreen from "./StartScreen.jsx";
 import ImagePreview from "./ImagePreview.jsx";
+import GuidanceToolIcon from "./GuidanceToolIcon.jsx";
 import ImageGenerationPanel from "./ImageGenerationPanel.jsx";
 import ServerStatus from "./ServerStatus.jsx";
 import PagePreparation from "./PagePreparation.jsx";
@@ -14,7 +15,6 @@ import GlossaryPanel from "./GlossaryPanel.jsx";
 import { KEYMAP, eventMatches, entryInContext, entryVisibleOnPlatform, shortcutFor, shortcutById } from "./keymap.js";
 import {
   TOOL_LABELS,
-  TOOL_ICONS,
   OVERLAY_MIN_RECT_SIZE,
   WORKFLOW_TABS,
   FONT_STYLES,
@@ -156,6 +156,7 @@ export default function App() {
   // id는 파일명 stem이라 세션이 달라도 겹칠 수 있다. 세션별 input_path로 페이지를 구분한다.
   const selectedKey = selected ? (selected.input_path || selected.id) : "";
   // 페이지 전환 직후 요약만 있을 때와 상세가 도착했을 때를 구분해, 상세 도착 시 편집 상태를 다시 초기화한다.
+  const guidanceDirty = Boolean(selected?.detail_loaded && !guidanceEquals(guidance, defaultGuidance(selected)));
   const selectedDetailKey = selected ? `${selectedKey}|${selected.detail_loaded ? "detail" : "summary"}` : "";
   const effectiveOcrModel = ocrModels.some((model) => model.id === ocrModel) ? ocrModel : ocrDefaultModel;
   const guidanceEditorUrl = selected?.input_url || null;
@@ -1350,6 +1351,10 @@ export default function App() {
     });
   }
 
+  function preventPlainAnalysisEnter(event) {
+    if ((event.key === "Enter" || event.code === "NumpadEnter") && !event.metaKey && !event.ctrlKey) event.preventDefault();
+  }
+
   async function applyGuidance() {
     if (!selected || selected.processing_excluded || !pageDetailReady()) return;
     const requestSid = sessionId;
@@ -2135,7 +2140,7 @@ export default function App() {
             <textarea value={extraPrompt} onChange={(e) => updateExtraPrompt(e.target.value)} />
           </div>
           <div className="row">
-            <button className="primary" onClick={applyGuidance} disabled={guidanceBusy || analyzeBusy || !selected || selected.processing_excluded}>Apply Analysis</button>
+            <button className="primary" onClick={applyGuidance} onKeyDown={preventPlainAnalysisEnter} disabled={guidanceBusy || analyzeBusy || !selected || selected.processing_excluded}>분석 적용 ({shortcutById("guidance.apply")})</button>
             <button onClick={() => runFinal()} disabled={ocrBusy || !selected || selected.processing_excluded}>Run Final</button>
           </div>
           <button className="wide" onClick={() => setActiveTab("export")} disabled={!sessionId || !images.length}>Export Page</button>
@@ -2213,7 +2218,7 @@ export default function App() {
                 </div>
                 <div className="editor-meta">
                   <span>{selected?.processing_excluded ? "페이지 처리 제외 · 원본 출력" : selected?.has_analysis && selected?.ocr_region_count === 0 ? "처리 대상 없음 · 원본 유지" : "Original + live analysis overlay"}</span>
-                  <span>편집 기록 {guidanceHistory.length}개</span>
+                  <span className={guidanceDirty ? "guidance-dirty" : ""} role="status">{guidanceDirty ? `미적용 변경 · ${shortcutById("guidance.apply")}로 분석 적용` : `편집 기록 ${guidanceHistory.length}개`}</span>
                 </div>
               </div>
                 <EditorCanvas
@@ -2232,12 +2237,12 @@ export default function App() {
                 {TOOL_LABELS.map(([id, label]) => (
                   <button
                     key={id}
-                    className={tool === id ? "active" : ""}
+                    className={`${tool === id ? "active" : ""} ${["tg-toggle","wall","ubox"].includes(id) ? "tool-group-start" : ""}`}
                     onClick={() => setTool(id)}
                     aria-label={label}
                     title={`${label} (${shortcutFor("guidance", "tool", id)})`}
                   >
-                    <span>{TOOL_ICONS[id]}</span>
+                    <span><GuidanceToolIcon tool={id} /></span>
                     <em>{shortcutFor("guidance", "tool", id)}</em>
                   </button>
                 ))}
@@ -2621,7 +2626,7 @@ export default function App() {
           <div className="side-action-grid">
             <button onClick={clearUnsavedGuidance} disabled={guidanceBusy || analyzeBusy || !selected}>Clear Unsaved</button>
             <button className="danger" onClick={clearGuidanceOutputs} disabled={guidanceBusy || analyzeBusy || !selected}>Delete Outputs</button>
-            <button className="primary wide" onClick={applyGuidance} disabled={guidanceBusy || analyzeBusy || !selected || selected.processing_excluded} title={`영역 분석 적용 (${shortcutById("guidance.apply")})`}>Apply Analysis</button>
+            <button className="primary wide" onClick={applyGuidance} onKeyDown={preventPlainAnalysisEnter} disabled={guidanceBusy || analyzeBusy || !selected || selected.processing_excluded} title={`영역 분석 적용 (${shortcutById("guidance.apply")})`}>분석 적용 ({shortcutById("guidance.apply")})</button>
           </div>
         </div>
 

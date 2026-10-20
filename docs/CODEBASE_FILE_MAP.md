@@ -478,3 +478,5 @@ indexed sheet crop의 획두께·ink density를 재서 OpenAI가 준 `render_hin
 수동 자동 Region 제외는 `pipeline/dialogue_extractor.py`의 `_suppressed_text_group_ids`가 텍스트 기반 fallback까지 반영한다. `frontend/src/regionExclusion.js`는 적용 전후 표시를 구분하고 `main_v2.py`는 제외 처리 버전이 없는 옛 guidance 결과 캐시의 재사용을 막는다.
 
 페이지 전체 처리 제외: `main_v2.py`의 /api/page-processing과 page_processing_excluded가 work/page_policy의 프로젝트별 상태를 읽는다. 분석·번역·생성·ZIP 내보내기에 반영하고 frontend의 제외/복원 버튼과 연결한다. `tests/test_page_processing.py`에서 원본 바이트 출력·복원·유료 호출 차단을 검사한다.
+
+영역 분석 우클릭 메뉴는 `frontend/src/EditorCanvas.jsx`, 제외 미리보기는 `frontend/src/regionExclusion.js`, 선 아이콘은 `frontend/src/GuidanceToolIcon.jsx`가 담당한다. [도구 모음 검토·변경 기록](TOOLBAR_UX_REVIEW.md). 삭제·Undo는 UI만 갱신하고 Cmd/Ctrl+Enter에서 분석을 적용한다.

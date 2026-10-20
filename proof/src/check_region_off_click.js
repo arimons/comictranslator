@@ -30,8 +30,8 @@ async(page)=>{
    const host=document.getElementById('stageHost');const box=host.getBoundingClientRect();const s=Math.min(box.width/image.naturalWidth,box.height/image.naturalHeight)*.98;
    return {x:box.x+(box.width-image.naturalWidth*s)/2+(rect[0]+rect[2]/2)*s,y:box.y+(box.height-image.naturalHeight*s)/2+(rect[1]+rect[3]/2)*s};
   },rect);
-  await preview.keyboard.press('x');
-  await preview.mouse.click(target.x,target.y);
+  await preview.mouse.click(target.x,target.y,{button:'right'});
+  await preview.getByRole('menuitem',{name:'이 처리 영역 제외',exact:true}).click();
   await preview.waitForFunction(()=>Array.from(document.querySelectorAll('.tools textarea')).some(n=>{try{return JSON.parse(n.value).suppressed_regions?.length===1;}catch{return false;}}));
   const guidance=await preview.evaluate(()=>Array.from(document.querySelectorAll('.tools textarea')).map(n=>{try{return JSON.parse(n.value);}catch{return null;}}).find(v=>v?.suppressed_regions?.length===1));
   if(guidance.disabled_tg_ids.length)throw new Error('Region Off 클릭이 TG 삭제로 처리됨');

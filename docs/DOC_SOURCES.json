@@ -213,6 +213,17 @@
         "frontend/src/ImageGenerationPanel.jsx",
         "main_v2.py"
       ]
+    },
+    "docs/TOOLBAR_UX_REVIEW.md": {
+      "role": "record",
+      "topic": "삭제 미리보기·우클릭 메뉴·도구 아이콘과 단축키 검토",
+      "sources": [
+        "frontend/src/EditorCanvas.jsx",
+        "frontend/src/App.jsx",
+        "frontend/src/keymap.js",
+        "frontend/src/GuidanceToolIcon.jsx",
+        "frontend/src/regionExclusion.js"
+      ]
     }
   }
 }

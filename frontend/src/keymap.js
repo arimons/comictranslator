@@ -51,17 +51,16 @@ export const KEYMAP = [
   { id: "page.next", context: "global", group: "탭·페이지", label: "다음 페이지", kind: "key", keys: [["PgDn"], ["Alt", "→"]], match: [{ code: "PageDown" }, { code: "ArrowRight", alt: true }], action: "page.next" },
 
   // 도구
-  { id: "guidance.tool.select", context: "guidance", group: "도구", label: "Select", kind: "key", keys: [["V"]], match: { code: "KeyV" }, action: "tool", arg: "select" },
-  { id: "guidance.tool.hand", context: "guidance", group: "도구", label: "Hand (화면 이동)", kind: "key", keys: [["H"]], match: { code: "KeyH" }, action: "tool", arg: "hand" },
-  { id: "guidance.tool.tg-toggle", context: "guidance", group: "도구", label: "TG Off", kind: "key", keys: [["D"]], match: { code: "KeyD" }, action: "tool", arg: "tg-toggle" },
-  { id: "guidance.tool.tg-split", context: "guidance", group: "도구", label: "TG Split", kind: "key", keys: [["T"]], match: { code: "KeyT" }, action: "tool", arg: "tg-split" },
-  { id: "guidance.tool.wall", context: "guidance", group: "도구", label: "Edge Wall", kind: "key", keys: [["E"]], match: { code: "KeyE" }, action: "tool", arg: "wall" },
-  { id: "guidance.tool.region-split", context: "guidance", group: "도구", label: "Region Split", kind: "key", keys: [["L"]], match: { code: "KeyL" }, action: "tool", arg: "region-split" },
+  { id: "guidance.tool.select", context: "guidance", group: "도구", label: "선택", kind: "key", keys: [["V"]], match: { code: "KeyV" }, action: "tool", arg: "select" },
+  { id: "guidance.tool.hand", context: "guidance", group: "도구", label: "화면 이동", kind: "key", keys: [["H"]], match: { code: "KeyH" }, action: "tool", arg: "hand" },
+  { id: "guidance.tool.tg-toggle", context: "guidance", group: "도구", label: "TG 제외", kind: "key", keys: [["D"]], match: { code: "KeyD" }, action: "tool", arg: "tg-toggle" },
+  { id: "guidance.tool.tg-split", context: "guidance", group: "도구", label: "TG 분할", kind: "key", keys: [["T"]], match: { code: "KeyT" }, action: "tool", arg: "tg-split" },
+  { id: "guidance.tool.wall", context: "guidance", group: "도구", label: "Edge 장벽", kind: "key", keys: [["E"]], match: { code: "KeyE" }, action: "tool", arg: "wall" },
+  { id: "guidance.tool.region-split", context: "guidance", group: "도구", label: "영역 분할", kind: "key", keys: [["L"]], match: { code: "KeyL" }, action: "tool", arg: "region-split" },
   { id: "guidance.tool.ubox", context: "guidance", group: "도구", label: "텍스트 기반 영역", kind: "key", keys: [["U"]], match: { code: "KeyU" }, action: "tool", arg: "ubox" },
   { id: "guidance.tool.bubble", context: "guidance", group: "도구", label: "경계 기반 seed", kind: "key", keys: [["B"]], match: { code: "KeyB" }, action: "tool", arg: "bubble" },
-  { id: "guidance.tool.region-off", context: "guidance", group: "도구", label: "Region Off", kind: "key", keys: [["X"]], match: { code: "KeyX" }, action: "tool", arg: "region-off" },
-  { id: "overlay.tool.select", context: "overlay", group: "도구", label: "Select", kind: "key", keys: [["V"]], match: { code: "KeyV" }, action: "tool", arg: "select" },
-  { id: "overlay.tool.hand", context: "overlay", group: "도구", label: "Hand (화면 이동)", kind: "key", keys: [["H"]], match: { code: "KeyH" }, action: "tool", arg: "hand" },
+  { id: "overlay.tool.select", context: "overlay", group: "도구", label: "선택", kind: "key", keys: [["V"]], match: { code: "KeyV" }, action: "tool", arg: "select" },
+  { id: "overlay.tool.hand", context: "overlay", group: "도구", label: "화면 이동", kind: "key", keys: [["H"]], match: { code: "KeyH" }, action: "tool", arg: "hand" },
   { id: "overlay.tool.eraser", context: "overlay", group: "도구", label: "지우개 (켜기/끄기)", kind: "key", keys: [["E"]], match: { code: "KeyE" }, action: "tool", arg: "eraser" },
 
   // 편집
@@ -70,8 +69,8 @@ export const KEYMAP = [
   { id: "edit.undo", context: CANVAS, group: "편집", label: "실행 취소", kind: "key", keys: [["Ctrl", "Z"]], match: { code: "KeyZ", mod: true }, action: "undo" },
   { id: "edit.redo", context: CANVAS, group: "편집", label: "다시 실행", kind: "key", keys: [["Ctrl", "Shift", "Z"]], match: { code: "KeyZ", mod: true, shift: true }, action: "redo" },
   { id: "edit.redo.y", context: CANVAS, group: "편집", label: "다시 실행 (Windows·Linux)", kind: "key", platform: "nonMac", keys: [["Ctrl", "Y"]], match: { code: "KeyY", mod: true }, action: "redo" },
-  { id: "guidance.delete", context: "guidance", group: "편집", label: "선택한 TG를 끄기. 선택이 없으면 포인터 아래 guide/TG/region 삭제 (우클릭과 같음)", kind: "key", keys: [["Delete"], ["Backspace"]], match: { code: ["Delete", "Backspace"] }, action: "delete" },
-  { id: "guidance.rightClick", context: "guidance", group: "편집", label: "포인터 아래 guide/TG/region 삭제", kind: "pointer", keys: [["우클릭"]] },
+  { id: "guidance.delete", context: "guidance", group: "편집", label: "선택한 TG를 끄기. 선택이 없으면 포인터 아래 guide/TG/region 삭제", kind: "key", keys: [["Delete"], ["Backspace"]], match: { code: ["Delete", "Backspace"] }, action: "delete" },
+  { id: "guidance.rightClick", context: "guidance", group: "편집", label: "우클릭 메뉴: TG 제외·이 처리 영역 제외·가이드 삭제", kind: "pointer", keys: [["우클릭"]] },
   { id: "overlay.nudge", context: "overlay", group: "편집", label: "선택한 safe rect 1px 이동 (선택이 없으면 ←/→는 페이지 이동)", kind: "key", when: ["regionSelected"], keys: [["←"], ["→"], ["↑"], ["↓"]], match: { code: ["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"] }, action: "overlay.nudge", arg: 1 },
   { id: "overlay.nudge.big", context: "overlay", group: "편집", label: "선택한 safe rect 10px 이동", kind: "key", when: ["regionSelected"], keys: [["Shift", "←"], ["Shift", "→"], ["Shift", "↑"], ["Shift", "↓"]], match: { code: ["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"], shift: true }, action: "overlay.nudge", arg: 10 },
   { id: "overlay.nextRegion", context: "overlay", group: "편집", label: "다음 region 선택 (읽는 순서)", kind: "key", keys: [["Tab"]], match: { code: "Tab" }, action: "overlay.cycleRegion", arg: 1 },
@@ -96,7 +95,7 @@ export const KEYMAP = [
   { id: "overlay.orientation", context: "overlay", group: "스타일", label: "쓰기 방향 순환: 자동 → 가로 → 세로", kind: "key", when: ["regionSelected"], keys: [["O"]], match: { code: "KeyO" }, action: "overlay.orientation" },
 
   // 적용
-  { id: "guidance.apply", context: "guidance", group: "적용", label: "영역 분석 적용 (Apply Analysis)", kind: "key", keys: [["Ctrl", "Enter"]], allowInInput: true, match: { code: ["Enter", "NumpadEnter"], mod: true }, action: "apply" },
+  { id: "guidance.apply", context: "guidance", group: "적용", label: "현재 페이지 분석 적용 (미적용 변경을 모아서 실행)", kind: "key", keys: [["Ctrl", "Enter"]], allowInInput: true, match: { code: ["Enter", "NumpadEnter"], mod: true }, action: "apply" },
   { id: "overlay.apply", context: "overlay", group: "적용", label: "Overlay 적용 (Apply Overlay)", kind: "key", keys: [["Ctrl", "Enter"]], allowInInput: true, when: ["notInFloatingEditor"], match: { code: ["Enter", "NumpadEnter"], mod: true }, action: "apply" },
 
   // 대사 편집 팝업

@@ -1,9 +1,10 @@
 import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from "react";
 import Konva from "konva";
+import { createPortal } from "react-dom";
 import { rectOf, tgId, imageGroups, defaultGuidance, regionId, imageRegions, regionDisplayRect } from "./lib.js";
 import { createViewport } from "./viewportControls.js";
 import { placeCanvasLabels, promotedTgIds } from "./canvasLabels.js";
-import { pendingRegionExclusions, regionIsExcluded } from "./regionExclusion.js";
+import { regionIsExcluded, tgIsExcluded } from "./regionExclusion.js";
 import { TEXT_BASED, regionProcessingBasis, regionTypeLabel } from "./regionTypes.js";
 
 const EditorCanvas = forwardRef(function EditorCanvas({ image, baseUrl, guidance, setGuidance, tool, layers, selectedTg, setSelectedTg, setStatus }, ref) {
@@ -24,6 +25,23 @@ const EditorCanvas = forwardRef(function EditorCanvas({ image, baseUrl, guidance
   const baseUrlRef = useRef(baseUrl);
   baseUrlRef.current = baseUrl;
   const [dragPreview, setDragPreview] = useState(null);
+  const [contextMenu, setContextMenu] = useState(null);
+  const menuRef = useRef(null);
+  useEffect(() => { setContextMenu(null); }, [image?.id, image?.input_url, guidance, tool]);
+  useEffect(() => {
+    if (!contextMenu) return;
+    const previous = document.activeElement;
+    menuRef.current?.querySelector('button:not(:disabled)')?.focus();
+    const outside = event => { if (!menuRef.current?.contains(event.target)) setContextMenu(null); };
+    const escape = event => { if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); setContextMenu(null); } };
+    window.addEventListener("pointerdown", outside, true);
+    window.addEventListener("keydown", escape, true);
+    return () => {
+      window.removeEventListener("pointerdown", outside, true);
+      window.removeEventListener("keydown", escape, true);
+      previous?.isConnected && previous.focus();
+    };
+  }, [contextMenu]);
   const setStatusRef = useRef(setStatus);
   setStatusRef.current = setStatus;
   const vpRef = useRef(null);
@@ -87,9 +105,8 @@ const EditorCanvas = forwardRef(function EditorCanvas({ image, baseUrl, guidance
 
   function findTgAt(point) {
     if (layersRef.current?.tg === false) return null;
-    const disabled = new Set((guidanceRef.current || {}).disabled_tg_ids || []);
     return [...imageGroups(imageRef.current)].reverse().find((group) => {
-      if (disabled.has(tgId(group))) return false;
+      if (tgIsExcluded(group, guidanceRef.current)) return false;
       const [x, y, w, h] = rectOf(group);
       return point.x >= x && point.x <= x + w && point.y >= y && point.y <= y + h;
     });
@@ -145,12 +162,6 @@ const EditorCanvas = forwardRef(function EditorCanvas({ image, baseUrl, guidance
     for (const item of regions) {
       const rect = item.unboxed_rect || item.bubble_rect || item.rect;
       if (rectContains(rect, point)) return { kind: "manual_regions", item };
-    }
-
-    const suppressed = [...pendingRegionExclusions(imageRef.current, current)].reverse();
-    for (const item of suppressed) {
-      const rect = item.rect || item.bubble_rect || item.unboxed_rect || item.source_rect;
-      if (rectContains(rect, point)) return { kind: "suppressed_regions", item };
     }
 
     const lineKinds = [
@@ -225,12 +236,17 @@ const EditorCanvas = forwardRef(function EditorCanvas({ image, baseUrl, guidance
     return true;
   }
 
-  function rightClickDelete(stage, evt) {
-    if (imageRef.current?.processing_excluded) return;
+  function openContextMenu(stage, evt) {
     evt.evt?.preventDefault();
     evt.evt?.stopPropagation?.();
     evt.cancelBubble = true;
-    deleteAtPoint(pointerToImage(stage));
+    const bounds = hostRef.current.getBoundingClientRect(), t = transformRef.current;
+    const point = {x:Math.round((evt.evt.clientX-bounds.left-t.x)/t.scale), y:Math.round((evt.evt.clientY-bounds.top-t.y)/t.scale)};
+    const excluded = imageRef.current?.processing_excluded;
+    setContextMenu({x:Math.max(8,Math.min(window.innerWidth-258,evt.evt.clientX)),
+      y:Math.max(8,Math.min(window.innerHeight-220,evt.evt.clientY)),
+      group:excluded ? null : findTgAt(point), region:excluded ? null : findRegionAt(point),
+      guide:excluded ? null : findGuideAt(point)});
   }
 
   function disableTg(id) {
@@ -247,7 +263,7 @@ const EditorCanvas = forwardRef(function EditorCanvas({ image, baseUrl, guidance
     return true;
   }
 
-  // 우클릭과 같은 우선순위: guide → TG → 자동 region
+  // Delete의 포인터 우선순위: guide → TG → 자동 region
   function deleteAtPoint(point) {
     const guideHit = findGuideAt(point);
     if (guideHit) {
@@ -267,7 +283,7 @@ const EditorCanvas = forwardRef(function EditorCanvas({ image, baseUrl, guidance
     disableTg(tgId(group));
   }
 
-  // Delete/Backspace: 선택한 TG가 있으면 끄고, 없으면 포인터 아래 항목을 우클릭처럼 지운다.
+  // Delete/Backspace: 선택한 TG가 있으면 끄고, 없으면 포인터 아래 항목을 지운다.
   function deleteSelection() {
     if (imageRef.current?.processing_excluded) return false;
     const selectedId = Number(selectedTgRef.current);
@@ -499,7 +515,6 @@ const EditorCanvas = forwardRef(function EditorCanvas({ image, baseUrl, guidance
     transformRef.current = { scale: view.scale, x: view.x, y: view.y, w: img.width, h: img.height };
     base.add(new Konva.Image({ image: img, x: view.x, y: view.y, width: img.width * view.scale, height: img.height * view.scale }));
 
-    const disabled = new Set(currentGuidance.disabled_tg_ids || []);
     const visibleRegions = currentLayers.regions && !currentImage.processing_excluded ? (currentImage?.regions?.regions || []).filter(region => !regionIsExcluded(region, currentGuidance)) : [];
     const promoted = promotedTgIds(visibleRegions);
     const labels = [];
@@ -509,7 +524,7 @@ const EditorCanvas = forwardRef(function EditorCanvas({ image, baseUrl, guidance
     if (currentLayers.tg && !currentImage.processing_excluded) {
       imageGroups(currentImage).forEach((group) => {
         const id = tgId(group);
-        if (disabled.has(id)) return;
+        if (tgIsExcluded(group, currentGuidance)) return;
         const r = toStageRect(rectOf(group));
         const selected = Number(selectedTgRef.current) === id;
         const rect = new Konva.Rect({
@@ -521,7 +536,6 @@ const EditorCanvas = forwardRef(function EditorCanvas({ image, baseUrl, guidance
           listening: true,
         });
         rect.on("click tap", (evt) => {
-          if (toolRef.current === "region-off") return;
           evt.cancelBubble = true;
           setSelectedTg(id);
           selectedTgRef.current = id;
@@ -590,26 +604,6 @@ const EditorCanvas = forwardRef(function EditorCanvas({ image, baseUrl, guidance
           strokeWidth: 2,
           dash: [7, 4],
           fill: isTextBased ? "rgba(180,83,9,0.08)" : "rgba(17,24,39,0.06)",
-        }));
-      });
-      pendingRegionExclusions(currentImage, currentGuidance).forEach((item) => {
-        const rect = item.rect || item.bubble_rect || item.unboxed_rect || item.source_rect;
-        if (!rect) return;
-        const stageRect = toStageRect(rect);
-        overlay.add(new Konva.Rect({
-          ...stageRect,
-          stroke: "#dc2626",
-          strokeWidth: 2,
-          dash: [5, 4],
-          fill: "rgba(220,38,38,0.10)",
-        }));
-        overlay.add(new Konva.Text({
-          text: "off",
-          x: stageRect.x + 4,
-          y: stageRect.y + 4,
-          fontSize: 13,
-          fill: "#dc2626",
-          fontStyle: "bold",
         }));
       });
       (currentGuidance.manual_seed_points || []).forEach((item) => {
@@ -692,9 +686,8 @@ const EditorCanvas = forwardRef(function EditorCanvas({ image, baseUrl, guidance
     if (!host) return;
     const stage = new Konva.Stage({ container: host, width: host.clientWidth, height: host.clientHeight });
     stageRef.current = stage;
-    const preventContextMenu = (event) => event.preventDefault();
+    const preventContextMenu = (event) => openContextMenu(stage, {evt:event});
     host.addEventListener("contextmenu", preventContextMenu);
-    stage.content?.addEventListener("contextmenu", preventContextMenu);
     const observer = new ResizeObserver(() => redraw());
     observer.observe(host);
 
@@ -717,7 +710,7 @@ const EditorCanvas = forwardRef(function EditorCanvas({ image, baseUrl, guidance
     stage.on("mousedown touchstart", (evt) => {
       const button = evt.evt?.button;
       if (button === 2) {
-        rightClickDelete(stage, evt);
+        evt.evt?.preventDefault();
         return;
       }
       if (button === 1) return;
@@ -759,15 +752,6 @@ const EditorCanvas = forwardRef(function EditorCanvas({ image, baseUrl, guidance
         addBoundarySeed(point);
         return;
       }
-      if (currentTool === "region-off") {
-        const region = findRegionAt(point);
-        if (!region) {
-          setStatus("삭제할 region 없음");
-          return;
-        }
-        suppressRegion(region);
-        return;
-      }
       if (currentTool !== "select" && currentTool !== "tg-toggle") return;
       const group = findTgAt(point);
       if (!group) return;
@@ -783,7 +767,6 @@ const EditorCanvas = forwardRef(function EditorCanvas({ image, baseUrl, guidance
       host.removeEventListener("mouseenter", onEnter);
       host.removeEventListener("mouseleave", onLeave);
       host.removeEventListener("contextmenu", preventContextMenu);
-      stage.content?.removeEventListener("contextmenu", preventContextMenu);
       observer.disconnect();
       stage.destroy();
       stageRef.current = null;
@@ -816,7 +799,26 @@ const EditorCanvas = forwardRef(function EditorCanvas({ image, baseUrl, guidance
     redraw();
   }, [image, guidance, tool, layers, selectedTg, dragPreview]);
 
-  return <div id="stageHost" tabIndex="0" className={["tg-split", "wall", "region-split", "ubox", "bubble"].includes(tool) ? "drawing" : ""} ref={hostRef} />;
+  const menuAction = action => { setContextMenu(null); action(); };
+  const automaticRegion = contextMenu?.region && !String(contextMenu.region.source_method || contextMenu.region.method || "").startsWith("manual_");
+  return <><div id="stageHost" tabIndex="0" className={["tg-split", "wall", "region-split", "ubox", "bubble"].includes(tool) ? "drawing" : ""} ref={hostRef} />
+    {contextMenu && createPortal(<div role="menu" aria-label="영역 편집 메뉴" ref={menuRef} className="canvas-context-menu"
+      style={{left:contextMenu.x,top:contextMenu.y}} onContextMenu={event => event.preventDefault()} onKeyDown={event => {
+        if (event.key === "Tab") { setContextMenu(null); return; }
+        if (!["ArrowDown","ArrowUp","Home","End"].includes(event.key)) return;
+        event.preventDefault(); event.stopPropagation();
+        const items = Array.from(menuRef.current.querySelectorAll('button:not(:disabled)'));
+        const index = items.indexOf(document.activeElement);
+        const next = event.key === "Home" ? 0 : event.key === "End" ? items.length-1 : (index + (event.key === "ArrowDown" ? 1 : -1) + items.length) % items.length;
+        items[next]?.focus();
+      }}>
+      <div className="canvas-context-heading">{contextMenu.region ? `R${regionId(contextMenu.region)}` : "캔버스"}{contextMenu.group ? ` · TG${tgId(contextMenu.group)}` : ""}</div>
+      {contextMenu.guide && <button role="menuitem" onClick={() => menuAction(() => setGuidanceWithRightClickUndo(removeGuide(contextMenu.guide), `${guideLabel(contextMenu.guide)} 삭제`))}>이 가이드 삭제</button>}
+      {contextMenu.group && <button role="menuitem" onClick={() => menuAction(() => disableTg(tgId(contextMenu.group)))}>이 TG 제외</button>}
+      <button role="menuitem" disabled={!automaticRegion} title={contextMenu.region && !automaticRegion ? "직접 지정한 영역은 해당 가이드를 삭제하세요" : "현재 자동 처리 영역 제외"} onClick={() => menuAction(() => suppressRegion(contextMenu.region))}>이 처리 영역 제외</button>
+      <button role="menuitem" onClick={() => menuAction(() => vpRef.current.fit())}>화면 맞춤</button>
+    </div>, document.body)}
+  </>;
 });
 
 export default EditorCanvas;
