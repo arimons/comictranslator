@@ -1,0 +1,3 @@
+-r ../requirements.txt
+# 별도 보존한 Google Batch 도구를 사용할 때만 설치한다.
+google-genai==2.6.0

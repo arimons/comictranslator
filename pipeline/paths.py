@@ -49,8 +49,8 @@ EXPORTS_DIR = PATHS.exports
 LEGACY_DIR = PATHS.legacy
 PROOF_DIR = LEGACY_DIR / "proof_outputs"
 SAMPLES_DIR = DATA_HOME / "samples"
-PROOF_DIR = LEGACY_DIR / "proof_outputs"
-SAMPLES_DIR = DATA_HOME / "samples"
+MODEL_CACHE_DIR = DATA_HOME / "cache/models"
+LAMA_MODEL_PATH = MODEL_CACHE_DIR / "torch/hub/checkpoints/big-lama.pt"
 
 
 def export_directory(home=None):
@@ -63,3 +63,10 @@ def export_directory(home=None):
         configured = "exports"
     path = Path(configured).expanduser()
     return path if path.is_absolute() else base / path
+
+
+def configure_model_cache():
+    """LaMa 모델 캐시를 데이터 홈에 둔다. 사용자가 지정한 환경변수는 유지한다."""
+    os.environ.setdefault("TORCH_HOME", str(MODEL_CACHE_DIR / "torch"))
+    if LAMA_MODEL_PATH.is_file():
+        os.environ.setdefault("LAMA_MODEL", str(LAMA_MODEL_PATH))

@@ -5,15 +5,26 @@ import requests
 import argparse
 from pathlib import Path
 from dotenv import load_dotenv
-import google.generativeai as genai
+from google import genai
+from google.genai import types
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-load_dotenv()
+load_dotenv(Path(__file__).resolve().parents[1] / ".env")
 API_KEY = os.getenv("GEMINI_API_KEY")
-if not API_KEY:
-    raise ValueError("GEMINI_API_KEY 환경변수가 필요합니다. .env 파일을 확인해주세요.")
+_CLIENT = None
 
-genai.configure(api_key=API_KEY)
+
+def get_client():
+    global _CLIENT
+    if not API_KEY:
+        raise ValueError("GEMINI_API_KEY 환경변수가 필요합니다. .env 파일을 확인해주세요.")
+    if _CLIENT is None:
+        # google-genai 2.6.0. 공식 SDK의 Files API만 사용한다.
+        # https://googleapis.github.io/python-genai/
+        _CLIENT = genai.Client(api_key=API_KEY)
+    return _CLIENT
+
+
 MODEL_NAME = "models/gemini-3.1-flash-image-preview"
 
 # API 서버 보호를 위한 재시도 업로드 래퍼
@@ -22,9 +33,9 @@ def upload_with_retry(img_path, max_retries=3, mime_type=None):
     for attempt in range(max_retries):
         try:
             if mime_type:
-                uploaded = genai.upload_file(str(img_path), mime_type=mime_type)
+                uploaded = get_client().files.upload(file=str(img_path), config=types.UploadFileConfig(mime_type=mime_type))
             else:
-                uploaded = genai.upload_file(str(img_path))
+                uploaded = get_client().files.upload(file=str(img_path))
             return uploaded
         except Exception as e:
             error_msg = str(e).lower()

@@ -7,6 +7,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import cv2
 import json
 from pipeline.project_paths import storage_json
+from pipeline.paths import configure_model_cache
 import os
 import sys
 import tempfile
@@ -1944,6 +1945,7 @@ def _invalidate_containing_bubbles(regions: List[Dict[str, Any]]) -> None:
 
 
 def _load_simple_lama_class() -> Any | None:
+    configure_model_cache()
     global SimpleLama
     if SimpleLama is None:
         try:

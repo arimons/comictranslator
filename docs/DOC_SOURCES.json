@@ -238,6 +238,18 @@
         "scripts/migrate_workspace.py",
         "app.py"
       ]
+    },
+    "docs/DEPENDENCIES.md": {
+      "role": "canonical",
+      "topic": "실제 Python 의존성과 LaMa 모델 캐시",
+      "sources": [
+        "requirements.txt",
+        "requirements-dev.txt",
+        "batch/requirements.txt",
+        "pipeline/paths.py",
+        "pipeline/dialogue_extractor.py",
+        "batch/submit_batch_folder.py"
+      ]
     }
   }
 }

@@ -495,3 +495,5 @@ indexed sheet crop의 획두께·ink density를 재서 OpenAI가 준 `render_hin
 저장 구조·이전·맥 미니 실행은 [저장 위치 안내](STORAGE_LAYOUT.md)를 참고합니다. 내보낸 zip 기본 위치는 데이터 홈의 exports입니다.
 
 이전 후 검증(2026-10-21): 원본·등록 후보·편집 값은 보존되며 임시 분석 복사본도 프로젝트 상대 경로로 저장합니다. 검증 스크립트의 출력은 데이터 홈 legacy/proof_outputs에 둡니다.
+
+2026-10-21: 기본·개발·선택 배치 의존성을 분리했습니다. LaMa 모델은 데이터 홈 cache/models에 두며 기존 Timestamp 프로젝트 ID와 가변 표시 이름을 구분합니다. [의존성 안내](DEPENDENCIES.md) 참고.

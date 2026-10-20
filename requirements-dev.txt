@@ -1,0 +1,4 @@
+-r requirements.txt
+# FastAPI·MCP 테스트와 검증 도구
+pytest==9.1.1
+httpx==0.28.1
