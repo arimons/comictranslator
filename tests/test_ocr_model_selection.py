@@ -6,87 +6,32 @@ import pytest
 from pipeline import gemini_ocr_translate_v5 as ocr
 
 
-@pytest.mark.parametrize(
-    "model_name,expected",
-    [
-        ("gemini-3-flash-preview", "gemini"),
-        ("gemini-3.6-flash", "gemini"),
-        ("gpt-5.6-luna", "openai"),
-        ("gpt-5.6-terra", "openai"),
-    ],
-)
-def test_resolve_provider_maps_known_prefixes(model_name: str, expected: str) -> None:
-    assert ocr.resolve_provider(model_name) == expected
+@pytest.mark.parametrize("model_name", ["gpt-6.1-sol", "gpt-6-luna", "gpt-5.6-terra"])
+def test_resolve_provider_maps_openai(model_name):
+    assert ocr.resolve_provider(model_name) == "openai"
 
 
-@pytest.mark.parametrize("model_name", ["claude-opus-5", "llama-3", "", "flash"])
-def test_resolve_provider_rejects_unknown(model_name: str) -> None:
-    with pytest.raises(ValueError):
-        ocr.resolve_provider(model_name)
+@pytest.mark.parametrize("model_name", ["gemini-3-flash-preview", "claude-opus-5", ""])
+def test_resolve_provider_rejects_non_openai(model_name):
+    with pytest.raises(ValueError): ocr.resolve_provider(model_name)
 
 
-def test_run_model_json_dispatches_to_gemini(monkeypatch) -> None:
-    seen = {}
-
-    def fake_gemini(image_path, prompt, temperature, max_retries=4, model_name=None):
-        seen["provider"] = "gemini"
-        seen["model"] = model_name
-        return {"regions": []}, 0.0
-
-    def fake_openai(*args, **kwargs):
-        seen["provider"] = "openai"
-        return {"regions": []}, 0.0
-
-    monkeypatch.setattr(ocr, "_run_gemini_json", fake_gemini)
-    monkeypatch.setattr(ocr, "_run_openai_json", fake_openai)
-
-    ocr._run_model_json("sheet.jpg", "prompt", 0.2, model_name="gemini-3-flash-preview")
-    assert seen["provider"] == "gemini"
-    assert seen["model"] == "gemini-3-flash-preview"
+def test_default_and_explicit_model_dispatch_to_openai(monkeypatch):
+    seen = []
+    def fake(image_path, prompt, temperature, model_name, max_retries=4):
+        seen.append(model_name)
+        return {"regions": []}, 0
+    monkeypatch.setattr(ocr, "_run_openai_json", fake)
+    ocr._run_model_json("sheet.jpg", "JSON prompt", 0.2)
+    ocr._run_model_json("sheet.jpg", "JSON prompt", 0.2, model_name="gpt-6-luna")
+    assert seen == ["gpt-6.1-sol", "gpt-6-luna"]
+    with pytest.raises(ValueError): ocr._run_model_json("sheet.jpg", "prompt", 0.2, model_name="gemini-3-flash-preview")
 
 
-def test_run_model_json_dispatches_to_openai(monkeypatch) -> None:
-    seen = {}
-
-    def fake_gemini(*args, **kwargs):
-        seen["provider"] = "gemini"
-        return {"regions": []}, 0.0
-
-    def fake_openai(image_path, prompt, temperature, model_name, max_retries=4):
-        seen["provider"] = "openai"
-        seen["model"] = model_name
-        return {"regions": []}, 0.0
-
-    monkeypatch.setattr(ocr, "_run_gemini_json", fake_gemini)
-    monkeypatch.setattr(ocr, "_run_openai_json", fake_openai)
-
-    ocr._run_model_json("sheet.jpg", "prompt", 0.2, model_name="gpt-5.6-luna")
-    assert seen["provider"] == "openai"
-    assert seen["model"] == "gpt-5.6-luna"
-
-
-def test_run_model_json_falls_back_to_module_default(monkeypatch) -> None:
-    seen = {}
-
-    def fake_gemini(image_path, prompt, temperature, max_retries=4, model_name=None):
-        seen["model"] = model_name
-        return {"regions": []}, 0.0
-
-    monkeypatch.setattr(ocr, "_run_gemini_json", fake_gemini)
-    monkeypatch.setattr(ocr, "MODEL_NAME", "gemini-3-flash-preview")
-
-    ocr._run_model_json("sheet.jpg", "prompt", 0.2)
-    assert seen["model"] == "gemini-3-flash-preview"
-
-
-def test_require_api_key_reports_missing_provider_key(monkeypatch) -> None:
+def test_require_existing_openai_key_only(monkeypatch):
     monkeypatch.setattr(ocr, "OPENAI_API_KEY", None)
-    with pytest.raises(RuntimeError, match="OPENAI_API_KEY"):
-        ocr._require_api_key("openai")
-
-    monkeypatch.setattr(ocr, "GEMINI_API_KEY", None)
-    with pytest.raises(RuntimeError, match="GEMINI_API_KEY"):
-        ocr._require_api_key("gemini")
+    with pytest.raises(RuntimeError, match="OPENAI_API_KEY"): ocr._require_api_key("openai")
+    with pytest.raises(ValueError): ocr._require_api_key("gemini")
 
 
 def test_pipeline_runner_forwards_model_flag() -> None:

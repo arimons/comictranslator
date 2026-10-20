@@ -80,7 +80,7 @@ def resolved_image_size(image_path: str | Path, size: str = "match_input") -> st
 
 def build_translation_layout_notes(
     image_path: str | Path,
-    model_name: str = "gpt-5.4-mini",
+    model_name: str = "gpt-6.1-sol",
     prompt_guide: str = "",
     log_callback: LogCallback | None = None,
 ) -> str:
@@ -114,6 +114,7 @@ Global user guide:
     try:
         response = client.responses.create(
             model=model_name,
+            reasoning={"effort": "low"},
             input=[
                 {
                     "role": "user",
@@ -139,7 +140,7 @@ def redraw_image_with_openai(
     model_name: str = "gpt-image-2",
     prompt_guide: str = "",
     translation_layout_notes: str = "",
-    text_model_name: str = "gpt-5.4-mini",
+    text_model_name: str = "gpt-6.1-sol",
     analyze_first: bool = False,
     quality: str = "medium",
     size: str = "match_input",

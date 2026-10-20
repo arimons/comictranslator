@@ -104,3 +104,5 @@ find proof -type f ! -path 'proof/src/*' -delete
 - 에이전트 검증 작업에서 `--work-dir proof`를 쓰면 보통 `--output proof`를 같이 쓴다.
 - `CLAUDE.md`나 `AGENTS.md`에 폴더 규칙을 중복으로 길게 복사하지 않는다.
 - 폴더 규칙 변경이 필요하면 이 문서를 먼저 갱신하고 각 에이전트별 가이드에서는 링크만 유지한다.
+
+OpenAI 전환(2026-10-20): pipeline_runner의 Step 4 호출 로그와 모델 기본값이 OpenAI로 변경됐으며 work_dir/output_dir 배치 규칙은 동일하다.

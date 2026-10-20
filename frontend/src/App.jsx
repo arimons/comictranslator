@@ -93,7 +93,7 @@ export default function App() {
   const [guidanceCompareMode, setGuidanceCompareMode] = useState("masked");
   const [autoOverlayPreview, setAutoOverlayPreview] = useState(true);
   const [exportImageModel, setExportImageModel] = useState("gpt-image-2");
-  const [exportTextModel, setExportTextModel] = useState("gpt-5.4-mini");
+  const [exportTextModel, setExportTextModel] = useState("gpt-6.1-sol");
   const [exportImageQuality, setExportImageQuality] = useState("medium");
   const [exportImageSize, setExportImageSize] = useState("match_input");
   const [exportOutputFormat, setExportOutputFormat] = useState("jpeg");
@@ -1617,7 +1617,7 @@ export default function App() {
           model: exportImageModel || "gpt-image-2",
           prompt_guide: exportPromptGuide,
           analyze_first: exportAnalyzeFirst,
-          text_model: exportTextModel || "gpt-5.4-mini",
+          text_model: exportTextModel || "gpt-6.1-sol",
           quality: exportImageQuality,
           size: exportImageSize,
           output_format: exportOutputFormat,

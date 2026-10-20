@@ -50,7 +50,7 @@ NEW_COMIC_TRANSLATOR/
 ├── tests/                      # pytest 테스트 (문서 동기화 검사 포함)
 ├── proof/                      # 검증용 스크립트 및 출력물
 │   └── src/                    # 검증 보조 스크립트 (삭제 금지)
-├── batch/                      # Gemini Batch API 보존 영역 (레퍼런스)
+├── batch/                      # OpenAI Batch API 보존 영역 (레퍼런스)
 │   ├── submit_batch_folder.py
 │   ├── receive_batch_result.py
 │   └── check_all_batches.py
@@ -75,8 +75,9 @@ NEW_COMIC_TRANSLATOR/
     ├── region_types.py         # 처리 기준 상수·기존 JSON 타입 호환·비파괴 projection
     ├── editor_review_bridge.py # 세션 산출물 조회·이미지 crop·revision·미적용 검토 초안
     ├── geometry.py             # 사각형 좌표 유틸
-    ├── gemini_ocr_translate_v5.py  # Step 4 (Gemini 기본, gpt-* 선택 가능)
-    ├── work_glossary.py        # 작품별 URL 자료 저장·단일 Gemini 용어 정리·수동 결정·버전 고정
+    ├── gemini_ocr_translate_v5.py  # Step 4 (GPT-6.1 Sol 기본, OpenAI Responses API)
+    ├── openai_tasks.py        # OpenAI 작업별 Sol/Luna 라우팅·JSON 출력·제한 승격
+    ├── work_glossary.py        # 작품별 URL 자료 저장·단일 OpenAI 용어 정리·수동 결정·버전 고정
     ├── work_matching.py        # 기존 CV·로컬 작품 조회·확인 작품 재사용
     ├── work_sources.py         # 공개 작품 URL의 제한 수집·본문 추출·자료 인용 구간
     ├── font_style_analyzer.py  # Step 4 직후 render_hint CV 보정
@@ -117,7 +118,7 @@ Step 5: Text Overlay (regions.json으로 bbox·safe rect 결정)
 
 각 단계는 별도 subprocess로 실행되며, 어느 단계든 실패하면 그 이미지는 실패로 끝난다. 예전 Step 5 White Masking(`apply_masking.py`)은 없어졌고 마스킹은 Step 3이 직접 만든다.
 
-예전 `integrate_ocr_v3.py` 단계는 메인 파이프라인에서 제거됐다. 현재는 `pipeline/gemini_ocr_translate_v5.py`가 Gemini 응답을 바로 overlay가 읽는 integrated JSON 구조로 저장한다.
+예전 `integrate_ocr_v3.py` 단계는 메인 파이프라인에서 제거됐다. 현재는 `pipeline/gemini_ocr_translate_v5.py`가 OpenAI 응답을 바로 overlay가 읽는 integrated JSON 구조로 저장한다.
 
 ## Root Wrapper
 
@@ -250,9 +251,9 @@ proof/
 
 ## Batch 영역
 
-### `batch/submit_batch_folder.py`, `receive_batch_result.py`, `check_all_batches.py` — Gemini Batch API
+### `batch/submit_batch_folder.py`, `receive_batch_result.py`, `check_all_batches.py` — OpenAI Batch API
 
-대용량 Gemini 이미지 Batch API 실험/운영용이다. Free tier에서 실제 대용량 작업이 막히는 문제가 확인되어 메인 파이프라인과 분리했다. 현재는 레퍼런스 목적으로 보존한다.
+대용량 OpenAI 이미지 Batch API 실험/운영용이다. Free tier에서 실제 대용량 작업이 막히는 문제가 확인되어 메인 파이프라인과 분리했다. 현재는 레퍼런스 목적으로 보존한다.
 
 ## Pipeline 파일
 
@@ -378,7 +379,7 @@ flood 실패 후보에 TELEA inpaint를 적용하는 승격 후보 실험 모듈
 OCR, 번역, Text Group 매칭을 한 번에 수행하고 integrated JSON을 생성한다.
 
 - 표준 입력: `--ocr-sheet-image`(indexed OCR sheet) + `--ocr-sheet-json`(`*_regions.json`) + `*_text_groups.json`. OCR sheet가 없을 때만 원본 이미지 + CV cluster 힌트 경로로 fallback한다.
-- `--model`로 모델을 고른다. `gemini-*`는 Gemini, `gpt-*`는 OpenAI로 보낸다. UI 노출 목록은 `SUPPORTED_OCR_MODELS`, 기본값은 `MODEL_NAME`이다.
+- `--model`로 모델을 고른다. `gemini-*`는 OpenAI, `gpt-*`는 OpenAI로 보낸다. UI 노출 목록은 `SUPPORTED_OCR_MODELS`, 기본값은 `MODEL_NAME`이다.
 - OCR 직후 `font_style_analyzer.update_integrated_render_hints()`로 render_hint를 보정한다.
 - 출력: `*_integrated.json`
 - 출력 구조: `clusters`(=Text Group), `unmatched_clusters`, `model`, `ocr_source`. 번역을 끝내 받지 못한 region이 있으면 `missing_region_ids`도 쓴다.
@@ -387,7 +388,7 @@ OCR, 번역, Text Group 매칭을 한 번에 수행하고 integrated JSON을 생
 
 ### `pipeline/font_style_analyzer.py`
 
-indexed sheet crop의 획두께·ink density를 재서 Gemini가 준 `render_hint_raw`를 `render_hint_final`로 보정한다. 진입점은 `update_integrated_render_hints()`이고, 단독 CLI로 OCR 없이 render_hint만 다시 계산할 수 있다.
+indexed sheet crop의 획두께·ink density를 재서 OpenAI가 준 `render_hint_raw`를 `render_hint_final`로 보정한다. 진입점은 `update_integrated_render_hints()`이고, 단독 CLI로 OCR 없이 render_hint만 다시 계산할 수 있다.
 
 ### `pipeline/pipeline_runner.py`
 
@@ -450,7 +451,7 @@ indexed sheet crop의 획두께·ink density를 재서 Gemini가 준 `render_hin
 | --- | --- |
 | Text Fragment가 Text Line으로 잘못 묶임 | `pipeline/text_group_builder_v2.py` |
 | 여러 Text Line이 Text Group으로 잘못 묶임 | `pipeline/text_group_builder_v2.py` |
-| Gemini가 Text Group id를 잘못 매칭함 | `pipeline/gemini_ocr_translate_v5.py` |
+| OpenAI가 Text Group id를 잘못 매칭함 | `pipeline/gemini_ocr_translate_v5.py` |
 | union bbox가 너무 크거나 작음 | `pipeline/gemini_ocr_translate_v5.py`, `pipeline/render_text_overlay.py` |
 | 마스킹이 말풍선 경계를 침범함 | `pipeline/dialogue_extractor.py`, `pipeline/bubble_detector.py` |
 | 텍스트 기반 글자 지우기가 이상함 | `pipeline/dialogue_extractor.py`, `pipeline/unboxed_text_detector.py` |
@@ -466,7 +467,7 @@ indexed sheet crop의 획두께·ink density를 재서 Gemini가 준 `render_hin
 
 작품 연결 UI는 프로젝트명 옆에 표시하며 연결 전 후보/검색 상태와 연결 후 작품명/용어집 조사 상태를 구분한다. `POST /api/glossary/match`가 CV 기반 재사용 또는 웹 후보 검색을 시작한다. 검색 실패 중에도 기존 작품 연결을 유지한다.
 
-작품 자료 수집은 `pipeline/work_sources.py`가 공개 URL 본문을 읽고, `pipeline/work_glossary.py`가 작품 ID별로 저장·재사용한다. 작품 매칭은 로컬 CV·저장 작품만 사용하며 Gemini는 저장 자료 정리에만 한 번 사용한다. 유료 검색은 호출하지 않는다.
+작품 자료 수집은 `pipeline/work_sources.py`가 공개 URL 본문을 읽고, `pipeline/work_glossary.py`가 작품 ID별로 저장·재사용한다. 작품 매칭은 로컬 CV·저장 작품만 사용하며 OpenAI는 저장 자료 정리에만 한 번 사용한다. 유료 검색은 호출하지 않는다.
 
 ## 이미지 생성 권장과 후보 등록 (2026-10-20)
 

@@ -69,7 +69,7 @@ def _ocr_skip_message(reason: str) -> str:
         return "말풍선 분석 산출물이 없어 OCR/번역을 건너뜁니다."
     if reason == OCR_SKIP_REASON_NO_REGIONS:
         return "말풍선 분석은 완료됐지만 OCR 대상 region이 없어 OCR/번역을 건너뜁니다."
-    return "OCR sheet 산출물이 불완전해 Gemini OCR/번역을 건너뜁니다."
+    return "OCR sheet 산출물이 불완전해 OpenAI OCR/번역을 건너뜁니다."
 
 
 def _analysis_state(regions_json: Path, indexed_sheet_jpg: Path) -> dict[str, object]:
@@ -369,8 +369,8 @@ def run_single_image(
             )
             return True, "\n".join(log)
 
-        # Step 4: Gemini OCR + 번역
-        _append_log(log, "\n🤖 Step 4: Gemini OCR/Translation", log_callback)
+        # Step 4: OpenAI OCR + 번역
+        _append_log(log, "\n🤖 Step 4: OpenAI OCR/Translation", log_callback)
         step_started = time.time()
         _analysis = _analysis_state(regions_json, indexed_sheet_jpg)
         # Step 3 산출물이 바뀌면 region_id / sheet_rect / anchor_ids 매핑이 달라질 수 있으므로
@@ -407,7 +407,7 @@ def run_single_image(
                     f"--extra-prompt={extra_prompt}",
                     *(["--model", ocr_model] if ocr_model else []),
                 ],
-                STEP_TIMEOUT["gemini"], "Gemini OCR", log_callback,
+                STEP_TIMEOUT["gemini"], "OpenAI OCR", log_callback,
             )
             _append_log(log, "  ✅ 완료", log_callback)
         else:

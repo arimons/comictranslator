@@ -2,7 +2,7 @@
 """Comic Translator review UI.
 
 This is a local-only web app for reviewing TG anchors and Step 3 regions before
-Gemini OCR. It intentionally lives beside the Gradio wrapper instead of
+OpenAI OCR. It intentionally lives beside the Gradio wrapper instead of
 replacing it.
 """
 
@@ -304,7 +304,7 @@ class GenerateMissingFinalRequest(BaseModel):
     model: str = "gpt-image-2"
     prompt_guide: str = ""
     analyze_first: bool = True
-    text_model: str = "gpt-5.4-mini"
+    text_model: str = "gpt-6.1-sol"
     quality: str = "medium"
     size: str = "match_input"
     output_format: str = "jpeg"
@@ -1321,7 +1321,7 @@ def write_export_recovery_generated(record: dict[str, Any], req: GenerateMissing
         "generated_at": dt.datetime.now(dt.timezone.utc).isoformat(),
         "attempts": attempts,
         "model": req.model or "gpt-image-2",
-        "text_model": req.text_model or "gpt-5.4-mini",
+        "text_model": req.text_model or "gpt-6.1-sol",
         "analyze_first": bool(req.analyze_first),
         "quality": req.quality or "medium",
         "size": req.size or "match_input",
@@ -1412,7 +1412,7 @@ def ocr_skip_message(reason: str) -> str:
         return "말풍선 분석 산출물이 없어 OCR/번역을 건너뜁니다."
     if reason == OCR_SKIP_REASON_NO_REGIONS:
         return "말풍선 분석은 완료됐지만 OCR 대상 region이 없어 OCR/번역을 건너뜁니다."
-    return "OCR sheet 산출물이 불완전해 Gemini OCR/번역을 건너뜁니다."
+    return "OCR sheet 산출물이 불완전해 OpenAI OCR/번역을 건너뜁니다."
 
 
 def ocr_skip_payload(reason: str, missing: list[str] | None = None, analysis_state: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -1986,7 +1986,7 @@ def run_final_for_item(
     if log_callback is None:
         run_subprocess(ocr_cmd, timeout=360)
     else:
-        log_callback("Step 4 Gemini OCR/번역 시작")
+        log_callback("Step 4 OpenAI OCR/번역 시작")
         run_subprocess_stream(ocr_cmd, timeout=360, log_callback=log_callback)
         log_callback("Step 6 Text Overlay 시작")
     write_json(Path(record["work_dir"]) / "json" / f"{record['id']}_glossary_snapshot.json", context)
@@ -2219,7 +2219,7 @@ def generate_missing_finals_with_openai(req: GenerateMissingFinalRequest) -> dic
             record["final_jpg"],
             model_name=req.model or "gpt-image-2",
             prompt_guide=req.prompt_guide or "",
-            text_model_name=req.text_model or "gpt-5.4-mini",
+            text_model_name=req.text_model or "gpt-6.1-sol",
             analyze_first=req.analyze_first,
             quality=req.quality or "medium",
             size=req.size or "match_input",
@@ -2294,7 +2294,7 @@ def stream_generate_missing_finals(req: GenerateMissingFinalRequest):
                     record["final_jpg"],
                     model_name=req.model or "gpt-image-2",
                     prompt_guide=req.prompt_guide or "",
-                    text_model_name=req.text_model or "gpt-5.4-mini",
+                    text_model_name=req.text_model or "gpt-6.1-sol",
                     analyze_first=req.analyze_first,
                     quality=req.quality or "medium",
                     size=req.size or "match_input",
@@ -2644,7 +2644,7 @@ def create_app() -> FastAPI:
                 data = store.read(wid)
             write_json(glossary_binding_path(req.session_id), {"work_id": wid})
             WORK_MATCHER.confirmed(work_match_path(req.session_id))
-            # 작품 연결은 수집·Gemini 요청을 시작하지 않는다.
+            # 작품 연결은 수집·OpenAI 요청을 시작하지 않는다.
             return glossary_payload(req.session_id)
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc

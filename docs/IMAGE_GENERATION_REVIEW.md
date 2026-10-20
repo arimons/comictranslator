@@ -57,3 +57,5 @@ temp_output/v2_sessions/{session_id}/work/image_generation/{image_id}/
 커버의 내장 생성 반환 이미지 1058×1487px를 실제 `register_generated_image` stdio 호출로 등록했다. 결과 ID는 `f6d60cbd64abce24c66e5c772aed4191`이며 `actual_model`은 미공개로 null, 품질은 미검토다. 생성 후보 검토 링크로 진입할 때 자동 분석과 작품 검색을 시작하지 않으며, 일반 진입에서도 생성 권장 페이지는 자동 분석 대상에서 제외한다. 사용자가 직접 실행하는 기존 분석 버튼은 유지된다.
 
 검증: MCP/형식/호환/페이지 분할 대상 27개 테스트 통과. 브라우저에서 실제 커버 원본·생성 후보의 표시, 600px 팝업 넘침 없음, Escape 닫기, 자동 분석·작품 검색을 포함한 POST 요청 0건을 확인했다. 브라우저 점검 소스는 `proof/src/check_image_generation_review.js`다.
+
+OpenAI 모델 전환(2026-10-20): 편집기 내보내기의 별도 API 생성 경로는 gpt-image-2와 GPT-6.1 Sol 번역·레이아웃 가이드를 기본으로 사용한다. 이 문서의 호스트 도구 후보 등록 경로는 호스트가 반환한 실제 모델 정보만 기록한다.

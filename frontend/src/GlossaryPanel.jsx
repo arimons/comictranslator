@@ -192,7 +192,7 @@ export default function GlossaryPanel({ sessionId, projectName, ocrBusy, analysi
             <label>작가 (동명 작품 구분)<input maxLength={200} value={author} onChange={(event) => setAuthor(event.target.value)} /></label>
             <label>원작 / 외전 / 판본 (선택)<input maxLength={200} value={edition} placeholder="예: 원작 만화, 특정 외전명" onChange={(event) => setEdition(event.target.value)} /></label>
           </> : null}
-          <p>작품명·작가·판본으로 용어집을 구분합니다. Gemini는 저장한 자료의 용어 정리를 직접 실행할 때만 사용합니다.</p>
+          <p>작품명·작가·판본으로 용어집을 구분합니다. OpenAI는 저장한 자료의 용어 정리를 직접 실행할 때만 사용합니다.</p>
           <div className="row"><button className="primary" disabled={busy || ocrBusy || (!savedId && !title.trim())}>{savedId ? "이 작품으로 확인 · 재사용" : "이 작품으로 확인 · 연결"}</button>{changing ? <button type="button" onClick={() => setChanging(false)}>취소</button> : null}</div>
         </form> : null}
         {data && !changing ? <>
@@ -205,7 +205,7 @@ export default function GlossaryPanel({ sessionId, projectName, ocrBusy, analysi
               <details><summary>자동 수집이 안 되면 본문 직접 붙여 넣기</summary><label>출처에서 복사한 본문<textarea maxLength={16000} rows={5} value={sourceText} onChange={(event) => setSourceText(event.target.value)} /></label><p>붙여 넣은 자료에서 만든 용어는 자동 적용하지 않고 검토에 둡니다.</p></details>
               <button disabled={disabled || !sourceUrl.trim()}>{busy ? "자료 처리 중…" : sourceText.trim() ? "본문 저장" : "URL 자료 수집 · 저장"}</button>
             </form>
-            <p>작품당 최대 6개, 문서당 본문 16,000자. URL 수집에는 Gemini를 사용하지 않습니다. 같은 자료는 저장본을 재사용합니다.</p>
+            <p>작품당 최대 6개, 문서당 본문 16,000자. URL 수집에는 OpenAI를 사용하지 않습니다. 같은 자료는 저장본을 재사용합니다.</p>
             {data.sources?.map((source) => <article className="work-candidate" key={source.url}>
               <a href={source.url} target="_blank" rel="noopener noreferrer">{source.title}</a>
               <p>{source.mode === "paste" ? "직접 저장" : "URL 수집"} · {source.text.length.toLocaleString()}자{source.truncated ? " · 일부만 저장" : ""} · {new Date(source.fetched_at).toLocaleString()}</p>
@@ -213,11 +213,12 @@ export default function GlossaryPanel({ sessionId, projectName, ocrBusy, analysi
               <div className="row"><button disabled={disabled} onClick={() => post("/api/glossary/source", { work_id: data.work_id, url: source.requested_url || source.url, refresh: true }, false)}>URL에서 다시 수집</button><button disabled={disabled} onClick={() => post("/api/glossary/source", { work_id: data.work_id, url: source.url, remove: true }, false)}>자료 삭제</button></div>
             </article>)}
             <button disabled={disabled || !data.sources?.length} onClick={() => post("/api/glossary/research", {}, false)}>저장 자료로 용어 정리</button>
-            <p>저장한 본문과 작품 정보만 Gemini에 전달합니다. 정리 시 일반 생성 비용·할당량이 적용됩니다. 같은 자료와 모델의 성공 결과가 있으면 API 없이 재사용합니다.</p>
+            <p>저장한 본문과 작품 정보만 OpenAI에 전달합니다. 정리 시 일반 생성 비용·할당량이 적용됩니다. 같은 자료와 모델의 성공 결과가 있으면 API 없이 재사용합니다.</p>
           </section>
           {researching ? <p role="status">저장한 자료의 작품·등장인물·용어를 정리하고 있습니다. 번역은 조사가 끝난 뒤 시작할 수 있습니다.</p> : null}
           {data.error ? <p role="alert" className="glossary-error">{data.error}</p> : null}
           {data.status === "ready" && !data.work_matches ? <p className="glossary-error">작품 일치가 확인되지 않아 자동 적용을 보류했습니다. 작품명을 확인하거나 개별 용어를 검토하세요.</p> : null}
+          {data.routing ? <p>용어 정리 모델: {data.routing.model} · {data.routing.reason}</p> : null}
           {data.summary ? <details><summary>작품·등장인물 참고 정보 (번역에 자동 전달하지 않음)</summary><p className="glossary-summary">{data.summary}</p></details> : null}
           <p>적용 {applied.length}개 · 검토 필요 {review.length}개 · 제외 {excluded.length}개. 수동 번역 지시문을 우선합니다. 기존 번역은 그대로이며, 변경된 용어집은 다음 번역부터 사용합니다.</p>
           {review.length ? <div><h3>충돌·불확실 항목만 검토</h3>{review.map(renderTerm)}</div> : null}

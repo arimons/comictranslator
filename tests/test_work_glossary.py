@@ -219,28 +219,27 @@ def test_batch_freezes_one_glossary_version(store, monkeypatch):
     assert all(context["entries"][0]["target"] == "유키" for context in seen)
 
 
-def test_research_provider_uses_one_plain_generation_and_only_saved_evidence(monkeypatch):
-    from google import genai
+def test_research_provider_uses_one_openai_generation_and_saved_evidence(monkeypatch):
+    import openai
     from pipeline.work_glossary import research_work
-    monkeypatch.setenv("GEMINI_API_KEY", "fake-test-key")
+    monkeypatch.setenv("OPENAI_API_KEY", "fake-test-key")
     calls = []
     class Client:
         def __init__(self, **kwargs):
-            assert kwargs["http_options"].retry_options.attempts == 1
-            self.models = self
+            assert kwargs["max_retries"] == 0
+            self.responses = self
         def __enter__(self): return self
         def __exit__(self, *args): pass
-        def generate_content(self, **kwargs):
+        def create(self, **kwargs):
             calls.append(kwargs)
-            return NS(text=json.dumps({"work_matches":True,"entries":report()["entries"]}))
-    monkeypatch.setattr(genai, "Client", Client)
-    sources = [{"url":"https://publisher.example/characters","title":"출처","text":"雪의 표기는 유키입니다." * 4,"content_hash":"abc","mode":"url"}]
+            return NS(output_text=json.dumps({"work_matches":True,"entries":report()["entries"]}))
+    monkeypatch.setattr(openai, "OpenAI", Client)
+    sources = [{"url":"https://publisher.example/characters","title":"出典","text":"雪의 표기는 유키입니다." * 4,"content_hash":"abc","mode":"url"}]
     result = research_work({"title":"작품","sources":sources})
-    assert len(calls) == 1
-    assert not calls[0]["config"].tools
-    assert calls[0]["config"].response_mime_type == "application/json"
+    assert len(calls) == 1 and calls[0]["model"] == "gpt-6-luna"
+    assert "tools" not in calls[0] and "temperature" not in calls[0]
     assert result["evidence"][0]["url"] == sources[0]["url"]
-    assert result["search_suggestions"] == ""
+    assert result["routing"]["model"] == "gpt-6-luna"
 
 
 def test_edit_to_existing_target_merges_duplicate_rows(store):
@@ -277,5 +276,5 @@ def test_payment_error_is_distinct_from_rate_limit(store):
     store.pool.shutdown(wait=True)
     data = store.read(wid)
     assert data['error_code'] == 'payment_required'
-    assert '크레딧 소진(402)' in data['error']
+    assert '결제 필요(402)' in data['error']
     assert 'private-sdk' not in json.dumps(data)
