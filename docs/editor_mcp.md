@@ -24,7 +24,9 @@ Codex는 프로젝트 로컬 MCP 설정을 지원하며 신뢰된 프로젝트�
 
 구현·프로토콜 검증은 공식 Python SDK **mcp 1.30.0**으로 했다. SDK 2.x의 `MCPServer` API와 혼용하지 않도록 요구 버전은 `>=1.30.0,<2.0.0`이다. [공식 Python SDK](https://github.com/modelcontextprotocol/python-sdk)
 
-## 도구 4개
+## 도구 8개
+
+기존 검토 도구 4개에 이미지 생성 권장·요청 준비·후보 등록 도구 4개를 추가했다. [이미지 생성 연결](IMAGE_GENERATION_REVIEW.md)에 실행·보관 계약과 커버 점검 내역을 기록했다.
 
 | 도구 | 하는 일 | 파일 변경 |
 |---|---|---|
@@ -32,6 +34,10 @@ Codex는 프로젝트 로컬 MCP 설정을 지원하며 신뢰된 프로젝트�
 | `inspect_page` | `image_id` 생략 시 페이지 목록. 지정 시 영역·번역·가이드·layout·복원 상태·이미지 존재 여부·revision 조회 | 없음 |
 | `view_region` | 전체 페이지 또는 특정 영역의 실제 이미지와 좌표·축소 배율 반환 | 없음 |
 | `propose_review` | 관찰과 후보 동작을 별도 초안 JSON에 저장. 실제 수정은 적용하지 않음 | `work/reviews/`에만 새 초안 |
+| `inspect_image_generation` | 권장 근거·미검토 후보 조회 | 없음 |
+| `recommend_image_generation` | 생성 권장/선택 근거 기록 | 페이지별 생성 자료 폴더 |
+| `prepare_image_generation` | 원본·용어집·번역이 고정된 요청 묶음 준비 | 같은 폴더의 요청 JSON |
+| `register_generated_image` | 내장 생성 반환 파일을 해당 페이지의 후보로 등록 | 같은 폴더의 후보·메타데이터 |
 
 MCP 도구명은 프로토콜 계약이다. UI 문구가 바뀌어도 도구명과 JSON 키를 화면 이름에 맞춰 일괄 치환하지 않는다.
 
@@ -90,12 +96,12 @@ temp_output/v2_sessions/{session_id}/work/reviews/{image_id}/{proposal_id}.json
 
 `pipeline/region_types.py`로 과거 `type: bubble/unboxed`를 경계 기반/텍스트 기반으로 읽는다. API projection과 동일하게 메모리에서만 `processing_basis`를 추가하며 캐시 마이그레이션은 하지 않는다. UI의 R 번호를 그대로 `region_id`로 사용한다.
 
-도구 인자는 프로젝트·페이지·영역 ID와 정해진 artifact 종류다. 임의 파일 경로를 받지 않는다. 입력·산출물 symlink는 지정된 세션·캐시 루트 안인지 검사한다. 알 수 없는 ID로 조회해 새 세션을 만드는 동작은 없다. 새 초안 경로도 세션 루트를 벗어날 수 없다.
+기존 관찰 도구 인자는 프로젝트·페이지·영역 ID와 정해진 artifact 종류다. 생성 결과 등록 도구만 허용된 생성 반환 폴더의 파일 경로를 받는다. 상세 제한은 이미지 생성 연결 문서를 따른다. 입력·산출물 symlink는 지정된 세션·캐시 루트 안인지 검사한다. 알 수 없는 ID로 조회해 새 세션을 만드는 동작은 없다. 새 초안 경로도 세션 루트를 벗어날 수 없다.
 
 ## 실행 및 유지보수
 
 - 진입점: `run_editor_mcp.py` — stdout은 JSON-RPC 전용, 로그는 stderr.
-- 어댑터: `pipeline/editor_review_bridge.py` — UI 의존성 없이 manifest·artifact를 읽고 검토 초안만 저장.
+- 관찰 어댑터: `pipeline/editor_review_bridge.py` — UI 의존성 없이 manifest·artifact를 읽고 검토 초안만 저장. 생성 후보는 `pipeline/image_generation_bridge.py`에서 별도로 다룬다.
 - 설정 생성: `configure_editor_mcp.py` — 프로젝트 로컬 Codex/Claude 설정.
 - 회귀 검사: `tests/test_editor_mcp.py` — 실제 subprocess stdio handshake·이미지·제안 왕복까지 검사.
 - 실제 프로젝트 조회 점검: `proof/src/smoke_editor_mcp.py`.

@@ -39,6 +39,7 @@ from pydantic import BaseModel
 from pipeline.manual_guidance import build_effective_text_groups, load_json, write_json
 from pipeline.region_types import regions_with_processing_basis
 from pipeline.page_preparation import build_plan, materialize_plan
+from pipeline.image_generation_bridge import ImageGenerationStore
 from pipeline.openai_image_redraw import redraw_image_with_openai
 from pipeline.pipeline_runner import DEFAULT_FONT, run_single_image, stream_subprocess
 from pipeline.render_text_overlay import apply_text_overlay
@@ -1170,6 +1171,7 @@ def image_record(
         "has_effective_text_groups": (json_dir / f"{stem}_text_groups_effective.json").exists(),
         "has_integrated_json": (json_dir / f"{stem}_integrated.json").exists(),
         "ocr_status": load_json(json_dir / f"{stem}_ocr_status.json", default={}),
+        "image_generation_recommendation": load_json(work / "image_generation" / stem / "recommendation.json", default={}),
         "export_recovery": export_recovery,
         "has_image_generation_fallback": has_image_generation_fallback,
         "detail_rev": page_detail_rev(json_dir, stem),
@@ -1236,6 +1238,7 @@ IMAGE_SUMMARY_KEYS = (
     "ocr_status",
     "export_recovery",
     "has_image_generation_fallback",
+    "image_generation_recommendation",
     "detail_rev",
 )
 PAGE_DETAIL_FILES = (
@@ -2610,6 +2613,16 @@ class RevalidatingStaticFiles(StaticFiles):
 
 def create_app() -> FastAPI:
     app = FastAPI(title="Comic Translator Review UI")
+
+    @app.get("/api/image-generation/{session_id}/{image_id}")
+    def read_image_generation(session_id: str, image_id: str) -> dict:
+        try:
+            result = ImageGenerationStore(ROOT).status(session_id, image_id)
+            for item in result["results"]:
+                item["preview_url"] = file_url(ROOT / item["preview_path"])
+            return result
+        except (ValueError, OSError) as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     @app.get("/api/glossary/{session_id}")
     def read_glossary(session_id: str) -> dict:

@@ -202,6 +202,16 @@
       "sources": [
         "proof/src/review_ore3_image_routes.py"
       ]
+    },
+    "docs/IMAGE_GENERATION_REVIEW.md": {
+      "role": "canonical",
+      "topic": "이미지 생성 권장 표시·내장 생성 요청·페이지별 후보 등록",
+      "sources": [
+        "pipeline/image_generation_bridge.py",
+        "run_editor_mcp.py",
+        "frontend/src/ImageGenerationPanel.jsx",
+        "main_v2.py"
+      ]
     }
   }
 }

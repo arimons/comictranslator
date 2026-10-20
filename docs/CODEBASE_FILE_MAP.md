@@ -467,3 +467,7 @@ indexed sheet crop의 획두께·ink density를 재서 Gemini가 준 `render_hin
 작품 연결 UI는 프로젝트명 옆에 표시하며 연결 전 후보/검색 상태와 연결 후 작품명/용어집 조사 상태를 구분한다. `POST /api/glossary/match`가 CV 기반 재사용 또는 웹 후보 검색을 시작한다. 검색 실패 중에도 기존 작품 연결을 유지한다.
 
 작품 자료 수집은 `pipeline/work_sources.py`가 공개 URL 본문을 읽고, `pipeline/work_glossary.py`가 작품 ID별로 저장·재사용한다. 작품 매칭은 로컬 CV·저장 작품만 사용하며 Gemini는 저장 자료 정리에만 한 번 사용한다. 유료 검색은 호출하지 않는다.
+
+## 이미지 생성 권장과 후보 등록 (2026-10-20)
+
+`pipeline/image_generation_bridge.py`는 원본·번역·용어집 revision을 묶어 생성 요청과 미검토 결과를 보관한다. `run_editor_mcp.py`에 권장·요청·등록 도구가 있고, `main_v2.py`의 읽기 API와 `frontend/src/ImageGenerationPanel.jsx`가 원본/후보 비교를 제공한다. 모델 호출은 호스트 내장 도구가 담당하며 최종 출력은 변경하지 않는다. [기록](IMAGE_GENERATION_REVIEW.md).

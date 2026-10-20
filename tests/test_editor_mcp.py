@@ -190,7 +190,7 @@ def test_real_stdio_handshake_images_errors_and_proposal(project):
             async with ClientSession(read, write) as client:
                 await client.initialize()
                 tools = {t.name: t for t in (await client.list_tools()).tools}
-                assert set(tools) == {"list_projects", "inspect_page", "view_region", "propose_review"}
+                assert set(tools) == {"list_projects", "inspect_page", "view_region", "propose_review", "inspect_image_generation", "recommend_image_generation", "prepare_image_generation", "register_generated_image"}
                 assert tools["view_region"].annotations.readOnlyHint is True
                 assert tools["propose_review"].annotations.readOnlyHint is False
                 projects = await client.call_tool("list_projects", {})

@@ -3326,3 +3326,19 @@ button.wide {
   .workspace-global-topbar { grid-template-columns: max-content minmax(190px, 1fr) minmax(340px, 1fr); grid-template-rows: 52px 34px; }
   .workspace-global-topbar > .top-file-nav { grid-column: 2 / -1; justify-self: end; max-width: 300px; }
 }
+
+/* 사용자 요청에 따른 이미지 생성 권장/후보 비교 */
+.image-generation-bar {display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:8px 12px;background:#f4f7ff;border-bottom:1px solid #dce5f5;font-size:12px;grid-column:1/-1;}
+.generation-badge {border-radius:20px;color:#2459b7;white-space:nowrap;}
+.generation-badge.recommended {background:#e7efff;border-color:#8caef0;}
+.generation-badge.optional {background:#fff5de;border-color:#dfbb6d;color:#805b16;}
+.generation-dialog-backdrop {position:fixed;inset:0;background:#16223888;z-index:160;display:flex;align-items:center;justify-content:center;padding:16px;}
+.generation-dialog {background:#fff;color:#172033;border-radius:12px;width:min(1200px,100%);max-height:94dvh;overflow:auto;padding:18px;box-shadow:0 20px 80px #0004;}
+.generation-dialog p {font-size:13px;line-height:1.6;}
+.generation-dialog textarea {width:100%;min-height:120px;box-sizing:border-box;}
+.generation-compare {display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:12px;}
+.generation-compare section {min-width:0;}
+.generation-compare .scalable-preview {height:60dvh;min-height:280px;}
+@media(max-width:700px) {.generation-compare {grid-template-columns:minmax(0,1fr);} .generation-dialog-backdrop {padding:6px;}}
+
+.app.workspace-mode .workspace {grid-template-rows:auto minmax(0,1fr);}

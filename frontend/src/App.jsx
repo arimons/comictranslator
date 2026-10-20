@@ -7,6 +7,7 @@ import { RestoreControls, RestoreStage, useRestore } from "./RestorePanel.jsx";
 import ShortcutHelp from "./ShortcutHelp.jsx";
 import StartScreen from "./StartScreen.jsx";
 import ImagePreview from "./ImagePreview.jsx";
+import ImageGenerationPanel from "./ImageGenerationPanel.jsx";
 import ServerStatus from "./ServerStatus.jsx";
 import PagePreparation from "./PagePreparation.jsx";
 import GlossaryPanel from "./GlossaryPanel.jsx";
@@ -66,6 +67,7 @@ export default function App() {
   const taskLocksRef = useRef(new Set());
   const [activeTab, setActiveTab] = useState("guidance");
   const [workspaceStarted, setWorkspaceStarted] = useState(false);
+  const generationReviewMode = Boolean(new URLSearchParams(window.location.search).get("generation_review"));
   useEffect(() => {
     // 스크린샷용 임시 hash를 남기지 않고 현재 화면 이름을 표시한다.
     const hash = workspaceStarted ? "#editor" : "#home";
@@ -864,6 +866,8 @@ export default function App() {
   useEffect(() => {
     if (
       !workspaceStarted
+      || generationReviewMode
+      || selected?.image_generation_recommendation?.priority === "recommended"
       || activeTab !== "guidance"
       || !selected
       || inputBusy
@@ -878,7 +882,7 @@ export default function App() {
     autoAnalysisRequestedRef.current.add(requestKey);
     setStatus(`${selected.name} 분석 산출물이 없어 현재 파일 분석을 시작합니다.`);
     analyze(selected.id);
-  }, [workspaceStarted, activeTab, selected?.id, selected?.image_sha256, selected?.regions, selected?.has_analysis, inputBusy, analyzeBusy, guidanceBusy]);
+  }, [workspaceStarted, generationReviewMode, activeTab, selected?.id, selected?.image_sha256, selected?.regions, selected?.has_analysis, selected?.image_generation_recommendation?.priority, inputBusy, analyzeBusy, guidanceBusy]);
 
   useEffect(() => {
     if (autoOverlayTimerRef.current) {
@@ -1988,6 +1992,19 @@ export default function App() {
     loadRecentSessions();
     setStatus(`${result.image_count}장의 단일 페이지 프로젝트를 만들었습니다. 원본 프로젝트는 유지됩니다.`);
   }
+  useEffect(() => {
+    const query = new URLSearchParams(window.location.search);
+    const reviewSession = query.get("generation_review");
+    if (!reviewSession) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        await openRecentSession({ session_id: reviewSession });
+        if (!cancelled && query.get("image_id")) setSelectedId(query.get("image_id"));
+      } catch (error) { if (!cancelled) setStatus(error.message); }
+    })();
+    return () => { cancelled = true; };
+  }, []);
   const previewSessionId = new URLSearchParams(window.location.search).get("page_preview");
   const pagePreparationControl = (sessionId || previewSessionId) ? <PagePreparation sessionId={sessionId || previewSessionId} disabled={anyBusy} onPrepared={adoptPreparedProject} autoOpen={Boolean(previewSessionId)} /> : null;
 
@@ -2027,7 +2044,7 @@ export default function App() {
           }}
           placeholder="Untitled project"
         />
-        <GlossaryPanel sessionId={sessionId} projectName={projectName} ocrBusy={ocrBusy} analysisReady={images.some((image) => image.has_analysis)} />
+        <GlossaryPanel autoMatch={!generationReviewMode} sessionId={sessionId} projectName={projectName} ocrBusy={ocrBusy} analysisReady={images.some((image) => image.has_analysis)} />
         </div>
         <nav className="workflow-tabs top-workflow-tabs">
           {WORKFLOW_TABS.map(([id, label]) => (
@@ -2153,6 +2170,7 @@ export default function App() {
       </aside>
 
       <main className="workspace">
+        <ImageGenerationPanel key={`${sessionId}:${selected?.id}`} sessionId={sessionId} image={selected} />
         {activeTab === "guidance" ? (
         <div className="guidance-workspace">
           <div className="viewer-grid guidance-grid">

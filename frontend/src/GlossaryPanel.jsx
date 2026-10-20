@@ -23,7 +23,7 @@ function Term({ entry, busy, onReview }) {
   </article>;
 }
 
-export default function GlossaryPanel({ sessionId, projectName, ocrBusy, analysisReady }) {
+export default function GlossaryPanel({ sessionId, projectName, ocrBusy, analysisReady, autoMatch = true }) {
   const [open, setOpen] = useState(false);
   const [data, setData] = useState(null);
   const [works, setWorks] = useState([]);
@@ -106,12 +106,12 @@ export default function GlossaryPanel({ sessionId, projectName, ocrBusy, analysi
   }, [sessionId, data?.status, matching?.status]);
 
   useEffect(() => {
-    if (!loaded || data || !sessionId || busy || matching?.status === "searching" || matching?.status === "failed" || matching?.status === "empty") return;
+    if (!autoMatch || !loaded || data || !sessionId || busy || matching?.status === "searching" || matching?.status === "failed" || matching?.status === "empty") return;
     const key = `${sessionId}:${analysisReady ? "ready" : "pending"}`;
     if (autoMatched.current === key) return;
     autoMatched.current = key;
     post("/api/glossary/match", {}, false);
-  }, [sessionId, loaded, analysisReady, Boolean(data), matching?.status]);
+  }, [sessionId, loaded, analysisReady, Boolean(data), matching?.status, autoMatch]);
 
   async function post(path, body, closeForm = true) {
     const sid = sessionId;

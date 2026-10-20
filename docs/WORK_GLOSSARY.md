@@ -60,3 +60,5 @@
 `tests/test_work_sources.py`는 본문 추출·내부 주소 및 리디렉션 차단·작품 간 재사용·저장본/정리 결과 재사용·갱신 실패 보존·직접 입력의 자동 적용 방지를 검증한다. `tests/test_work_glossary.py`는 단일 일반 생성·인용·충돌·수동 결정·번역 및 배치 연결을 검증한다. `tests/test_work_matching.py`는 CV·키워드의 로컬 조회와 유료 검색 차단을 검증한다. 테스트의 외부 요청은 모의 응답이다.
 
 SDK 참고: [공식 Python SDK](https://github.com/googleapis/python-genai).
+
+이미지 생성 요청 준비 시에도 현재 연결된 용어집의 적용 항목·버전을 고정하고, 결과 등록 시 변경 여부를 확인한다. 요청 준비는 자료 수집이나 용어집 조사를 실행하지 않는다. 자세한 계약은 [이미지 생성 연결](IMAGE_GENERATION_REVIEW.md)을 참고한다.
