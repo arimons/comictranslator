@@ -3346,7 +3346,7 @@ button.wide {
 .memo-title { flex: 1; font-size: 15px; font-weight: 600; }
 .memo-table { display: grid; gap: 4px; margin: 8px 0; }
 .memo-row { display: grid; gap: 4px; align-items: center; }
-.memo-table.characters .memo-row { grid-template-columns: 28px 1fr 1fr 1fr 1.6fr 1.6fr 44px 84px; }
+.memo-table.characters .memo-row { grid-template-columns: 52px 1fr 1fr 1fr 1.6fr 1.6fr 44px 84px; }
 .memo-table.terms .memo-row { grid-template-columns: 1fr 1fr 2fr 32px; }
 .memo-row.head span { font-size: 11px; color: var(--muted); }
 .memo-row input:not([type="radio"]) { width: 100%; min-width: 0; padding: 4px 6px; font-size: 12px; }
@@ -3359,7 +3359,7 @@ button.wide {
 .speaker-keys button { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; }
 .speaker-keys kbd { font-size: 10px; padding: 0 4px; border: 1px solid var(--line); border-radius: 3px; }
 .speaker-section .hint { font-size: 11px; color: var(--muted); line-height: 1.5; }
-@media (max-width: 800px) { .memo-table.characters .memo-row { grid-template-columns: 24px 1fr 1fr 70px; } .memo-table.characters .memo-row > :nth-child(3), .memo-table.characters .memo-row > :nth-child(4), .memo-table.characters .memo-row > :nth-child(5), .memo-table.characters .memo-row > :nth-child(7) { display: none; } }
+@media (max-width: 800px) { .memo-table.characters .memo-row { grid-template-columns: 52px 1fr 1fr 70px; } .memo-table.characters .memo-row > :nth-child(3), .memo-table.characters .memo-row > :nth-child(4), .memo-table.characters .memo-row > :nth-child(5), .memo-table.characters .memo-row > :nth-child(7) { display: none; } }
 .speaker-picker { width: min(420px, 100%); max-height: 70vh; display: flex; flex-direction: column; gap: 8px; background: var(--panel); color: var(--text); border: 1px solid var(--line); border-radius: 10px; padding: 14px; box-shadow: var(--shadow); }
 .speaker-picker header { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
 .speaker-picker header span { font-size: 11px; color: var(--muted); }
@@ -3394,3 +3394,4 @@ button.wide {
 .memo-link-options select, .memo-link-options input { flex: 1; min-width: 0; }
 .memo-unlink { justify-self: start; font-size: 12px; color: var(--muted); }
 .memo-title-label { display: grid; gap: 4px; font-size: 11px; color: var(--muted); }
+select.memo-key { width: 100%; padding: 2px; font-size: 12px; }

@@ -107,6 +107,16 @@ export default function GlossaryPanel({ sessionId, projectName, ocrBusy, analysi
     });
   }
 
+  // 키 칸에서 고른 번호 자리로 옮긴다. 주인공은 1번 고정, 9(기타)는 8번 뒤 첫 자리.
+  function placeCharacter(index, slot) {
+    edit((next) => {
+      const [row] = next.characters.splice(index, 1);
+      const lead = next.characters.some((item) => item.protagonist) ? 1 : 0;
+      const target = Math.max(lead, Math.min(next.characters.length, slot - 1));
+      next.characters.splice(target, 0, row);
+    });
+  }
+
   function moveCharacter(index, step) {
     edit((next) => {
       const target = index + step;
@@ -202,7 +212,10 @@ export default function GlossaryPanel({ sessionId, projectName, ocrBusy, analysi
           <div className="memo-table characters">
             <div className="memo-row head"><span>키</span><span>이름</span><span>원문</span><span>호칭·약칭</span><span>성격</span><span>말투</span><span>주인공</span><span /></div>
             {characters.map((row, index) => <div className="memo-row" key={row.id || `new-${index}`}>
-              <span className="memo-key">{index < 8 ? index + 1 : "9"}</span>
+              {row.protagonist ? <span className="memo-key">1</span> : <select className="memo-key" aria-label={`${row.name || "인물"} 단축키 번호`} value={index < 8 ? index + 1 : 9} onChange={(event) => placeCharacter(index, Number(event.target.value))}>
+                {[2, 3, 4, 5, 6, 7, 8].map((n) => <option key={n} value={n}>{n}</option>)}
+                <option value={9}>9 기타</option>
+              </select>}
               <TableInput label="이름" value={row.name} onChange={(value) => updateRow("characters", index, "name", value)} />
               <TableInput label="원문 표기" value={row.original} onChange={(value) => updateRow("characters", index, "original", value)} />
               <TableInput label="호칭·약칭" value={row.aliases} onChange={(value) => updateRow("characters", index, "aliases", value)} />
