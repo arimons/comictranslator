@@ -49,12 +49,8 @@ from pipeline.work_glossary import (NARRATION, GlossaryStore, character_map, cv_
 
 load_dotenv()
 
-ROOT = Path(__file__).resolve().parent
-UI_DIR = ROOT / "ui_v2"
-SESSION_ROOT = ROOT / "temp_output" / "v2_sessions"
-INPUT_CACHE_DIR = ROOT / "temp_output" / "v2_input_cache"
-CV_CACHE_DIR = ROOT / "temp_output" / "v2_cv_cache"
-ANALYSIS_CACHE_DIR = ROOT / "temp_output" / "v2_analysis_cache"
+from pipeline.paths import (REPO_ROOT as ROOT, WEB_DIR as UI_DIR, PROJECTS_DIR as SESSION_ROOT,
+                            INPUT_CACHE_DIR, CV_CACHE_DIR, ANALYSIS_CACHE_DIR, GLOSSARY_DIR, EXPORTS_DIR)
 ANALYSIS_CACHE_VERSION = "2026-05-29-region-suppress-v1"
 ANALYSIS_CACHE_COMPATIBLE_VERSIONS = {
     ANALYSIS_CACHE_VERSION,
@@ -75,7 +71,7 @@ _GLOSSARY_STORE_LOCK = threading.Lock()
 
 
 def glossary_store() -> GlossaryStore:
-    root = SESSION_ROOT.parent / "v2_glossaries"
+    root = GLOSSARY_DIR
     with _GLOSSARY_STORE_LOCK:
         key = str(root)
         if key not in _GLOSSARY_STORES:
@@ -2726,7 +2722,7 @@ def stale_code_files() -> list[str]:
 def bundle_version() -> str:
     # 문자열로 보낸다. 나노초 정수는 JS 숫자 정밀도를 넘는다.
     try:
-        return str((ROOT / "ui_v2" / "app.bundle.js").stat().st_mtime_ns)
+        return str((UI_DIR / "app.bundle.js").stat().st_mtime_ns)
     except OSError:
         return ""
 

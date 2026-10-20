@@ -123,3 +123,5 @@ python proof/src/smoke_editor_mcp.py SESSION_ID IMAGE_ID --region REGION_ID
 inspect_page는 페이지별 processing_excluded를 함께 반환한다. work/page_policy의 내용도 revision에 포함한다. 페이지 전체 제외는 TG/Region 개별 편집 기록을 삭제하지 않으며, 생성 요청은 처리 대상으로 복원한 뒤 준비해야 한다.
 
 편집기 UI의 새 화자 지정은 R 단위(by_region)이며 구 by_tg를 호환용으로 읽는다. CV가 없어도 분석 적용으로 만든 수동 R은 지정 가능하다. MCP의 기존 조회·검토 초안 도구가 곧바로 화자를 쓰거나 적용하는 것은 아니다. 새 target_key R 제외는 선택된 범위/검출 방식만 대상으로 하며 구 제외 기록도 계속 읽는다.
+
+경로 통합(2026-10-20): 저장 위치는 `pipeline/paths.py`에서 정의하며 `COMIC_TRANSLATOR_HOME`으로 변경할 수 있습니다.

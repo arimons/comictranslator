@@ -79,8 +79,8 @@ class ImageGenerationStore(ReviewStore):
             wid = binding["work_id"]
             if not re.fullmatch(r"[0-9a-f]{24}", wid):
                 raise ValueError("용어집 ID가 올바르지 않습니다")
-            path = self.root / "temp_output/v2_glossaries" / f"{wid}.json"
-            if not path.resolve().is_relative_to(self.root / "temp_output/v2_glossaries"):
+            path = self.paths.glossaries / f"{wid}.json"
+            if not path.resolve().is_relative_to(self.paths.glossaries):
                 raise ValueError("용어집 경로가 올바르지 않습니다")
             if path.stat().st_size > MAX_FILE_BYTES:
                 raise ValueError("용어집 크기 제한 초과")
@@ -164,11 +164,11 @@ class ImageGenerationStore(ReviewStore):
             raise ValueError("잘못된 생성 요청 ID입니다")
         source = Path(source_path).expanduser().resolve()
         # 반환 파일만 명시적으로 읽는다. 임의 로컬 파일/URL은 읽지 않는다.
-        inbox = (self.root / "temp_output/image_generation_inbox").resolve()
+        inbox = self.paths.image_generation_inbox.resolve()
         generated = (Path.home() / ".codex/generated_images").resolve()
         if not any(source.is_relative_to(root) for root in (inbox, generated)):
             raise ValueError("생성 결과는 Codex generated_images 또는 프로젝트 image_generation_inbox에 있어야 합니다")
-        if not inbox.is_relative_to(self.root):
+        if not inbox.is_relative_to(self.paths.home):
             raise ValueError("결과 수신 폴더가 프로젝트 밖을 가리킵니다")
         with source.open("rb") as stream:
             raw = stream.read(MAX_FILE_BYTES + 1)

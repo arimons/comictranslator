@@ -73,7 +73,7 @@ def create_server(root: Path = ROOT) -> FastMCP:
     @server.tool(annotations=write, structured_output=True)
     def register_generated_image(session_id: str, image_id: str, request_id: str,
                                   source_path: str) -> dict[str, Any]:
-        """내장 생성 도구의 반환 이미지를 해당 요청/페이지에 미검토 후보로 등록합니다. source_path는 ~/.codex/generated_images 또는 프로젝트 temp_output/image_generation_inbox 내부만 허용. 원본·기존 출력은 유지합니다. 모델명을 프롬프트로 추정하지 않습니다."""
+        """내장 생성 도구의 반환 이미지를 해당 요청/페이지에 미검토 후보로 등록합니다. source_path는 ~/.codex/generated_images 또는 데이터 홈 inbox/image_generation 내부만 허용. 원본·기존 출력은 유지합니다. 모델명을 프롬프트로 추정하지 않습니다."""
         return generation.register(session_id, image_id, request_id, source_path)
 
     return server

@@ -15,6 +15,7 @@ from typing import Any, Literal
 from PIL import Image
 from pydantic import BaseModel, ConfigDict, Field
 
+from pipeline.paths import for_repo
 from pipeline.region_types import regions_with_processing_basis
 
 Artifact = Literal["original", "masked", "final", "analysis", "ocr_sheet", "region_mask"]
@@ -47,12 +48,13 @@ class CandidateAction(BaseModel):
 class ReviewStore:
     def __init__(self, root: Path):
         self.root = root.resolve()
-        self.sessions = self.root / "temp_output/v2_sessions"
-        self.allowed = tuple((self.root / "temp_output" / name).resolve() for name in (
-            "v2_sessions", "v2_input_cache", "v2_analysis_cache", "v2_cv_cache"))
+        self.paths = for_repo(self.root)
+        self.sessions = self.paths.projects
+        self.allowed = tuple(path.resolve() for path in (
+            self.sessions, self.paths.input_cache, self.paths.analysis_cache, self.paths.cv_cache))
         self.session_anchor = self.sessions.resolve()
-        if any(not path.is_relative_to(self.root) for path in self.allowed):
-            raise ValueError("세션·캐시 루트가 저장소 밖을 가리킵니다")
+        if any(not path.is_relative_to(self.paths.home) for path in self.allowed):
+            raise ValueError("세션·캐시 루트가 데이터 홈 밖을 가리킵니다")
 
     def _safe(self, path: Path, *, proposals=False) -> Path:
         resolved = path.resolve()

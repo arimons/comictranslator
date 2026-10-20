@@ -49,6 +49,7 @@ def test_speaker_priority_manual_then_narration_then_text_based_default():
 
 def test_memo_api_binds_saves_drafts_and_assigns_speakers(tmp_path, monkeypatch):
     monkeypatch.setattr(app, "ROOT", tmp_path)
+    monkeypatch.setattr(app, "GLOSSARY_DIR", tmp_path / "temp_output/v2_glossaries")
     monkeypatch.setattr(app, "SESSION_ROOT", tmp_path / "temp_output/v2_sessions")
     data = app.ensure_session("book")
     original = app.session_dir("book") / "input/page.png"
@@ -96,6 +97,7 @@ def test_cv_match_counts_memo_originals_and_auto_links_only_clear_winner(tmp_pat
     assert match_works("", [flag]) == {"has_cv": False, "candidates": []}
 
     monkeypatch.setattr(app, "ROOT", tmp_path)
+    monkeypatch.setattr(app, "GLOSSARY_DIR", tmp_path / "temp_output/v2_glossaries")
     monkeypatch.setattr(app, "SESSION_ROOT", tmp_path / "temp_output/v2_sessions")
     data = app.ensure_session("vol")
     original = app.session_dir("vol") / "input/p1.png"

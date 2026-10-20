@@ -119,3 +119,6 @@ frontend/node_modules/
 
 # 로컬 환경 변수 (API 키)
 .env
+
+# 브라우저 자동화의 로컬 기록
+.playwright-mcp/

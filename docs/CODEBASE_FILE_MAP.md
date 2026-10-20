@@ -488,3 +488,5 @@ indexed sheet crop의 획두께·ink density를 재서 OpenAI가 준 `render_hin
 2026-10-20 편집 표시 동기화: frontend/src/regionTypes.js의 regionDetectionLabel은 두 처리 기준과 Edge 검출 경로를 읽어 선택 정보에 표시한다. EditorCanvas.jsx는 lib.js의 공통 파랑/초록/노랑 팔레트로 반투명 R을 그린다. CV 텍스트는 App.jsx가 선택 R의 유효 TG anchor에서 읽어 읽기 전용으로 표시하며 검출 JSON은 수정하지 않는다.
 
 2026-10-20: EditorCanvas.jsx는 TG/R 독립 선택, 겹친 위치 순환, 선택 대상 D/Delete, 가이드 1회 입력 후 V 복귀를 처리한다. region_types.py와 regionTypes.js의 region_binding_key/regionBindingKey는 R 번호·TG anchor에 독립적인 범위/검출 경로 키이며 화자 저장과 새 정확한 R 제외에 사용한다. dialogue_extractor.py는 새 target_key 제외를 일반/수동/분할 R 및 수동 U 마스킹 전에 반영한다. 구 제외 JSON의 동작은 유지한다.
+
+경로 통합(2026-10-20): 저장 위치는 `pipeline/paths.py`에서 정의하며 `COMIC_TRANSLATOR_HOME`으로 변경할 수 있습니다.

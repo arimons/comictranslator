@@ -4,6 +4,7 @@
 import argparse
 import sys
 from pathlib import Path
+from pipeline.paths import DATA_HOME
 
 from dotenv import load_dotenv
 
@@ -106,7 +107,7 @@ def main():
     parser = argparse.ArgumentParser(description="만화 번역 파이프라인")
     parser.add_argument("--input", "-i", required=True, help="입력 이미지 또는 폴더")
     parser.add_argument("--output", "-o", required=True, help="출력 이미지 또는 폴더")
-    parser.add_argument("--work-dir", default="temp_output", help="중간 파일 저장 폴더 (기본: temp_output)")
+    parser.add_argument("--work-dir", default=str(DATA_HOME / "cli_work"), help="중간 파일 저장 폴더 (데이터 홈/cli_work)")
     parser.add_argument("--font", default=None, help="폰트 경로 또는 이름")
     parser.add_argument("--prompt", default="", help="추가 번역 프롬프트")
     parser.add_argument("--force", action="store_true", help="캐시 무시하고 강제 재처리")
