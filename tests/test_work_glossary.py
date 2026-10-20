@@ -110,4 +110,6 @@ def test_cv_match_counts_memo_originals_and_auto_links_only_clear_winner(tmp_pat
     assert not app.glossary_binding_path("vol").exists()  # GET은 연결하지 않는다
     bound = client.post("/api/glossary/bind", json={"session_id": "vol", "work_id": "b" * 24, "matched_by": "cv",
                                                      "hits": payload["match"]["candidates"][0]["hits"]}).json()
-    assert bound["binding"]["matched_by"] == "cv" and "match" not in bound
+    assert bound["binding"]["matched_by"] == "cv" and bound["match"]["candidates"]
+    unbound = client.post("/api/glossary/unbind", json={"session_id": "vol"}).json()
+    assert unbound["glossary"] is None and unbound["binding"]["matched_by"] == "none"

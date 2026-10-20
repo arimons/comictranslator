@@ -54,7 +54,7 @@ export default function GlossaryPanel({ sessionId, projectName, ocrBusy, analysi
 
   // 연결 전: 분석이 끝나 CV가 생기면 다시 조회한다. 확실한 후보 1개면 자동 연결한다.
   useEffect(() => {
-    if (!sessionId || data || !analysisReady || match?.has_cv) return undefined;
+    if (!sessionId || data || binding?.matched_by === "none" || !analysisReady || match?.has_cv) return undefined;
     let alive = true;
     api(`/api/glossary/${encodeURIComponent(sessionId)}`)
       .then((result) => { if (alive) applyPayload(result); })
@@ -64,7 +64,7 @@ export default function GlossaryPanel({ sessionId, projectName, ocrBusy, analysi
 
   useEffect(() => {
     const best = match?.candidates?.[0];
-    if (data || !best?.strong || busy || autoBound.current === sessionId) return;
+    if (data || binding?.matched_by === "none" || !best?.strong || busy || autoBound.current === sessionId) return;
     autoBound.current = sessionId;
     post("/api/glossary/bind", { work_id: best.work_id, matched_by: "cv", hits: best.hits }, "bind");
   }, [match, Boolean(data), sessionId]);
@@ -128,17 +128,25 @@ export default function GlossaryPanel({ sessionId, projectName, ocrBusy, analysi
   const characters = draft?.characters || [];
   const terms = draft?.terms || [];
   const candidates = match?.candidates || [];
+  const best = candidates[0];
   const autoLinked = binding?.matched_by === "cv";
-  const label = data ? data.title : candidates.length ? `후보: ${candidates[0].title}?` : "작품 메모 연결";
-  const summary = data
-    ? `${autoLinked ? "CV 자동 연결 · " : ""}인물 ${data.characters.length} · 용어 ${data.terms.length}`
-    : match?.has_cv ? (candidates.length ? "확인 후 연결하세요" : "일치하는 작품 메모 없음") : "인물·말투·용어";
-  const showPicker = !data || changing;
+  const declined = binding?.matched_by === "none";
+  const chipText = data ? data.title : declined ? "작품 없음" : best ? `${best.title}?` : "작품 미연결";
+  const chipTitle = data
+    ? `작품: ${data.title}${autoLinked ? " (CV 자동 연결)" : ""} · 인물 ${data.characters.length} · 용어 ${data.terms.length}`
+    : best && !declined ? "앞쪽 페이지 CV로 찾은 후보입니다. 눌러서 확인 후 연결하세요" : "눌러서 이 프로젝트의 작품을 연결하세요";
+  const status = data
+    ? (autoLinked ? `앞쪽 페이지 CV 자동 연결 · 근거 ${(binding.hits || []).slice(0, 6).join(", ")}` : "직접 연결")
+    : declined ? "작품 없이 진행 중 (자동 연결 안 함)"
+      : best ? `CV 후보: ${best.title} (일치 ${best.score}개). 확인 후 연결하세요`
+        : match?.has_cv ? "앞쪽 페이지 CV와 일치하는 작품 메모가 없습니다" : "분석이 끝나면 CV로 작품을 찾습니다";
+  const otherWorks = works.filter((item) => !candidates.some((row) => row.work_id === item.work_id));
+  const showOptions = changing || !data;
+  const bind = (body) => post("/api/glossary/bind", body, "bind");
 
   return <>
-    <button className={`glossary-toggle ${data ? "linked" : ""}`} title={`${label} · ${summary}`} onClick={() => setOpen(true)} disabled={!sessionId}>
-      <strong>{label} ▾</strong>
-      <span>{summary}</span>
+    <button className={`work-chip ${data ? "linked" : best && !declined ? "suggest" : ""}`} title={chipTitle} onClick={() => setOpen(true)} disabled={!sessionId}>
+      <span>작품</span><strong>{chipText}</strong>
     </button>
     {open && <div className="glossary-backdrop" onClick={close}>
       <section ref={dialogRef} className="glossary-dialog memo" role="dialog" aria-modal="true" aria-label="작품 메모" onClick={(event) => event.stopPropagation()} onKeyDown={(event) => {
@@ -148,40 +156,47 @@ export default function GlossaryPanel({ sessionId, projectName, ocrBusy, analysi
         <header className="glossary-heading">
           <h2>작품 메모</h2>
           <div className="row">
-            {data && !changing ? <button className="primary" disabled={!dirty || Boolean(busy) || ocrBusy} onClick={save}>{busy === "save" ? "저장 중…" : dirty ? "저장" : "저장됨"}</button> : null}
+            {data ? <button className="primary" disabled={!dirty || Boolean(busy) || ocrBusy} onClick={save}>{busy === "save" ? "저장 중…" : dirty ? "저장" : "저장됨"}</button> : null}
             <button onClick={close} aria-label="작품 메모 닫기">닫기</button>
           </div>
         </header>
         {error ? <p role="alert" className="glossary-error">{error}</p> : null}
 
-        {showPicker ? <form className="memo-picker" onSubmit={(event) => {
-          event.preventDefault();
-          post("/api/glossary/bind", workId ? { work_id: workId } : { title: title || projectName }, "bind");
-        }}>
-          <p>같은 작품의 여러 권이 하나의 메모를 함께 씁니다.</p>
-          {candidates.length ? <div className="memo-candidates">
-            <strong>앞쪽 페이지 CV와 일치하는 작품</strong>
-            {candidates.map((row) => <button type="button" key={row.work_id} disabled={Boolean(busy)} onClick={() => post("/api/glossary/bind", { work_id: row.work_id }, "bind")}>
-              {row.title} <span>일치 {row.score}개 · {row.hits.slice(0, 5).join(", ")}</span>
-            </button>)}
+        <section className="memo-link" aria-label="연결된 작품">
+          <div className="memo-link-current">
+            <div><span>이 프로젝트의 작품</span><strong>{data ? data.title : "연결 안 됨"}</strong><small>{status}</small></div>
+            {data ? <button disabled={Boolean(busy)} onClick={() => setChanging((value) => !value)}>{changing ? "변경 닫기" : "변경"}</button> : null}
+          </div>
+          {showOptions ? <div className="memo-link-options">
+            {candidates.length ? <div>
+              <h4>CV로 찾은 후보 <small>앞쪽 페이지 글자에 메모의 원문 이름·용어가 나온 수</small></h4>
+              {candidates.map((row) => <button key={row.work_id} disabled={Boolean(busy) || row.work_id === data?.work_id} onClick={() => bind({ work_id: row.work_id })}>
+                <strong>{row.title}{row.work_id === data?.work_id ? " (현재)" : ""}</strong><span>일치 {row.score}개 · {row.hits.slice(0, 6).join(", ")}</span>
+              </button>)}
+            </div> : null}
+            {otherWorks.length ? <div>
+              <h4>다른 작품 메모에서 고르기</h4>
+              <div className="row">
+                <select value={workId} onChange={(event) => setWorkId(event.target.value)} aria-label="작품 메모 선택">
+                  <option value="">선택…</option>
+                  {otherWorks.map((item) => <option key={item.work_id} value={item.work_id}>{item.title}</option>)}
+                </select>
+                <button disabled={Boolean(busy) || !workId} onClick={() => bind({ work_id: workId })}>연결</button>
+              </div>
+            </div> : null}
+            <div>
+              <h4>새 작품으로 등록</h4>
+              <form className="row" onSubmit={(event) => { event.preventDefault(); bind({ title }); }}>
+                <input value={title} maxLength={200} placeholder="작품명 (예: 내 사망플래그가 그칠 줄 모른다)" onChange={(event) => setTitle(event.target.value)} aria-label="새 작품명" />
+                <button disabled={Boolean(busy) || !title.trim()}>등록하고 연결</button>
+              </form>
+            </div>
+            {data || !declined ? <button className="memo-unlink" disabled={Boolean(busy)} onClick={() => post("/api/glossary/unbind", {}, "bind")}>작품 없이 진행 (연결 해제, 자동 연결 안 함)</button> : null}
           </div> : null}
-          {works.length ? <label>기존 작품 메모<select value={workId} onChange={(event) => setWorkId(event.target.value)}>
-            <option value="">새 작품 만들기</option>
-            {works.map((item) => <option key={item.work_id} value={item.work_id}>{item.title}</option>)}
-          </select></label> : null}
-          {!workId ? <label>작품명<input value={title} maxLength={200} placeholder={projectName || "작품명"} onChange={(event) => setTitle(event.target.value)} /></label> : null}
-          <div className="row">
-            <button className="primary" disabled={Boolean(busy) || (!workId && !(title || projectName).trim())}>{workId ? "이 메모 연결" : "만들고 연결"}</button>
-            {changing ? <button type="button" onClick={() => setChanging(false)}>취소</button> : null}
-          </div>
-        </form> : null}
+        </section>
 
-        {draft && !changing ? <>
-          {autoLinked ? <p className="memo-auto">앞쪽 페이지 CV에서 {binding.hits?.slice(0, 6).join(", ")} 등이 보여 자동 연결했습니다. 다른 작품이면 ‘다른 작품 연결’로 바꾸세요.</p> : null}
-          <div className="glossary-work">
-            <input className="memo-title" aria-label="작품명" value={draft.title} maxLength={200} onChange={(event) => edit((next) => { next.title = event.target.value; })} />
-            <button disabled={Boolean(busy)} onClick={() => setChanging(true)}>다른 작품 연결</button>
-          </div>
+        {draft ? <>
+          <label className="memo-title-label">표시 이름<input className="memo-title" value={draft.title} maxLength={200} onChange={(event) => edit((next) => { next.title = event.target.value; })} /></label>
 
           <h3>등장인물 · 말투 <small>번호 = 영역 분석 탭 화자 단축키 · 9 기타(전체 목록) · N 내레이션 · 0 해제</small></h3>
           <div className="memo-table characters">

@@ -92,13 +92,11 @@ def glossary_payload(session_id: str) -> dict:
         raise ValueError("프로젝트를 찾을 수 없습니다.")
     binding = load_json(glossary_binding_path(session_id), default={})
     glossary = session_glossary(session_id)
-    payload = {"glossary": glossary, "works": glossary_store().list_works(),
-               "binding": {key: binding.get(key) for key in ("matched_by", "hits")} if glossary else None}
-    if not glossary:
-        # 연결 전이면 저장된 CV만으로 후보를 계산한다. 연결은 편집기가 POST로 한다(GET은 쓰지 않음).
-        session = load_json(session_file(session_id), default={})
-        payload["match"] = match_works(cv_page_text(session, session_dir(session_id) / "work"), glossary_store().all_memos())
-    return payload
+    # 저장된 CV만으로 후보를 계산한다(연결 후에도 '변경'에서 보여 준다). 연결은 편집기가 POST로 한다.
+    session = load_json(session_file(session_id), default={})
+    return {"glossary": glossary, "works": glossary_store().list_works(),
+            "binding": {key: binding.get(key) for key in ("matched_by", "hits")} if binding else None,
+            "match": match_works(cv_page_text(session, session_dir(session_id) / "work"), glossary_store().all_memos())}
 
 
 def speakers_path(session_id: str, image_id: str) -> Path:
@@ -2688,6 +2686,17 @@ def create_app() -> FastAPI:
             auto = req.matched_by == "cv"
             write_json(glossary_binding_path(req.session_id), {"work_id": wid, "matched_by": "cv" if auto else "user",
                                                                "hits": [str(hit)[:40] for hit in req.hits[:12]] if auto else []})
+            return glossary_payload(req.session_id)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @app.post("/api/glossary/unbind")
+    def unbind_glossary(req: GlossaryBindRequest) -> dict:
+        try:
+            if not session_file(req.session_id).is_file():
+                raise ValueError("프로젝트를 찾을 수 없습니다.")
+            # 작품 없이 진행. 'none'을 남겨 CV 자동 연결이 다시 붙지 않게 한다.
+            write_json(glossary_binding_path(req.session_id), {"work_id": None, "matched_by": "none", "hits": []})
             return glossary_payload(req.session_id)
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc

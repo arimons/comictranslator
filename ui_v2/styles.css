@@ -3280,7 +3280,6 @@ button.wide {
 }
 
 /* 작품별 용어집은 편집 상태와 독립된 창에서 검토한다. */
-.glossary-toggle { white-space: nowrap; font-size: 12px; }
 .glossary-backdrop { position: fixed; inset: 0; z-index: 3000; display: flex; align-items: center; justify-content: center; padding: 24px; background: #0006; }
 .glossary-dialog { width: min(760px, 100%); max-height: 90vh; overflow: auto; background: var(--panel); color: var(--text); border: 1px solid var(--line); border-radius: 12px; padding: 24px; box-shadow: var(--shadow); text-align: left; }
 .glossary-heading, .glossary-work { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
@@ -3294,16 +3293,12 @@ button.wide {
 .glossary-work { margin-top: 20px; flex-wrap: wrap; }
 .glossary-work span { color: var(--muted); font-size: 12px; }
 .glossary-error { color: var(--red); }
-@media (max-width: 800px) { .glossary-backdrop { padding: 8px; } .glossary-dialog { padding: 16px; } .glossary-toggle { max-width: 145px; overflow: hidden; text-overflow: ellipsis; } }
+@media (max-width: 800px) { .glossary-backdrop { padding: 8px; } .glossary-dialog { padding: 16px; } }
 
 /* 프로젝트 표시명 옆에 작품 연결과 용어집 조사 상태를 따로 표시한다. */
 .workspace-global-topbar { gap: 10px; }
 .project-identity { display: flex; align-items: center; gap: 8px; min-width: 0; }
-.project-identity .project-name-input { flex: 0 1 105px; width: 105px; min-width: 70px; }
-.project-identity .glossary-toggle { flex: 1 1 0; min-width: 0; max-width: 280px; align-self: center; display: grid; gap: 3px; text-align: left; padding: 6px 8px; }
-.glossary-toggle strong, .glossary-toggle span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.glossary-toggle strong { font-size: 12px; font-weight: 600; color: var(--blue); }
-.glossary-toggle span { font-size: 10px; color: var(--muted); }
+.project-identity .project-name-input { flex: 0 1 220px; width: 220px; min-width: 120px; }
 .workspace-global-topbar .top-workflow-tabs { width: 100%; min-width: 0; }
 .workspace-global-topbar .top-workflow-tabs button { min-width: 0; flex: 1 0 auto; padding: 0 6px; font-size: 12px; }
 .workspace-global-topbar .file-navigator.top-file-nav { grid-template-columns: 70px 26px minmax(70px, 1fr) 26px 26px 26px; width: 100%; max-width: 100%; gap: 4px; }
@@ -3377,3 +3372,25 @@ button.wide {
 .memo-candidates { display: grid; gap: 6px; margin: 10px 0; }
 .memo-candidates button { text-align: left; }
 .memo-candidates button span, .memo-auto { font-size: 12px; color: var(--muted); }
+
+/* 프로젝트명 옆 작품 칩: 한 줄, 프로젝트명을 가리지 않는다 */
+.work-chip { flex: 0 1 auto; min-width: 0; max-width: 260px; display: inline-flex; align-items: baseline; gap: 6px; padding: 4px 10px; border-radius: 999px; font-size: 12px; white-space: nowrap; }
+.work-chip span { color: var(--muted); font-size: 11px; }
+.work-chip strong { overflow: hidden; text-overflow: ellipsis; font-weight: 600; }
+.work-chip.linked strong { color: var(--blue); }
+.work-chip.suggest { border-style: dashed; }
+.work-chip.suggest strong { color: var(--orange); }
+.memo-link { border: 1px solid var(--line); border-radius: 8px; padding: 12px; margin: 12px 0 16px; }
+.memo-link-current { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
+.memo-link-current > div { display: grid; gap: 2px; min-width: 0; }
+.memo-link-current span, .memo-link-current small { font-size: 11px; color: var(--muted); }
+.memo-link-current strong { font-size: 15px; }
+.memo-link-options { display: grid; gap: 12px; margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--line); }
+.memo-link-options h4 { margin: 0 0 6px; font-size: 12px; }
+.memo-link-options h4 small { font-weight: 400; color: var(--muted); margin-left: 6px; }
+.memo-link-options > div > button { width: 100%; display: grid; gap: 2px; text-align: left; margin-bottom: 4px; }
+.memo-link-options > div > button span { font-size: 11px; color: var(--muted); }
+.memo-link-options .row { margin: 0; }
+.memo-link-options select, .memo-link-options input { flex: 1; min-width: 0; }
+.memo-unlink { justify-self: start; font-size: 12px; color: var(--muted); }
+.memo-title-label { display: grid; gap: 4px; font-size: 11px; color: var(--muted); }

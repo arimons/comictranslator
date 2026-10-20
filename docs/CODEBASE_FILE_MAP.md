@@ -157,7 +157,7 @@ guidance(수동 보정)가 있는 이미지는 `guidance_digest`(guidance 내용
 | `POST /api/guidance`, `/api/guidance/clear` | 수동 보정(TG 삭제/split, edge barrier, manual region 등) 반영 후 Step 3 재실행 |
 | `POST /api/run-final(-stream)` | Step 4(OCR/번역) + Step 5(오버레이) 실행. body의 `ocr_model`로 모델 지정 |
 | `GET /api/ocr-models` | OCR/번역 모델 목록(`id`, `label`, `note`)과 기본값 |
-| `GET /api/glossary/{session_id}`, `POST /api/glossary/bind`, `/api/glossary/save`, `/api/glossary/draft` | 작품 메모 연결·저장·URL 초안. 메모 참고문을 Step 4 프롬프트에 붙인다 |
+| `GET /api/glossary/{session_id}`, `POST /api/glossary/bind`, `/api/glossary/unbind`, `/api/glossary/save`, `/api/glossary/draft` | 작품 메모 연결·저장·URL 초안. 메모 참고문을 Step 4 프롬프트에 붙인다 |
 | `GET /api/speakers/{session_id}/{image_id}`, `POST /api/speakers` | 페이지별 TG→화자 지정(`work/speakers/{image_id}.json`). Step 4가 region 화자 목록으로 바꿔 프롬프트에 붙인다 |
 | `POST /api/overlay/apply` | 오버레이 위치/폰트만 다시 렌더링 (OCR 재실행 없음). 저장한 수동값에 영역 위치(`_anchor`)를 기록 |
 | `GET /api/session/{id}/export`, `POST /api/export/generate-missing` | 결과 ZIP 내보내기, 실패 이미지 OpenAI 이미지 생성 fallback |
