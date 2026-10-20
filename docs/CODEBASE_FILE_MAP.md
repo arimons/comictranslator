@@ -484,3 +484,5 @@ indexed sheet crop의 획두께·ink density를 재서 OpenAI가 준 `render_hin
 
 
 2026-10-20 UI 동기화: 페이지 분석 경로 전환: main_v2.py의 /api/page-analysis-route는 work/page_policy에 standard/auto 선택을 저장한다. pipeline_runner.py는 standard 정책을 읽어 dialogue_extractor.py의 --force-standard에 연결한다. ImagePreview.jsx는 캐시 로드·실패/재시도를, ImageGenerationPanel.jsx와 App.jsx는 비교 영역의 등록 후보 표시와 전환 요청을 담당한다.
+
+2026-10-20 편집 표시 동기화: frontend/src/regionTypes.js의 regionDetectionLabel은 두 처리 기준과 Edge 검출 경로를 읽어 선택 정보에 표시한다. EditorCanvas.jsx는 lib.js의 공통 파랑/초록/노랑 팔레트로 반투명 R을 그린다. CV 텍스트는 App.jsx가 선택 R의 유효 TG anchor에서 읽어 읽기 전용으로 표시하며 검출 JSON은 수정하지 않는다.

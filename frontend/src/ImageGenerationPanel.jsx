@@ -30,15 +30,14 @@ export default function ImageGenerationPanel({ sessionId, image, onStatus }) {
     return () => { window.removeEventListener("keydown", escape); previous?.isConnected && previous.focus(); };
   }, [open]);
   if (!image || image.processing_excluded) return null;
-  const recommendation = data?.recommendation;
+  const recommendation = data?.recommendation || image.image_generation_recommendation;
   const results = data?.results || [];
+  if (!["recommended", "optional"].includes(recommendation?.priority) && !results.length) return null;
   const result = results.find((item) => item.result_id === resultId) || results.at(-1);
   const label = recommendation?.priority === "recommended" ? "이미지 생성 권장" : recommendation?.priority === "optional" ? "이미지 생성 선택" : "이미지 생성 검토";
   const instruction = `이 프로젝트의 페이지를 Codex 내장 이미지 생성으로 한국어 번역하고, 생성 결과를 미검토 후보로 등록해줘. 원본과 기존 출력은 유지해줘.\nsession_id: ${sessionId}\nimage_id: ${image.id}\ninspect_page → prepare_image_generation → 내장 이미지 생성 → register_generated_image 순서로 진행해줘.`;
-  return <div className="image-generation-bar">
-    <button type="button" className={`generation-badge ${recommendation?.priority || "neutral"}`} onClick={() => setOpen(true)} title={recommendation?.reason || "자동 실행 없이 생성 요청과 결과를 확인합니다"}>{label}{results.length ? ` · 후보 ${results.length}` : ""}</button>
-    <span>{recommendation?.stale ? "이전 판단 이후 페이지가 변경됨 · 다시 확인 필요" : recommendation?.reason || "필요한 페이지에만 생성 요청을 할 수 있습니다."}</span>
-    {error ? <span role="status">연결 확인 필요: {error}</span> : null}
+  return <div className="image-generation-control">
+    <button type="button" className={`generation-badge ${recommendation?.priority || "neutral"}`} onClick={() => setOpen(true)} title={error ? `연결 확인 필요: ${error}` : recommendation?.stale ? "이전 판단 이후 페이지가 변경됨 · 다시 확인 필요" : recommendation?.reason || "생성 요청과 등록 결과 확인"}>{label}{results.length ? ` · 후보 ${results.length}` : ""}</button>
     {open ? <div className="generation-dialog-backdrop" onClick={() => setOpen(false)}><section role="dialog" aria-modal="true" aria-label="이미지 생성 검토" ref={dialogRef} className="generation-dialog" onKeyDown={(event) => {
       if (event.key === "Escape") { event.stopPropagation(); setOpen(false); }
       if (event.key === "Tab") {

@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import EditorCanvas from "./EditorCanvas.jsx";
 import OverlayCanvas from "./OverlayCanvas.jsx";
 import RegionTypeBadge from "./RegionTypeBadge.jsx";
-import { TEXT_BASED, regionProcessingBasis, regionTypeLabel } from "./regionTypes.js";
+import { TEXT_BASED, regionProcessingBasis, regionTypeLabel, regionDetectionLabel } from "./regionTypes.js";
 import { RestoreControls, RestoreStage, useRestore } from "./RestorePanel.jsx";
 import ShortcutHelp from "./ShortcutHelp.jsx";
 import StartScreen from "./StartScreen.jsx";
@@ -16,6 +16,9 @@ import SpeakerPicker from "./SpeakerPicker.jsx";
 import { KEYMAP, eventMatches, entryInContext, entryVisibleOnPlatform, shortcutFor, shortcutById } from "./keymap.js";
 import {
   TOOL_LABELS,
+  overlayRegionColor,
+  imageGroups,
+  tgId,
   OVERLAY_MIN_RECT_SIZE,
   WORKFLOW_TABS,
   FONT_STYLES,
@@ -214,6 +217,8 @@ export default function App() {
   }, [workMemo, speakerByTg, guidanceRegions]);
   const selectedGuidanceRegion = selectedTg == null ? null
     : guidanceRegions.find((region) => (region.anchor_ids || []).map(Number).includes(Number(selectedTg))) || null;
+  const selectedCvGroups = imageGroups(selected).filter((group) => (selectedGuidanceRegion?.anchor_ids || [selectedTg]).map(Number).includes(tgId(group)));
+  const selectedCvText = selectedCvGroups.map((group) => group.text || (group.lines || []).map((line) => line.text || (line.fragments || []).map((fragment) => fragment.text || "").join("")).filter(Boolean).join("\n")).filter(Boolean).join("\n\n");
   const selectedPageId = selected?.id || "";
 
   useEffect(() => {
@@ -2374,11 +2379,6 @@ export default function App() {
       </aside>
 
       <main className="workspace">
-        <div className="page-processing-bar">
-          <span>{selected?.processing_excluded ? "페이지 처리 제외 · 원본 그대로 출력" : "페이지 처리 대상"}</span>
-          <button type="button" disabled={!selected || anyBusy} onClick={togglePageProcessing}>{selected?.processing_excluded ? "처리 대상으로 복원" : "이 페이지 처리 제외"}</button>
-        </div>
-        <ImageGenerationPanel key={`${sessionId}:${selected?.id}`} sessionId={sessionId} image={selected} onStatus={setGenerationStatus} />
         {activeTab === "guidance" ? (
         <div className="guidance-workspace">
           <div className="viewer-grid guidance-grid">
@@ -2691,6 +2691,11 @@ export default function App() {
           </button>
         </div>
 
+        <div className="page-processing-controls">
+          <button type="button" className={selected?.processing_excluded ? "page-excluded-control" : ""} disabled={!selected || anyBusy} onClick={togglePageProcessing} title={selected?.processing_excluded ? "현재 페이지는 원본 그대로 출력합니다. 클릭하면 처리 대상으로 복원합니다." : "이 페이지를 처리에서 제외하고 원본 그대로 출력합니다."}>{selected?.processing_excluded ? "처리 대상으로 복원" : "페이지 처리 제외"}</button>
+          <ImageGenerationPanel key={`${sessionId}:${selected?.id}`} sessionId={sessionId} image={selected} onStatus={setGenerationStatus} />
+        </div>
+
         {toolsOpen ? <>
         {activeTab === "overlay" ? <>
         <div className="section compact-section">
@@ -2834,7 +2839,13 @@ export default function App() {
         </div>
 
         <div className="section speaker-section">
-          <h2>화자 지정 {selectedGuidanceRegion ? <small>R{regionId(selectedGuidanceRegion)} · {speakerLabels[regionId(selectedGuidanceRegion)] || "미지정"}</small> : null}</h2>
+          <h2>화자 지정 {selectedGuidanceRegion ? <small>R{regionId(selectedGuidanceRegion)}</small> : selectedTg != null ? <small>TG{selectedTg}</small> : null}</h2>
+          {selectedGuidanceRegion ? <div className="selected-region-method" style={{borderColor:overlayRegionColor(selectedGuidanceRegion),background:`${overlayRegionColor(selectedGuidanceRegion)}12`}}><span aria-hidden="true" style={{color:overlayRegionColor(selectedGuidanceRegion)}}>● </span>{regionDetectionLabel(selectedGuidanceRegion)}</div> : null}
+          {selectedTg != null ? <div className="selected-cv-context">
+            <div><label htmlFor="selected-cv-text">CV 감지 텍스트</label><span className="speaker-assignment-label">화자: {selectedGuidanceRegion ? speakerLabels[regionId(selectedGuidanceRegion)] || "미지정" : "영역 없음"}</span></div>
+            <textarea id="selected-cv-text" aria-label="선택 영역 CV 텍스트" readOnly value={selectedCvText} placeholder="이 영역에 연결된 CV 텍스트가 없습니다." rows={4} />
+            <small>자동 인식된 원문 · 인식 오류가 있을 수 있습니다.</small>
+          </div> : null}
           {!selectedGuidanceRegion ? <p className="hint">화자를 지정할 영역을 선택하세요.</p> : speakerCharacters.length ? <div className="speaker-keys">
             {speakerCharacters.map((row, index) => (
               <button key={row.id} disabled={!selectedGuidanceRegion} onClick={() => assignSpeaker(index + 1)} title={row.speech || row.personality || ""}>
@@ -2878,6 +2889,7 @@ export default function App() {
         <details className="section guidance-disclosure">
           <summary>표시 설정{Object.values(layers).some((visible) => !visible) ? <span>일부 숨김</span> : null}</summary>
           <p className="hint">겹친 표시를 확인할 때만 끕니다. 분석·출력 결과는 바뀌지 않습니다.</p>
+          <div className="region-color-legend"><span><i style={{color:"#22c55e"}}>●</i> Edge</span><span><i style={{color:"#38bdf8"}}>●</i> Bubble</span><span><i style={{color:"#eab308"}}>●</i> Unboxed</span></div>
           <div className="toggles">
             {Object.entries({ tg: "텍스트 묶음 (TG)", regions: "처리 영역 (R)", guidance: "가이드" }).map(([key, label]) => (
               <label className="check" key={key}>

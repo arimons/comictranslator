@@ -77,3 +77,5 @@ OpenAI 모델 전환(2026-10-20): 편집기 내보내기의 별도 API 생성 �
 미리보기는 캐시 이미지의 onLoad와 effect 순서 때문에 치수가 지워지지 않도록 URL별 로드 상태를 유지한다. 실패는 영구 ‘불러오는 중’ 대신 오류·다시 불러오기로 표시한다. 검사: `tests/test_page_analysis_route.py`와 `proof/src/check_generation_entry.js`. 브라우저 검사는 실제 후보를 읽되 유료 분석 POST를 fixture로 가로챈다. 이번 변경 확인 중에는 실제 3권 표지의 CV/번역/이미지 생성을 실행하지 않았다.
 
 UI 검증은 별도 headless Chromium에서 실행한다. `proof/src/run_headless_browser_check.cjs`에 검사 파일을 인자로 전달하며 작업 중인 브라우저 창·탭은 열거나 전환하지 않는다. 표지 원본과 등록된 PNG의 바이트는 이번 UI 변경으로 수정하지 않는다.
+
+일반 페이지의 공통 생성 안내 행은 제거했다. recommended/optional 판단이나 등록 결과가 있는 페이지에만 오른쪽 작업 패널의 작은 생성 배지를 표시한다. 권장 근거와 생성 요청/후보 비교는 배지를 눌러 확인하며, 캔버스 위 전폭 행은 사용하지 않는다.

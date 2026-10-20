@@ -1,7 +1,7 @@
 import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from "react";
 import Konva from "konva";
 import { createPortal } from "react-dom";
-import { rectOf, tgId, imageGroups, defaultGuidance, regionId, imageRegions, regionDisplayRect } from "./lib.js";
+import { rectOf, tgId, imageGroups, defaultGuidance, regionId, imageRegions, regionDisplayRect, overlayRegionColor } from "./lib.js";
 import { createViewport } from "./viewportControls.js";
 import { placeCanvasLabels, promotedTgIds } from "./canvasLabels.js";
 import { regionIsExcluded, tgIsExcluded } from "./regionExclusion.js";
@@ -563,14 +563,16 @@ const EditorCanvas = forwardRef(function EditorCanvas({ image, baseUrl, guidance
         if (!rect) return;
         const r = toStageRect(rect);
         const isTextBased = regionProcessingBasis(region) === TEXT_BASED;
-        const color = isTextBased ? "#b45309" : "#0f766e";
+        const color = overlayRegionColor(region);
         const regionSelected = (region.anchor_ids || []).map(Number).includes(Number(selectedTgRef.current));
+        const hasContour = Array.isArray(region.contour) && region.contour.length > 1;
+        const tint = `${color}${regionSelected ? "2b" : "17"}`;
         overlay.add(new Konva.Rect({
           ...r,
           stroke: color,
           strokeWidth: regionSelected ? 3 : 1.2,
           opacity: regionSelected ? 1 : .65,
-          fill: "transparent",
+          fill: hasContour ? "transparent" : tint,
           dash: isTextBased ? [6, 4] : undefined,
         }));
         const anchors = (region.anchor_ids || []).map(id => `TG${id}`);
@@ -584,9 +586,9 @@ const EditorCanvas = forwardRef(function EditorCanvas({ image, baseUrl, guidance
         if (region.safe_text_rect) {
           overlay.add(new Konva.Rect({ ...toStageRect(region.safe_text_rect), stroke: "#111827", strokeWidth: 1, opacity:.3, dash: [4, 3] }));
         }
-        if (Array.isArray(region.contour) && region.contour.length > 1) {
+        if (hasContour) {
           const points = region.contour.flatMap((pt) => toStagePoint(pt));
-          overlay.add(new Konva.Line({ points, closed: true, stroke: color, strokeWidth: 1.2, opacity: 0.55 }));
+          overlay.add(new Konva.Line({ points, closed: true, stroke: color, strokeWidth: regionSelected ? 2 : 1.2, fill: tint, opacity: regionSelected ? 1 : .75 }));
         }
       });
     }

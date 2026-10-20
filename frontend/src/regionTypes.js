@@ -25,3 +25,11 @@ export function usesEdgeBarrier(region) {
     region?.region_type_guess, ...(Array.isArray(region?.quality_flags) ? region.quality_flags : [])].join(" ").toLowerCase();
   return regionProcessingBasis(region) !== TEXT_BASED && (methods.includes("edge_barrier") || methods.includes("manual_edge"));
 }
+
+// 처리 기준은 두 가지, 화면의 세 색은 Edge 검출 방법까지 함께 구분한다.
+export function regionDetectionLabel(region) {
+  if (regionProcessingBasis(region) === TEXT_BASED) return "텍스트 기반 · Unboxed";
+  if (usesEdgeBarrier(region)) return "경계 기반 · Edge";
+  if (regionProcessingBasis(region) === BOUNDARY_BASED) return "경계 기반 · Bubble";
+  return "미분류";
+}

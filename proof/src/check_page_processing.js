@@ -13,10 +13,10 @@ async(page)=>{
   await preview.setViewportSize({width:1600,height:1000});
   await preview.goto(`http://127.0.0.1:7873/?generation_review=${sid}&image_id=${id}#editor`);
   original=await preview.evaluate(async()=>Boolean((await fetch('/api/session/20261020_075649/page/00002').then(r=>r.json())).image.processing_excluded));
-  await preview.getByRole('button',{name:original?'처리 대상으로 복원':'이 페이지 처리 제외',exact:true}).click();
-  await preview.getByRole('button',{name:original?'이 페이지 처리 제외':'처리 대상으로 복원',exact:true}).waitFor();
+  await preview.getByRole('button',{name:original?'처리 대상으로 복원':'페이지 처리 제외',exact:true}).click();
+  await preview.getByRole('button',{name:original?'페이지 처리 제외':'처리 대상으로 복원',exact:true}).waitFor();
   if(!original){
-   await preview.getByText('페이지 처리 제외 · 원본 그대로 출력',{exact:true}).waitFor();
+   await preview.getByText('페이지 처리 제외 · 원본 출력',{exact:true}).waitFor();
    const state=await preview.evaluate(async()=>{
     const image=(await fetch('/api/session/20261020_075649/page/00002').then(r=>r.json())).image;
     return {excluded:image.processing_excluded,originalOutput:image.final_url===image.input_url,guidance:image.guidance};
@@ -26,8 +26,8 @@ async(page)=>{
    if(box.height<200)throw new Error('편집기 높이 부족');
    await preview.screenshot({path:'proof/misc/page-processing-excluded.png',scale:'css'});
   }
-  await preview.getByRole('button',{name:original?'이 페이지 처리 제외':'처리 대상으로 복원',exact:true}).click();
-  await preview.getByRole('button',{name:original?'처리 대상으로 복원':'이 페이지 처리 제외',exact:true}).waitFor();
+  await preview.getByRole('button',{name:original?'페이지 처리 제외':'처리 대상으로 복원',exact:true}).click();
+  await preview.getByRole('button',{name:original?'처리 대상으로 복원':'페이지 처리 제외',exact:true}).waitFor();
   if(errors.length||unexpected.length)throw new Error(JSON.stringify({errors,unexpected}));
   return {ok:true,restoredOriginalState:original,errors,unexpected};
  }finally{

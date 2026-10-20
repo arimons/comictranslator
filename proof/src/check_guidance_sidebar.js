@@ -7,7 +7,7 @@ async(page)=>{
   const req=route.request(),url=req.url();
   if(req.method()!=='GET'){posts.push(url);return route.fulfill({status:409,json:{detail:'UI 검증 중 실제 저장·분석·삭제 차단'}});}
   if(url.endsWith(`/api/session/${sid}/page/${id}`)){
-   const res=await route.fetch(),body=await res.json();return route.fulfill({response:res,json:{image:{...body.image,processing_excluded:false,has_effective_text_groups:false,guidance:empty,text_groups:[{text_group_id:3,fallback_rect:rect}],regions:{regions:[{region_id:1,type:'unboxed',anchor_ids:[3],unboxed_rect:rect}]}}}});
+   const res=await route.fetch(),body=await res.json();return route.fulfill({response:res,json:{image:{...body.image,processing_excluded:false,has_effective_text_groups:false,guidance:empty,effective_text_groups:[{text_group_id:3,fallback_rect:rect,text:"CV原文（認識誤りあり）"}],text_groups:[{text_group_id:3,fallback_rect:rect,text:"CV原文（認識誤りあり）"}],regions:{regions:[{region_id:1,type:'unboxed',anchor_ids:[3],unboxed_rect:rect}]}}}});
   }
   return route.continue();
  });
@@ -19,6 +19,9 @@ async(page)=>{
   if(await tools.locator('textarea').isVisible())throw Error('JSON 상시 노출');
   if(await tools.getByRole('button',{name:'Clear Unsaved'}).count()||await tools.getByRole('button',{name:'Delete Outputs'}).count())throw Error('불명확한 이름 남음');
   if(await tools.locator('.speaker-section button').count())throw Error('미선택 상태에서 비활성 화자 버튼 노출');
+  if(await p.locator('.workspace > .page-processing-bar,.workspace > .image-generation-bar').count())throw Error('캔버스 위 상태 행이 남음');
+  if(await tools.locator('.image-generation-control').count())throw Error('일반 페이지에 생성 안내 노출');
+  const bounds=await p.locator('#stageHost').boundingBox();if(bounds.height<800)throw Error('편집 높이 부족 '+bounds.height);
   await p.screenshot({path:'proof/misc/guidance-sidebar-idle.png',scale:'css'});
   const target=await p.evaluate(async rect=>{
    const {image}=await fetch('/api/session/20261020_075649/page/00002').then(r=>r.json());
@@ -29,6 +32,10 @@ async(page)=>{
   await p.mouse.click(target.x,target.y);
   await tools.locator('.speaker-section button').first().waitFor();
   if(await tools.locator('.speaker-section button:enabled').count()<2)throw Error('선택 후 화자 지정 없음');
+  const cv=tools.getByRole('textbox',{name:'선택 영역 CV 텍스트',exact:true});
+  if(await cv.inputValue()!=='CV原文（認識誤りあり）'||!await cv.evaluate(n=>n.readOnly))throw Error('CV 읽기 전용 표시 실패 '+await cv.inputValue());
+  const fillAlpha=await p.locator('#stageHost canvas').last().evaluate((c,target)=>{const b=c.getBoundingClientRect();return c.getContext('2d').getImageData((target.x-b.x)*c.width/b.width,(target.y-b.y)*c.height/b.height,1,1).data[3];},target);
+  if(fillAlpha<20)throw Error('선택 R 색칠 없음 '+fillAlpha);
   await p.screenshot({path:'proof/misc/guidance-sidebar-selected.png',scale:'css'});
   await tools.getByText('표시 설정',{exact:true}).click();
   const regions=tools.getByLabel('처리 영역 (R)',{exact:true});await regions.uncheck();await regions.check();
@@ -48,6 +55,6 @@ async(page)=>{
   await tools.getByRole('button',{name:'편집 실행 취소',exact:true}).click();
   if(JSON.parse(await json.inputValue()).disabled_tg_ids.join()!=='3')throw Error('가이드 비우기 Undo 실패');
   if(errors.length||posts.length)throw Error(JSON.stringify({errors,posts}));
-  return {ok:true,checks:['필수 작업만 기본 표시','미선택 화자 버튼 숨김','선택 후 화자 지정','표시 설정 유지','JSON 접어서 편집','가이드 비우기와 Undo','작업 결과 삭제 확인/취소'],errors,posts};
+  return {ok:true,checks:['일반 페이지 안내 없음/편집 높이 확보','R 선택 색칠','CV 원문 읽기 전용','필수 작업만 기본 표시','미선택 화자 버튼 숨김','선택 후 화자 지정','표시 설정 유지','JSON 접어서 편집','가이드 비우기와 Undo','작업 결과 삭제 확인/취소'],errors,posts};
  }finally{await p.close();}
 }
