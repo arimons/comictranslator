@@ -3374,3 +3374,6 @@ button.wide {
 .speaker-picker li button.active { background: var(--panel-2); outline: 1px solid var(--blue); }
 .speaker-picker li button span { font-size: 11px; color: var(--muted); }
 .speaker-picker li.empty { padding: 8px; font-size: 12px; color: var(--muted); }
+.memo-candidates { display: grid; gap: 6px; margin: 10px 0; }
+.memo-candidates button { text-align: left; }
+.memo-candidates button span, .memo-auto { font-size: 12px; color: var(--muted); }

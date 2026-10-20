@@ -465,7 +465,7 @@ indexed sheet crop의 획두께·ink density를 재서 OpenAI가 준 `render_hin
 .venv/bin/python -m pytest -q    # pytest.ini가 tests/만 수집한다
 ```
 
-작품 메모 버튼은 프로젝트명 옆에 있다. 메모는 `temp_output/v2_glossaries/{work_id}.json`(format `work-memo-v1`)에 작품별로 저장하고, 프로젝트는 `work/glossary_binding.json`으로 연결한다. 이전 형식 파일은 처음 읽을 때 인물·용어 표로 옮기고 원본을 `.legacy.json`으로 남긴다. URL 초안은 `pipeline/work_sources.py`로 본문 한 개를 읽어 OpenAI에 한 번 보낸다. 유료 검색은 호출하지 않는다.
+작품 메모 버튼은 프로젝트명 옆에 있다. 메모는 `temp_output/v2_glossaries/{work_id}.json`(format `work-memo-v1`)에 작품별로 저장하고, 프로젝트는 `work/glossary_binding.json`으로 연결한다. 연결 전 프로젝트는 앞쪽 페이지 CV에서 메모 원문 표기를 세어 후보를 내고, 확실한 1개면 편집기가 자동 연결한다. 이전 형식 파일은 처음 읽을 때 인물·용어 표로 옮기고 원본을 `.legacy.json`으로 남긴다. URL 초안은 `pipeline/work_sources.py`로 본문 한 개를 읽어 OpenAI에 한 번 보낸다. 유료 검색은 호출하지 않는다.
 
 ## 이미지 생성 권장과 후보 등록 (2026-10-20)
 

@@ -82,3 +82,32 @@ def test_memo_api_binds_saves_drafts_and_assigns_speakers(tmp_path, monkeypatch)
     cleared = client.post("/api/speakers", json={"session_id": "book", "image_id": image_id, "tg_ids": [2], "character_id": None}).json()
     assert cleared["by_tg"] == {"3": cid}
     assert client.get(f"/api/speakers/book/{image_id}").json()["by_tg"] == {"3": cid}
+
+
+def test_cv_match_counts_memo_originals_and_auto_links_only_clear_winner(tmp_path, monkeypatch):
+    from pipeline.work_glossary import match_works
+    flag = {"work_id": "b" * 24, "title": "사망플래그", "characters": [{"original": "ハロルド・ストークス, ハロルド"}, {"original": "エリカ"}],
+            "terms": [{"original": "スメラギ家"}]}
+    other = {"work_id": "c" * 24, "title": "다른 작품", "characters": [{"original": "エリカ"}], "terms": []}
+    result = match_works("ハロルドさま!スメラギ家のエリカです", [flag, other])
+    assert result["candidates"][0]["work_id"] == "b" * 24 and result["candidates"][0]["strong"]
+    weak = match_works("エリカです", [flag, other])
+    assert not weak["candidates"][0]["strong"]
+    assert match_works("", [flag]) == {"has_cv": False, "candidates": []}
+
+    monkeypatch.setattr(app, "ROOT", tmp_path)
+    monkeypatch.setattr(app, "SESSION_ROOT", tmp_path / "temp_output/v2_sessions")
+    data = app.ensure_session("vol")
+    original = app.session_dir("vol") / "input/p1.png"
+    Image.new("RGB", (20, 20)).save(original)
+    data["images"] = [app.image_manifest_item(original, app.file_sha256(original))]
+    app.save_session(data)
+    write_json(app.session_dir("vol") / "work/json/p1_cv.json", [{"label": "ハロルド"}, {"label": "スメラギ家"}, {"label": "エリカ"}])
+    write_json(tmp_path / "temp_output/v2_glossaries" / f"{'b' * 24}.json", {**flag, "format": "work-memo-v1"})
+    client = TestClient(app.create_app())
+    payload = client.get("/api/glossary/vol").json()
+    assert payload["glossary"] is None and payload["match"]["candidates"][0]["strong"]
+    assert not app.glossary_binding_path("vol").exists()  # GET은 연결하지 않는다
+    bound = client.post("/api/glossary/bind", json={"session_id": "vol", "work_id": "b" * 24, "matched_by": "cv",
+                                                     "hits": payload["match"]["candidates"][0]["hits"]}).json()
+    assert bound["binding"]["matched_by"] == "cv" and "match" not in bound

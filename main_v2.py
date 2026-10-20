@@ -43,7 +43,8 @@ from pipeline.image_generation_bridge import ImageGenerationStore
 from pipeline.openai_image_redraw import redraw_image_with_openai
 from pipeline.pipeline_runner import DEFAULT_FONT, run_single_image, stream_subprocess
 from pipeline.render_text_overlay import apply_text_overlay
-from pipeline.work_glossary import NARRATION, GlossaryStore, character_map, glossary_snapshot, page_speakers, speaker_prompt
+from pipeline.work_glossary import (NARRATION, GlossaryStore, character_map, cv_page_text, glossary_snapshot, match_works,
+                                    page_speakers, speaker_prompt)
 
 load_dotenv()
 
@@ -89,7 +90,15 @@ def glossary_payload(session_id: str) -> dict:
     # 조회가 빈 프로젝트를 만들지 않도록 ensure_session을 쓰지 않는다.
     if not session_file(session_id).is_file():
         raise ValueError("프로젝트를 찾을 수 없습니다.")
-    return {"glossary": session_glossary(session_id), "works": glossary_store().list_works()}
+    binding = load_json(glossary_binding_path(session_id), default={})
+    glossary = session_glossary(session_id)
+    payload = {"glossary": glossary, "works": glossary_store().list_works(),
+               "binding": {key: binding.get(key) for key in ("matched_by", "hits")} if glossary else None}
+    if not glossary:
+        # 연결 전이면 저장된 CV만으로 후보를 계산한다. 연결은 편집기가 POST로 한다(GET은 쓰지 않음).
+        session = load_json(session_file(session_id), default={})
+        payload["match"] = match_works(cv_page_text(session, session_dir(session_id) / "work"), glossary_store().all_memos())
+    return payload
 
 
 def speakers_path(session_id: str, image_id: str) -> Path:
@@ -170,6 +179,8 @@ class GlossaryBindRequest(BaseModel):
     session_id: str
     work_id: str | None = None
     title: str = ""
+    matched_by: str = "user"
+    hits: list[str] = []
 
 
 class GlossarySaveRequest(BaseModel):
@@ -2674,7 +2685,9 @@ def create_app() -> FastAPI:
                 raise ValueError("프로젝트를 찾을 수 없습니다.")
             store = glossary_store()
             wid = store.read(req.work_id)["work_id"] if req.work_id else store.create(req.title)
-            write_json(glossary_binding_path(req.session_id), {"work_id": wid})
+            auto = req.matched_by == "cv"
+            write_json(glossary_binding_path(req.session_id), {"work_id": wid, "matched_by": "cv" if auto else "user",
+                                                               "hits": [str(hit)[:40] for hit in req.hits[:12]] if auto else []})
             return glossary_payload(req.session_id)
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc

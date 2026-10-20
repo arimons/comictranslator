@@ -2190,7 +2190,7 @@ export default function App() {
           }}
           placeholder="Untitled project"
         />
-        <GlossaryPanel sessionId={sessionId} projectName={projectName} ocrBusy={ocrBusy} onMemoChange={setWorkMemo} />
+        <GlossaryPanel sessionId={sessionId} projectName={projectName} ocrBusy={ocrBusy} analysisReady={images.some((image) => image.has_analysis)} onMemoChange={setWorkMemo} />
         </div>
         <nav className="workflow-tabs top-workflow-tabs">
           {WORKFLOW_TABS.map(([id, label]) => (

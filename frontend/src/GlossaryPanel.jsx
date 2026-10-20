@@ -11,7 +11,7 @@ function TableInput({ value, onChange, label, wide = false }) {
   return <input className={wide ? "wide" : ""} aria-label={label} value={value || ""} maxLength={300} onChange={(event) => onChange(event.target.value)} />;
 }
 
-export default function GlossaryPanel({ sessionId, projectName, ocrBusy, onMemoChange }) {
+export default function GlossaryPanel({ sessionId, projectName, ocrBusy, analysisReady, onMemoChange }) {
   const [open, setOpen] = useState(false);
   const [data, setData] = useState(null);
   const [works, setWorks] = useState([]);
@@ -24,6 +24,9 @@ export default function GlossaryPanel({ sessionId, projectName, ocrBusy, onMemoC
   const [busy, setBusy] = useState("");
   const [error, setError] = useState("");
   const [changing, setChanging] = useState(false);
+  const [binding, setBinding] = useState(null);
+  const [match, setMatch] = useState(null);
+  const autoBound = useRef("");
   const sessionRef = useRef(sessionId);
   const dialogRef = useRef(null);
   sessionRef.current = sessionId;
@@ -31,6 +34,8 @@ export default function GlossaryPanel({ sessionId, projectName, ocrBusy, onMemoC
   function applyPayload(result) {
     setData(result.glossary || null);
     setWorks(result.works || []);
+    setBinding(result.binding || null);
+    setMatch(result.match || null);
     setDraft(result.glossary ? structuredClone(result.glossary) : null);
     setDirty(false);
     onMemoChange?.(result.glossary || null);
@@ -46,6 +51,23 @@ export default function GlossaryPanel({ sessionId, projectName, ocrBusy, onMemoC
       .catch((err) => { if (alive) setError(err.message); });
     return () => { alive = false; };
   }, [sessionId]);
+
+  // 연결 전: 분석이 끝나 CV가 생기면 다시 조회한다. 확실한 후보 1개면 자동 연결한다.
+  useEffect(() => {
+    if (!sessionId || data || !analysisReady || match?.has_cv) return undefined;
+    let alive = true;
+    api(`/api/glossary/${encodeURIComponent(sessionId)}`)
+      .then((result) => { if (alive) applyPayload(result); })
+      .catch(() => {});
+    return () => { alive = false; };
+  }, [sessionId, analysisReady, Boolean(data), match?.has_cv]);
+
+  useEffect(() => {
+    const best = match?.candidates?.[0];
+    if (data || !best?.strong || busy || autoBound.current === sessionId) return;
+    autoBound.current = sessionId;
+    post("/api/glossary/bind", { work_id: best.work_id, matched_by: "cv", hits: best.hits }, "bind");
+  }, [match, Boolean(data), sessionId]);
 
   useEffect(() => {
     if (!open) return undefined;
@@ -105,8 +127,12 @@ export default function GlossaryPanel({ sessionId, projectName, ocrBusy, onMemoC
 
   const characters = draft?.characters || [];
   const terms = draft?.terms || [];
-  const label = data ? data.title : "작품 메모 연결";
-  const summary = data ? `인물 ${data.characters.length} · 용어 ${data.terms.length}` : "인물·말투·용어";
+  const candidates = match?.candidates || [];
+  const autoLinked = binding?.matched_by === "cv";
+  const label = data ? data.title : candidates.length ? `후보: ${candidates[0].title}?` : "작품 메모 연결";
+  const summary = data
+    ? `${autoLinked ? "CV 자동 연결 · " : ""}인물 ${data.characters.length} · 용어 ${data.terms.length}`
+    : match?.has_cv ? (candidates.length ? "확인 후 연결하세요" : "일치하는 작품 메모 없음") : "인물·말투·용어";
   const showPicker = !data || changing;
 
   return <>
@@ -133,6 +159,12 @@ export default function GlossaryPanel({ sessionId, projectName, ocrBusy, onMemoC
           post("/api/glossary/bind", workId ? { work_id: workId } : { title: title || projectName }, "bind");
         }}>
           <p>같은 작품의 여러 권이 하나의 메모를 함께 씁니다.</p>
+          {candidates.length ? <div className="memo-candidates">
+            <strong>앞쪽 페이지 CV와 일치하는 작품</strong>
+            {candidates.map((row) => <button type="button" key={row.work_id} disabled={Boolean(busy)} onClick={() => post("/api/glossary/bind", { work_id: row.work_id }, "bind")}>
+              {row.title} <span>일치 {row.score}개 · {row.hits.slice(0, 5).join(", ")}</span>
+            </button>)}
+          </div> : null}
           {works.length ? <label>기존 작품 메모<select value={workId} onChange={(event) => setWorkId(event.target.value)}>
             <option value="">새 작품 만들기</option>
             {works.map((item) => <option key={item.work_id} value={item.work_id}>{item.title}</option>)}
@@ -145,6 +177,7 @@ export default function GlossaryPanel({ sessionId, projectName, ocrBusy, onMemoC
         </form> : null}
 
         {draft && !changing ? <>
+          {autoLinked ? <p className="memo-auto">앞쪽 페이지 CV에서 {binding.hits?.slice(0, 6).join(", ")} 등이 보여 자동 연결했습니다. 다른 작품이면 ‘다른 작품 연결’로 바꾸세요.</p> : null}
           <div className="glossary-work">
             <input className="memo-title" aria-label="작품명" value={draft.title} maxLength={200} onChange={(event) => edit((next) => { next.title = event.target.value; })} />
             <button disabled={Boolean(busy)} onClick={() => setChanging(true)}>다른 작품 연결</button>
