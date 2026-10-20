@@ -30,7 +30,7 @@ NEW_COMIC_TRANSLATOR/
 │       ├── App.jsx              # 세션/이미지 목록/워크플로우 탭 전체 상태
 │       ├── StartScreen.jsx      # 홈: 파일·폴더 불러오기, 최근 프로젝트, 분석 방법
 │       ├── PagePreparation.jsx  # 원본을 보존하는 페이지 분할 미리보기·별도 프로젝트 생성
-│       ├── ServerStatus.jsx     # 서버 연결 상태등 (작업 진행률과 별개)
+│       ├── ServerStatus.jsx     # 서버 연결·코드 버전 상태등 (재시작·새로고침 필요 표시, 작업 진행률과 별개)
 │       ├── ImagePreview.jsx     # 비교 이미지 확대·전체/너비 맞춤
 │       ├── GlossaryPanel.jsx    # 프로젝트명 옆 작품 메모: 작품 연결·인물/용어 표 편집·URL 초안
 │       ├── EditorCanvas.jsx      # Step 3 영역 분석 캔버스 (Konva)
@@ -158,6 +158,7 @@ guidance(수동 보정)가 있는 이미지는 `guidance_digest`(guidance 내용
 | `POST /api/run-final(-stream)` | Step 4(OCR/번역) + Step 5(오버레이) 실행. body의 `ocr_model`로 모델 지정 |
 | `GET /api/ocr-models` | OCR/번역 모델 목록(`id`, `label`, `note`)과 기본값 |
 | `GET /api/glossary/{session_id}`, `POST /api/glossary/bind`, `/api/glossary/unbind`, `/api/glossary/save`, `/api/glossary/draft` | 작품 메모 연결·저장·URL 초안. 메모 참고문을 Step 4 프롬프트에 붙인다 |
+| `GET /api/health` | 연결 확인. `stale_code`(서버 시작 뒤 바뀐 Python 파일)와 `bundle`(화면 번들 버전)을 함께 돌려준다 |
 | `GET /api/speakers/{session_id}/{image_id}`, `POST /api/speakers` | 페이지별 TG→화자 지정(`work/speakers/{image_id}.json`). Step 4가 region 화자 목록으로 바꿔 프롬프트에 붙인다 |
 | `POST /api/overlay/apply` | 오버레이 위치/폰트만 다시 렌더링 (OCR 재실행 없음). 저장한 수동값에 영역 위치(`_anchor`)를 기록 |
 | `GET /api/session/{id}/export`, `POST /api/export/generate-missing` | 결과 ZIP 내보내기, 실패 이미지 OpenAI 이미지 생성 fallback |

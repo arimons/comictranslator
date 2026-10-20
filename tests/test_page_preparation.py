@@ -78,5 +78,5 @@ def test_preview_is_read_only_and_apply_creates_separate_project(tmp_path, monke
 
 def test_health_does_not_create_sessions(tmp_path, monkeypatch):
     monkeypatch.setattr(main_v2, "SESSION_ROOT", tmp_path / "sessions")
-    assert TestClient(main_v2.create_app()).get("/api/health").json() == {"status": "ok"}
+    assert TestClient(main_v2.create_app()).get("/api/health").json()["status"] == "ok"
     assert not main_v2.SESSION_ROOT.exists()
