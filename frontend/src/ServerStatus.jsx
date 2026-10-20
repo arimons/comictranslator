@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 
-export default function ServerStatus() {
+export default function ServerStatus({ onRestarted }) {
   const [state, setState] = useState({ color: "yellow", label: "서버 연결 확인 중" });
   const checkRef = useRef(null);
   // 이 화면을 연 시점의 번들 버전. 서버가 새 번들을 알려 주면 새로고침이 필요하다.
@@ -66,8 +66,10 @@ export default function ServerStatus() {
       } catch { /* 아직 뜨는 중 */ }
       await new Promise((resolve) => setTimeout(resolve, 1000));
     }
-    restartingRef.current = false;
-    checkRef.current?.();
+    // 재시작한 서버가 읽은 파일을 화면도 처음부터 다시 읽도록 새로고침한다.
+    // 편집기에서는 onRestarted가 보던 프로젝트·페이지·탭을 기억해 둔다.
+    if (onRestarted) onRestarted();
+    else window.location.reload();
   }
 
   function onClick() {

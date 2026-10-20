@@ -53,6 +53,8 @@ import { regionIsExcluded } from "./regionExclusion.js";
 const OVERLAY_HISTORY_LIMIT = 100;
 const OVERLAY_HISTORY_MERGE_MS = 1500;
 
+const RESUME_KEY = "comic-translator-resume-after-restart";
+
 export default function App() {
   const [sessionId, setSessionId] = useState("");
   const [projectName, setProjectName] = useState("");
@@ -93,6 +95,7 @@ export default function App() {
   const [analysisPolicy, setAnalysisPolicy] = useState("reuse");
   const [importNameFocusRequest, setImportNameFocusRequest] = useState(0);
   const [imageStatuses, setImageStatuses] = useState({});
+  const [generationStatus, setGenerationStatus] = useState(null);
   const [guidanceCompareMode, setGuidanceCompareMode] = useState("masked");
   const [autoOverlayPreview, setAutoOverlayPreview] = useState(true);
   const [exportImageModel, setExportImageModel] = useState("gpt-image-2");
@@ -167,11 +170,15 @@ export default function App() {
   const selectedDetailKey = selected ? `${selectedKey}|${selected.detail_loaded ? "detail" : "summary"}` : "";
   const effectiveOcrModel = ocrModels.some((model) => model.id === ocrModel) ? ocrModel : ocrDefaultModel;
   const guidanceEditorUrl = selected?.input_url || null;
+  const generatedCandidates = generationStatus?.session_id === sessionId && generationStatus?.image_id === selected?.id ? generationStatus.results || [] : [];
+  const latestGeneratedCandidate = generatedCandidates.at(-1);
+  const generationRecommended = selected?.analysis_route !== "standard" && (selected?.image_generation_recommendation?.priority === "recommended" || selected?.analysis_skip_reason === "cover_image_gen_redraw");
   const guidanceCompareTabs = [
-    ["masked", "Masked", selected?.masked_url],
-    ["source", "Original", selected?.input_url],
-    ["final", "Final", selected?.final_url],
-    ["sheet", "OCR Sheet", selected?.indexed_sheet_url],
+    ["generated", "생성 후보", latestGeneratedCandidate?.preview_url],
+    ["masked", "마스크", selected?.masked_url],
+    ["source", "원본", selected?.input_url],
+    ["final", "최종 출력", selected?.final_url],
+    ["sheet", "OCR 시트", selected?.indexed_sheet_url],
   ];
   const guidanceCompareTab = guidanceCompareTabs.find(([id, _label, url]) => id === guidanceCompareMode && url) || guidanceCompareTabs.find(([_id, _label, url]) => url) || guidanceCompareTabs[0];
   const effectiveGuidanceCompareMode = guidanceCompareTab?.[0] || guidanceCompareMode;
@@ -986,7 +993,7 @@ export default function App() {
     if (
       !workspaceStarted
       || generationReviewMode
-      || selected?.image_generation_recommendation?.priority === "recommended"
+      || (selected?.analysis_route !== "standard" && selected?.image_generation_recommendation?.priority === "recommended")
       || activeTab !== "guidance"
       || !selected
       || inputBusy
@@ -1001,7 +1008,7 @@ export default function App() {
     autoAnalysisRequestedRef.current.add(requestKey);
     setStatus(`${selected.name} 분석 산출물이 없어 현재 파일 분석을 시작합니다.`);
     analyze(selected.id);
-  }, [workspaceStarted, generationReviewMode, activeTab, selected?.id, selected?.image_sha256, selected?.regions, selected?.has_analysis, selected?.image_generation_recommendation?.priority, inputBusy, analyzeBusy, guidanceBusy]);
+  }, [workspaceStarted, generationReviewMode, activeTab, selected?.id, selected?.image_sha256, selected?.regions, selected?.has_analysis, selected?.image_generation_recommendation?.priority, selected?.analysis_route, inputBusy, analyzeBusy, guidanceBusy]);
 
   useEffect(() => {
     if (autoOverlayTimerRef.current) {
@@ -1325,6 +1332,36 @@ export default function App() {
     });
   }
 
+  // 서버 재시작 뒤: 보던 위치를 기억하고 새로고침한다. 새 화면이 같은 프로젝트를 다시 연다.
+  function reloadAfterServerRestart() {
+    try {
+      if (sessionId) {
+        window.sessionStorage.setItem(RESUME_KEY, JSON.stringify({ session_id: sessionId, image_id: selectedIdRef.current || selectedId, tab: activeTab }));
+      }
+    } catch { /* 저장소를 못 쓰면 시작 화면으로 돌아간다 */ }
+    window.location.reload();
+  }
+
+  useEffect(() => {
+    let resume = null;
+    try {
+      resume = JSON.parse(window.sessionStorage.getItem(RESUME_KEY) || "null");
+      window.sessionStorage.removeItem(RESUME_KEY);
+    } catch { resume = null; }
+    if (!resume?.session_id) return undefined;
+    let cancelled = false;
+    (async () => {
+      try {
+        await openRecentSession({ session_id: resume.session_id });
+        if (cancelled) return;
+        if (resume.image_id) { setSelectedId(resume.image_id); selectedIdRef.current = resume.image_id; }
+        if (resume.tab) setActiveTab(resume.tab);
+        setStatus("서버를 재시작하고 프로젝트를 다시 불러왔습니다");
+      } catch (error) { if (!cancelled) setStatus(error.message); }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
   async function openRecentSession(recent) {
     if (!recent?.session_id) return;
     setSessionTracked(recent.session_id);
@@ -1466,6 +1503,20 @@ export default function App() {
     if (selected?.detail_loaded) return true;
     setStatus("페이지 정보를 불러오는 중입니다. 잠시 후 다시 시도하세요.");
     return false;
+  }
+
+  async function switchToStandardAnalysis() {
+    if (!selected || anyBusy || selected.processing_excluded || !pageDetailReady()) return;
+    const sid = sessionId, id = selected.id;
+    // 정책 응답이 도착한 뒤 자동 분석과 명시적 분석이 중복 실행되지 않게 한다.
+    autoAnalysisRequestedRef.current.add(`${id}:${selected.image_sha256 || ""}`);
+    try {
+      const result = await api("/api/page-analysis-route", {method:"POST", body:JSON.stringify({session_id:sid, image_id:id, route:"standard"})});
+      if (sessionIdRef.current !== sid) return;
+      applyImageRecord(result.image);
+      setGuidanceCompareMode("masked");
+      await analyze(id, {force:false});
+    } catch (err) { setStatus(`기존 방식 전환 실패: ${err.message}`); }
   }
 
   async function togglePageProcessing() {
@@ -2176,7 +2227,7 @@ export default function App() {
   return (
     <div className={`app workspace-mode ${toolsOpen ? "" : "tools-collapsed"} ${activeTab === "overlay" ? "overlay-mode" : ""} ${activeTab === "ocr" ? "ocr-mode" : ""} ${activeTab === "export" ? "export-mode" : ""} ${activeTab === "restore" ? "restore-mode" : ""}`}>
       <header className="workspace-global-topbar">
-        <div className="workspace-brand-group"><button className="workspace-brand" type="button" onClick={returnToStartPage} title="홈으로 돌아가기">Comic Translator Studio</button><ServerStatus /></div>
+        <div className="workspace-brand-group"><button className="workspace-brand" type="button" onClick={returnToStartPage} title="홈으로 돌아가기">Comic Translator Studio</button><ServerStatus onRestarted={reloadAfterServerRestart} /></div>
         <div className="project-identity">
         <input
           className="project-name-input"
@@ -2321,13 +2372,13 @@ export default function App() {
           <span>{selected?.processing_excluded ? "페이지 처리 제외 · 원본 그대로 출력" : "페이지 처리 대상"}</span>
           <button type="button" disabled={!selected || anyBusy} onClick={togglePageProcessing}>{selected?.processing_excluded ? "처리 대상으로 복원" : "이 페이지 처리 제외"}</button>
         </div>
-        <ImageGenerationPanel key={`${sessionId}:${selected?.id}`} sessionId={sessionId} image={selected} />
+        <ImageGenerationPanel key={`${sessionId}:${selected?.id}`} sessionId={sessionId} image={selected} onStatus={setGenerationStatus} />
         {activeTab === "guidance" ? (
         <div className="guidance-workspace">
           <div className="viewer-grid guidance-grid">
             <section className="preview-card guidance-preview-card">
               <div className="card-head">
-                <span>Compare</span>
+                <span>비교 미리보기</span>
                 <div className="preview-tabs">
                   {guidanceCompareTabs.map(([id, label, url]) => (
                     <button key={id} className={effectiveGuidanceCompareMode === id ? "active" : ""} onClick={() => setGuidanceCompareMode(id)} disabled={!url}>
@@ -2336,6 +2387,12 @@ export default function App() {
                   ))}
                 </div>
               </div>
+              {!selected?.processing_excluded && (generationRecommended || selected?.analysis_route === "standard") ? <div className="generation-preview-notice" role="status">
+                <strong>{generationRecommended ? "이미지 생성 권장 페이지" : "기존 방식으로 처리하는 페이지"}</strong>
+                <p>{generationRecommended ? "현재 페이지는 자동 분석을 시작하지 않습니다. 생성 후보를 검토하거나 기존 CV·영역 분석 방식으로 전환할 수 있습니다." : "CV → TG → 처리 영역 분석을 사용합니다. 생성 후보와 원본은 그대로 보관합니다."}</p>
+                {latestGeneratedCandidate ? <p>생성 후보 {generatedCandidates.length}개 등록됨 · 최종 출력 미반영{latestGeneratedCandidate.stale ? " · 이전 입력 기준으로 생성되어 재검토 필요" : " · 미검토 후보"}</p> : <p>등록된 생성 후보가 없습니다. 원본을 표시합니다.</p>}
+                {generationRecommended ? <><button type="button" className="primary" onClick={switchToStandardAnalysis} onKeyDown={preventPlainAnalysisEnter} disabled={anyBusy || !selected?.detail_loaded}>기존 방식으로 처리 · CV/자동 분석</button><small>기존 CV 결과가 있으면 재사용합니다. 없으면 유료 CV 호출이 발생할 수 있습니다. 번역·이미지 생성은 실행하지 않습니다.</small></> : null}
+              </div> : null}
               <ImagePreview src={guidanceCompareUrl} />
             </section>
 
