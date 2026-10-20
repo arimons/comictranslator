@@ -480,3 +480,6 @@ indexed sheet crop의 획두께·ink density를 재서 OpenAI가 준 `render_hin
 페이지 전체 처리 제외: `main_v2.py`의 /api/page-processing과 page_processing_excluded가 work/page_policy의 프로젝트별 상태를 읽는다. 분석·번역·생성·ZIP 내보내기에 반영하고 frontend의 제외/복원 버튼과 연결한다. `tests/test_page_processing.py`에서 원본 바이트 출력·복원·유료 호출 차단을 검사한다.
 
 영역 분석 우클릭 메뉴는 `frontend/src/EditorCanvas.jsx`, 제외 미리보기는 `frontend/src/regionExclusion.js`, 선 아이콘은 `frontend/src/GuidanceToolIcon.jsx`가 담당한다. [도구 모음 검토·변경 기록](TOOLBAR_UX_REVIEW.md). 삭제·Undo는 UI만 갱신하고 Cmd/Ctrl+Enter에서 분석을 적용한다.
+
+
+2026-10-20 UI 동기화: 페이지 분석 경로 전환: main_v2.py의 /api/page-analysis-route는 work/page_policy에 standard/auto 선택을 저장한다. pipeline_runner.py는 standard 정책을 읽어 dialogue_extractor.py의 --force-standard에 연결한다. ImagePreview.jsx는 캐시 로드·실패/재시도를, ImageGenerationPanel.jsx와 App.jsx는 비교 영역의 등록 후보 표시와 전환 요청을 담당한다.

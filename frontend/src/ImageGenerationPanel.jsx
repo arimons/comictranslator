@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { api } from "./lib.js";
 import ImagePreview from "./ImagePreview.jsx";
 
-export default function ImageGenerationPanel({ sessionId, image }) {
+export default function ImageGenerationPanel({ sessionId, image, onStatus }) {
   const [data, setData] = useState(null);
   const dialogRef = useRef(null);
   const [error, setError] = useState("");
@@ -15,13 +15,13 @@ export default function ImageGenerationPanel({ sessionId, image }) {
     async function read() {
       try {
         const next = await api(`/api/image-generation/${encodeURIComponent(sessionId)}/${encodeURIComponent(image.id)}`);
-        if (alive) { setData(next); setError(""); }
+        if (alive) { setData(next); onStatus?.(next); setError(""); }
       } catch (err) { if (alive) setError(err.message); }
       if (alive) timer = window.setTimeout(read, 5000);
     }
     read();
     return () => { alive = false; window.clearTimeout(timer); };
-  }, [sessionId, image?.id, image?.processing_excluded]);
+  }, [sessionId, image?.id, image?.processing_excluded, onStatus]);
   useEffect(() => {
     if (!open) return;
     const previous = document.activeElement;

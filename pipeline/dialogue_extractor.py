@@ -2768,6 +2768,7 @@ def build_dialogue_sheet(
     indexed_label_gutter: int = 48,
     base_masked_path: str | None = None,
     reuse_existing_unboxed_inpaint: bool = False,
+    force_standard: bool = False,
 ) -> Dict[str, Any]:
     """
     1. Bubble 영역 검출 → 흰색 마스킹
@@ -2782,7 +2783,7 @@ def build_dialogue_sheet(
     img_h, img_w = image.shape[:2]
     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
 
-    if _is_cover_image_path(image_path):
+    if _is_cover_image_path(image_path) and not force_standard:
         return _write_cover_skip_outputs(
             image,
             image_path,
@@ -3292,6 +3293,7 @@ def main() -> None:
     parser.add_argument("output_json_path", help="regions JSON 출력 경로")
     parser.add_argument("indexed_output_sheet_path", help="indexed OCR sheet 이미지 출력 경로")
     parser.add_argument("--output-vis-path", default=None, help="bubble vis 이미지 출력 경로 (선택)")
+    parser.add_argument("--force-standard", action="store_true", help="표지도 기존 CV/TG/영역 분석으로 처리")
     args = parser.parse_args()
 
     result = build_dialogue_sheet(
@@ -3301,6 +3303,7 @@ def main() -> None:
         output_json_path=args.output_json_path,
         indexed_output_sheet_path=args.indexed_output_sheet_path,
         output_vis_path=args.output_vis_path,
+        force_standard=args.force_standard,
     )
     n = len(result.get("regions", []))
     print(f"✅ 대사 추출 완료: {n}개 region → {args.output_json_path}")

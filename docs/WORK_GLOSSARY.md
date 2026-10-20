@@ -55,3 +55,6 @@ Step 4 직전에 서버가 현재 `regions.json`과 `by_tg`로 region별 화자�
 ## 번역 요청에 붙는 순서
 
 `작품 참고문(인물·용어·메모)` → `화자 지정` → `Additional Translation Prompt`. 실행한 값은 `json/{id}_glossary_snapshot.json`과 `integrated.json`의 `glossary.speakers`에 남는다. 메모나 화자를 바꿔도 기존 번역은 자동으로 다시 실행하지 않는다.
+
+
+2026-10-20 UI 동기화: 페이지를 이미지 생성 권장에서 기존 CV·영역 분석 방식으로 전환해도 연결된 작품 메모와 생성 후보는 유지한다. 경로 전환은 번역을 실행하지 않으며 이후 OCR/번역의 작품 메모 주입 계약은 동일하다.

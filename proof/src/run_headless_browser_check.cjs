@@ -1,0 +1,3 @@
+const fs=require('fs'),vm=require('vm');
+const {chromium}=require('/Users/changhyunpark/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/node_modules/playwright');
+(async()=>{const browser=await chromium.launch({headless:true,executablePath:'/Users/changhyunpark/Library/Caches/ms-playwright/chromium_headless_shell-1228/chrome-headless-shell-mac-arm64/chrome-headless-shell'});try{const context=await browser.newContext();const page=await context.newPage();const run=vm.runInThisContext('('+fs.readFileSync(process.argv[2],'utf8')+')');console.log(JSON.stringify(await run(page)));}finally{await browser.close();}})().catch(e=>{console.error(e);process.exitCode=1;});

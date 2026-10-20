@@ -279,6 +279,9 @@ def run_single_image(
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
     name = image_path.stem
+    policy_path = work_dir / "page_policy" / f"{name}.json"
+    policy = json.loads(policy_path.read_text()) if policy_path.is_file() else {}
+    force_standard = policy.get("analysis_route") == "standard"
     log = []
     t0 = time.time()
 
@@ -339,13 +342,16 @@ def run_single_image(
         # Step 3: 만화 대사 추출 — Bubble Detect + Unboxed Erase(LaMa) + OCR Sheet
         _append_log(log, "\n🗨️ Step 3: 만화 대사 추출", log_callback)
         step_started = time.time()
-        if not masked_jpg.exists() or not regions_json.exists() or force:
+        prior_regions = json.loads(regions_json.read_text()) if regions_json.is_file() else {}
+        cover_skip = force_standard and prior_regions.get("skip_reason") == "cover_image_gen_redraw"
+        if not masked_jpg.exists() or not regions_json.exists() or force or cover_skip:
             _run_step(
                 [
                     PYTHON, "-m", "pipeline.dialogue_extractor",
                     str(image_path), str(clusters_json),
                     str(masked_jpg), str(regions_json), str(indexed_sheet_jpg),
                     "--output-vis-path", str(bubble_vis_jpg),
+                    *(["--force-standard"] if force_standard else []),
                 ],
                 STEP_TIMEOUT["extract"], "Dialogue Extractor", log_callback,
             )
@@ -353,6 +359,14 @@ def run_single_image(
         else:
             _append_log(log, "  ✅ 캐시 사용", log_callback)
         _append_log(log, f"  ⏱️ 단계 소요 {time.time() - step_started:.1f}s / 누적 {elapsed()}", log_callback)
+
+        if cover_skip and integrated_json.exists():
+            # 표지 건너뛰기 표지만 폐기한다. 기존 번역·최종 이미지는 보존한다.
+            previous = json.loads(integrated_json.read_text())
+            if isinstance(previous, dict) and previous.get("skipped"):
+                integrated_json.unlink()
+                status_path = work_dir / "json" / f"{name}_ocr_status.json"
+                status_path.unlink(missing_ok=True)
 
         if stop_after in {"extract", "pre_ocr"}:
             total = time.time() - t0

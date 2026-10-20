@@ -1356,5 +1356,6 @@ python3 run_pipeline.py \
   window.addEventListener('scroll', updateActive, { passive: true });
   updateActive();
 </script>
+<aside style="margin:24px"><h3>페이지별 기존 분석 경로 선택</h3><p>2026-10-20: 편집기의 기존 방식 전환은 work/page_policy의 analysis_route를 standard로 저장합니다. pipeline_runner는 이 정책을 읽어 Step 3에 --force-standard를 전달하고 표지의 자동 건너뛰기를 우회합니다. 기존 CV는 재사용하고 없을 때만 호출합니다. 표지 건너뛰기 산출물은 재생성하며 공유 기본 분석 캐시와는 섞지 않습니다. UI 전환은 pre_ocr까지만 실행하고 번역·이미지 생성·기존 최종 출력은 변경하지 않습니다.</p></aside>
 </body>
 </html>

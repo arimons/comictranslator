@@ -26,7 +26,7 @@ import webbrowser
 import zipfile
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 from urllib.parse import quote
 from uuid import uuid4
 
@@ -798,6 +798,8 @@ def backfill_analysis_cache_from_sessions(image_hash: str) -> bool:
 
 
 def hydrate_analysis_cache(record: dict[str, Any], image_hash: str, force: bool, log_callback, allow_backfill: bool = False) -> bool:
+    if record.get("analysis_route") == "standard":
+        return False
     if force:
         return False
     if guidance_clear_marker(record).exists():
@@ -830,6 +832,8 @@ def hydrate_analysis_cache(record: dict[str, Any], image_hash: str, force: bool,
 
 
 def store_analysis_cache(record: dict[str, Any], image_hash: str) -> bool:
+    if record.get("analysis_route") == "standard":
+        return False
     if not all(Path(record[key]).exists() for key in ANALYSIS_CACHE_REQUIRED):
         return False
     _normalize_empty_region_visual(record)
@@ -883,6 +887,8 @@ def backfill_guidance_cache_from_sessions(image_hash: str) -> bool:
 
 
 def store_guidance_cache(record: dict[str, Any], image_hash: str) -> bool:
+    if record.get("analysis_route") == "standard":
+        return False
     guidance_path = Path(record["guidance_json"])
     if not guidance_path.exists():
         return False
@@ -897,6 +903,8 @@ def store_guidance_cache(record: dict[str, Any], image_hash: str) -> bool:
 
 
 def store_guidance_output_cache(record: dict[str, Any], image_hash: str, guidance: dict[str, Any]) -> bool:
+    if record.get("analysis_route") == "standard":
+        return False
     if not guidance_has_edits(guidance):
         return False
     if not all(Path(record[key]).exists() for key in GUIDANCE_OUTPUT_REQUIRED):
@@ -930,6 +938,8 @@ def store_guidance_output_cache(record: dict[str, Any], image_hash: str, guidanc
 
 
 def hydrate_guidance_output_cache(record: dict[str, Any], image_hash: str, guidance: dict[str, Any], log_callback) -> bool:
+    if record.get("analysis_route") == "standard":
+        return False
     if not guidance_has_edits(guidance):
         return False
     cache_dir = guidance_output_cache_dir(image_hash, guidance)
@@ -1113,6 +1123,19 @@ def page_processing_excluded(session_id: str, image_id: str) -> bool:
     return policy.get("excluded") is True
 
 
+def page_analysis_route(session_id: str, image_id: str) -> str:
+    # 페이지 제외와 같은 프로젝트 로컬 정책. 기존 JSON에는 키가 없어도 된다.
+    page_processing_excluded(session_id, image_id)
+    policy = load_json(session_dir(session_id) / "work/page_policy" / f"{image_id}.json", default={})
+    return "standard" if policy.get("analysis_route") == "standard" else "auto"
+
+
+class PageAnalysisRouteRequest(BaseModel):
+    session_id: str
+    image_id: str
+    route: Literal["standard", "auto"]
+
+
 class PageProcessingRequest(BaseModel):
     session_id: str
     image_id: str
@@ -1156,6 +1179,7 @@ def image_record(
     record = {
         "id": stem,
         "processing_excluded": excluded,
+        "analysis_route": page_analysis_route(session_id, stem),
         "name": path.name,
         "image_sha256": image_hash,
         "input_path": str(path),
@@ -1221,6 +1245,8 @@ def image_record(
 # 세션 요약 목록에 들어가는 키. 전체 레코드도 같은 키를 같은 의미로 가진다(프론트에서 병합).
 IMAGE_SUMMARY_KEYS = (
     "processing_excluded",
+    "analysis_route",
+    "analysis_skip_reason",
     "id",
     "name",
     "image_sha256",
@@ -1291,7 +1317,8 @@ def page_detail_rev(json_dir: Path, stem: str) -> str:
 def _regions_flags(data: Any) -> dict[str, Any]:
     regions = data.get("regions") if isinstance(data, dict) else None
     has_analysis = isinstance(regions, list)
-    return {"has_analysis": has_analysis, "ocr_region_count": len(regions) if has_analysis else None}
+    return {"has_analysis": has_analysis, "ocr_region_count": len(regions) if has_analysis else None,
+            "analysis_skip_reason": data.get("skip_reason") if isinstance(data, dict) else None}
 
 
 def _integrated_flags(data: Any) -> dict[str, Any]:
@@ -1833,6 +1860,7 @@ def run_step3_with_effective_text_groups(session_id: str, image_id: str, guidanc
         suppressed_regions=guidance.get("suppressed_regions", []),
         base_masked_path=record["masked_jpg"] if can_reuse_unboxed_mask else None,
         reuse_existing_unboxed_inpaint=can_reuse_unboxed_mask,
+        force_standard=record.get("analysis_route") == "standard",
     )
     if sheet_result.get("reused_unboxed_inpaint"):
         report["fast_path"] = {
@@ -2757,8 +2785,19 @@ def create_app() -> FastAPI:
     @app.post("/api/page-processing")
     def set_page_processing(req: PageProcessingRequest) -> dict:
         get_image(req.session_id, req.image_id)
-        write_json(session_dir(req.session_id) / "work/page_policy" / f"{req.image_id}.json",
-                   {"excluded": req.excluded, "updated_at": dt.datetime.now().isoformat()})
+        path = session_dir(req.session_id) / "work/page_policy" / f"{req.image_id}.json"
+        policy = load_json(path, default={})
+        write_json(path, {**policy, "excluded": req.excluded, "updated_at": dt.datetime.now().isoformat()})
+        return {"image": page_record(req.session_id, req.image_id)}
+
+    @app.post("/api/page-analysis-route")
+    def set_page_analysis_route(req: PageAnalysisRouteRequest) -> dict:
+        get_image(req.session_id, req.image_id)
+        if page_processing_excluded(req.session_id, req.image_id):
+            raise HTTPException(status_code=409, detail="처리 대상으로 복원한 뒤 전환하세요.")
+        path = session_dir(req.session_id) / "work/page_policy" / f"{req.image_id}.json"
+        policy = load_json(path, default={})
+        write_json(path, {**policy, "analysis_route": req.route, "updated_at": dt.datetime.now().isoformat()})
         return {"image": page_record(req.session_id, req.image_id)}
 
     @app.get("/api/image-generation/{session_id}/{image_id}")

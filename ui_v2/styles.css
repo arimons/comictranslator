@@ -3399,3 +3399,21 @@ select.memo-key { width: 100%; padding: 2px; font-size: 12px; }
 .memo-save-state { align-self: center; font-size: 12px; color: var(--muted); }
 .memo-save-state.saving, .memo-save-state.pending { color: var(--orange); }
 .memo-save-state.error { color: var(--red); }
+
+/* 생성 권장 페이지도 비교 영역을 비워 두지 않고 경로와 대안을 표시한다. */
+.guidance-preview-card:has(.generation-preview-notice) {grid-template-rows:auto auto minmax(0,1fr);}
+.generation-preview-notice {padding:12px 14px;background:#fff8e7;border-bottom:1px solid #efd28a;color:#5b4514;font-size:12px;line-height:1.5;}
+.generation-preview-notice strong {display:block;font-size:14px;}
+.generation-preview-notice p {margin:5px 0;}
+.generation-preview-notice button {margin:5px 0;max-width:100%;white-space:normal;}
+.generation-preview-notice small {display:block;line-height:1.5;}
+.guidance-preview-card .card-head {min-height:44px;gap:8px;flex-wrap:wrap;}
+.guidance-preview-card .preview-tabs {flex-wrap:wrap;}
+
+.guidance-preview-card:has(.generation-result-strip) {grid-template-rows:auto auto minmax(0,1fr);}
+.generation-result-strip {display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;padding:7px 10px;border-bottom:1px solid var(--line);background:#f6f8fb;color:var(--muted);font-size:11px;}
+.generation-result-strip strong {color:var(--text);}
+.generation-result-strip details {position:relative;}
+.generation-result-strip summary {cursor:pointer;color:#0b57d0;}
+.generation-result-strip details[open] > div {position:absolute;right:0;top:22px;z-index:20;width:min(320px,65vw);padding:12px;border:1px solid var(--line);border-radius:8px;background:var(--panel);box-shadow:var(--shadow);color:var(--text);line-height:1.5;}
+.generation-result-strip p {margin:0 0 8px;}

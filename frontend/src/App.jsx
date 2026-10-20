@@ -95,8 +95,9 @@ export default function App() {
   const [analysisPolicy, setAnalysisPolicy] = useState("reuse");
   const [importNameFocusRequest, setImportNameFocusRequest] = useState(0);
   const [imageStatuses, setImageStatuses] = useState({});
+  const [routeBusy, setRouteBusy] = useState(false);
   const [generationStatus, setGenerationStatus] = useState(null);
-  const [guidanceCompareMode, setGuidanceCompareMode] = useState("masked");
+  const [guidanceCompareMode, setGuidanceCompareMode] = useState("auto");
   const [autoOverlayPreview, setAutoOverlayPreview] = useState(true);
   const [exportImageModel, setExportImageModel] = useState("gpt-image-2");
   const [exportTextModel, setExportTextModel] = useState("gpt-6.1-sol");
@@ -174,15 +175,17 @@ export default function App() {
   const latestGeneratedCandidate = generatedCandidates.at(-1);
   const generationRecommended = selected?.analysis_route !== "standard" && (selected?.image_generation_recommendation?.priority === "recommended" || selected?.analysis_skip_reason === "cover_image_gen_redraw");
   const guidanceCompareTabs = [
-    ["generated", "생성 후보", latestGeneratedCandidate?.preview_url],
+    ["generated", "생성 결과", latestGeneratedCandidate?.preview_url],
     ["masked", "마스크", selected?.masked_url],
     ["source", "원본", selected?.input_url],
     ["final", "최종 출력", selected?.final_url],
     ["sheet", "OCR 시트", selected?.indexed_sheet_url],
   ];
-  const guidanceCompareTab = guidanceCompareTabs.find(([id, _label, url]) => id === guidanceCompareMode && url) || guidanceCompareTabs.find(([_id, _label, url]) => url) || guidanceCompareTabs[0];
+  const preferredCompareMode = guidanceCompareMode === "auto" ? (latestGeneratedCandidate && generationRecommended ? "generated" : "masked") : guidanceCompareMode;
+  const guidanceCompareTab = guidanceCompareTabs.find(([id, _label, url]) => id === preferredCompareMode && url) || guidanceCompareTabs.find(([_id, _label, url]) => url) || guidanceCompareTabs[0];
   const effectiveGuidanceCompareMode = guidanceCompareTab?.[0] || guidanceCompareMode;
   const guidanceCompareUrl = guidanceCompareTab?.[2] || selected?.masked_url || selected?.input_url || null;
+  useEffect(() => { setGuidanceCompareMode("auto"); }, [selectedKey]);
   const selectedToolLabel = TOOL_LABELS.find(([id]) => id === tool)?.[1] || tool;
   const disabledCount = guidance.disabled_tg_ids?.length || 0;
   const splitCount = guidance.tg_splits?.length || 0;
@@ -240,7 +243,7 @@ export default function App() {
   const ocrBusy = Boolean(busyTasks.ocr);
   const overlayBusy = Boolean(busyTasks.overlay);
   const exportBusy = Boolean(busyTasks.export);
-  const anyBusy = Object.values(busyTasks).some(Boolean);
+  const anyBusy = routeBusy || Object.values(busyTasks).some(Boolean);
   const currentIndex = selected ? Math.max(0, images.findIndex((img) => img.id === selected.id)) : -1;
   const needsAttentionImages = images.filter((img) => {
     const state = imageStatuses[img.id]?.status;
@@ -1508,6 +1511,7 @@ export default function App() {
   async function switchToStandardAnalysis() {
     if (!selected || anyBusy || selected.processing_excluded || !pageDetailReady()) return;
     const sid = sessionId, id = selected.id;
+    setRouteBusy(true);
     // 정책 응답이 도착한 뒤 자동 분석과 명시적 분석이 중복 실행되지 않게 한다.
     autoAnalysisRequestedRef.current.add(`${id}:${selected.image_sha256 || ""}`);
     try {
@@ -1517,6 +1521,7 @@ export default function App() {
       setGuidanceCompareMode("masked");
       await analyze(id, {force:false});
     } catch (err) { setStatus(`기존 방식 전환 실패: ${err.message}`); }
+    finally { setRouteBusy(false); }
   }
 
   async function togglePageProcessing() {
@@ -2387,10 +2392,16 @@ export default function App() {
                   ))}
                 </div>
               </div>
-              {!selected?.processing_excluded && (generationRecommended || selected?.analysis_route === "standard") ? <div className="generation-preview-notice" role="status">
+              {!selected?.processing_excluded && latestGeneratedCandidate ? <div className="generation-result-strip">
+                <span title={latestGeneratedCandidate.stale ? "입력·번역·작품 메모 변경으로 재검토가 필요합니다. 등록 결과는 보존됩니다." : "등록된 생성 결과입니다."}><strong>생성 결과 {generatedCandidates.length}개</strong> · 출력 미반영{latestGeneratedCandidate.stale ? " · 재검토 필요" : ""}</span>
+                {generationRecommended ? <details><summary>기존 방식으로 전환</summary><div>
+                  <p>기존 CV는 재사용하며, 없으면 유료 CV 호출이 발생할 수 있습니다. 생성 결과와 원본은 보존합니다. 번역·이미지 생성은 실행하지 않습니다.</p>
+                  <button type="button" onClick={switchToStandardAnalysis} onKeyDown={preventPlainAnalysisEnter} disabled={anyBusy || !selected?.detail_loaded}>기존 방식으로 처리 · CV/자동 분석</button>
+                </div></details> : <span>기존 방식으로 처리 중</span>}
+              </div> : !selected?.processing_excluded && (generationRecommended || selected?.analysis_route === "standard") ? <div className="generation-preview-notice" role="status">
                 <strong>{generationRecommended ? "이미지 생성 권장 페이지" : "기존 방식으로 처리하는 페이지"}</strong>
-                <p>{generationRecommended ? "현재 페이지는 자동 분석을 시작하지 않습니다. 생성 후보를 검토하거나 기존 CV·영역 분석 방식으로 전환할 수 있습니다." : "CV → TG → 처리 영역 분석을 사용합니다. 생성 후보와 원본은 그대로 보관합니다."}</p>
-                {latestGeneratedCandidate ? <p>생성 후보 {generatedCandidates.length}개 등록됨 · 최종 출력 미반영{latestGeneratedCandidate.stale ? " · 이전 입력 기준으로 생성되어 재검토 필요" : " · 미검토 후보"}</p> : <p>등록된 생성 후보가 없습니다. 원본을 표시합니다.</p>}
+                <p>{generationRecommended ? "현재 페이지는 자동 분석을 시작하지 않습니다. 생성 결과를 등록하거나 기존 CV·영역 분석 방식으로 전환할 수 있습니다." : "CV → TG → 처리 영역 분석을 사용합니다. 원본은 그대로 보관합니다."}</p>
+                <p>등록된 생성 결과가 없습니다. 원본을 표시합니다.</p>
                 {generationRecommended ? <><button type="button" className="primary" onClick={switchToStandardAnalysis} onKeyDown={preventPlainAnalysisEnter} disabled={anyBusy || !selected?.detail_loaded}>기존 방식으로 처리 · CV/자동 분석</button><small>기존 CV 결과가 있으면 재사용합니다. 없으면 유료 CV 호출이 발생할 수 있습니다. 번역·이미지 생성은 실행하지 않습니다.</small></> : null}
               </div> : null}
               <ImagePreview src={guidanceCompareUrl} />
