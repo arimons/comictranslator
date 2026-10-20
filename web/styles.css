@@ -3443,3 +3443,13 @@ select.memo-key { width: 100%; padding: 2px; font-size: 12px; }
 
 .selected-region-method {display:inline-block;font-size:11px;border:1px solid;border-radius:5px;padding:3px 7px;margin-top:7px;font-weight:600;}
 .region-color-legend {display:flex;flex-wrap:wrap;gap:10px;font-size:11px;margin-bottom:10px;}
+
+/* 원본 재연결은 접힌 도구로 제공해 편집 캔버스 높이를 유지한다. */
+.source-link-control { position:relative; font-size:12px; }
+.source-link-control > summary { cursor:pointer; white-space:nowrap; padding:7px 10px; border:1px solid var(--border,#cbd5e1); border-radius:7px; }
+.source-link-body { position:absolute; right:0; top:100%; width:min(420px,85vw); max-height:70vh; overflow:auto; z-index:100; padding:16px; border:1px solid #cbd5e1; border-radius:8px; background:var(--panel,#fff); color:var(--text,#172033); box-shadow:0 8px 28px #0002; }
+.source-link-body p { margin:8px 0; line-height:1.5; white-space:normal; }
+.source-link-body input { display:block; width:100%; box-sizing:border-box; margin:6px 0 10px; }
+.source-link-body small { display:block; margin-top:12px; line-height:1.5; white-space:normal; }
+.home-page-preparation .source-link-control { margin-top:8px; }
+.home-page-preparation .source-link-body { left:0; right:auto; }

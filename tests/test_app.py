@@ -875,7 +875,7 @@ def test_import_starts_load_cache_hydration_in_background(tmp_path, monkeypatch)
     assert calls == [("background_import", ["page1"], app.IMPORT_CACHE_SYNC_LIMIT)]
 
 
-def test_import_links_session_input_to_hash_cache(tmp_path, monkeypatch):
+def test_import_references_original_without_input_cache(tmp_path, monkeypatch):
     monkeypatch.setattr(app, "SESSION_ROOT", tmp_path / "sessions")
     source = tmp_path / "source" / "page1.jpg"
     source.parent.mkdir(parents=True)
@@ -887,13 +887,13 @@ def test_import_links_session_input_to_hash_cache(tmp_path, monkeypatch):
     cache_path = app.input_cache_path(image_hash, ".jpg")
 
     assert records[0]["image_sha256"] == image_hash
-    assert cache_path.read_bytes() == b"same image"
+    assert not cache_path.exists()
     assert input_path.read_bytes() == b"same image"
     assert input_path.is_symlink()
-    assert input_path.resolve() == cache_path
+    assert input_path.resolve() == source.resolve()
 
 
-def test_upload_replaces_session_input_with_hash_cache_link(tmp_path, monkeypatch):
+def test_upload_keeps_owned_input_without_input_cache(tmp_path, monkeypatch):
     monkeypatch.setattr(app, "SESSION_ROOT", tmp_path / "sessions")
     client = TestClient(app.create_app())
 
@@ -906,9 +906,9 @@ def test_upload_replaces_session_input_with_hash_cache_link(tmp_path, monkeypatc
     record = response.json()["images"][0]
     input_path = Path(record["input_path"])
     cache_path = app.input_cache_path(record["image_sha256"], ".jpg")
-    assert cache_path.read_bytes() == b"upload image"
-    assert input_path.is_symlink()
-    assert input_path.resolve() == cache_path
+    assert not cache_path.exists()
+    assert not input_path.is_symlink()
+    assert input_path.read_bytes() == b"upload image"
 
 
 def test_clear_guidance_outputs_removes_manual_files_without_restoring_cache(tmp_path, monkeypatch):

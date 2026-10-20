@@ -40,6 +40,7 @@ from pydantic import BaseModel
 from pipeline.project_paths import manifest_files, manifest_path, project_base
 from pipeline.manual_guidance import build_effective_text_groups, load_json, write_json
 from pipeline.region_types import regions_with_processing_basis
+from pipeline.source_library import SourceLibrary, atomic_link, digest as source_digest
 from pipeline.page_preparation import build_plan, materialize_plan
 from pipeline.image_generation_bridge import ImageGenerationStore
 from pipeline.openai_image_redraw import redraw_image_with_openai
@@ -312,6 +313,12 @@ class GenerateMissingFinalRequest(BaseModel):
     force: bool = False
 
 
+class SourceFolderRequest(BaseModel):
+    session_id: str
+    folder: str
+    revision: str | None = None
+
+
 def now_id() -> str:
     return dt.datetime.now().strftime("%Y%m%d_%H%M%S")
 
@@ -321,6 +328,10 @@ def session_dir(session_id: str) -> Path:
     if not safe:
         raise HTTPException(status_code=400, detail="Invalid session id")
     return SESSION_ROOT / safe
+
+
+def source_library():
+    return SourceLibrary(SESSION_ROOT.parent)
 
 
 def session_file(session_id: str) -> Path:
@@ -339,12 +350,13 @@ def ensure_session(session_id: str | None = None) -> dict[str, Any]:
     else:
         data = {"session_id": sid, "created_at": dt.datetime.now().isoformat(timespec="seconds"), "images": []}
         write_json(path, data)
-    return data
+    return source_library().refresh(data, base)
 
 
 def save_session(data: dict[str, Any]) -> None:
     data["images"] = sorted_image_records(data.get("images", []))
-    write_json(session_dir(data["session_id"]) / "project.json", data)
+    portable = {**data, "images": [{k:v for k,v in p.items() if k != "source_status"} for p in data["images"]]}
+    write_json(session_dir(data["session_id"]) / "project.json", portable)
 
 
 def delete_session(session_id: str) -> None:
@@ -540,6 +552,7 @@ def file_sha256(path: Path) -> str:
 
 
 def ensure_record_hash(item: dict[str, Any]) -> str:
+    if item.get("source_status") == "missing":raise HTTPException(status_code=409,detail="원본 폴더를 다시 연결하세요")
     image_hash = item.get("image_sha256")
     if image_hash:
         return image_hash
@@ -1257,6 +1270,9 @@ def image_record(
 
 # 세션 요약 목록에 들어가는 키. 전체 레코드도 같은 키를 같은 의미로 가진다(프론트에서 병합).
 IMAGE_SUMMARY_KEYS = (
+    "input_storage",
+    "source_ref",
+    "source_status",
     "processing_excluded",
     "analysis_route",
     "analysis_skip_reason",
@@ -1404,6 +1420,7 @@ def clear_export_recovery_metadata(record: dict[str, Any]) -> None:
 
 def merge_manifest_metadata(record: dict[str, Any], item: dict[str, Any]) -> dict[str, Any]:
     passthrough_keys = (
+        "input_storage", "source_ref", "source_status",
         "parent_id",
         "parent_name",
         "parent_input_path",
@@ -1543,12 +1560,16 @@ def copy_images_into_session(paths: list[Path], session_id: str) -> list[dict[st
     input_dir = session_dir(session_id) / "input"
     existing_ids = {item["id"] for item in data.get("images", [])}
     records: list[dict[str, Any]] = []
+    root = Path(os.path.commonpath([str(p.resolve().parent) for p in paths])) if paths else None
+    root_id = source_library().register(root) if root else None
     for index, src in enumerate(sorted(paths, key=lambda path: natural_name_key(path.name)), start=1):
         if src.suffix.lower() not in IMAGE_EXTS or not src.exists():
             continue
         candidate = allocate_input_path(input_dir, safe_filename(src.name), index, existing_ids)
-        image_hash, _cache_path = link_cached_input(src, candidate)
-        record = image_manifest_item(candidate, image_hash)
+        image_hash = source_digest(src)
+        atomic_link(src, candidate)
+        record = image_manifest_item(candidate, image_hash, {"input_storage":"source",
+            "source_ref":{"root_id":root_id,"relative_path":str(src.resolve().relative_to(root))}})
         data.setdefault("images", []).append(record)
         records.append(record)
     save_session(data)
@@ -1590,11 +1611,11 @@ def session_images(session_id: str, include_detail: bool = True) -> list[dict[st
         input_path = Path(item["input_path"])
         # hydrate 함수들은 경로만 쓰므로 큰 JSON을 읽지 않는 가벼운 레코드로 충분하다.
         record = image_record(session_id, input_path, image_hash, item, probe_image=False, include_detail=False)
-        if image_hash and not record["processing_excluded"]:
+        if image_hash and input_path.exists() and not record["processing_excluded"]:
             hydrate_analysis_cache(record, image_hash, False, noop, allow_backfill=False)
             hydrate_guidance_cache(record, image_hash, noop, allow_backfill=False)
         guidance = load_json(record["guidance_json"], default={})
-        if guidance_has_edits(guidance) and not record["processing_excluded"]:
+        if input_path.exists() and guidance_has_edits(guidance) and not record["processing_excluded"]:
             output_ready = bool(image_hash) and hydrate_guidance_output_cache(record, image_hash, guidance, noop)
             if not output_ready and analysis_outputs_are_cache_links(record) and _claim_guidance_reapply(session_id, record):
                 pending_reapply.append(item)
@@ -1648,6 +1669,9 @@ def page_record(session_id: str, image_id: str) -> dict[str, Any]:
 
 
 def analyze_one_image(session_id: str, item: dict[str, Any], index: int, total: int, force: bool, emit) -> bool:
+    if item.get("source_status") == "missing":
+        emit({"type":"image_status","image_id":item["id"],"status":"failed","detail":"원본 폴더를 다시 연결하세요"})
+        return False
     if page_processing_excluded(session_id, item["id"]):
         emit({"type":"image_status", "image_id":item["id"], "status":"skipped", "detail":"페이지 처리 제외 · 원본 출력"})
         return True
@@ -3017,6 +3041,40 @@ def create_app() -> FastAPI:
         delete_session(req.session_id)
         return {"ok": True, "sessions": list_recent_sessions()}
 
+    @app.get("/api/sources/{session_id}")
+    def input_sources(session_id: str):
+        if not session_file(session_id).is_file():raise HTTPException(status_code=404,detail="프로젝트가 없습니다")
+        data=ensure_session(session_id)
+        pages=data.get("images",[])
+        return {"session_id":session_id,"total":len(pages),
+            "connected":sum(p.get("source_status")=="connected" for p in pages),
+            "fallback":sum(p.get("source_status")=="fallback" for p in pages),
+            "missing":sum(p.get("source_status")=="missing" for p in pages),
+            "owned":sum(not p.get("source_ref") for p in pages)}
+
+    @app.post("/api/sources/preview")
+    def preview_input_sources(req: SourceFolderRequest):
+        req=req.model_dump()
+        if not session_file(req["session_id"]).is_file():raise HTTPException(status_code=404,detail="프로젝트가 없습니다")
+        try:
+            return source_library().preview(ensure_session(req["session_id"]), req["folder"])
+        except (OSError,ValueError,KeyError) as exc:
+            raise HTTPException(status_code=400,detail=str(exc)) from exc
+
+    @app.post("/api/sources/relink")
+    def relink_input_sources(req: SourceFolderRequest):
+        req=req.model_dump()
+        if not session_file(req["session_id"]).is_file():raise HTTPException(status_code=404,detail="프로젝트가 없습니다")
+        try:
+            data=ensure_session(req["session_id"])
+            plan=source_library().preview(data, req["folder"])
+            if not req.get("revision") or req["revision"]!=plan["revision"]:
+                raise HTTPException(status_code=409,detail="원본 또는 프로젝트가 변경됐습니다. 다시 확인하세요")
+            result=source_library().apply(data,session_dir(req["session_id"]),plan)
+            return {"matched":result["matched"],"unmatched":result["unmatched"],"status":input_sources(req["session_id"])}
+        except (OSError,ValueError,KeyError) as exc:
+            raise HTTPException(status_code=400,detail=str(exc)) from exc
+
     @app.post("/api/import-path")
     def import_path(req: ImportPathRequest) -> dict[str, Any]:
         data = ensure_session(req.session_id)
@@ -3062,8 +3120,8 @@ def create_app() -> FastAPI:
         for path in copied:
             if path.stem in known:
                 continue
-            image_hash, _cache_path = link_cached_input(path, path)
-            item = image_manifest_item(path, image_hash)
+            image_hash = file_sha256(path)
+            item = image_manifest_item(path, image_hash, {"input_storage":"upload"})
             current.setdefault("images", []).append(item)
             records.append(item)
         save_session(current)
@@ -3194,9 +3252,9 @@ def create_app() -> FastAPI:
         # 세션·캐시 폴더 아래의 이미지만 내려준다. 저장소 루트 전체를 열면 .env나 인증서 파일까지 읽힌다.
         resolved = Path(path).resolve()
         servable_roots = (SESSION_ROOT, INPUT_CACHE_DIR, ANALYSIS_CACHE_DIR)
-        if resolved.suffix.lower() not in IMAGE_EXTS or not any(
+        if resolved.suffix.lower() not in IMAGE_EXTS or not (any(
             resolved.is_relative_to(root.resolve()) for root in servable_roots
-        ):
+        ) or source_library().allowed_source(resolved, SESSION_ROOT)):
             raise HTTPException(status_code=403, detail="File outside workspace is not served")
         if not resolved.exists():
             raise HTTPException(status_code=404, detail="File not found")

@@ -65,8 +65,9 @@ export default function StartScreen({
                 </div>
                 <input ref={fileRef} type="file" multiple accept="image/*" hidden onChange={(event) => uploadFromInput(event.currentTarget)} />
                 <input ref={folderRef} type="file" multiple webkitdirectory="" directory="" accept="image/*" hidden onChange={(event) => uploadFromInput(event.currentTarget)} />
-                <details className="home-path">
-                  <summary>로컬 폴더 경로로 불러오기</summary>
+                <p className="home-hint">파일·폴더 선택은 프로젝트에 업로드합니다. 복사 없이 사용하려면 아래 원본 폴더 경로를 지정하세요.</p>
+                <details className="home-path" open>
+                  <summary>원본 폴더 경로로 불러오기 · 복사 없이 참조</summary>
                   <div className="import-folder">
                     <input aria-label="로컬 폴더 경로" value={folderPath} onChange={(event) => setFolderPath(event.target.value)} placeholder="예: /Users/이름/만화/작품명" disabled={busy} onKeyDown={(event) => { if (event.key === "Enter" && folderPath.trim() && !busy) importPath(); }} />
                     <button onClick={importPath} disabled={busy || !folderPath.trim()}>불러오기</button>
@@ -76,7 +77,7 @@ export default function StartScreen({
                   <div className="selection-summary"><strong>작업할 이미지 {images.length}장</strong><span>분석결과 있음 {analyzed}장</span></div>
                   <details className="selected-files">
                     <summary>선택한 이미지 확인·제외</summary>
-                    <p className="home-hint">파일명의 숫자 순서로 정렬됩니다. 예: 1, 2, 10</p>
+                    <p className="home-hint">브라우저 파일 선택은 원래 경로를 알 수 없어 프로젝트에 보관합니다. 복사 없이 사용하려면 원본 폴더 경로로 불러오세요.</p><p className="home-hint">파일명의 숫자 순서로 정렬됩니다. 예: 1, 2, 10</p>
                     <div className="loaded-file-list">
                       {images.map((image, index) => <div key={image.id} className="loaded-file-row">
                         <span>{index + 1}</span><strong title={image.name}>{image.name}{image.page_side && <em>{image.page_side}</em>}</strong>

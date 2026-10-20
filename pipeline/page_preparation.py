@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import hashlib
+import os
 import json
 from pathlib import Path
 
@@ -63,7 +64,7 @@ def build_plan(images: list[dict]) -> dict:
             # 접두 번호가 원본의 자연 정렬과 페이지 순서를 모두 보존한다.
             suffix = {"right": "R", "left": "L", "center": "C", "single": "S"}[side]
             outputs.append({"name": f"{index + 1:05d}_{path.stem}_p{number:02d}_{suffix}.png" if plan["mode"] != "keep" else f"{index + 1:05d}_{path.name}", "crop_rect": rect, "side": side})
-        pages.append({"image_id": image["id"], "source_name": image.get("name") or path.name, "source_path": str(path), "source_sha256": file_digest(path), **plan, "outputs": outputs})
+        pages.append({"image_id": image["id"], "source_name": image.get("name") or path.name, "source_path": str(path), "source_sha256": file_digest(path), "source_ref":image.get("source_ref"), "source_fallback_path":image.get("source_fallback_path"), **plan, "outputs": outputs})
     content = {"schema_version": 1, "reading_order": "rtl", "pages": pages}
     revision = hashlib.sha256(json.dumps(content, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
     return {**content, "revision": revision, "source_count": len(pages), "output_count": sum(len(page["outputs"]) for page in pages), "changed_count": sum(page["mode"] != "keep" for page in pages)}
@@ -84,7 +85,11 @@ def materialize_plan(plan: dict, output_dir: Path) -> list[dict]:
             if target.exists():
                 raise FileExistsError(target)
             if page["mode"] == "keep":
-                shutil.copyfile(source, target)
+                if page.get("source_ref"):
+                    target.symlink_to(os.path.relpath(source.resolve(),target.parent.resolve()))
+                else:
+                    # 원본 미연결인 이전 페이지와 업로드는 프로젝트 소유 상태를 보존한다.
+                    shutil.copyfile(source, target)
             else:
                 x, y, width, height = output["crop_rect"]
                 with Image.open(source) as image:
@@ -92,5 +97,8 @@ def materialize_plan(plan: dict, output_dir: Path) -> list[dict]:
                     if crop.mode not in {"1", "L", "LA", "P", "RGB", "RGBA", "I", "I;16"}:
                         crop = crop.convert("RGB")
                     crop.save(target, format="PNG")
-            results.append({"path": target, "parent_id": page["image_id"], "parent_name": page["source_name"], "parent_input_path": page["source_path"], "source_image_sha256": page["source_sha256"], "crop_rect": output["crop_rect"], "page_side": output["side"], "reading_order": "rtl", "split_policy": page["mode"]})
+            storage = {"input_storage":"derived"} if page["mode"]!="keep" else ({"input_storage":"source","source_ref":page["source_ref"]} if page.get("source_ref") else {"input_storage":"upload"})
+            if page["mode"]=="keep" and page.get("source_fallback_path"):
+                storage["source_fallback_path"]=page["source_fallback_path"]
+            results.append({**storage,"path": target, "parent_id": page["image_id"], "parent_name": page["source_name"], "parent_input_path": page["source_path"], "source_image_sha256": page["source_sha256"], "crop_rect": output["crop_rect"], "page_side": output["side"], "reading_order": "rtl", "split_policy": page["mode"]})
     return results

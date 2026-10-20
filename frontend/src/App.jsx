@@ -5,6 +5,7 @@ import RegionTypeBadge from "./RegionTypeBadge.jsx";
 import { TEXT_BASED, regionProcessingBasis, regionTypeLabel, regionDetectionLabel, regionBindingKey } from "./regionTypes.js";
 import { RestoreControls, RestoreStage, useRestore } from "./RestorePanel.jsx";
 import ShortcutHelp from "./ShortcutHelp.jsx";
+import SourceLinks from "./SourceLinks.jsx";
 import StartScreen from "./StartScreen.jsx";
 import ImagePreview from "./ImagePreview.jsx";
 import GuidanceToolIcon from "./GuidanceToolIcon.jsx";
@@ -2213,7 +2214,7 @@ export default function App() {
     return () => { cancelled = true; };
   }, []);
   const previewSessionId = new URLSearchParams(window.location.search).get("page_preview");
-  const pagePreparationControl = (sessionId || previewSessionId) ? <PagePreparation sessionId={sessionId || previewSessionId} disabled={anyBusy} onPrepared={adoptPreparedProject} autoOpen={Boolean(previewSessionId)} /> : null;
+  const pagePreparationControl = (sessionId || previewSessionId) ? <><PagePreparation sessionId={sessionId || previewSessionId} disabled={anyBusy} onPrepared={adoptPreparedProject} autoOpen={Boolean(previewSessionId)} /><SourceLinks key={sessionId || previewSessionId} sessionId={sessionId || previewSessionId} disabled={anyBusy} onChanged={() => refresh(sessionId || previewSessionId)} /></> : null;
 
   if (!workspaceStarted) {
     return <StartScreen

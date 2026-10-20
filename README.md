@@ -10,7 +10,7 @@ python3 -m venv .venv
 
 현재 API 키는 `.env`에 준비합니다. Cloud Vision은 REST API 키 방식이며 Google 인증 JSON은 필요하지 않습니다. 사용자 폰트는 Fonts에 넣습니다.
 작업물과 LaMa 모델은 코드 저장소 밖 `~/ComicTranslator`에 저장됩니다. 테스트·개발은 requirements-dev.txt, Google Batch는 batch/requirements.txt를 별도로 설치합니다. [설치 의존성](docs/DEPENDENCIES.md).
-[데이터 이전·맥 미니 운영](docs/STORAGE_LAYOUT.md) · [편집기 매뉴얼](docs/editor_manual.html) · [코드 지도](docs/CODEBASE_FILE_MAP.md)
+[원본 직접 참조·재연결](docs/INPUT_SOURCES.md) · [데이터 이전·맥 미니 운영](docs/STORAGE_LAYOUT.md) · [편집기 매뉴얼](docs/editor_manual.html) · [코드 지도](docs/CODEBASE_FILE_MAP.md)
 
 ---
 

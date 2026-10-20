@@ -16,9 +16,11 @@ def prepare():
         index.write_text('''# Comic Translator 작업 데이터
 
 - projects/: 프로젝트 ID별 작업물. 폴더 ID는 유지하고 작품명은 project.json의 project_name으로 바꿉니다.
-- cache/input/: 입력 이미지 작업 사본. 프로젝트 input의 상대 링크가 이 파일을 참조합니다.
+- cache/input/: 이전 프로젝트의 호환·대체 사본. 새 일반 페이지는 원본 폴더를 직접 참조합니다.
 - cache/cv/, cache/analysis/: API/CV 및 분석 캐시.
 - cache/models/: LaMa 등 모델 파일.
+- local/hosts/: 기기별 원본 폴더 경로.
+- 프로젝트 input/: 분할·크롭은 실제 파일, 일반 원본은 앱이 관리하는 입력 별칭입니다.
 - glossaries/: 작품 메모·용어집.
 - exports/: 내보낸 결과.
 - inbox/image_generation/: 생성 결과 수신.
@@ -27,7 +29,8 @@ def prepare():
 - backups/: 이전 전 데이터와 공개 전 원본 Git 이력. 자동 삭제하지 않습니다.
 
 코드와 데이터는 별개입니다. Python 패키지는 코드 폴더의 .venv에 설치합니다.
-맥 미니로 옮길 때 projects + cache/input + glossaries를 함께 가져가세요.
+맥 미니에는 projects + glossaries를 옮기고 앱의 원본 연결에서 이미 보유한 원본 폴더를 지정하세요.
+cache/input은 재연결 전 대체 입력이며 이전 보관 프로젝트도 사용하므로 아직 삭제하지 마세요.
 cache/models의 big-lama.pt도 가져가면 다시 다운로드할 필요가 없습니다.
 기존 Syncthing Developer 공유에 이 데이터 홈은 포함되지 않습니다.
 ''',encoding='utf-8')

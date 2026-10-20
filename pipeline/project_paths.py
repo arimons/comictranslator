@@ -8,7 +8,7 @@ import os
 from pathlib import Path
 from pipeline.paths import REPO_ROOT
 
-PATH_KEYS = {"input_path", "parent_input_path", "mask_ref", "original_path", "preview_path", "returned_path",
+PATH_KEYS = {"source_fallback_path","input_path", "parent_input_path", "mask_ref", "original_path", "preview_path", "returned_path",
              "image", "clusters", "font_path", "source", "output", "board", "all_board", "session",
              "anime_model", "sheet_image_path", "chunk_sheet_path", "sheet_json_path"}
 

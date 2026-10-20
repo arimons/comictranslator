@@ -34,7 +34,7 @@ def test_file_endpoint_serves_session_images_only(tmp_path):
     assert client.get("/api/file", params={"path": str(app.ROOT / ".env")}).status_code == 403
 
 
-def test_repeated_upload_of_same_name_never_overwrites_cached_originals():
+def test_repeated_upload_of_same_name_never_overwrites_owned_originals():
     client = TestClient(app.create_app())
     contents = [b"first image", b"second image", b"third image"]
     records = []
@@ -49,7 +49,8 @@ def test_repeated_upload_of_same_name_never_overwrites_cached_originals():
     assert len({record["id"] for record in records}) == 3
     for record, content in zip(records, contents):
         assert Path(record["input_path"]).read_bytes() == content
-        assert app.input_cache_path(record["image_sha256"], ".jpg").read_bytes() == content
+        assert not app.input_cache_path(record["image_sha256"], ".jpg").exists()
+        assert not Path(record["input_path"]).is_symlink()
 
 
 def test_upload_same_stem_with_different_extensions_gets_distinct_ids():

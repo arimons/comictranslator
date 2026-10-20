@@ -15,6 +15,7 @@ from typing import Any, Literal
 from PIL import Image
 from pydantic import BaseModel, ConfigDict, Field
 
+from pipeline.source_library import SourceLibrary, digest as source_digest
 from pipeline.paths import for_repo
 from pipeline.project_paths import manifest_path, manifest_files, runtime_json, transform_paths
 from pipeline.region_types import regions_with_processing_basis
@@ -60,7 +61,7 @@ class ReviewStore:
     def _safe(self, path: Path, *, proposals=False) -> Path:
         resolved = path.resolve()
         roots = (self.session_anchor,) if proposals else self.allowed
-        if not any(resolved.is_relative_to(root) for root in roots):
+        if not any(resolved.is_relative_to(root) for root in roots) and (proposals or not SourceLibrary(self.paths.home).allowed_source(resolved, self.sessions)):
             raise ValueError("허용된 세션·캐시 경로 밖의 파일입니다")
         return resolved
 
@@ -124,6 +125,15 @@ class ReviewStore:
         if page is None:
             raise ValueError("프로젝트에 등록되지 않은 페이지입니다")
         original = Path(page["input_path"])
+        if page.get("source_ref"):
+            candidate=SourceLibrary(self.paths.home).target(page["source_ref"])
+            try:
+                if candidate and candidate.is_file() and source_digest(candidate)==page.get("image_sha256"):
+                    original=candidate
+                elif page.get("source_fallback_path") and Path(page["source_fallback_path"]).is_file() and source_digest(Path(page["source_fallback_path"]))==page.get("image_sha256"):
+                    original=Path(page["source_fallback_path"])
+                else:raise ValueError("원본 폴더를 다시 연결하세요")
+            except OSError as exc:raise ValueError("원본 폴더를 다시 연결하세요") from exc
         if not original.is_absolute():
             original = base / original
         if original.suffix.lower() not in {".jpg", ".jpeg", ".png", ".webp", ".bmp", ".tif", ".tiff"}:

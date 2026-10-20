@@ -250,6 +250,20 @@
         "pipeline/dialogue_extractor.py",
         "batch/submit_batch_folder.py"
       ]
+    },
+    "docs/INPUT_SOURCES.md": {
+      "role": "canonical",
+      "topic": "원본 직접 참조·분할 소유 입력·기기별 해시 재연결",
+      "sources": [
+        "pipeline/source_library.py",
+        "pipeline/project_paths.py",
+        "pipeline/page_preparation.py",
+        "pipeline/editor_review_bridge.py",
+        "app.py",
+        "scripts/migrate_input_sources.py",
+        "frontend/src/SourceLinks.jsx",
+        "frontend/src/StartScreen.jsx"
+      ]
     }
   }
 }
