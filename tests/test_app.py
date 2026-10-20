@@ -14,6 +14,7 @@ from urllib.parse import quote
 @pytest.fixture(autouse=True)
 def isolate_input_cache(tmp_path, monkeypatch):
     monkeypatch.setattr(app, "INPUT_CACHE_DIR", tmp_path / "input_cache")
+    monkeypatch.setattr(app, "export_directory", lambda: tmp_path / "exports")
 
 
 def run_load_cache_hydration_immediately(monkeypatch):

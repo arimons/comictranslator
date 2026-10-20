@@ -51,7 +51,7 @@ from pipeline.work_glossary import (NARRATION, GlossaryStore, character_map, cv_
 load_dotenv()
 
 from pipeline.paths import (REPO_ROOT as ROOT, WEB_DIR as UI_DIR, PROJECTS_DIR as SESSION_ROOT,
-                            INPUT_CACHE_DIR, CV_CACHE_DIR, ANALYSIS_CACHE_DIR, GLOSSARY_DIR, EXPORTS_DIR)
+                            INPUT_CACHE_DIR, CV_CACHE_DIR, ANALYSIS_CACHE_DIR, GLOSSARY_DIR, EXPORTS_DIR, DATA_HOME, export_directory)
 ANALYSIS_CACHE_VERSION = "2026-05-29-region-suppress-v1"
 ANALYSIS_CACHE_COMPATIBLE_VERSIONS = {
     ANALYSIS_CACHE_VERSION,
@@ -2224,7 +2224,7 @@ def clear_guidance_outputs(session_id: str, image_id: str) -> dict[str, Any]:
 def build_session_export_zip(session_id: str) -> Path:
     data = ensure_session(session_id)
     base = session_dir(data["session_id"])
-    export_dir = base / "exports"
+    export_dir = export_directory() / data["session_id"]
     export_dir.mkdir(parents=True, exist_ok=True)
     zip_path = export_dir / export_zip_filename(data.get("project_name", ""), data["session_id"])
     used_names: set[str] = set()

@@ -228,6 +228,16 @@
       "role": "record",
       "topic": "코드 구조 학습 이력",
       "sources": []
+    },
+    "docs/STORAGE_LAYOUT.md": {
+      "role": "canonical",
+      "topic": "저장 위치·상대 경로·이전 및 맥 미니 운영",
+      "sources": [
+        "pipeline/paths.py",
+        "pipeline/project_paths.py",
+        "scripts/migrate_workspace.py",
+        "app.py"
+      ]
     }
   }
 }

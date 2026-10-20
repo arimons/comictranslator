@@ -1,3 +1,19 @@
+# Comic Translator Studio
+
+로컬 만화 번역·영역 편집 도구. Python FastAPI 편집기와 React 화면, OCR·번역·글자 입히기 파이프라인을 함께 제공합니다.
+
+```sh
+python3 -m venv .venv
+.venv/bin/pip install -r requirements.txt
+.venv/bin/python app.py --no-browser --port 7873
+```
+
+API 키는 `.env`, Google 인증은 `google-credentials.json`에 별도로 준비합니다. 사용자 폰트는 Fonts에 넣습니다.
+작업물은 코드 저장소 밖 `~/ComicTranslator`에 저장됩니다.
+[데이터 이전·맥 미니 운영](docs/STORAGE_LAYOUT.md) · [편집기 매뉴얼](docs/editor_manual.html) · [코드 지도](docs/CODEBASE_FILE_MAP.md)
+
+---
+
 # Comic Translator — 프로젝트 안내 및 초기 구현 기록
 
 **작성일**: 2025-12-22 | **최종 업데이트**: v89da0d9

@@ -47,3 +47,15 @@ GLOSSARY_DIR = PATHS.glossaries
 IMAGE_GENERATION_INBOX = PATHS.image_generation_inbox
 EXPORTS_DIR = PATHS.exports
 LEGACY_DIR = PATHS.legacy
+
+
+def export_directory(home=None):
+    """config.json의 사용자 지정 내보내기 위치. 상대 경로는 데이터 홈 기준."""
+    import json
+    base = Path(home or DATA_HOME)
+    try:
+        configured = json.loads((base / "config.json").read_text()).get("exports_dir", "exports")
+    except (OSError, ValueError, AttributeError):
+        configured = "exports"
+    path = Path(configured).expanduser()
+    return path if path.is_absolute() else base / path

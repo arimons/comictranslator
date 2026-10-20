@@ -127,3 +127,5 @@ inspect_page는 페이지별 processing_excluded를 함께 반환한다. work/pa
 경로 통합(2026-10-20): 저장 위치는 `pipeline/paths.py`에서 정의하며 `COMIC_TRANSLATOR_HOME`으로 변경할 수 있습니다.
 
 저장 경로(2026-10-20): 기본 데이터 홈은 `~/ComicTranslator`입니다. 프로젝트 JSON은 상대 경로를 저장하고, 읽을 때 기존 절대 경로와 `session.json`도 지원합니다.
+
+저장 구조·이전·맥 미니 실행은 [저장 위치 안내](STORAGE_LAYOUT.md)를 참고합니다. 내보낸 zip 기본 위치는 데이터 홈의 exports입니다.
