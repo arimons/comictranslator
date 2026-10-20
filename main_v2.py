@@ -2649,6 +2649,42 @@ class RevalidatingStaticFiles(StaticFiles):
         return response
 
 
+# 서버가 불러온 프로젝트 Python 파일의 수정 시각. 실행 중에 바뀌면 재시작이 필요하다.
+_CODE_MTIMES: dict[str, int] = {}
+
+
+def loaded_code_mtimes() -> dict[str, int]:
+    result = {}
+    for module in list(sys.modules.values()):
+        path = getattr(module, "__file__", None)
+        if not path or not path.endswith(".py"):
+            continue
+        file = Path(path).resolve()
+        if not file.is_relative_to(ROOT) or any(part.startswith(".venv") for part in file.relative_to(ROOT).parts):
+            continue
+        try:
+            result[str(file.relative_to(ROOT))] = file.stat().st_mtime_ns
+        except OSError:
+            continue
+    return result
+
+
+def stale_code_files() -> list[str]:
+    changed = []
+    for name, mtime in loaded_code_mtimes().items():
+        # 나중에 지연 import된 모듈은 처음 본 시각을 기준으로 삼는다.
+        if _CODE_MTIMES.setdefault(name, mtime) != mtime:
+            changed.append(name)
+    return sorted(changed)
+
+
+def bundle_version() -> int:
+    try:
+        return (ROOT / "ui_v2" / "app.bundle.js").stat().st_mtime_ns
+    except OSError:
+        return 0
+
+
 def create_app() -> FastAPI:
     app = FastAPI(title="Comic Translator Review UI")
 
@@ -2764,9 +2800,12 @@ def create_app() -> FastAPI:
     def recent_sessions() -> dict[str, Any]:
         return {"sessions": list_recent_sessions()}
 
+    _CODE_MTIMES.update(loaded_code_mtimes())
+
     @app.get("/api/health")
-    def server_health() -> dict[str, str]:
-        return {"status": "ok"}
+    def server_health() -> dict[str, Any]:
+        # stale_code: 서버 시작 뒤 바뀐 Python 파일(재시작 필요). bundle: 화면 번들 버전(바뀌면 새로고침 필요).
+        return {"status": "ok", "stale_code": stale_code_files(), "bundle": bundle_version()}
 
     def preparation_source(session_id: str) -> dict[str, Any]:
         if not re.fullmatch(r"[A-Za-z0-9_-]+", session_id) or not session_file(session_id).is_file():

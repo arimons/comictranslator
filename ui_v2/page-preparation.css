@@ -4,6 +4,12 @@
 .server-status span { width: 8px; height: 8px; border-radius: 50%; background: #d3991b; box-shadow: 0 0 0 3px #d3991b18; }
 .server-status-green span { background: #169563; box-shadow: 0 0 0 3px #16956316; animation: server-breathe 3s ease-in-out infinite; }
 .server-status-red span { background: #d33e42; box-shadow: 0 0 0 3px #d33e4218; }
+.server-status-orange span { background: #e8590c; box-shadow: 0 0 0 3px #e8590c22; }
+.server-status-blue span { background: #2563eb; box-shadow: 0 0 0 3px #2563eb1f; }
+.server-status-orange, .server-status-blue { flex: 0 0 auto; width: auto; gap: 5px; padding: 0 8px; border-radius: 999px; }
+.server-status em { font-style: normal; font-size: 11px; font-weight: 600; white-space: nowrap; }
+.server-status-orange em { color: #c2410c; }
+.server-status-blue em { color: #1d4ed8; }
 @keyframes server-breathe { 0%, 100% { opacity: .55; } 50% { opacity: 1; } }
 @media (prefers-reduced-motion: reduce) { .server-status span { animation: none; } }
 .home-page-preparation { margin-top: 14px; }

@@ -119,3 +119,25 @@ def test_ui_assets_are_revalidated_so_rebuilt_bundle_is_picked_up():
 
     assert response.status_code == 200
     assert response.headers["cache-control"] == "no-cache"
+
+
+def test_health_reports_python_files_changed_after_start(tmp_path, monkeypatch):
+    import os
+    import sys
+    import types
+
+    import main_v2
+    from fastapi.testclient import TestClient
+
+    module_file = tmp_path / "loaded_mod.py"
+    module_file.write_text("X = 1\n")
+    fake = types.ModuleType("loaded_mod_for_health")
+    fake.__file__ = str(module_file)
+    monkeypatch.setitem(sys.modules, "loaded_mod_for_health", fake)
+    monkeypatch.setattr(main_v2, "ROOT", tmp_path)
+    monkeypatch.setattr(main_v2, "_CODE_MTIMES", {})
+    client = TestClient(main_v2.create_app())
+    assert client.get("/api/health").json()["stale_code"] == []
+    stat = module_file.stat()
+    os.utime(module_file, ns=(stat.st_atime_ns, stat.st_mtime_ns + 1_000_000_000))
+    assert client.get("/api/health").json()["stale_code"] == ["loaded_mod.py"]

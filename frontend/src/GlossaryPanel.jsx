@@ -27,6 +27,12 @@ export default function GlossaryPanel({ sessionId, projectName, ocrBusy, analysi
   const [binding, setBinding] = useState(null);
   const [match, setMatch] = useState(null);
   const autoBound = useRef("");
+  // 자동 저장: 칸에서 포커스가 빠지거나 순서·주인공·삭제를 바꾸면 바로 저장한다.
+  const draftRef = useRef(null);
+  const editVersion = useRef(0);
+  const saving = useRef(false);
+  const savePending = useRef(false);
+  const [saveState, setSaveState] = useState("saved");
   const sessionRef = useRef(sessionId);
   const dialogRef = useRef(null);
   sessionRef.current = sessionId;
@@ -36,9 +42,15 @@ export default function GlossaryPanel({ sessionId, projectName, ocrBusy, analysi
     setWorks(result.works || []);
     setBinding(result.binding || null);
     setMatch(result.match || null);
-    setDraft(result.glossary ? structuredClone(result.glossary) : null);
+    setDraftValue(result.glossary ? structuredClone(result.glossary) : null);
     setDirty(false);
+    setSaveState("saved");
     onMemoChange?.(result.glossary || null);
+  }
+
+  function setDraftValue(next) {
+    draftRef.current = next;
+    setDraft(next);
   }
 
   useEffect(() => {
@@ -91,20 +103,65 @@ export default function GlossaryPanel({ sessionId, projectName, ocrBusy, analysi
     }
   }
 
-  function edit(mutator) {
-    setDraft((current) => {
-      const next = structuredClone(current);
-      mutator(next);
-      return next;
-    });
+  function edit(mutator, { commit = false } = {}) {
+    const next = structuredClone(draftRef.current);
+    mutator(next);
+    setDraftValue(next);
+    editVersion.current += 1;
     setDirty(true);
+    setSaveState("pending");
+    if (commit) requestSave();
+  }
+
+  function requestSave() {
+    if (!draftRef.current?.work_id) return;
+    if (saving.current) { savePending.current = true; return; }
+    runSave();
+  }
+
+  async function runSave() {
+    const sid = sessionId;
+    const sent = draftRef.current;
+    const version = editVersion.current;
+    saving.current = true;
+    setSaveState("saving");
+    try {
+      const result = await api("/api/glossary/save", { method: "POST", body: JSON.stringify({
+        session_id: sid, work_id: sent.work_id, title: sent.title, characters: sent.characters, terms: sent.terms, notes: sent.notes || "",
+      }) });
+      if (sessionRef.current !== sid) return;
+      const saved = result.glossary;
+      setData(saved);
+      onMemoChange?.(saved);
+      // 편집 중인 표는 그대로 두고, 새 인물에 서버가 붙인 id만 옮겨 화자 지정이 같은 인물을 가리키게 한다.
+      const ids = Object.fromEntries((saved?.characters || []).map((row) => [row.name.replace(/\s+/g, "").toLowerCase(), row.id]));
+      const current = draftRef.current;
+      if (current?.characters?.some((row) => !row.id && ids[row.name.replace(/\s+/g, "").toLowerCase()])) {
+        const next = structuredClone(current);
+        next.characters.forEach((row) => { row.id = row.id || ids[row.name.replace(/\s+/g, "").toLowerCase()]; });
+        setDraftValue(next);
+      }
+      if (editVersion.current === version) { setDirty(false); setSaveState("saved"); }
+      setError("");
+    } catch (err) {
+      if (sessionRef.current === sid) { setError(`자동 저장 실패: ${err.message}`); setSaveState("error"); }
+    } finally {
+      saving.current = false;
+      if (savePending.current) { savePending.current = false; runSave(); }
+    }
   }
 
   function updateRow(list, index, field, value) {
-    edit((next) => {
-      if (field === "protagonist") next.characters.forEach((row, i) => { row.protagonist = i === index; });
-      else next[list][index][field] = value;
-    });
+    if (field === "protagonist") {
+      // 서버와 같은 규칙: 주인공은 한 명이고 1번 자리로 간다.
+      edit((next) => {
+        next.characters.forEach((row, i) => { row.protagonist = i === index; });
+        const [row] = next.characters.splice(index, 1);
+        next.characters.unshift(row);
+      }, { commit: true });
+      return;
+    }
+    edit((next) => { next[list][index][field] = value; });
   }
 
   // 키 칸에서 고른 번호 자리로 옮긴다. 주인공은 1번 고정, 9(기타)는 8번 뒤 첫 자리.
@@ -114,7 +171,7 @@ export default function GlossaryPanel({ sessionId, projectName, ocrBusy, analysi
       const lead = next.characters.some((item) => item.protagonist) ? 1 : 0;
       const target = Math.max(lead, Math.min(next.characters.length, slot - 1));
       next.characters.splice(target, 0, row);
-    });
+    }, { commit: true });
   }
 
   function moveCharacter(index, step) {
@@ -122,16 +179,11 @@ export default function GlossaryPanel({ sessionId, projectName, ocrBusy, analysi
       const target = index + step;
       if (target < 0 || target >= next.characters.length) return;
       [next.characters[index], next.characters[target]] = [next.characters[target], next.characters[index]];
-    });
+    }, { commit: true });
   }
 
-  const save = () => post("/api/glossary/save", {
-    work_id: draft.work_id, title: draft.title, characters: draft.characters, terms: draft.terms, notes: draft.notes || "",
-  }, "save");
-
   function close() {
-    if (dirty && !window.confirm("저장하지 않은 작품 메모 변경이 있습니다. 닫을까요?")) return;
-    if (dirty) { setDraft(structuredClone(data)); setDirty(false); }
+    if (dirty) requestSave();
     setOpen(false);
   }
 
@@ -159,14 +211,16 @@ export default function GlossaryPanel({ sessionId, projectName, ocrBusy, analysi
       <span>작품</span><strong>{chipText}</strong>
     </button>
     {open && <div className="glossary-backdrop" onClick={close}>
-      <section ref={dialogRef} className="glossary-dialog memo" role="dialog" aria-modal="true" aria-label="작품 메모" onClick={(event) => event.stopPropagation()} onKeyDown={(event) => {
-        if (event.key === "Escape") { event.stopPropagation(); close(); }
-        if ((event.metaKey || event.ctrlKey) && event.key === "s") { event.preventDefault(); if (dirty && !busy) save(); }
-      }}>
+      <section ref={dialogRef} className="glossary-dialog memo" role="dialog" aria-modal="true" aria-label="작품 메모" onClick={(event) => event.stopPropagation()}
+        onBlur={(event) => { if (dirty && ["INPUT", "TEXTAREA"].includes(event.target.tagName)) requestSave(); }}
+        onKeyDown={(event) => {
+          if (event.key === "Escape") { event.stopPropagation(); close(); }
+          if ((event.metaKey || event.ctrlKey) && event.key === "s") { event.preventDefault(); if (dirty) requestSave(); }
+        }}>
         <header className="glossary-heading">
           <h2>작품 메모</h2>
           <div className="row">
-            {data ? <button className="primary" disabled={!dirty || Boolean(busy) || ocrBusy} onClick={save}>{busy === "save" ? "저장 중…" : dirty ? "저장" : "저장됨"}</button> : null}
+            {data ? <span className={`memo-save-state ${saveState}`} role="status">{{ saved: "자동 저장됨", pending: "편집 중", saving: "저장 중…", error: "저장 실패" }[saveState]}</span> : null}
             <button onClick={close} aria-label="작품 메모 닫기">닫기</button>
           </div>
         </header>
@@ -225,7 +279,7 @@ export default function GlossaryPanel({ sessionId, projectName, ocrBusy, analysi
               <span className="memo-actions">
                 <button aria-label="위로" disabled={index === 0} onClick={() => moveCharacter(index, -1)}>↑</button>
                 <button aria-label="아래로" disabled={index === characters.length - 1} onClick={() => moveCharacter(index, 1)}>↓</button>
-                <button aria-label="삭제" onClick={() => edit((next) => { next.characters.splice(index, 1); })}>×</button>
+                <button aria-label="삭제" onClick={() => edit((next) => { next.characters.splice(index, 1); }, { commit: true })}>×</button>
               </span>
             </div>)}
           </div>
@@ -239,7 +293,7 @@ export default function GlossaryPanel({ sessionId, projectName, ocrBusy, analysi
               <TableInput label="원문" value={row.original} onChange={(value) => updateRow("terms", index, "original", value)} />
               <TableInput label="한국어" value={row.korean} onChange={(value) => updateRow("terms", index, "korean", value)} />
               <TableInput label="메모" wide value={row.note} onChange={(value) => updateRow("terms", index, "note", value)} />
-              <span className="memo-actions"><button aria-label="삭제" onClick={() => edit((next) => { next.terms.splice(index, 1); })}>×</button></span>
+              <span className="memo-actions"><button aria-label="삭제" onClick={() => edit((next) => { next.terms.splice(index, 1); }, { commit: true })}>×</button></span>
             </div>)}
           </div>
           <button onClick={() => edit((next) => { next.terms.push({ ...EMPTY_TERM }); })}>+ 용어</button>
@@ -250,7 +304,7 @@ export default function GlossaryPanel({ sessionId, projectName, ocrBusy, analysi
             <summary>URL로 초안 채우기 (OpenAI 1회)</summary>
             <form onSubmit={(event) => {
               event.preventDefault();
-              if (dirty) { setError("먼저 변경 내용을 저장하세요."); return; }
+              if (dirty) { requestSave(); setError("편집 내용을 저장하는 중입니다. 잠시 뒤 다시 누르세요."); return; }
               post("/api/glossary/draft", { work_id: data.work_id, url: sourceUrl, text: sourceText }, "draft");
             }}>
               <label>자료 URL (나무위키 등)<input type="url" required maxLength={2000} value={sourceUrl} onChange={(event) => setSourceUrl(event.target.value)} placeholder="https://namu.wiki/w/…" /></label>
