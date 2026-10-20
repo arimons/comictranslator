@@ -246,8 +246,9 @@ def draft_from_source(title: str, source: dict, existing: dict) -> dict:
         "어디서나 쓰는 평범한 일반 명사(영지·산업·질병 등), 한 번 일어난 줄거리 사건, 작가·제작·출판 정보, 사이트 메뉴, 다른 작품은 제외하세요.\n"
         "name 규칙: known.characters의 인물과 같은 사람이면(일본어 original로 대조) known의 name을 그대로 쓰세요. "
         "새 인물은 자료의 한국어 표기를, 일본어 자료뿐이면 일반적인 한국어 음차를 쓰세요. 같은 성은 known과 같은 한국어 표기로 맞추세요. "
-        "known.characters 중 needs_fill이 false이고 자료에 새 일본어 표기도 없는 인물, known.terms와 같은 용어는 넣지 마세요. "
-        "needs_fill이 true인 인물은 자료에서 읽히는 성격·말투를 채워 넣으세요.\n"
+        "known의 인물·용어 중 original이 비어 있는 항목은 자료에서 일본어 표기를 찾으면 같은 name·korean으로 반드시 다시 넣어 original을 채우세요. "
+        "known.characters 중 needs_fill이 true인 인물은 자료에서 읽히는 성격·말투를 채워 넣으세요. "
+        "그 밖에 자료에 새로 알려 주는 것이 없는 known 항목은 넣지 마세요.\n"
         '형식: {"characters":[],"terms":[]}\n'
         + json.dumps({"title": title, "known": known, "source": {"title": source.get("title", ""), "text": source["text"]}},
                      ensure_ascii=False)
