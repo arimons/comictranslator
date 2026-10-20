@@ -6,7 +6,7 @@ from dotenv import load_dotenv
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 load_dotenv(REPO_ROOT / ".env")
-WEB_DIR = REPO_ROOT / "ui_v2"
+WEB_DIR = REPO_ROOT / "web"
 FONTS_DIR = REPO_ROOT / "Fonts"
 
 @dataclass(frozen=True)

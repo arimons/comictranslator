@@ -7,7 +7,7 @@ from fastapi.testclient import TestClient
 from PIL import Image
 import pytest
 
-import main_v2 as app
+import app as app
 from pipeline.editor_review_bridge import ReviewStore
 from pipeline.image_generation_bridge import ImageGenerationStore
 

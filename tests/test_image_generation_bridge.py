@@ -110,7 +110,7 @@ def test_stdio_generation_roundtrip(project):
     from mcp import ClientSession, StdioServerParameters
     from mcp.client.stdio import stdio_client
     async def run():
-        params = StdioServerParameters(command=sys.executable, args=[str(Path(__file__).resolve().parents[1] / "run_editor_mcp.py"), "--root", str(root)])
+        params = StdioServerParameters(command=sys.executable, args=[str(Path(__file__).resolve().parents[1] / "scripts/run_editor_mcp.py"), "--root", str(root)])
         async with stdio_client(params) as streams:
             async with ClientSession(*streams) as client:
                 await client.initialize()
@@ -128,14 +128,14 @@ def test_stdio_generation_roundtrip(project):
 
 
 def test_http_status_exposes_preview_without_analysis(project, monkeypatch):
-    import main_v2
+    import app
     from fastapi.testclient import TestClient
     root, _, _, returned, store = project
-    monkeypatch.setattr(main_v2, "ROOT", root)
-    monkeypatch.setattr(main_v2, "SESSION_ROOT", root / "temp_output/v2_sessions")
+    monkeypatch.setattr(app, "ROOT", root)
+    monkeypatch.setattr(app, "SESSION_ROOT", root / "temp_output/v2_sessions")
     request = prepare(store)
     result = store.register("book", "cover", request["request_id"], str(returned))
-    with TestClient(main_v2.create_app()) as client:
+    with TestClient(app.create_app()) as client:
         response = client.get("/api/image-generation/book/cover")
         assert response.status_code == 200
         item = response.json()["results"][0]

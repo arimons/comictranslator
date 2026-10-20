@@ -4,7 +4,7 @@ from pathlib import Path
 from PIL import Image
 from fastapi.testclient import TestClient
 import pytest
-import main_v2 as app
+import app as app
 from pipeline import dialogue_extractor as extract
 from pipeline import pipeline_runner as runner
 

@@ -12,7 +12,7 @@
 
 영역 처리 기준의 현재 용어·변수명·기존 JSON/캐시 호환 정책은 [변경 기록](docs/REGION_PROCESSING_BASIS_CHANGELOG.md)을 따른다.
 
-에이전트의 프로젝트·페이지·영역 조회와 미적용 검토 초안은 [편집기 검토 MCP](docs/editor_mcp.md)를 사용한다. 진입점은 `run_editor_mcp.py`이며 UI 서버 없이 동작한다.
+에이전트의 프로젝트·페이지·영역 조회와 미적용 검토 초안은 [편집기 검토 MCP](docs/editor_mcp.md)를 사용한다. 진입점은 `scripts/run_editor_mcp.py`이며 UI 서버 없이 동작한다.
 
 편집기 UI/UX와 MCP 후속 작업은 [편집기 할 일](docs/EDITOR_TODO.md)에서 관리한다.
 
@@ -22,13 +22,12 @@
 
 ```text
 NEW_COMIC_TRANSLATOR/
-├── main_v2.py                   # FastAPI 기반 리뷰 UI (현재 메인 UI, 상세는 docs/CODEBASE_FILE_MAP.md)
-├── ui_v2/                       # main_v2.py 정적 자산 (frontend/ 빌드 결과)
+├── app.py                   # FastAPI 기반 리뷰 UI (현재 메인 UI, 상세는 docs/CODEBASE_FILE_MAP.md)
+├── web/                       # app.py 정적 자산 (frontend/ 빌드 결과)
 ├── frontend/                    # React 프론트엔드 소스
 ├── run_pipeline.py             # CLI 진입점
-├── run_debug_pipeline.py       # Debug 이미지 일괄 실행
-├── run_floodfill_batch.py      # 구 FloodFill 배치 실행 (폐기 모듈 import로 현재 실행 불가)
-├── visualize_debug.py          # Debug bbox 시각화
+├── scripts/run_debug_pipeline.py       # Debug 이미지 일괄 실행
+├── scripts/visualize_debug.py          # Debug bbox 시각화
 ├── tests/                      # pytest (pytest.ini가 이 폴더만 수집)
 ├── batch/                      # Gemini Batch API 보존 영역
 │   ├── submit_batch_folder.py
@@ -93,7 +92,7 @@ Step 5: Text Overlay            → output_dir/final/{name}_final.jpg
 | `pipeline/manual_guidance.py` | 편집기 guidance 적용, atomic JSON 쓰기 |
 | `pipeline/background_restore.py` | 배경 복원 탭: 문맥 영역·제거 마스크 분리, LaMa 복원, 마스크 내부만 합성한 패치를 Step 5 렌더 때 적용 |
 | `pipeline/openai_image_redraw.py` | 렌더 생략 페이지 OpenAI image model 재생성 |
-| `visualize_debug.py` | union/cluster/line bbox 시각화 |
+| `scripts/visualize_debug.py` | union/cluster/line bbox 시각화 |
 
 ---
 
@@ -101,7 +100,7 @@ Step 5: Text Overlay            → output_dir/final/{name}_final.jpg
 
 ```bash
 . .venv/bin/activate
-python3 run_debug_pipeline.py
+python3 scripts/run_debug_pipeline.py
 ```
 
 `proof/Debug/`를 `work_dir`와 출력 폴더로 함께 사용하며 산출물은 타입별 하위 폴더에 저장됨:

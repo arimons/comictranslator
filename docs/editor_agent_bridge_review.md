@@ -33,7 +33,7 @@ MCP는 이 통로를 도구와 데이터 형식으로 공개하는 규약이다.
 | 복원 실행·진행 | `POST /api/restore/run`, `GET /api/restore/job/{job_id}` | 완료 후 결과를 받아볼 수 있다. 실행도 마스크와 문맥 상태를 저장하므로 완전한 무변경 preview는 아니다. |
 | 복원 확정 | `POST /api/restore/accept` | 실행과 확정이 분리돼 있다. 기존 확정 패치 목록에 추가한다. |
 
-서버 구현은 `main_v2.py`, Guidance 데이터 처리는 `pipeline/manual_guidance.py`, 복원은 `pipeline/background_restore.py`를 기준으로 확인했다. 현재 HTTP API는 MCP 서버 자체가 아니다.
+서버 구현은 `app.py`, Guidance 데이터 처리는 `pipeline/manual_guidance.py`, 복원은 `pipeline/background_restore.py`를 기준으로 확인했다. 현재 HTTP API는 MCP 서버 자체가 아니다.
 
 ## 권장 연결 구조
 

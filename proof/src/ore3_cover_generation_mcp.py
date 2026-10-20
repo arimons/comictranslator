@@ -25,7 +25,7 @@ def hashes(session):
 
 async def main(source=None):
     before = {sid: hashes(sid) for sid in (SESSION, "20260531_153718")}
-    params = StdioServerParameters(command=sys.executable, args=[str(ROOT / "run_editor_mcp.py")], cwd=str(ROOT))
+    params = StdioServerParameters(command=sys.executable, args=[str(ROOT / "scripts/run_editor_mcp.py")], cwd=str(ROOT))
     async with stdio_client(params) as streams:
         async with ClientSession(*streams) as client:
             await client.initialize()

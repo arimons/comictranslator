@@ -4,17 +4,17 @@ import json
 import os
 from pathlib import Path
 
-import main_v2
+import app
 import pytest
 from fastapi.testclient import TestClient
 
 
 @pytest.fixture(autouse=True)
 def isolate_roots(tmp_path, monkeypatch):
-    monkeypatch.setattr(main_v2, "SESSION_ROOT", tmp_path / "sessions")
-    monkeypatch.setattr(main_v2, "INPUT_CACHE_DIR", tmp_path / "input_cache")
-    monkeypatch.setattr(main_v2, "CV_CACHE_DIR", tmp_path / "cv_cache")
-    monkeypatch.setattr(main_v2, "ANALYSIS_CACHE_DIR", tmp_path / "analysis_cache")
+    monkeypatch.setattr(app, "SESSION_ROOT", tmp_path / "sessions")
+    monkeypatch.setattr(app, "INPUT_CACHE_DIR", tmp_path / "input_cache")
+    monkeypatch.setattr(app, "CV_CACHE_DIR", tmp_path / "cv_cache")
+    monkeypatch.setattr(app, "ANALYSIS_CACHE_DIR", tmp_path / "analysis_cache")
 
 
 def fs_snapshot(*roots: Path) -> dict[str, tuple]:
@@ -30,11 +30,11 @@ def fs_snapshot(*roots: Path) -> dict[str, tuple]:
 
 def make_guided_page(session_id: str, stem: str, payload: bytes, region_count: int = 2) -> tuple[dict, str]:
     """guidance 산출물 캐시가 있는 페이지를 만든다. regions에는 mask_ref가 있고 캐시에 mask PNG가 있다."""
-    image_path = main_v2.SESSION_ROOT / session_id / "input" / f"{stem}.jpg"
+    image_path = app.SESSION_ROOT / session_id / "input" / f"{stem}.jpg"
     image_path.parent.mkdir(parents=True, exist_ok=True)
     image_path.write_bytes(payload)
-    image_hash = main_v2.file_sha256(image_path)
-    record = main_v2.image_record(session_id, image_path, image_hash)
+    image_hash = app.file_sha256(image_path)
+    record = app.image_record(session_id, image_path, image_hash)
     masks_dir = Path(record["work_dir"]) / "masks"
     masks_dir.mkdir(parents=True, exist_ok=True)
     regions = []
@@ -57,7 +57,7 @@ def make_guided_page(session_id: str, stem: str, payload: bytes, region_count: i
         path = Path(record[key])
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_bytes(content)
-    assert main_v2.store_guidance_output_cache(record, image_hash, guidance) is True
+    assert app.store_guidance_output_cache(record, image_hash, guidance) is True
     # 세션 쪽 mask는 지워 두고, 첫 GET이 캐시에서 연결하게 한다.
     for mask in masks_dir.glob(f"{stem}_R*_mask.png"):
         mask.unlink()
@@ -65,9 +65,9 @@ def make_guided_page(session_id: str, stem: str, payload: bytes, region_count: i
 
 
 def make_session(session_id: str, items: list[dict]) -> None:
-    session = main_v2.ensure_session(session_id)
+    session = app.ensure_session(session_id)
     session["images"] = items
-    main_v2.save_session(session)
+    app.save_session(session)
 
 
 def test_second_get_session_performs_zero_writes(tmp_path):
@@ -75,11 +75,11 @@ def test_second_get_session_performs_zero_writes(tmp_path):
     page1, _ = make_guided_page(session_id, "page1", b"image one")
     page2, _ = make_guided_page(session_id, "page2", b"image two")
     make_session(session_id, [page1, page2])
-    client = TestClient(main_v2.create_app())
+    client = TestClient(app.create_app())
 
     first = client.get(f"/api/session/{session_id}")
     assert first.status_code == 200
-    roots = (main_v2.SESSION_ROOT, main_v2.ANALYSIS_CACHE_DIR)
+    roots = (app.SESSION_ROOT, app.ANALYSIS_CACHE_DIR)
     before = fs_snapshot(*roots)
     second = client.get(f"/api/session/{session_id}")
     after = fs_snapshot(*roots)
@@ -95,10 +95,10 @@ def test_guidance_hydration_keeps_masks_of_other_pages(tmp_path):
     page2, _ = make_guided_page(session_id, "page2", b"image two")
     make_session(session_id, [page1, page2])
 
-    main_v2.session_images(session_id)
+    app.session_images(session_id)
 
     for stem in ("page1", "page2"):
-        record = main_v2.image_record(session_id, Path(main_v2.get_image(session_id, stem)["input_path"]))
+        record = app.image_record(session_id, Path(app.get_image(session_id, stem)["input_path"]))
         for region in record["regions"]["regions"]:
             assert Path(region["mask_ref"]).exists(), region["mask_ref"]
             assert Path(region["mask_ref"]).read_bytes().startswith(f"mask {stem}".encode())
@@ -106,12 +106,12 @@ def test_guidance_hydration_keeps_masks_of_other_pages(tmp_path):
 
 def test_get_session_does_not_run_step3_and_defers_reapply(tmp_path, monkeypatch):
     session_id = "defer_reapply"
-    image_path = main_v2.SESSION_ROOT / session_id / "input" / "page1.jpg"
+    image_path = app.SESSION_ROOT / session_id / "input" / "page1.jpg"
     image_path.parent.mkdir(parents=True)
     image_path.write_bytes(b"image")
-    image_hash = main_v2.file_sha256(image_path)
-    record = main_v2.image_record(session_id, image_path, image_hash)
-    cache_dir = main_v2.analysis_cache_dir(image_hash)
+    image_hash = app.file_sha256(image_path)
+    record = app.image_record(session_id, image_path, image_hash)
+    cache_dir = app.analysis_cache_dir(image_hash)
     cache_dir.mkdir(parents=True)
     (cache_dir / "masked.jpg").write_bytes(b"baseline masked")
     for key, content in {
@@ -133,9 +133,9 @@ def test_get_session_does_not_run_step3_and_defers_reapply(tmp_path, monkeypatch
         raise AssertionError("GET must not run Step 3")
 
     scheduled = []
-    monkeypatch.setattr(main_v2, "run_step3_with_effective_text_groups", fail_step3)
-    monkeypatch.setattr(main_v2, "start_background_load_cache_hydration", lambda sid, items: scheduled.append((sid, [item["id"] for item in items])))
-    client = TestClient(main_v2.create_app())
+    monkeypatch.setattr(app, "run_step3_with_effective_text_groups", fail_step3)
+    monkeypatch.setattr(app, "start_background_load_cache_hydration", lambda sid, items: scheduled.append((sid, [item["id"] for item in items])))
+    client = TestClient(app.create_app())
 
     assert client.get(f"/api/session/{session_id}").status_code == 200
     assert client.get(f"/api/session/{session_id}").status_code == 200
@@ -148,7 +148,7 @@ def test_session_summary_omits_page_detail_and_page_endpoint_returns_it(tmp_path
     session_id = "summary_split"
     page1, _ = make_guided_page(session_id, "page1", b"image one")
     make_session(session_id, [page1])
-    client = TestClient(main_v2.create_app())
+    client = TestClient(app.create_app())
 
     summary = client.get(f"/api/session/{session_id}").json()
     item = summary["images"][0]
@@ -175,26 +175,26 @@ def test_detail_rev_changes_when_page_json_changes(tmp_path):
     session_id = "detail_rev"
     page1, _ = make_guided_page(session_id, "page1", b"image one")
     make_session(session_id, [page1])
-    before = main_v2.session_image_summaries(session_id)[0]
-    overlay_path = Path(main_v2.image_record(session_id, Path(page1["input_path"]))["overlay_guidance_json"])
+    before = app.session_image_summaries(session_id)[0]
+    overlay_path = Path(app.image_record(session_id, Path(page1["input_path"]))["overlay_guidance_json"])
     overlay_path.write_text('{"regions": {"1": {"font_size": 30}}}', encoding="utf-8")
-    after = main_v2.session_image_summaries(session_id)[0]
+    after = app.session_image_summaries(session_id)[0]
 
     assert before["detail_rev"] != after["detail_rev"]
 
 
 def test_summary_flags_for_skipped_integrated(tmp_path):
     session_id = "skipped_flags"
-    image_path = main_v2.SESSION_ROOT / session_id / "input" / "page1.jpg"
+    image_path = app.SESSION_ROOT / session_id / "input" / "page1.jpg"
     image_path.parent.mkdir(parents=True)
     image_path.write_bytes(b"image")
-    record = main_v2.image_record(session_id, image_path)
+    record = app.image_record(session_id, image_path)
     Path(record["regions_json"]).parent.mkdir(parents=True, exist_ok=True)
     Path(record["regions_json"]).write_text('{"regions": []}', encoding="utf-8")
     Path(record["integrated_json"]).write_text(json.dumps({"skipped": True, "message": "스킵됨"}), encoding="utf-8")
     make_session(session_id, [{"id": "page1", "name": "page1.jpg", "input_path": str(image_path)}])
 
-    item = main_v2.session_image_summaries(session_id)[0]
+    item = app.session_image_summaries(session_id)[0]
 
     assert item["has_analysis"] is True
     assert item["ocr_region_count"] == 0
@@ -212,10 +212,10 @@ def test_overlay_apply_skips_full_image_margin_probe(tmp_path, monkeypatch):
     def fail_probe(*_args, **_kwargs):
         raise AssertionError("overlay apply must not probe image margins")
 
-    monkeypatch.setattr(main_v2, "estimate_horizontal_margins", fail_probe)
-    monkeypatch.setattr(main_v2, "image_dimensions", fail_probe)
-    monkeypatch.setattr(main_v2, "render_overlay_for_record", lambda record, font, tracking=None: rendered.append(record["id"]))
-    client = TestClient(main_v2.create_app())
+    monkeypatch.setattr(app, "estimate_horizontal_margins", fail_probe)
+    monkeypatch.setattr(app, "image_dimensions", fail_probe)
+    monkeypatch.setattr(app, "render_overlay_for_record", lambda record, font, tracking=None: rendered.append(record["id"]))
+    client = TestClient(app.create_app())
 
     response = client.post(
         "/api/overlay/apply",

@@ -12,7 +12,7 @@
       "sources": [
         "pipeline/work_glossary.py",
         "frontend/src/GlossaryPanel.jsx",
-        "main_v2.py",
+        "app.py",
         "pipeline/work_sources.py",
         "pipeline/openai_tasks.py"
       ]
@@ -38,8 +38,8 @@
       "role": "canonical",
       "topic": "Comic Translator Studio 편집기 사용법",
       "sources": [
-        "main_v2.py",
-        "ui_v2/index.html",
+        "app.py",
+        "web/index.html",
         "pipeline/manual_guidance.py",
         "pipeline/dialogue_extractor.py",
         "frontend/src/App.jsx",
@@ -60,7 +60,7 @@
       "role": "record",
       "topic": "2026-10-19 편집기 MCP 연결 및 에이전트 1차 검토 방안",
       "sources": [
-        "main_v2.py",
+        "app.py",
         "pipeline/manual_guidance.py",
         "pipeline/background_restore.py",
         "frontend/src/EditorCanvas.jsx",
@@ -72,14 +72,14 @@
       "topic": "파일별 역할",
       "sources": [
         "run_pipeline.py",
-        "main_v2.py",
+        "app.py",
         "pipeline/pipeline_runner.py",
         "pipeline/background_restore.py",
         "frontend/src/RestorePanel.jsx",
         "pipeline/region_types.py",
         "frontend/src/regionTypes.js",
         "frontend/src/RegionTypeBadge.jsx",
-        "run_editor_mcp.py",
+        "scripts/run_editor_mcp.py",
         "pipeline/editor_review_bridge.py"
       ]
     },
@@ -148,7 +148,7 @@
         "pipeline/region_types.py",
         "frontend/src/regionTypes.js",
         "frontend/src/RegionTypeBadge.jsx",
-        "main_v2.py",
+        "app.py",
         "pipeline/dialogue_extractor.py",
         "tests/test_region_processing_basis.py"
       ]
@@ -162,8 +162,8 @@
       "role": "canonical",
       "topic": "편집기 검토 MCP의 실제 도구·설정·revision·초안 저장 계약",
       "sources": [
-        "run_editor_mcp.py",
-        "configure_editor_mcp.py",
+        "scripts/run_editor_mcp.py",
+        "scripts/configure_editor_mcp.py",
         "pipeline/editor_review_bridge.py",
         "pipeline/region_types.py",
         "tests/test_editor_mcp.py"
@@ -175,8 +175,8 @@
       "sources": [
         "frontend/src/StartScreen.jsx",
         "frontend/src/App.jsx",
-        "main_v2.py",
-        "ui_v2/styles.css"
+        "app.py",
+        "web/styles.css"
       ]
     },
     "docs/EDITOR_TODO.md": {
@@ -189,7 +189,7 @@
       "topic": "원본 보존 페이지 분할 미리보기·서버 상태등·이미지 맞춤",
       "sources": [
         "pipeline/page_preparation.py",
-        "main_v2.py",
+        "app.py",
         "frontend/src/PagePreparation.jsx",
         "frontend/src/ServerStatus.jsx",
         "frontend/src/ImagePreview.jsx",
@@ -208,9 +208,9 @@
       "topic": "이미지 생성 권장 표시·내장 생성 요청·페이지별 후보 등록",
       "sources": [
         "pipeline/image_generation_bridge.py",
-        "run_editor_mcp.py",
+        "scripts/run_editor_mcp.py",
         "frontend/src/ImageGenerationPanel.jsx",
-        "main_v2.py"
+        "app.py"
       ]
     },
     "docs/TOOLBAR_UX_REVIEW.md": {
@@ -223,6 +223,11 @@
         "frontend/src/GuidanceToolIcon.jsx",
         "frontend/src/regionExclusion.js"
       ]
+    },
+    "docs/learning-log.md": {
+      "role": "record",
+      "topic": "코드 구조 학습 이력",
+      "sources": []
     }
   }
 }

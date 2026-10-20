@@ -5,7 +5,7 @@ import pytest
 from fastapi.testclient import TestClient
 from PIL import Image
 
-import main_v2 as app
+import app as app
 from pipeline.manual_guidance import write_json
 from pipeline.work_glossary import GlossaryStore, glossary_snapshot, page_speakers, speaker_prompt
 

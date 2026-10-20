@@ -185,7 +185,7 @@ def test_real_stdio_handshake_images_errors_and_proposal(project):
     async def run():
         # 다른 cwd에서도 실행하며 FastAPI, API 키, 네트워크 listener는 필요 없다.
         parameters = StdioServerParameters(command=sys.executable,
-            args=[str(ROOT / "run_editor_mcp.py"), "--root", str(root)], cwd=str(root))
+            args=[str(ROOT / "scripts/run_editor_mcp.py"), "--root", str(root)], cwd=str(root))
         async with stdio_client(parameters) as (read, write):
             async with ClientSession(read, write) as client:
                 await client.initialize()
@@ -214,11 +214,12 @@ def test_real_stdio_handshake_images_errors_and_proposal(project):
 
 
 def test_local_client_config_preserves_other_servers_and_is_idempotent(tmp_path):
-    from configure_editor_mcp import configure
+    from scripts.configure_editor_mcp import configure
     import tomllib
     (tmp_path / ".venv/bin").mkdir(parents=True)
     (tmp_path / ".venv/bin/python").touch()
-    (tmp_path / "run_editor_mcp.py").touch()
+    (tmp_path / "scripts").mkdir(exist_ok=True)
+    (tmp_path / "scripts/run_editor_mcp.py").touch()
     (tmp_path / ".codex").mkdir()
     original = '[mcp_servers.other]\ncommand = "other-server"\n'
     (tmp_path / ".codex/config.toml").write_text(original)
@@ -235,10 +236,11 @@ def test_local_client_config_preserves_other_servers_and_is_idempotent(tmp_path)
 
 
 def test_local_client_config_does_not_overwrite_existing_manual_server(tmp_path):
-    from configure_editor_mcp import configure
+    from scripts.configure_editor_mcp import configure
     (tmp_path / ".venv/bin").mkdir(parents=True)
     (tmp_path / ".venv/bin/python").touch()
-    (tmp_path / "run_editor_mcp.py").touch()
+    (tmp_path / "scripts").mkdir(exist_ok=True)
+    (tmp_path / "scripts/run_editor_mcp.py").touch()
     (tmp_path / ".codex").mkdir()
     path = tmp_path / ".codex/config.toml"
     original = '[mcp_servers.comic-translator-review]\ncommand = "existing"\n'

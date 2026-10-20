@@ -1,3 +1,7 @@
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 #!/usr/bin/env python3
 """공식 MCP Python SDK 1.30.x FastMCP 기반 stdio 연결. stdout은 프로토콜 전용."""
 import argparse
@@ -12,7 +16,7 @@ from mcp.types import CallToolResult, ImageContent, TextContent, ToolAnnotations
 from pipeline.editor_review_bridge import Artifact, CandidateAction, Observation, ReviewStore
 from pipeline.image_generation_bridge import ImageGenerationStore
 
-ROOT = Path(__file__).resolve().parent
+ROOT = Path(__file__).resolve().parents[1]
 
 
 def create_server(root: Path = ROOT) -> FastMCP:

@@ -1,23 +1,23 @@
-# main_v2의 파일 서빙 범위, 입력 파일 충돌, 분석 스트림 실패 처리를 검증한다.
+# app의 파일 서빙 범위, 입력 파일 충돌, 분석 스트림 실패 처리를 검증한다.
 
 import json
 from pathlib import Path
 
-import main_v2
+import app
 import pytest
 from fastapi.testclient import TestClient
 
 
 @pytest.fixture(autouse=True)
 def isolate_roots(tmp_path, monkeypatch):
-    monkeypatch.setattr(main_v2, "SESSION_ROOT", tmp_path / "sessions")
-    monkeypatch.setattr(main_v2, "INPUT_CACHE_DIR", tmp_path / "input_cache")
-    monkeypatch.setattr(main_v2, "CV_CACHE_DIR", tmp_path / "cv_cache")
-    monkeypatch.setattr(main_v2, "ANALYSIS_CACHE_DIR", tmp_path / "analysis_cache")
+    monkeypatch.setattr(app, "SESSION_ROOT", tmp_path / "sessions")
+    monkeypatch.setattr(app, "INPUT_CACHE_DIR", tmp_path / "input_cache")
+    monkeypatch.setattr(app, "CV_CACHE_DIR", tmp_path / "cv_cache")
+    monkeypatch.setattr(app, "ANALYSIS_CACHE_DIR", tmp_path / "analysis_cache")
 
 
 def test_file_endpoint_serves_session_images_only(tmp_path):
-    client = TestClient(main_v2.create_app())
+    client = TestClient(app.create_app())
     image = tmp_path / "sessions" / "s1" / "output" / "final" / "page1_final.jpg"
     image.parent.mkdir(parents=True)
     image.write_bytes(b"jpeg")
@@ -31,11 +31,11 @@ def test_file_endpoint_serves_session_images_only(tmp_path):
     # 이미지가 아닌 파일, 세션·캐시 폴더 밖 파일, 저장소 비밀 파일은 내려주지 않는다.
     assert client.get("/api/file", params={"path": str(session_json)}).status_code == 403
     assert client.get("/api/file", params={"path": str(outside_image)}).status_code == 403
-    assert client.get("/api/file", params={"path": str(main_v2.ROOT / ".env")}).status_code == 403
+    assert client.get("/api/file", params={"path": str(app.ROOT / ".env")}).status_code == 403
 
 
 def test_repeated_upload_of_same_name_never_overwrites_cached_originals():
-    client = TestClient(main_v2.create_app())
+    client = TestClient(app.create_app())
     contents = [b"first image", b"second image", b"third image"]
     records = []
     for content in contents:
@@ -49,11 +49,11 @@ def test_repeated_upload_of_same_name_never_overwrites_cached_originals():
     assert len({record["id"] for record in records}) == 3
     for record, content in zip(records, contents):
         assert Path(record["input_path"]).read_bytes() == content
-        assert main_v2.input_cache_path(record["image_sha256"], ".jpg").read_bytes() == content
+        assert app.input_cache_path(record["image_sha256"], ".jpg").read_bytes() == content
 
 
 def test_upload_same_stem_with_different_extensions_gets_distinct_ids():
-    client = TestClient(main_v2.create_app())
+    client = TestClient(app.create_app())
 
     response = client.post(
         "/api/upload?session_id=stem_upload",
@@ -79,7 +79,7 @@ def test_reimporting_same_file_name_keeps_previous_record_intact(tmp_path):
 
     records = []
     for source in (first, second, third):
-        records.extend(main_v2.copy_images_into_session([source], "reimport"))
+        records.extend(app.copy_images_into_session([source], "reimport"))
 
     assert len({record["id"] for record in records}) == 3
     assert [Path(record["input_path"]).read_bytes() for record in records] == [b"first", b"second", b"third"]
@@ -87,23 +87,23 @@ def test_reimporting_same_file_name_keeps_previous_record_intact(tmp_path):
 
 def test_stream_analyze_finishes_remaining_images_after_one_failure(tmp_path, monkeypatch):
     session_id = "partial_failure"
-    session = main_v2.ensure_session(session_id)
+    session = app.ensure_session(session_id)
     session["images"] = []
     for name in ("page1", "page2"):
         image_path = tmp_path / "sessions" / session_id / "input" / f"{name}.jpg"
         image_path.parent.mkdir(parents=True, exist_ok=True)
         image_path.write_bytes(name.encode())
         session["images"].append({"id": name, "name": f"{name}.jpg", "input_path": str(image_path)})
-    main_v2.save_session(session)
+    app.save_session(session)
 
     def fake_run_single_image(image_path, *args, **kwargs):
         if Path(image_path).stem == "page1":
             return False, "page1 실패"
         return True, "완료"
 
-    monkeypatch.setattr(main_v2, "run_single_image", fake_run_single_image)
+    monkeypatch.setattr(app, "run_single_image", fake_run_single_image)
 
-    events = [json.loads(line) for line in main_v2.stream_analyze(main_v2.AnalyzeRequest(session_id=session_id))]
+    events = [json.loads(line) for line in app.stream_analyze(app.AnalyzeRequest(session_id=session_id))]
 
     statuses = {(event.get("image_id"), event.get("status")) for event in events if event["type"] == "image_status"}
     assert ("page1", "failed") in statuses
@@ -113,7 +113,7 @@ def test_stream_analyze_finishes_remaining_images_after_one_failure(tmp_path, mo
 
 
 def test_ui_assets_are_revalidated_so_rebuilt_bundle_is_picked_up():
-    client = TestClient(main_v2.create_app())
+    client = TestClient(app.create_app())
 
     response = client.get("/app.bundle.js")
 
@@ -126,7 +126,7 @@ def test_health_reports_python_files_changed_after_start(tmp_path, monkeypatch):
     import sys
     import types
 
-    import main_v2
+    import app
     from fastapi.testclient import TestClient
 
     module_file = tmp_path / "loaded_mod.py"
@@ -134,9 +134,9 @@ def test_health_reports_python_files_changed_after_start(tmp_path, monkeypatch):
     fake = types.ModuleType("loaded_mod_for_health")
     fake.__file__ = str(module_file)
     monkeypatch.setitem(sys.modules, "loaded_mod_for_health", fake)
-    monkeypatch.setattr(main_v2, "ROOT", tmp_path)
-    monkeypatch.setattr(main_v2, "_CODE_MTIMES", {})
-    client = TestClient(main_v2.create_app())
+    monkeypatch.setattr(app, "ROOT", tmp_path)
+    monkeypatch.setattr(app, "_CODE_MTIMES", {})
+    client = TestClient(app.create_app())
     assert client.get("/api/health").json()["stale_code"] == []
     stat = module_file.stat()
     os.utime(module_file, ns=(stat.st_atime_ns, stat.st_mtime_ns + 1_000_000_000))
@@ -144,17 +144,17 @@ def test_health_reports_python_files_changed_after_start(tmp_path, monkeypatch):
 
 
 def test_restart_requires_confirmation_while_jobs_run(monkeypatch):
-    import main_v2
+    import app
     from fastapi.testclient import TestClient
 
     calls = []
-    monkeypatch.setattr(main_v2, "restart_current_process", lambda *args, **kwargs: calls.append("restart"))
-    client = TestClient(main_v2.create_app())
-    monkeypatch.setattr(main_v2, "busy_job_count", lambda: 2)
+    monkeypatch.setattr(app, "restart_current_process", lambda *args, **kwargs: calls.append("restart"))
+    client = TestClient(app.create_app())
+    monkeypatch.setattr(app, "busy_job_count", lambda: 2)
     response = client.post("/api/server/restart")
     assert response.status_code == 409 and "2개" in response.json()["detail"]
     assert client.post("/api/server/restart?force=true").json() == {"ok": True, "interrupted": 2}
-    monkeypatch.setattr(main_v2, "busy_job_count", lambda: 0)
+    monkeypatch.setattr(app, "busy_job_count", lambda: 0)
     assert client.post("/api/server/restart").json()["ok"] is True
     import time
     time.sleep(0.05)
@@ -164,20 +164,20 @@ def test_restart_requires_confirmation_while_jobs_run(monkeypatch):
 def test_inflight_counter_counts_streaming_until_last_chunk():
     import asyncio
 
-    import main_v2
+    import app
 
     seen = []
 
-    async def app(scope, receive, send):
+    async def mock_app(scope, receive, send):
         await send({"type": "http.response.start", "status": 200, "headers": []})
         await send({"type": "http.response.body", "body": b"a", "more_body": True})
-        seen.append(main_v2._INFLIGHT["count"])
+        seen.append(app._INFLIGHT["count"])
         await send({"type": "http.response.body", "body": b"b"})
-        seen.append(main_v2._INFLIGHT["count"])
+        seen.append(app._INFLIGHT["count"])
 
     async def send(message):
         pass
 
-    before = main_v2._INFLIGHT["count"]
-    asyncio.run(main_v2.InflightCounter(app)({"type": "http", "path": "/api/run-final-stream"}, None, send))
-    assert seen == [before + 1, before] and main_v2._INFLIGHT["count"] == before
+    before = app._INFLIGHT["count"]
+    asyncio.run(app.InflightCounter(mock_app)({"type": "http", "path": "/api/run-final-stream"}, None, send))
+    assert seen == [before + 1, before] and app._INFLIGHT["count"] == before

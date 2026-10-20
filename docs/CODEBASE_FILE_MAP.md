@@ -1,7 +1,7 @@
 # 코드베이스 파일 맵
 
-> 마지막 확인: 2026-10-06. 현재 구조 트리와 pipeline 파일 섹션을 실제 모듈 기준으로 정리하고, main_v2 안전성 보강(파일 서빙 제한, subprocess 공유, atomic JSON 쓰기 등)을 반영했다.
-> 표준 진입점은 `main_v2.py`(편집기)와 `run_pipeline.py`(CLI)다.
+> 마지막 확인: 2026-10-06. 현재 구조 트리와 pipeline 파일 섹션을 실제 모듈 기준으로 정리하고, app 안전성 보강(파일 서빙 제한, subprocess 공유, atomic JSON 쓰기 등)을 반영했다.
+> 표준 진입점은 `app.py`(편집기)와 `run_pipeline.py`(CLI)다.
 
 작성일: 2026-05-05 / 최종 갱신: 2026-10-20
 
@@ -19,11 +19,11 @@ FloodFill 필터 체계 상세는 [FLOODFILL_MASKING_PROGRESS.md](FLOODFILL_MASK
 
 ```text
 NEW_COMIC_TRANSLATOR/
-├── main_v2.py                  # FastAPI 기반 리뷰 UI (현재 메인 UI)
-├── run_editor_mcp.py           # UI 독립 stdio MCP 진입점 (조회·검토 초안)
-├── configure_editor_mcp.py     # 프로젝트 로컬 Codex/Claude MCP 설정 생성
-├── ui_v2/                      # main_v2.py 정적 자산 (index.html, styles.css, app.bundle.js)
-├── frontend/                    # ui_v2 프론트엔드 소스 + esbuild 빌드 설정
+├── app.py                  # FastAPI 기반 리뷰 UI (현재 메인 UI)
+├── scripts/run_editor_mcp.py           # UI 독립 stdio MCP 진입점 (조회·검토 초안)
+├── scripts/configure_editor_mcp.py     # 프로젝트 로컬 Codex/Claude MCP 설정 생성
+├── web/                      # app.py 정적 자산 (index.html, styles.css, app.bundle.js)
+├── frontend/                    # web 프론트엔드 소스 + esbuild 빌드 설정
 │   ├── package.json
 │   └── src/
 │       ├── main.jsx            # React 엔트리포인트
@@ -43,9 +43,8 @@ NEW_COMIC_TRANSLATOR/
 │       ├── RegionTypeBadge.jsx   # 공통 처리 기준 배지
 │       └── lib.js                # 공용 순수 헬퍼 함수 + 상수
 ├── run_pipeline.py             # CLI 진입점
-├── run_debug_pipeline.py       # Debug 이미지 일괄 실행 wrapper
-├── run_floodfill_batch.py      # 구 FloodFill 배치 wrapper (폐기 모듈 import로 현재 실행 불가)
-├── visualize_debug.py          # Debug bbox 시각화
+├── scripts/run_debug_pipeline.py       # Debug 이미지 일괄 실행 wrapper
+├── scripts/visualize_debug.py          # Debug bbox 시각화
 ├── pytest.ini                  # pytest 수집 경로를 tests/로 고정
 ├── tests/                      # pytest 테스트 (문서 동기화 검사 포함)
 ├── proof/                      # 검증용 스크립트 및 출력물
@@ -83,7 +82,7 @@ NEW_COMIC_TRANSLATOR/
     ├── render_text_overlay.py  # Step 5
     ├── overlay_anchor.py       # 글자 입히기 수동값을 region 번호 대신 영역 위치로 재매칭
     ├── background_restore.py   # 배경 복원 탭 엔진 (문맥 영역·마스크 분리, LaMa, 확정 패치 합성)
-    ├── openai_image_redraw.py  # 렌더 생략 페이지 OpenAI 이미지 재생성 (main_v2 export)
+    ├── openai_image_redraw.py  # 렌더 생략 페이지 OpenAI 이미지 재생성 (app export)
     ├── vis/                    # pipeline 진단 시각화 도구
     ├── experimental/           # pipeline 승격 후보 실험 모듈
     ├── ocr_reference/          # 글꼴 스타일 참고 이미지
@@ -123,15 +122,15 @@ Step 5: Text Overlay (regions.json으로 bbox·safe rect 결정)
 
 ### `main.py`, `run_test_pipeline.py` — 폐기됨
 
-Gradio UI(`main.py`)와 test_image 범위 실행 wrapper(`run_test_pipeline.py`)는 2026-08-14에 `archive/retired_gradio_ui/`로 옮겼다. UI는 `main_v2.py`, CLI는 `run_pipeline.py`를 쓴다. `main.py` 전용이던 `difficulty_scorer.py`, `gemini_image_redraw.py`도 함께 `pipeline/archive/`로 옮겼다.
+Gradio UI(`main.py`)와 test_image 범위 실행 wrapper(`run_test_pipeline.py`)는 2026-08-14에 `archive/retired_gradio_ui/`로 옮겼다. UI는 `app.py`, CLI는 `run_pipeline.py`를 쓴다. `main.py` 전용이던 `difficulty_scorer.py`, `gemini_image_redraw.py`도 함께 `pipeline/archive/`로 옮겼다.
 
-### `main_v2.py` (현재 메인 UI)
+### `app.py` (현재 메인 UI)
 
 FastAPI 기반 로컬 리뷰 웹앱이다. TG(Anchor Text Group) 수동 보정, Step 3 flood region 재판정, OCR/번역, 텍스트 오버레이 배치까지 한 화면에서 다루는 캔버스 편집기를 제공한다.
 
 ```bash
-python3 main_v2.py            # http://127.0.0.1:7870
-python3 main_v2.py --no-browser --port 7870
+python3 app.py            # http://127.0.0.1:7870
+python3 app.py --no-browser --port 7870
 ```
 
 **세션 구조** — 이미지를 불러오면 `temp_output/v2_sessions/{session_id}/`에 `input/`, `work/`, `output/` 하위 폴더가 생기고, `session.json`이 이미지 목록·guidance·프로젝트명을 기록한다.
@@ -171,7 +170,7 @@ guidance(수동 보정)가 있는 이미지는 `guidance_digest`(guidance 내용
 
 - 세션 목록 GET은 캐시 연결(hydrate)을 멱등으로 한다. 이미 같은 캐시 파일에 연결돼 있으면 아무것도 쓰지 않는다. guidance 재적용(Step 3 재실행)이 필요한 페이지는 GET에서 돌리지 않고 백그라운드 hydration으로 넘기며, 끝날 때까지 `hydration_pending`이 true다. 프론트는 이 값이 true인 동안만 요약 목록을 다시 받고, 선택 페이지 상세는 `detail_rev`가 바뀔 때만 다시 받는다.
 - `/api/file`은 `SESSION_ROOT`, `INPUT_CACHE_DIR`, `ANALYSIS_CACHE_DIR` 아래의 이미지 확장자 파일만 내려준다. 그 밖의 경로는 403이다. 예전처럼 저장소 루트 전체를 열면 `.env`나 인증서 파일까지 읽힌다.
-- UI 정적 자산(`ui_v2/`)은 `Cache-Control: no-cache`로 내려준다(`RevalidatingStaticFiles`). `index.html`이 버전 없는 `/app.bundle.js`를 참조하므로, 번들을 다시 빌드하면 새로고침만으로 반영된다.
+- UI 정적 자산(`web/`)은 `Cache-Control: no-cache`로 내려준다(`RevalidatingStaticFiles`). `index.html`이 버전 없는 `/app.bundle.js`를 참조하므로, 번들을 다시 빌드하면 새로고침만으로 반영된다.
 - 업로드·폴더 import는 `allocate_input_path()`로 세션 `input/`에서 이미지 id(stem)와 파일이 모두 겹치지 않는 이름을 고른다. input 파일은 전역 입력 캐시를 가리키는 symlink라서, 기존 경로에 덮어쓰면 다른 이미지(다른 세션 포함)의 원본이 바뀌기 때문이다. `/api/upload`는 `"xb"` 모드로 써서 기존 파일을 따라가 덮어쓰지 않는다.
 - `/api/analyze-stream`은 한 장이 실패해도 나머지를 끝까지 처리한다. 실패한 이미지는 `image_id`가 붙은 `error` 이벤트로 알리고, 마지막 `complete` 이벤트를 `ok: false`로 보낸다.
 - subprocess 실행(`run_subprocess`, `run_subprocess_stream`)은 `pipeline_runner.stream_subprocess()`를 공유한다. 아래 `pipeline_runner.py` 항목 참고.
@@ -179,7 +178,7 @@ guidance(수동 보정)가 있는 이미지는 `guidance_digest`(guidance 내용
 - JSON 저장은 `manual_guidance.write_json()`을 쓴다. 임시 파일에 다 쓴 뒤 `os.replace`로 교체하므로 쓰는 도중 중단돼도 기존 JSON이 잘린 채 남지 않는다.
 - Step 4 모델은 편집기 OCR 탭의 선택 상자에서 고른다. 서버 기본값과 같으면 프론트가 `ocr_model: null`을 보내 `--model` 인자를 생략한다. 추가 프롬프트는 `--extra-prompt=값` 형식으로 넘겨 `-`로 시작하는 프롬프트도 옵션으로 오인되지 않는다.
 
-**프론트엔드** — `ui_v2/index.html`이 로드하는 `ui_v2/app.bundle.js`는 `frontend/src/`를 esbuild로 번들링한 결과물이다. 소스는 다음처럼 나뉜다.
+**프론트엔드** — `web/index.html`이 로드하는 `web/app.bundle.js`는 `frontend/src/`를 esbuild로 번들링한 결과물이다. 소스는 다음처럼 나뉜다.
 
 영역 ID는 R 번호로 통일하고 경계 기반/텍스트 기반 배지를 붙인다. 저장된 `bubble/unboxed`를 유지하는 호환 정책과 변수명 변경 내역은 [변경 기록](REGION_PROCESSING_BASIS_CHANGELOG.md)을 참고한다.
 
@@ -197,7 +196,7 @@ guidance(수동 보정)가 있는 이미지는 `guidance_digest`(guidance 내용
 | `frontend/src/App.jsx` | 세션 관리, 이미지 목록, 워크플로우 탭(분석/OCR/오버레이/배경 복원/내보내기) 전체 상태. Action History의 텍스트 기반 줄에서 LaMa 강제 토글(`manual_regions[].inpaint_engine = "lama"`) |
 | `frontend/src/main.jsx` | React 엔트리포인트 |
 
-프론트엔드 코드를 수정하면 `frontend/`에서 `npm install`(최초 1회) 후 `npm run build`로 `ui_v2/app.bundle.js`를 다시 생성해야 한다. `ui_v2/app.bundle.js`는 결과물이므로 커밋 대상이며, 앱을 실행만 할 때는 Node.js가 필요 없다.
+프론트엔드 코드를 수정하면 `frontend/`에서 `npm install`(최초 1회) 후 `npm run build`로 `web/app.bundle.js`를 다시 생성해야 한다. `web/app.bundle.js`는 결과물이므로 커밋 대상이며, 앱을 실행만 할 때는 Node.js가 필요 없다.
 
 ### `run_pipeline.py`
 
@@ -211,14 +210,14 @@ python run_pipeline.py --input image.jpg --output output/ [--force] [--workers 4
 - 단일 이미지도 폴더와 같은 `run_batch_images()` 경로를 쓴다. 최종 결과는 `{output}/final/`에 저장된다.
 - `--keep-cache` 없이 끝나면 중간 파일을 지운다. `--pre-ocr`(Step 3까지)일 때는 유지한다.
 
-### `run_debug_pipeline.py`
+### `scripts/run_debug_pipeline.py`
 
 Debug 이미지를 `pipeline_runner.run_single_image()`로 처리한다.
 
 - 최종 결과와 중간 파일을 모두 `proof/Debug/`에 모은다.
-- 처리 후 tight TG 생성과 `visualize_debug.py` 시각화를 시도하지만, 둘 다 구 경로·구 파일명(`pipeline/cluster_cv_v5.py`, `{번호}_cv.json` 루트 배치)을 기대해 현재 산출물 구조에서는 경고만 남긴다.
+- 처리 후 tight TG 생성과 `scripts/visualize_debug.py` 시각화를 시도하지만, 둘 다 구 경로·구 파일명(`pipeline/cluster_cv_v5.py`, `{번호}_cv.json` 루트 배치)을 기대해 현재 산출물 구조에서는 경고만 남긴다.
 
-### `visualize_debug.py`
+### `scripts/visualize_debug.py`
 
 Debug 산출물 시각화 도구다.
 
@@ -266,7 +265,7 @@ Google Cloud Vision OCR wrapper다. REST API(API Key, `CLOUD_VISION_API_KEY`) �
 - 파이프라인은 CLI(`cloud_vision_api.py <image> <out_json>`)로 이미지마다 1회 호출한다. 예전 3x3 그리드 묶음 호출(`detect_text_grid()`)은 없어졌다.
 - `CloudVisionAPI.detect_document_text(preprocess="upscale2x_clahe")`: 2배 확대 + CLAHE 전처리 후 `DOCUMENT_TEXT_DETECTION`으로 단어 단위 bbox + confidence를 얻고, 좌표를 원본 크기로 되돌린다.
 - languageHints `["ja", "en"]`을 요청에 넣는다.
-- API 호출이 실패하면 CLI는 결과 파일을 쓰지 않고 exit 1로 끝난다. 빈 배열을 저장하면 이후 단계와 main_v2 CV 캐시가 "텍스트 0개"를 성공으로 굳히기 때문이다. 연결 오류 메시지에 섞인 API 키는 `***`로 가린다.
+- API 호출이 실패하면 CLI는 결과 파일을 쓰지 않고 exit 1로 끝난다. 빈 배열을 저장하면 이후 단계와 app CV 캐시가 "텍스트 0개"를 성공으로 굳히기 때문이다. 연결 오류 메시지에 섞인 API 키는 `***`로 가린다.
 - 출력은 이후 `text_group_builder_v2.py`가 읽는 Vision JSON이다.
 
 **OCR 타입 변경 이력**: `TEXT_DETECTION` → `DOCUMENT_TEXT_DETECTION` 으로 전환했다.
@@ -294,7 +293,7 @@ Text Group이 FloodFill의 **Anchor Text Group** seed 후보로 사용된다.
 
 이 파일을 포함한 최종 처리 기준 해석은 `pipeline/region_types.py`를 공통으로 사용한다. `region_processing_basis()`는 기존 `type: bubble/unboxed`를 각각 `boundary_based/text_based`로 읽으며, 기존 타입이 파생 필드보다 우선한다. `regions_with_processing_basis()`는 API 응답의 메모리 복사본에만 필드를 추가하므로 기존 캐시 파일은 수정하지 않는다. `source_method`와 검출기 내부 후보 분류는 이 두 처리 기준과 구분한다.
 
-Step 3 진입점이다. `pipeline_runner`가 `python -m pipeline.dialogue_extractor <image> <text_groups> <masked> <regions> <indexed_sheet> --output-vis-path <bubble_vis>`로 호출하고, `main_v2.py`는 guidance 재적용 때 `build_dialogue_sheet()`를 직접 import한다.
+Step 3 진입점이다. `pipeline_runner`가 `python -m pipeline.dialogue_extractor <image> <text_groups> <masked> <regions> <indexed_sheet> --output-vis-path <bubble_vis>`로 호출하고, `app.py`는 guidance 재적용 때 `build_dialogue_sheet()`를 직접 import한다.
 
 - `build_dialogue_sheet()`: ① `bubble_detector.build_ocr_region_sheet()`로 경계 기반 검출·마스킹 → ② 텍스트 기반 영역의 글자를 LaMa(`simple_lama_inpainting`)로 지움 → ③ 두 종류 crop을 읽기 순서로 모아 indexed OCR sheet + `regions.json` 저장
 - 편집기 guidance(`manual_regions`, `manual_seed_points`, `virtual_walls`, `split_guides`, suppressed region)를 인자로 받아 반영한다.
@@ -402,7 +401,7 @@ indexed sheet crop의 획두께·ink density를 재서 OpenAI가 준 `render_hin
 - 어느 단계든 subprocess가 실패하면(`PipelineError`) 그 이미지는 실패로 끝난다.
 - Step 4는 Step 3 산출물(`regions.json`, indexed sheet, `text_groups.json`)이 `integrated.json`보다 새로우면 다시 만든다.
 - Step 5에는 `--regions_json`과 `--original_image`를 넘긴다.
-- `stream_subprocess(cmd, timeout, on_line)`: 출력을 reader thread로 줄 단위로 읽어 `on_line`에 넘기고 `(returncode, 출력 줄)`을 반환한다. 출력이 멈춰도 timeout이 지켜지며, 넘기면 프로세스를 종료하고 `subprocess.TimeoutExpired`를 던진다. 자식 환경에는 `PYTHONUNBUFFERED=1`, `PYTHONIOENCODING=utf-8`, 저장소 루트를 앞에 둔 `PYTHONPATH`를 넣는다(`_subprocess_env()`). `main_v2.py`도 이 함수를 쓴다.
+- `stream_subprocess(cmd, timeout, on_line)`: 출력을 reader thread로 줄 단위로 읽어 `on_line`에 넘기고 `(returncode, 출력 줄)`을 반환한다. 출력이 멈춰도 timeout이 지켜지며, 넘기면 프로세스를 종료하고 `subprocess.TimeoutExpired`를 던진다. 자식 환경에는 `PYTHONUNBUFFERED=1`, `PYTHONIOENCODING=utf-8`, 저장소 루트를 앞에 둔 `PYTHONPATH`를 넣는다(`_subprocess_env()`). `app.py`도 이 함수를 쓴다.
 
 ### `pipeline/manual_guidance.py`
 
@@ -414,7 +413,7 @@ indexed sheet crop의 획두께·ink density를 재서 OpenAI가 준 `render_hin
 
 ### `pipeline/openai_image_redraw.py`
 
-렌더링을 건너뛴 페이지(표지·컬러 일러스트 등)를 OpenAI 이미지 모델로 번역 이미지로 다시 만든다(`redraw_image_with_openai()`). `main_v2.py`의 export 단계 "generate missing" 경로에서 쓴다.
+렌더링을 건너뛴 페이지(표지·컬러 일러스트 등)를 OpenAI 이미지 모델로 번역 이미지로 다시 만든다(`redraw_image_with_openai()`). `app.py`의 export 단계 "generate missing" 경로에서 쓴다.
 
 ### `pipeline/render_text_overlay.py`
 
@@ -430,7 +429,7 @@ indexed sheet crop의 획두께·ink density를 재서 OpenAI가 준 `render_hin
 
 ### `pipeline/background_restore.py`
 
-배경 복원 탭(`RestorePanel.jsx`, `main_v2.py`의 `/api/restore/*`)의 엔진이다. 엔진은 LaMa 하나다. FLUX.1 Fill(MFLUX)을 시험했지만 어두운 배경·투명 말풍선에서도 LaMa보다 결과가 나쁘고 영역당 수 분이 걸려 제거했다.
+배경 복원 탭(`RestorePanel.jsx`, `app.py`의 `/api/restore/*`)의 엔진이다. 엔진은 LaMa 하나다. FLUX.1 Fill(MFLUX)을 시험했지만 어두운 배경·투명 말풍선에서도 LaMa보다 결과가 나쁘고 영역당 수 분이 걸려 제거했다.
 
 - 문맥 영역(`context_rect`)과 제거 마스크를 분리한다. 모델에는 문맥 영역을 잘라 넘기고, 바꾸는 것은 마스크 픽셀뿐이다(`composite_inside_mask`). 마스크 바깥 픽셀이 하나라도 바뀌면 결과를 버린다(`changed_pixels_outside_mask`).
 - 처리 해상도는 긴 변 512/768/원본 중 고르며 기본은 원본이다. 16의 배수 패딩과 역변환은 `prepare_model_input`/`restore_from_model_output`이 맡고, 이진 마스크는 최근접 보간만 쓴다.
@@ -464,7 +463,7 @@ indexed sheet crop의 획두께·ink density를 재서 OpenAI가 준 `render_hin
 ## 검증 명령
 
 ```bash
-.venv/bin/python -m compileall -q main_v2.py run_pipeline.py run_debug_pipeline.py visualize_debug.py pipeline batch
+.venv/bin/python -m compileall -q app.py run_pipeline.py scripts/run_debug_pipeline.py scripts/visualize_debug.py pipeline batch
 .venv/bin/python -m pytest -q    # pytest.ini가 tests/만 수집한다
 ```
 
@@ -472,18 +471,18 @@ indexed sheet crop의 획두께·ink density를 재서 OpenAI가 준 `render_hin
 
 ## 이미지 생성 권장과 후보 등록 (2026-10-20)
 
-`pipeline/image_generation_bridge.py`는 원본·번역·용어집 revision을 묶어 생성 요청과 미검토 결과를 보관한다. `run_editor_mcp.py`에 권장·요청·등록 도구가 있고, `main_v2.py`의 읽기 API와 `frontend/src/ImageGenerationPanel.jsx`가 원본/후보 비교를 제공한다. 모델 호출은 호스트 내장 도구가 담당하며 최종 출력은 변경하지 않는다. [기록](IMAGE_GENERATION_REVIEW.md).
+`pipeline/image_generation_bridge.py`는 원본·번역·용어집 revision을 묶어 생성 요청과 미검토 결과를 보관한다. `scripts/run_editor_mcp.py`에 권장·요청·등록 도구가 있고, `app.py`의 읽기 API와 `frontend/src/ImageGenerationPanel.jsx`가 원본/후보 비교를 제공한다. 모델 호출은 호스트 내장 도구가 담당하며 최종 출력은 변경하지 않는다. [기록](IMAGE_GENERATION_REVIEW.md).
 
 분석 캔버스의 TG/Region 번호 배치는 `frontend/src/canvasLabels.js`가 화면 좌표에서 계산한다. `frontend/src/EditorCanvas.jsx`는 승격 TG 번호 중복을 줄이고 여백 목록·연한 번호를 그린다. 데이터 ID나 좌표는 변경하지 않는다.
 
-수동 자동 Region 제외는 `pipeline/dialogue_extractor.py`의 `_suppressed_text_group_ids`가 텍스트 기반 fallback까지 반영한다. `frontend/src/regionExclusion.js`는 적용 전후 표시를 구분하고 `main_v2.py`는 제외 처리 버전이 없는 옛 guidance 결과 캐시의 재사용을 막는다.
+수동 자동 Region 제외는 `pipeline/dialogue_extractor.py`의 `_suppressed_text_group_ids`가 텍스트 기반 fallback까지 반영한다. `frontend/src/regionExclusion.js`는 적용 전후 표시를 구분하고 `app.py`는 제외 처리 버전이 없는 옛 guidance 결과 캐시의 재사용을 막는다.
 
-페이지 전체 처리 제외: `main_v2.py`의 /api/page-processing과 page_processing_excluded가 work/page_policy의 프로젝트별 상태를 읽는다. 분석·번역·생성·ZIP 내보내기에 반영하고 frontend의 제외/복원 버튼과 연결한다. `tests/test_page_processing.py`에서 원본 바이트 출력·복원·유료 호출 차단을 검사한다.
+페이지 전체 처리 제외: `app.py`의 /api/page-processing과 page_processing_excluded가 work/page_policy의 프로젝트별 상태를 읽는다. 분석·번역·생성·ZIP 내보내기에 반영하고 frontend의 제외/복원 버튼과 연결한다. `tests/test_page_processing.py`에서 원본 바이트 출력·복원·유료 호출 차단을 검사한다.
 
 영역 분석 우클릭 메뉴는 `frontend/src/EditorCanvas.jsx`, 제외 미리보기는 `frontend/src/regionExclusion.js`, 선 아이콘은 `frontend/src/GuidanceToolIcon.jsx`가 담당한다. [도구 모음 검토·변경 기록](TOOLBAR_UX_REVIEW.md). 삭제·Undo는 UI만 갱신하고 Cmd/Ctrl+Enter에서 분석을 적용한다.
 
 
-2026-10-20 UI 동기화: 페이지 분석 경로 전환: main_v2.py의 /api/page-analysis-route는 work/page_policy에 standard/auto 선택을 저장한다. pipeline_runner.py는 standard 정책을 읽어 dialogue_extractor.py의 --force-standard에 연결한다. ImagePreview.jsx는 캐시 로드·실패/재시도를, ImageGenerationPanel.jsx와 App.jsx는 비교 영역의 등록 후보 표시와 전환 요청을 담당한다.
+2026-10-20 UI 동기화: 페이지 분석 경로 전환: app.py의 /api/page-analysis-route는 work/page_policy에 standard/auto 선택을 저장한다. pipeline_runner.py는 standard 정책을 읽어 dialogue_extractor.py의 --force-standard에 연결한다. ImagePreview.jsx는 캐시 로드·실패/재시도를, ImageGenerationPanel.jsx와 App.jsx는 비교 영역의 등록 후보 표시와 전환 요청을 담당한다.
 
 2026-10-20 편집 표시 동기화: frontend/src/regionTypes.js의 regionDetectionLabel은 두 처리 기준과 Edge 검출 경로를 읽어 선택 정보에 표시한다. EditorCanvas.jsx는 lib.js의 공통 파랑/초록/노랑 팔레트로 반투명 R을 그린다. CV 텍스트는 App.jsx가 선택 R의 유효 TG anchor에서 읽어 읽기 전용으로 표시하며 검출 JSON은 수정하지 않는다.
 

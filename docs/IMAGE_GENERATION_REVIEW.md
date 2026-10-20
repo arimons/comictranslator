@@ -52,7 +52,7 @@ temp_output/v2_sessions/{session_id}/work/image_generation/{image_id}/
 - 검증 스크립트: `proof/src/ore3_cover_generation_mcp.py`. 준비와 결과 등록을 실제 stdio MCP로 수행하고 생성 자료를 제외한 두 프로젝트 파일의 내용 해시 보존을 확인한다. 이미지 생성은 대화의 내장 도구에서 별도로 실행한다.
 - 검증 자료는 `proof/misc/ore3-cover-generation/`에 보관한다.
 
-구현: `pipeline/image_generation_bridge.py`, `run_editor_mcp.py`, `main_v2.py`, `frontend/src/ImageGenerationPanel.jsx`.
+구현: `pipeline/image_generation_bridge.py`, `scripts/run_editor_mcp.py`, `app.py`, `frontend/src/ImageGenerationPanel.jsx`.
 
 커버의 내장 생성 반환 이미지 1058×1487px를 실제 `register_generated_image` stdio 호출로 등록했다. 결과 ID는 `f6d60cbd64abce24c66e5c772aed4191`이며 `actual_model`은 미공개로 null, 품질은 미검토다. 생성 후보 검토 링크로 진입할 때 자동 분석과 작품 검색을 시작하지 않으며, 일반 진입에서도 생성 권장 페이지는 자동 분석 대상에서 제외한다. 사용자가 직접 실행하는 기존 분석 버튼은 유지된다.
 

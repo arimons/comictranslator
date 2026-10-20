@@ -48,12 +48,12 @@ def test_pipeline_runner_forwards_model_flag() -> None:
     assert "ocr_model" in inspect.signature(pipeline_runner.run_batch_images).parameters
 
 
-def test_main_v2_exposes_ocr_model_endpoint() -> None:
+def test_app_exposes_ocr_model_endpoint() -> None:
     from fastapi.testclient import TestClient
 
-    import main_v2
+    import app
 
-    response = TestClient(main_v2.create_app()).get("/api/ocr-models")
+    response = TestClient(app.create_app()).get("/api/ocr-models")
     assert response.status_code == 200
     body = response.json()
     assert body["default"] == ocr.MODEL_NAME
@@ -63,13 +63,13 @@ def test_main_v2_exposes_ocr_model_endpoint() -> None:
         ocr.resolve_provider(model_id)  # 목록의 모든 모델이 provider 판별을 통과해야 한다
 
 
-def test_main_v2_forwards_ocr_model_to_step4() -> None:
-    """main_v2가 요청의 ocr_model을 Step 4 subprocess 인자로 넘겨야 한다."""
+def test_app_forwards_ocr_model_to_step4() -> None:
+    """app가 요청의 ocr_model을 Step 4 subprocess 인자로 넘겨야 한다."""
     import inspect
 
-    import main_v2
+    import app
 
-    source = inspect.getsource(main_v2.run_final_for_item)
+    source = inspect.getsource(app.run_final_for_item)
     assert '"--model", ocr_model' in source, "Step 4 호출에 --model 전달이 없습니다"
-    assert "ocr_model" in inspect.signature(main_v2.run_final_for_item).parameters
-    assert "ocr_model" in main_v2.RunFinalRequest.model_fields
+    assert "ocr_model" in inspect.signature(app.run_final_for_item).parameters
+    assert "ocr_model" in app.RunFinalRequest.model_fields

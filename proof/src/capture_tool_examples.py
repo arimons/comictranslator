@@ -14,7 +14,7 @@ def dump(path,data):
  path.parent.mkdir(parents=True,exist_ok=True);path.write_text(json.dumps(data,ensure_ascii=False,indent=2))
 
 def prepare():
- from main_v2 import ensure_session,save_session
+ from app import ensure_session,save_session
  if (BASE/'session.json').exists():
   raise SystemExit('이미 있는 검증 프로젝트는 덮어쓰지 않습니다. 새 촬영 시 SID를 새 값으로 지정하세요.')
  data=ensure_session(SID);data.update(project_name='매뉴얼 도구 전후 · 검증 복사본',images=[])
@@ -29,7 +29,7 @@ def prepare():
  print(SID)
 
 def apply(name,path):
- from main_v2 import run_step3_with_effective_text_groups
+ from app import run_step3_with_effective_text_groups
  guidance=json.loads(Path(path).read_text())
  result=run_step3_with_effective_text_groups(SID,name,guidance)
  dump(CAP/f'{name}-result.json',{'report':result.get('guidance_report'),'regions':result.get('regions')})

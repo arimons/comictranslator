@@ -2,10 +2,10 @@
   "name": "comic-translator-review-ui",
   "private": true,
   "version": "1.0.0",
-  "description": "ui_v2 리뷰 앱 프론트엔드 빌드 (esbuild 번들 -> ../ui_v2/app.bundle.js)",
+  "description": "web 리뷰 앱 프론트엔드 빌드 (esbuild 번들 -> ../web/app.bundle.js)",
   "scripts": {
-    "build": "esbuild src/main.jsx --bundle --minify --jsx=automatic --define:process.env.NODE_ENV=\\\"production\\\" --outfile=../ui_v2/app.bundle.js",
-    "watch": "esbuild src/main.jsx --bundle --jsx=automatic --define:process.env.NODE_ENV=\\\"development\\\" --outfile=../ui_v2/app.bundle.js --watch --sourcemap"
+    "build": "esbuild src/main.jsx --bundle --minify --jsx=automatic --define:process.env.NODE_ENV=\\\"production\\\" --outfile=../web/app.bundle.js",
+    "watch": "esbuild src/main.jsx --bundle --jsx=automatic --define:process.env.NODE_ENV=\\\"development\\\" --outfile=../web/app.bundle.js --watch --sourcemap"
   },
   "dependencies": {
     "konva": "^9.3.0",

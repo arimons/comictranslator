@@ -1,3 +1,7 @@
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 """프로젝트 로컬 Codex/Claude MCP 설정만 추가한다. 기존 다른 서버·전역 설정은 보존한다."""
 import json
 import os
@@ -6,18 +10,18 @@ import re
 import tempfile
 import tomllib
 
-ROOT = Path(__file__).resolve().parent
+ROOT = Path(__file__).resolve().parents[1]
 NAME = "comic-translator-review"
-START = "# BEGIN comic-translator-review (configure_editor_mcp.py)"
+START = "# BEGIN comic-translator-review (scripts/configure_editor_mcp.py)"
 END = "# END comic-translator-review"
 
 
 def configure(root: Path = ROOT) -> list[Path]:
     root = root.resolve()
     python = root / ".venv/bin/python"
-    server = root / "run_editor_mcp.py"
+    server = root / "scripts/run_editor_mcp.py"
     if not python.is_file() or not server.is_file():
-        raise ValueError("프로젝트 .venv와 run_editor_mcp.py를 먼저 준비하세요")
+        raise ValueError("프로젝트 .venv와 scripts/run_editor_mcp.py를 먼저 준비하세요")
     codex_path, claude_path = root / ".codex/config.toml", root / ".mcp.json"
     for path in (codex_path, claude_path):
         if not path.resolve().is_relative_to(root):

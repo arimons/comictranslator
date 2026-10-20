@@ -17,7 +17,7 @@
 - 최근 작업 시각은 manifest와 분석·번역·수동 가이드·배경 복원 상태·최종 이미지의 마지막 변경 시각 중 최댓값이다. 사람이 마지막으로 편집한 시각이나 검토 완료 시각을 보장하는 필드가 아니다.
 - 최근 프로젝트 집계는 파일 존재와 stat만 확인한다. 대형 JSON 해석·캐시 복원·분석 실행을 유발하지 않는다. 기존 중복 프로젝트 필터 정책은 유지했다.
 
-화면 구현은 `frontend/src/StartScreen.jsx`, 실행 연결은 `frontend/src/App.jsx`, 스타일은 `ui_v2/styles.css`, 최근 프로젝트 요약은 `main_v2.py`의 `session_home_progress`가 담당한다. UI 번들은 기존 프론트엔드 빌드로 갱신한다.
+화면 구현은 `frontend/src/StartScreen.jsx`, 실행 연결은 `frontend/src/App.jsx`, 스타일은 `web/styles.css`, 최근 프로젝트 요약은 `app.py`의 `session_home_progress`가 담당한다. UI 번들은 기존 프론트엔드 빌드로 갱신한다.
 
 참고: [Figma 파일 브라우저](https://help.figma.com/hc/en-us/articles/14381406380183-Guide-to-the-file-browser), [Photoshop 홈 화면](https://helpx.adobe.com/photoshop/desktop/get-started/learn-the-basics/homescreen-overview.html).
 

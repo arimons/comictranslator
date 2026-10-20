@@ -15,10 +15,10 @@ UI/UX가 바뀌어도 서버 코드는 React 컴포넌트·화면 좌표·버튼
 ```bash
 source .venv/bin/activate
 python -m pip install -r requirements.txt
-python configure_editor_mcp.py
+python scripts/configure_editor_mcp.py
 ```
 
-설정 스크립트는 이 프로젝트의 `.codex/config.toml`과 `.mcp.json`에만 서버를 등록한다. 전역 설정·다른 MCP 서버는 유지하고, 동일 이름의 수동 설정이 충돌하면 덮어쓰지 않는다. 실행 경로는 프로젝트 `.venv/bin/python`과 `run_editor_mcp.py`의 절대 경로다. 호스트 경로가 들어가므로 설정 파일은 Git에서 제외하며 다른 컴퓨터에서는 스크립트를 다시 실행한다.
+설정 스크립트는 이 프로젝트의 `.codex/config.toml`과 `.mcp.json`에만 서버를 등록한다. 전역 설정·다른 MCP 서버는 유지하고, 동일 이름의 수동 설정이 충돌하면 덮어쓰지 않는다. 실행 경로는 프로젝트 `.venv/bin/python`과 `scripts/run_editor_mcp.py`의 절대 경로다. 호스트 경로가 들어가므로 설정 파일은 Git에서 제외하며 다른 컴퓨터에서는 스크립트를 다시 실행한다.
 
 Codex는 프로젝트 로컬 MCP 설정을 지원하며 신뢰된 프로젝트에서 이를 읽는다. 등록 확인은 `codex mcp get comic-translator-review`로 한다. 이미 열린 대화의 도구 목록이 즉시 바뀐다고 가정하지 않고, 새 대화 또는 MCP 재연결 후 사용한다. Claude Code는 프로젝트의 `.mcp.json`을 읽으며 처음 연결할 때 클라이언트의 프로젝트 MCP 확인 절차가 나타날 수 있다. [Codex 공식 MCP 문서](https://developers.openai.com/codex/mcp)
 
@@ -100,9 +100,9 @@ temp_output/v2_sessions/{session_id}/work/reviews/{image_id}/{proposal_id}.json
 
 ## 실행 및 유지보수
 
-- 진입점: `run_editor_mcp.py` — stdout은 JSON-RPC 전용, 로그는 stderr.
+- 진입점: `scripts/run_editor_mcp.py` — stdout은 JSON-RPC 전용, 로그는 stderr.
 - 관찰 어댑터: `pipeline/editor_review_bridge.py` — UI 의존성 없이 manifest·artifact를 읽고 검토 초안만 저장. 생성 후보는 `pipeline/image_generation_bridge.py`에서 별도로 다룬다.
-- 설정 생성: `configure_editor_mcp.py` — 프로젝트 로컬 Codex/Claude 설정.
+- 설정 생성: `scripts/configure_editor_mcp.py` — 프로젝트 로컬 Codex/Claude 설정.
 - 회귀 검사: `tests/test_editor_mcp.py` — 실제 subprocess stdio handshake·이미지·제안 왕복까지 검사.
 - 실제 프로젝트 조회 점검: `proof/src/smoke_editor_mcp.py`.
 

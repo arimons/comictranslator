@@ -6,7 +6,7 @@ from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
-import main_v2
+import app
 from fastapi.testclient import TestClient
 
 SOURCE = "20260531_153718"
@@ -14,24 +14,24 @@ TITLE = "사망플래그 3권(자동분할)"
 
 
 def original_snapshot():
-    base = main_v2.session_dir(SOURCE)
+    base = app.session_dir(SOURCE)
     return {str(path.relative_to(base)): [path.stat().st_size, path.stat().st_mtime_ns]
             for path in base.rglob("*") if path.is_file()}
 
 
 def main():
     before = original_snapshot()
-    manifest_before = main_v2.session_file(SOURCE).read_bytes()
-    with patch.object(main_v2, "run_single_image", side_effect=AssertionError("유료 분석 실행 금지")), \
-         patch.object(main_v2, "redraw_image_with_openai", side_effect=AssertionError("이미지 생성 실행 금지")), \
-         patch.object(main_v2, "stream_subprocess", side_effect=AssertionError("파이프라인 실행 금지")):
-        client = TestClient(main_v2.create_app())
+    manifest_before = app.session_file(SOURCE).read_bytes()
+    with patch.object(app, "run_single_image", side_effect=AssertionError("유료 분석 실행 금지")), \
+         patch.object(app, "redraw_image_with_openai", side_effect=AssertionError("이미지 생성 실행 금지")), \
+         patch.object(app, "stream_subprocess", side_effect=AssertionError("파이프라인 실행 금지")):
+        client = TestClient(app.create_app())
         response = client.post("/api/pages/preview", json={"session_id": SOURCE})
         response.raise_for_status()
         plan = response.json()
         assert (plan["source_count"], plan["output_count"]) == (83, 165)
         existing = []
-        for path in main_v2.SESSION_ROOT.glob("*/session.json"):
+        for path in app.SESSION_ROOT.glob("*/session.json"):
             data = json.loads(path.read_text())
             if data.get("project_name") == TITLE and data.get("parent_session_id") == SOURCE and data.get("page_preparation", {}).get("revision") == plan["revision"]:
                 existing.append(data)
@@ -49,8 +49,8 @@ def main():
     assert target["images"][0]["page_side"] == "center"
     assert [item["page_side"] for item in target["images"][1:3]] == ["right", "left"]
     assert before == original_snapshot(), "원본 프로젝트 파일 변경 감지"
-    assert manifest_before == main_v2.session_file(SOURCE).read_bytes()
-    base = main_v2.session_dir(target["session_id"])
+    assert manifest_before == app.session_file(SOURCE).read_bytes()
+    base = app.session_dir(target["session_id"])
     assert not list((base / "work").rglob("*.json")), "분석 산출물이 생성되면 안 됩니다."
     assert not list((base / "output").rglob("*.jpg"))
     report = {"session_id": target["session_id"], "project_name": TITLE, "parent_session_id": SOURCE,

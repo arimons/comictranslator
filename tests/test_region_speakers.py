@@ -3,7 +3,7 @@ import json
 from pathlib import Path
 from PIL import Image
 from fastapi.testclient import TestClient
-import main_v2 as app
+import app as app
 from pipeline.region_types import region_binding_key
 from pipeline.work_glossary import page_speakers
 

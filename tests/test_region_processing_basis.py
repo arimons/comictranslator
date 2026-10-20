@@ -56,19 +56,19 @@ def test_projection_does_not_mutate_legacy_artifacts():
 
 
 def test_page_read_projects_cached_types_without_rewriting_cache(tmp_path, monkeypatch):
-    import main_v2
+    import app
     from fastapi.testclient import TestClient
     from PIL import Image
 
-    monkeypatch.setattr(main_v2, "SESSION_ROOT", tmp_path / "sessions")
-    monkeypatch.setattr(main_v2, "ANALYSIS_CACHE_DIR", tmp_path / "cache")
-    session = main_v2.ensure_session("legacy")
-    image = main_v2.SESSION_ROOT / "legacy/input/page.jpg"
+    monkeypatch.setattr(app, "SESSION_ROOT", tmp_path / "sessions")
+    monkeypatch.setattr(app, "ANALYSIS_CACHE_DIR", tmp_path / "cache")
+    session = app.ensure_session("legacy")
+    image = app.SESSION_ROOT / "legacy/input/page.jpg"
     Image.new("RGB", (100, 150), "white").save(image)
     session["images"] = [{"id": "page", "name": "page.jpg", "input_path": str(image)}]
-    main_v2.save_session(session)
-    record = main_v2.image_record("legacy", image)
-    cache = main_v2.ANALYSIS_CACHE_DIR / "old/regions.json"
+    app.save_session(session)
+    record = app.image_record("legacy", image)
+    cache = app.ANALYSIS_CACHE_DIR / "old/regions.json"
     cache.parent.mkdir(parents=True)
     cache.write_text(json.dumps({"regions": [
         {"region_id": 1, "type": "bubble", "source_method": "manual_edge_barrier_rescue"},
@@ -78,7 +78,7 @@ def test_page_read_projects_cached_types_without_rewriting_cache(tmp_path, monke
     target.parent.mkdir(parents=True, exist_ok=True)
     target.symlink_to(cache)
     before = (cache.read_bytes(), cache.stat().st_mtime_ns, target.lstat().st_ino)
-    result = TestClient(main_v2.create_app()).get("/api/session/legacy/page/page")
+    result = TestClient(app.create_app()).get("/api/session/legacy/page/page")
     assert result.status_code == 200
     regions = result.json()["image"]["regions"]["regions"]
     assert [r["processing_basis"] for r in regions] == ["boundary_based", "text_based"]

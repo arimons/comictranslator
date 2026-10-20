@@ -549,9 +549,9 @@ for i, w in enumerate(weights):
 ```
 NEW_COMIC_TRANSLATOR/
 ├── main.py                          # Gradio UI (메인 진입점)
-├── run_debug_pipeline.py            # Debug 실행 wrapper
+├── scripts/run_debug_pipeline.py            # Debug 실행 wrapper
 ├── run_test_pipeline.py             # Test 실행 wrapper
-├── visualize_debug.py               # bbox 시각화
+├── scripts/visualize_debug.py               # bbox 시각화
 ├── pipeline/
 │   ├── cloud_vision_api.py          # Cloud Vision API
 │   ├── cluster_cv_v5.py             # V5 클러스터링 (2-Pass BFS)

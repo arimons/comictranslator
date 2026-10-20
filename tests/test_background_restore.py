@@ -8,7 +8,7 @@ import numpy as np
 import pytest
 from fastapi.testclient import TestClient
 
-import main_v2
+import app
 from pipeline import background_restore as br
 
 
@@ -150,15 +150,15 @@ def test_grayscale_detection():
 
 
 def _session_with_image(tmp_path, monkeypatch):
-    monkeypatch.setattr(main_v2, "SESSION_ROOT", tmp_path / "sessions")
-    monkeypatch.setattr(main_v2, "INPUT_CACHE_DIR", tmp_path / "input_cache")
-    data = main_v2.ensure_session("s1")
-    input_dir = main_v2.session_dir("s1") / "input"
+    monkeypatch.setattr(app, "SESSION_ROOT", tmp_path / "sessions")
+    monkeypatch.setattr(app, "INPUT_CACHE_DIR", tmp_path / "input_cache")
+    data = app.ensure_session("s1")
+    input_dir = app.session_dir("s1") / "input"
     input_dir.mkdir(parents=True, exist_ok=True)
     img_path = input_dir / "p1.png"
     cv2.imwrite(str(img_path), np.full((200, 160, 3), 255, np.uint8))
     data["images"] = [{"id": "p1", "name": "p1.png", "input_path": str(img_path)}]
-    main_v2.save_session(data)
+    app.save_session(data)
     return img_path
 
 
@@ -173,7 +173,7 @@ def _wait_job(client, job_id):
 
 def test_restore_api_run_accept_and_failure_keeps_patches(tmp_path, monkeypatch):
     _session_with_image(tmp_path, monkeypatch)
-    client = TestClient(main_v2.create_app())
+    client = TestClient(app.create_app())
 
     def fake_lama(img_in, mask_in):
         out = img_in.copy()

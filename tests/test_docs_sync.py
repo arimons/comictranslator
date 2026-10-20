@@ -36,6 +36,7 @@ REFERENCE_PATTERN = re.compile(r"\b((?:[\w./-]+/)?[\w-]+\.(?:py|md|html))\b")
 
 # 폐기됐지만 문서에 의도적으로 남겨둔 참조. {참조: 사유}
 RETIRED_REFERENCES = {
+    "run_floodfill_batch.py": "사용 불가인 이전 실행기, archive로 이동",
     "main.py": "Gradio UI 폐기 이력 설명용 (archive/retired_gradio_ui/)",
     "run_test_pipeline.py": "Gradio UI와 함께 폐기된 실행 스크립트",
     "translate_cover.py": "구 표지 번역 경로. archive 보관",

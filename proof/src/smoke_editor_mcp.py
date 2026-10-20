@@ -12,7 +12,7 @@ ROOT = Path(__file__).resolve().parents[2]
 
 
 async def run(session_id, image_id, region_id):
-    parameters = StdioServerParameters(command=sys.executable, args=[str(ROOT / "run_editor_mcp.py")], cwd="/tmp")
+    parameters = StdioServerParameters(command=sys.executable, args=[str(ROOT / "scripts/run_editor_mcp.py")], cwd="/tmp")
     async with stdio_client(parameters) as (read, write):
         async with ClientSession(read, write) as client:
             await client.initialize()

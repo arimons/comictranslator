@@ -1954,7 +1954,7 @@ def _load_simple_lama_class() -> Any | None:
 # 병렬 분석(기본 4장)에서 LaMa 페이지가 겹치면 16〜18GB Mac이 멈출 수 있다.
 # 그래서 LaMa를 올린 프로세스 수를 머신 전체에서 LAMA_MAX_PROCESSES개(기본 2)로 묶는다.
 # 모델은 프로세스가 끝날 때까지 메모리에 남으므로 슬롯도 프로세스가 끝날 때 OS가 푼다.
-# 상주 서버(main_v2)가 모델을 올리면 슬롯 하나를 계속 쓴다. 그래서 1로 줄이면 분석이 멈출 수 있다.
+# 상주 서버(app)가 모델을 올리면 슬롯 하나를 계속 쓴다. 그래서 1로 줄이면 분석이 멈출 수 있다.
 _LAMA_SLOT_DIR = Path(tempfile.gettempdir()) / "comic_translator_lama_slots"
 _lama_slot_handle: Any = None
 

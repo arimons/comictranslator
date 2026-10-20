@@ -1,3 +1,7 @@
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 # Debug 이미지(00013, 00014, 00016, 00019)를 표준 파이프라인으로 처리
 #!/usr/bin/env python3
 
@@ -6,7 +10,7 @@ from pathlib import Path
 
 from pipeline.pipeline_runner import run_single_image
 
-PROJECT_ROOT = Path(__file__).parent
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
 DEBUG_IMAGES = ["00013", "00014", "00016", "00019"]
 
 # 중간 파일 및 최종 결과 모두 proof/Debug에 저장
@@ -61,7 +65,7 @@ def run_debug_pipeline():
         # 시각화
         print(f"\n🎨 {img_num} 시각화 중...")
         result = subprocess.run(
-            ["python3", str(PROJECT_ROOT / "visualize_debug.py"), img_num],
+            ["python3", str(PROJECT_ROOT / "scripts/visualize_debug.py"), img_num],
             capture_output=True, text=True, timeout=30,
         )
         print(result.stdout)
