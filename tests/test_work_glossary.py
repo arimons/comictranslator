@@ -170,6 +170,8 @@ def test_final_translation_receives_only_applied_terms_and_records_version(store
     wid = store.confirm({"title": "작품"})
     data = store.read(wid)
     data.update(status="ready", version=3, entries=build_entries(report(), []))
+    data['entries'].append(dict(keyword=True, source='', target='노먼', status='auto',
+                                aliases=['집사 노먼'], variants=[{'from':'노만','to':'노먼'}], source_forms=[]))
     data["entries"].append({"source": "不確実", "target": "불확실", "status": "review"})
     write_json(store.path(wid), data)
     write_json(main_v2.glossary_binding_path(sid), {"work_id": wid})
@@ -189,6 +191,7 @@ def test_final_translation_receives_only_applied_terms_and_records_version(store
     main_v2.run_final_for_item(sid, {"id": "page", "input_path": str(image)}, "수동 지시: 말투 유지", None)
     prompt = next(arg for arg in commands[0] if arg.startswith("--extra-prompt="))
     assert "유키" in prompt and "불확실" not in prompt
+    assert '노먼' in prompt and '집사 노먼' in prompt and '노만' in prompt
     assert prompt.endswith("수동 지시: 말투 유지")
     assert load_json(record["integrated_json"])["glossary"]["version"] == 3
     assert load_json(Path(record["work_dir"]) / "json/page_glossary_snapshot.json")["work_id"] == wid

@@ -127,7 +127,7 @@ def source_evidence(sources: list[dict]) -> list[dict]:
     from pipeline.work_glossary import source_site
     evidence = []
     for source in sources:
-        # 같은 자료의 짧은 구간에 두 표기가 함께 있는 경우만 적용 근거가 된다.
+        # 모델이 자료 구간을 인용하도록 분할한다. 일본어·한국어 동시 출현은 요구하지 않는다.
         text = source['text']
         for start in range(0, len(text), 1200):
             evidence.append({'text': text[start:start + 1400], 'url': source['url'], 'title': source['title'],

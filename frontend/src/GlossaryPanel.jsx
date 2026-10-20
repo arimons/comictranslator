@@ -8,13 +8,16 @@ function Term({ entry, busy, onReview }) {
   const [target, setTarget] = useState(entry.target);
   useEffect(() => setTarget(entry.target), [entry.target]);
   return <article className={`glossary-term ${entry.status}`}>
-    <div className="glossary-term-heading"><strong>{entry.source}</strong><span>{entry.kind} · {TERM_STATUS[entry.status]}</span></div>
+    <div className="glossary-term-heading"><strong>{entry.keyword ? entry.target : entry.source}</strong><span>{entry.kind} · {TERM_STATUS[entry.status]}</span></div>
     <div className="row">
-      <input aria-label={`${entry.source} 한국어 표기`} value={target} maxLength={120} onChange={(event) => setTarget(event.target.value)} />
+      <input aria-label={`${entry.keyword ? entry.target : entry.source} 한국어 표기`} value={target} maxLength={120} onChange={(event) => setTarget(event.target.value)} />
       <button onClick={() => onReview(entry.id, "accepted", target)} disabled={busy || !target.trim()}>적용</button>
       <button onClick={() => onReview(entry.id, "rejected")} disabled={busy || entry.status === "rejected"}>제외</button>
     </div>
     <p>{entry.reason}{entry.note ? ` · ${entry.note}` : ""}</p>
+    {entry.aliases?.length ? <p>약칭·별명: {entry.aliases.join(" · ")}</p> : null}
+    {entry.variants?.length ? <p>표기 교정: {entry.variants.map((v) => `${v.from} → ${v.to}`).join(" · ")}</p> : null}
+    {entry.source_forms?.length ? <p>원문 참고: {entry.source_forms.join(" · ")}</p> : null}
     {entry.evidence?.length ? <details><summary>자료 인용 근거 {entry.evidence.length}개</summary>
       {entry.evidence.map((cite, index) => <div className="glossary-citation" key={`${cite.url}-${index}`}>
         <a href={cite.url} target="_blank" rel="noopener noreferrer">{cite.title}</a><p>{cite.text}</p>
@@ -221,11 +224,11 @@ export default function GlossaryPanel({ sessionId, projectName, ocrBusy, analysi
           {data.routing ? <p>용어 정리 모델: {data.routing.model} · {data.routing.reason}</p> : null}
           {data.summary ? <details><summary>작품·등장인물 참고 정보 (번역에 자동 전달하지 않음)</summary><p className="glossary-summary">{data.summary}</p></details> : null}
           <p>적용 {applied.length}개 · 검토 필요 {review.length}개 · 제외 {excluded.length}개. 수동 번역 지시문을 우선합니다. 기존 번역은 그대로이며, 변경된 용어집은 다음 번역부터 사용합니다.</p>
-          <p>같은 인물·용어로 확인되면 나무위키 대표 표기로 통일해 자동 적용합니다. 사용자 확정 표기를 우선하며, 누구를 가리키는지 불확실한 항목만 검토합니다. 전체 이름과 약칭도 각각 같은 표기 기준을 사용합니다.</p>
+          <p>한국어 작품 키워드부터 수집하며 일본어 대응은 없어도 됩니다. 약칭·별명은 유지하고, 표기 변형은 대표 철자로 교정합니다. 인물·용어 혼동만 검토하며 화자나 말투를 자동 지정하지 않습니다.</p>
           {review.length ? <div><h3>충돌·불확실 항목만 검토</h3>{review.map(renderTerm)}</div> : null}
           <details><summary>적용 중인 용어 {applied.length}개</summary>{applied.map(renderTerm)}</details>
           {excluded.length ? <details><summary>제외한 용어 {excluded.length}개</summary>{excluded.map(renderTerm)}</details> : null}
-          {data.status === "ready" && !entries.length ? <p>확인된 용어가 없습니다. 일본어 원문과 한국어 표기를 함께 확인할 수 있는 자료를 추가하세요.</p> : null}
+          {data.status === "ready" && !entries.length ? <p>확인된 용어가 없습니다. 한국어 작품·등장인물 소개 자료를 추가하세요.</p> : null}
 
         </> : null}
       </section>
