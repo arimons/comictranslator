@@ -18,7 +18,7 @@ async(page)=>{
     const b=document.getElementById('stageHost').getBoundingClientRect(),s=Math.min(b.width/img.width,b.height/img.height)*.98,r=groups[i].fallback_rect;
     return {x:b.x+(b.width-img.width*s)/2+(r[0]+20)*s,y:b.y+(b.height-img.height*s)/2+(r[1]+20)*s};
    },{i,groups});
-   await p.mouse.click(target.x,target.y);await p.locator('.selected-region-method').getByText(cases[i].label,{exact:false}).waitFor();
+   await p.mouse.click(target.x,target.y);await p.mouse.click(target.x,target.y);await p.locator('.selected-region-method').getByText(cases[i].label,{exact:false}).waitFor();
    const pixel=await p.locator('#stageHost canvas').last().evaluate((canvas,target)=>{const b=canvas.getBoundingClientRect();return Array.from(canvas.getContext('2d').getImageData((target.x-b.x)*canvas.width/b.width,(target.y-b.y)*canvas.height/b.height,1,1).data);},target);
    if(pixel[3]<25||pixel[3]>80||pixel.slice(0,3).some((v,j)=>Math.abs(v-cases[i].rgb[j])>24))throw Error(cases[i].label+' tint '+pixel);
   }

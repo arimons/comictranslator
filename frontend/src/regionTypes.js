@@ -33,3 +33,9 @@ export function regionDetectionLabel(region) {
   if (regionProcessingBasis(region) === BOUNDARY_BASED) return "경계 기반 · Bubble";
   return "미분류";
 }
+
+// R 번호/TG anchor가 바뀌어도 같은 검출 경로·범위에 화자와 직접 제외 기록을 연결한다.
+export function regionBindingKey(region) {
+  const rect = region?.bubble_rect || region?.unboxed_rect || region?.erase_rect || region?.source_rect || [];
+  return JSON.stringify([regionProcessingBasis(region), region?.source_method || region?.method || "", rect.slice(0,4).map(Math.trunc)]);
+}

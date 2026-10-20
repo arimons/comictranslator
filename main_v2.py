@@ -201,7 +201,9 @@ class GlossaryDraftRequest(BaseModel):
 class SpeakerRequest(BaseModel):
     session_id: str
     image_id: str
-    tg_ids: list[int]
+    tg_ids: list[int] = []
+    region_id: int | None = None
+    region_key: str | None = None
     character_id: str | None = None
 
 
@@ -2003,7 +2005,8 @@ def run_final_for_item(
     context = glossary_context if glossary_context is not None else session_glossary_snapshot(session_id)
     record = image_record(session_id, Path(item["input_path"]), item.get("image_sha256"))
     speakers = page_speakers(load_json(record["regions_json"], default={}).get("regions", []),
-                             page_speaker_map(session_id, record["id"]), context)
+                             page_speaker_map(session_id, record["id"]), context,
+                             load_json(speakers_path(session_id, record["id"]), default={}).get("by_region", {}))
     translation_prompt = "\n\n".join(part for part in (context.get("prompt", ""), speaker_prompt(speakers), extra_prompt) if part)
     clusters = current_clusters_path(record, record["id"])
     font = font_path or DEFAULT_FONT
@@ -2874,7 +2877,7 @@ def create_app() -> FastAPI:
     def read_speakers(session_id: str, image_id: str) -> dict:
         try:
             get_image(session_id, image_id)
-            return {"by_tg": page_speaker_map(session_id, image_id)}
+            return {"by_tg": page_speaker_map(session_id, image_id), "by_region": load_json(speakers_path(session_id, image_id), default={}).get("by_region", {})}
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -2885,14 +2888,33 @@ def create_app() -> FastAPI:
             cid = req.character_id
             if cid and cid != NARRATION and cid not in character_map(session_glossary(req.session_id)):
                 raise ValueError("작품 메모에 없는 인물입니다.")
-            by_tg = page_speaker_map(req.session_id, req.image_id)
-            for tg in req.tg_ids:
+            from pipeline.region_types import region_binding_key
+            stored = load_json(speakers_path(req.session_id, req.image_id), default={})
+            by_tg, by_region = stored.get("by_tg", {}), stored.get("by_region", {})
+            regions = page_record(req.session_id, req.image_id).get("regions", {}).get("regions", [])
+            tg_ids = req.tg_ids
+            if req.region_id is not None:
+                region = next((r for r in regions if r.get("region_id") == req.region_id), None)
+                if region is None:
+                    raise ValueError("현재 페이지에 없는 처리 영역입니다.")
+                key = region_binding_key(region)
+                if req.region_key is not None and req.region_key != key:
+                    raise ValueError("처리 영역이 변경됐습니다. 다시 선택하세요.")
+                # null은 기존 TG 지정으로 되돌아가지 않는 명시적인 R 지정 해제다.
+                by_region[key] = cid
+                tg_ids = []
+            else:
+                # 기존 TG 전용 클라이언트의 새 지정이 이전 R 직접 지정보다 우선한다.
+                for region in regions:
+                    if set(region.get("anchor_ids") or []) & set(tg_ids):
+                        by_region.pop(region_binding_key(region), None)
+            for tg in tg_ids:
                 if cid:
                     by_tg[str(int(tg))] = cid
                 else:
                     by_tg.pop(str(int(tg)), None)
-            write_json(speakers_path(req.session_id, req.image_id), {"by_tg": by_tg})
-            return {"by_tg": by_tg}
+            write_json(speakers_path(req.session_id, req.image_id), {**stored, "by_tg": by_tg, "by_region": by_region})
+            return {"by_tg": by_tg, "by_region": by_region}
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 

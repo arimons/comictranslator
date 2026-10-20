@@ -190,9 +190,9 @@ def ordered_characters(characters: list[dict]) -> list[dict]:
     return sorted(characters, key=lambda row: not row.get("protagonist"))
 
 
-def page_speakers(regions: list[dict], by_tg: dict, snapshot: dict) -> list[dict]:
-    """region별 화자. 수동 지정(TG 기준)을 우선하고, 텍스트 기반 영역은 주인공을 기본값으로 쓴다."""
-    from pipeline.region_types import TEXT_BASED, region_processing_basis
+def page_speakers(regions: list[dict], by_tg: dict, snapshot: dict, by_region: dict | None = None) -> list[dict]:
+    """R 직접 지정을 우선하고 기존 TG 지정을 호환용으로 읽는다. 텍스트 기반 미지정은 주인공 기본값."""
+    from pipeline.region_types import TEXT_BASED, region_processing_basis, region_binding_key
     names = {row["id"]: row["name"] for row in snapshot.get("characters", [])}
     names[NARRATION] = "내레이션"
     lead = next((row for row in snapshot.get("characters", []) if row.get("protagonist")), None)
@@ -201,7 +201,7 @@ def page_speakers(regions: list[dict], by_tg: dict, snapshot: dict) -> list[dict
         rid = region.get("region_id")
         if rid is None:
             continue
-        assigned = next((by_tg.get(str(tg)) for tg in region.get("anchor_ids") or [] if by_tg.get(str(tg))), None)
+        assigned = (by_region or {})[region_binding_key(region)] if region_binding_key(region) in (by_region or {}) else next((by_tg.get(str(tg)) for tg in region.get("anchor_ids") or [] if by_tg.get(str(tg))), None)
         if assigned == NARRATION:
             result.append({"region_id": int(rid), "speaker": names[NARRATION], "source": "narration"})
         elif assigned in names:

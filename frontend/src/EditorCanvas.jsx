@@ -5,9 +5,9 @@ import { rectOf, tgId, imageGroups, defaultGuidance, regionId, imageRegions, reg
 import { createViewport } from "./viewportControls.js";
 import { placeCanvasLabels, promotedTgIds } from "./canvasLabels.js";
 import { regionIsExcluded, tgIsExcluded } from "./regionExclusion.js";
-import { TEXT_BASED, regionProcessingBasis, regionTypeLabel } from "./regionTypes.js";
+import { TEXT_BASED, regionProcessingBasis, regionTypeLabel, regionBindingKey } from "./regionTypes.js";
 
-const EditorCanvas = forwardRef(function EditorCanvas({ image, baseUrl, guidance, setGuidance, tool, layers, selectedTg, setSelectedTg, setStatus, speakerLabels }, ref) {
+const EditorCanvas = forwardRef(function EditorCanvas({ image, baseUrl, guidance, setGuidance, tool, layers, selectedTg, setSelectedTg, selectedRegionId, setSelectedRegionId, onToolComplete, setStatus, speakerLabels }, ref) {
   const hostRef = useRef(null);
   const stageRef = useRef(null);
   const imageObjRef = useRef(null);
@@ -20,6 +20,14 @@ const EditorCanvas = forwardRef(function EditorCanvas({ image, baseUrl, guidance
   const guidanceRef = useRef(guidance);
   const layersRef = useRef(layers);
   const selectedTgRef = useRef(selectedTg);
+  const selectedRegionRef = useRef(selectedRegionId);
+  const selectRegionCallbackRef = useRef(setSelectedRegionId);
+  const completeToolRef = useRef(onToolComplete);
+  const lastSelectionClick = useRef(null);
+  const skipClickRef = useRef(false);
+  selectedRegionRef.current = selectedRegionId;
+  selectRegionCallbackRef.current = setSelectedRegionId;
+  completeToolRef.current = onToolComplete;
   // region_id → 화자 이름. 라벨에 붙여 지정 상태를 캔버스에서 바로 본다.
   const speakerLabelsRef = useRef(speakerLabels);
   speakerLabelsRef.current = speakerLabels;
@@ -182,6 +190,24 @@ const EditorCanvas = forwardRef(function EditorCanvas({ image, baseUrl, guidance
     return null;
   }
 
+  function chooseTg(id) {
+    selectedRegionRef.current = null; selectRegionCallbackRef.current(null);
+    selectedTgRef.current = id; setSelectedTg(id);
+    if (id != null) setStatus(`TG${id} 선택`);
+  }
+
+  function chooseRegion(region) {
+    selectedTgRef.current = null; setSelectedTg(null);
+    selectedRegionRef.current = region ? regionId(region) : null;
+    selectRegionCallbackRef.current(selectedRegionRef.current);
+    if (region) setStatus(`R${regionId(region)} 선택`);
+  }
+
+  function completeTool() {
+    toolRef.current = "select";
+    completeToolRef.current?.();
+  }
+
   function findRegionAt(point) {
     if (layersRef.current?.regions === false) return null;
     return [...imageRegions(imageRef.current)].reverse().find((region) => {
@@ -215,8 +241,11 @@ const EditorCanvas = forwardRef(function EditorCanvas({ image, baseUrl, guidance
       return false;
     }
     const latest = guidanceRef.current || defaultGuidance(null);
+    const targetKey = regionBindingKey(region);
     const sourceRegionId = region.source_order ?? region.source_region_id ?? region.region_id;
     const duplicate = (latest.suppressed_regions || []).some((item) => {
+      if (targetKey) return item.target_key === targetKey;
+      if (item.target_key) return false;
       const itemSourceId = item.source_region_id ?? item.source_order;
       return itemSourceId != null && sourceRegionId != null && Number(itemSourceId) === Number(sourceRegionId);
     });
@@ -226,6 +255,7 @@ const EditorCanvas = forwardRef(function EditorCanvas({ image, baseUrl, guidance
     }
     const nextItem = {
       id: `suppress_${Date.now()}`,
+      ...(targetKey ? {target_key: targetKey} : {}),
       type: "region_suppress",
       source_region_id: sourceRegionId,
       display_region_id: region.region_id,
@@ -235,7 +265,8 @@ const EditorCanvas = forwardRef(function EditorCanvas({ image, baseUrl, guidance
       rect,
     };
     const next = { ...latest, suppressed_regions: [...(latest.suppressed_regions || []), nextItem] };
-    setGuidanceWithRightClickUndo(next, `R${regionId(region)} 자동 region 삭제`);
+    setGuidanceWithRightClickUndo(next, `R${regionId(region)} 처리 영역 제외`);
+    chooseRegion(null);
     return true;
   }
 
@@ -286,24 +317,22 @@ const EditorCanvas = forwardRef(function EditorCanvas({ image, baseUrl, guidance
     disableTg(tgId(group));
   }
 
-  // D는 선택 항목에만 작용한다. 포인터 아래 다른 항목을 지우지 않는다.
-  function excludeSelectedTg() {
+  // D와 Delete는 선택한 TG/R에 적용하며 선택이 없으면 D는 아무것도 지우지 않는다.
+  function excludeSelection() {
     if (imageRef.current?.processing_excluded) return false;
-    if (selectedTgRef.current == null) {
-      setStatus("제외할 TG를 먼저 선택하세요");
-      return false;
+    if (selectedRegionRef.current != null) {
+      const region = imageRegions(imageRef.current).find(r => regionId(r) === Number(selectedRegionRef.current));
+      return region ? suppressRegion(region) : false;
     }
-    return disableTg(Number(selectedTgRef.current));
+    if (selectedTgRef.current != null) return disableTg(Number(selectedTgRef.current));
+    setStatus("제외할 TG 또는 R을 먼저 선택하세요");
+    return false;
   }
 
-  // Delete/Backspace: 선택한 TG가 있으면 끄고, 없으면 포인터 아래 항목을 지운다.
+  // Delete/Backspace: 선택한 TG/R을 제외하고, 없으면 포인터 아래 항목을 지운다.
   function deleteSelection() {
     if (imageRef.current?.processing_excluded) return false;
-    const selectedId = Number(selectedTgRef.current);
-    if (selectedTgRef.current != null && Number.isFinite(selectedId)) {
-      disableTg(selectedId);
-      return true;
-    }
+    if (selectedRegionRef.current != null || selectedTgRef.current != null) return excludeSelection();
     const stage = stageRef.current;
     if (!stage || !pointerInsideRef.current || !stage.getPointerPosition()) {
       setStatus("삭제할 선택 없음 (TG를 선택하거나 지울 항목 위에 포인터를 두세요)");
@@ -313,7 +342,11 @@ const EditorCanvas = forwardRef(function EditorCanvas({ image, baseUrl, guidance
     return true;
   }
 
-  function selectedTgRect() {
+  function selectedBounds() {
+    if (selectedRegionRef.current != null) {
+      const region = imageRegions(imageRef.current).find(r => regionId(r) === Number(selectedRegionRef.current));
+      return region ? regionDisplayRect(region) : null;
+    }
     const id = Number(selectedTgRef.current);
     if (selectedTgRef.current == null || !Number.isFinite(id)) return null;
     const group = imageGroups(imageRef.current).find((item) => tgId(item) === id);
@@ -331,7 +364,7 @@ const EditorCanvas = forwardRef(function EditorCanvas({ image, baseUrl, guidance
       return rect ? vpRef.current.ensureVisible(rect) : false;
     },
     zoomToSelection: () => {
-      const rect = selectedTgRect();
+      const rect = selectedBounds();
       if (!rect) {
         setStatus("확대할 선택 TG 없음");
         return false;
@@ -339,7 +372,8 @@ const EditorCanvas = forwardRef(function EditorCanvas({ image, baseUrl, guidance
       return vpRef.current.zoomToRect(rect);
     },
     deleteSelection,
-    excludeSelectedTg,
+    excludeSelection,
+    ensureRegionVisible: region => vpRef.current.ensureVisible(regionDisplayRect(region)),
   }));
 
   function addLine(kind, start, end, tg) {
@@ -543,12 +577,6 @@ const EditorCanvas = forwardRef(function EditorCanvas({ image, baseUrl, guidance
           fill: "rgba(37,99,235,0.015)",
           listening: true,
         });
-        rect.on("click tap", (evt) => {
-          evt.cancelBubble = true;
-          setSelectedTg(id);
-          selectedTgRef.current = id;
-          setStatus(`TG${id} 선택`);
-        });
         overlay.add(rect);
         obstacles.push(r);
         // Region에 연결된 TG 번호는 중복 표시하지 않고, 선택한 TG만 따로 확인한다.
@@ -564,7 +592,7 @@ const EditorCanvas = forwardRef(function EditorCanvas({ image, baseUrl, guidance
         const r = toStageRect(rect);
         const isTextBased = regionProcessingBasis(region) === TEXT_BASED;
         const color = overlayRegionColor(region);
-        const regionSelected = (region.anchor_ids || []).map(Number).includes(Number(selectedTgRef.current));
+        const regionSelected = selectedRegionRef.current != null && regionId(region) === Number(selectedRegionRef.current);
         const hasContour = Array.isArray(region.contour) && region.contour.length > 1;
         const tint = `${color}${regionSelected ? "2b" : "17"}`;
         overlay.add(new Konva.Rect({
@@ -658,11 +686,19 @@ const EditorCanvas = forwardRef(function EditorCanvas({ image, baseUrl, guidance
           fill:label.color, opacity:.25, listening:false}));
       }
       const text = label.outside ? label.gutterText || label.text : label.text;
-      const node = new Konva.Label({x:label.x, y:label.y, listening:false, name:"annotation-label",
+      const node = new Konva.Label({x:label.x, y:label.y, listening:true, name:"annotation-label",
         opacity:label.outside || label.selected ? .95 : .46});
       node.add(new Konva.Tag({fill:label.outside ? "#f8fafc" : "#ffffff", opacity:label.outside ? .95 : .35, cornerRadius:3}));
       node.add(new Konva.Text({text, fontSize:11, fontStyle:label.kind === "region" ? "bold" : "normal",
         fill:label.color, padding:3, width:label.width, height:label.height, ellipsis:true, wrap:"none"}));
+      node.on("click tap", evt => {
+        if (toolRef.current !== "select") return;
+        evt.cancelBubble = true;
+        if (label.kind === "region") {
+          const region = imageRegions(imageRef.current).find(r => `R${regionId(r)}` === label.id);
+          if (region) chooseRegion(region);
+        } else chooseTg(Number(label.id.replace("TG", "")));
+      });
       overlay.add(node);
     });
     stage.draw();
@@ -716,7 +752,7 @@ const EditorCanvas = forwardRef(function EditorCanvas({ image, baseUrl, guidance
     stage.on("dblclick dbltap", () => {
       if (!imageObjRef.current || !stage.getPointerPosition()) return;
       const point = pointerToImage(stage);
-      if (findGuideAt(point) || findTgAt(point)) return;
+      if (findGuideAt(point) || findTgAt(point) || findRegionAt(point)) return;
       vp.fit();
     });
     stage.on("mousedown touchstart", (evt) => {
@@ -746,10 +782,12 @@ const EditorCanvas = forwardRef(function EditorCanvas({ image, baseUrl, guidance
       dragRef.current = null;
       setDragPreview(null);
       const currentTool = toolRef.current;
+      const before = guidanceRef.current;
       if (currentTool === "tg-split") addLine("tg_split", start, end, tg);
       if (currentTool === "wall") addEdgeBarrierBox(start, end);
       if (currentTool === "region-split") addLine("split", start, end);
       if (currentTool === "ubox") addManualRegion("ubox", start, end);
+      if (guidanceRef.current !== before) { skipClickRef.current = true; setTimeout(() => { skipClickRef.current = false; }, 0); completeTool(); }
     });
     stage.on("click tap", (evt) => {
       if (evt.evt?.button === 2) {
@@ -757,22 +795,26 @@ const EditorCanvas = forwardRef(function EditorCanvas({ image, baseUrl, guidance
         evt.cancelBubble = true;
         return;
       }
+      if (skipClickRef.current) { skipClickRef.current = false; return; }
       const currentTool = toolRef.current;
       if (imageRef.current?.processing_excluded) return;
       const point = pointerToImage(stage);
       if (currentTool === "bubble") {
         addBoundarySeed(point);
+        completeTool();
         return;
       }
       if (currentTool !== "select") return;
-      const group = findTgAt(point);
-      // TG 밖의 말풍선 안쪽을 눌러도 그 영역의 첫 TG를 선택해 화자 지정 대상으로 삼는다.
-      const region = !group && currentTool === "select" ? findRegionAt(point) : null;
-      if (!group && !region?.anchor_ids?.length) return;
-      const id = group ? tgId(group) : Number(region.anchor_ids[0]);
-      setSelectedTg(id);
-      selectedTgRef.current = id;
-      setStatus(`TG${id} 선택`);
+      const groups = layersRef.current?.tg === false ? [] : [...imageGroups(imageRef.current)].reverse().filter(g => !tgIsExcluded(g,guidanceRef.current) && rectContains(rectOf(g),point));
+      const regions = layersRef.current?.regions === false ? [] : [...imageRegions(imageRef.current)].reverse().filter(r => !regionIsExcluded(r,guidanceRef.current) && rectContains(regionDisplayRect(r),point));
+      const hits = [...groups.map(group=>({kind:"tg",id:tgId(group),group})),...regions.map(region=>({kind:"region",id:regionId(region),region}))];
+      if (!hits.length) { chooseTg(null); lastSelectionClick.current = null; return; }
+      const last = lastSelectionClick.current;
+      const repeat = last && Math.hypot(point.x-last.x,point.y-last.y)*(transformRef.current?.scale||1)<5 && Date.now()-last.time<1800;
+      const current = hits.findIndex(hit => hit.kind === "tg" ? selectedTgRef.current != null && hit.id===Number(selectedTgRef.current) : selectedRegionRef.current != null && hit.id===Number(selectedRegionRef.current));
+      const hit = evt.evt?.altKey && regions.length ? {kind:"region",region:regions[0]} : hits[repeat ? (current+1)%hits.length : 0];
+      if (hit.kind === "tg") chooseTg(hit.id); else chooseRegion(hit.region);
+      lastSelectionClick.current = {...point,time:Date.now()};
     });
 
     return () => {
@@ -810,10 +852,10 @@ const EditorCanvas = forwardRef(function EditorCanvas({ image, baseUrl, guidance
 
   useEffect(() => {
     redraw();
-  }, [image, guidance, tool, layers, selectedTg, dragPreview, speakerLabels]);
+  }, [image, guidance, tool, layers, selectedTg, selectedRegionId, dragPreview, speakerLabels]);
 
   const menuAction = action => { setContextMenu(null); action(); };
-  const automaticRegion = contextMenu?.region && !String(contextMenu.region.source_method || contextMenu.region.method || "").startsWith("manual_");
+  const automaticRegion = contextMenu?.region;
   return <><div id="stageHost" tabIndex="0" className={["tg-split", "wall", "region-split", "ubox", "bubble"].includes(tool) ? "drawing" : ""} ref={hostRef} />
     {contextMenu && createPortal(<div role="menu" aria-label="영역 편집 메뉴" ref={menuRef} className="canvas-context-menu"
       style={{left:contextMenu.x,top:contextMenu.y}} onContextMenu={event => event.preventDefault()} onKeyDown={event => {
@@ -827,8 +869,10 @@ const EditorCanvas = forwardRef(function EditorCanvas({ image, baseUrl, guidance
       }}>
       <div className="canvas-context-heading">{contextMenu.region ? `R${regionId(contextMenu.region)}` : "캔버스"}{contextMenu.group ? ` · TG${tgId(contextMenu.group)}` : ""}</div>
       {contextMenu.guide && <button role="menuitem" onClick={() => menuAction(() => setGuidanceWithRightClickUndo(removeGuide(contextMenu.guide), `${guideLabel(contextMenu.guide)} 삭제`))}>이 가이드 삭제</button>}
+      {contextMenu.group && <button role="menuitem" onClick={() => menuAction(() => chooseTg(tgId(contextMenu.group)))}>이 TG 선택</button>}
+      {contextMenu.region && <button role="menuitem" onClick={() => menuAction(() => chooseRegion(contextMenu.region))}>이 처리 영역 선택</button>}
       {contextMenu.group && <button role="menuitem" onClick={() => menuAction(() => disableTg(tgId(contextMenu.group)))}>이 TG 제외</button>}
-      <button role="menuitem" disabled={!automaticRegion} title={contextMenu.region && !automaticRegion ? "직접 지정한 영역은 해당 가이드를 삭제하세요" : "현재 자동 처리 영역 제외"} onClick={() => menuAction(() => suppressRegion(contextMenu.region))}>이 처리 영역 제외</button>
+      <button role="menuitem" disabled={!automaticRegion} title="이 처리 영역 제외" onClick={() => menuAction(() => suppressRegion(contextMenu.region))}>이 처리 영역 제외</button>
       <button role="menuitem" onClick={() => menuAction(() => vpRef.current.fit())}>화면 맞춤</button>
     </div>, document.body)}
   </>;

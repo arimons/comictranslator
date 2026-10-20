@@ -1544,6 +1544,9 @@ def _suppression_rect(item: Dict[str, Any]) -> List[int] | None:
 
 
 def _suppression_matches_region(item: Dict[str, Any], region: Dict[str, Any]) -> bool:
+    if item.get("target_key"):
+        from pipeline.region_types import region_binding_key
+        return item["target_key"] == region_binding_key(region)
     method = str(region.get("method") or "")
     if method.startswith("manual_"):
         return False
@@ -2854,6 +2857,9 @@ def build_dialogue_sheet(
     _invalidate_suppressed_regions(regions, suppressed_regions or [])
     suppressed_tg_ids = _suppressed_text_group_ids(groups, regions, suppressed_regions or [])
     regions = _split_manual_seed_regions(regions, groups, manual_split_guides or [], image_shape=image.shape[:2])
+    # 분리된 R 직접 제외도 부모 전체가 아닌 해당 자식에만 반영한다.
+    _invalidate_suppressed_regions(regions, [item for item in suppressed_regions or [] if item.get("target_key")])
+    suppressed_tg_ids.update(_suppressed_text_group_ids(groups, regions, suppressed_regions or []))
     source_meta_by_anchor: Dict[int, Dict[str, Any]] = {}
     for source_region in sheet.get("regions", []):
         for aid in source_region.get("anchor_ids", []):
@@ -2970,6 +2976,8 @@ def build_dialogue_sheet(
     manual_unboxed_tg_ids: set[int] = set()
     group_by_id = {_tg_id(group, idx): group for idx, group in enumerate(groups, start=1)}
     for item in manual_unboxed_crops:
+        if any(_suppression_matches_region(excluded, item) for excluded in suppressed_regions or [] if excluded.get("target_key")):
+            continue
         crops.append(item)
         manual_unboxed_tg_ids.update(int(tid) for tid in item.get("anchor_ids", []))
         if not _apply_manual_ubox_lama(image, masked_image, item, group_by_id):

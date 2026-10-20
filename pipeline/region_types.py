@@ -38,3 +38,14 @@ def regions_with_processing_basis(payload: Any) -> Any:
     if not isinstance(payload, dict) or not isinstance(payload.get("regions"), list):
         return payload
     return {**payload, "regions": [with_processing_basis(r) if isinstance(r, dict) else r for r in payload["regions"]]}
+
+
+def region_binding_key(region: Mapping[str, Any]) -> str:
+    """재번호화와 TG 제외에 독립적인 페이지 내부 영역 식별자. 범위가 변하면 재지정한다."""
+    import json
+    basis = region_processing_basis(region) or LEGACY_TYPE_TO_BASIS.get(region.get("region_type_guess"))
+    if basis is None:
+        basis = BOUNDARY_BASED if region.get("bubble_rect") else TEXT_BASED if region.get("unboxed_rect") else None
+    method = region.get("source_method") or region.get("method") or ""
+    rect = region.get("bubble_rect") or region.get("unboxed_rect") or region.get("erase_rect") or region.get("source_rect") or []
+    return json.dumps([basis, method, [int(v) for v in rect[:4]]], ensure_ascii=False, separators=(",", ":"))

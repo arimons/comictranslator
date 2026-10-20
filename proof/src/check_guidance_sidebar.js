@@ -29,7 +29,7 @@ async(page)=>{
    const b=document.getElementById('stageHost').getBoundingClientRect(),s=Math.min(b.width/n.naturalWidth,b.height/n.naturalHeight)*.98;
    return {x:b.x+(b.width-n.naturalWidth*s)/2+(rect[0]+rect[2]/2)*s,y:b.y+(b.height-n.naturalHeight*s)/2+(rect[1]+rect[3]/2)*s};
   },rect);
-  await p.mouse.click(target.x,target.y);
+  await p.mouse.click(target.x,target.y);await p.mouse.click(target.x,target.y);
   await tools.locator('.speaker-section button').first().waitFor();
   if(await tools.locator('.speaker-section button:enabled').count()<2)throw Error('선택 후 화자 지정 없음');
   const cv=tools.getByRole('textbox',{name:'선택 영역 CV 텍스트',exact:true});

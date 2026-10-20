@@ -121,3 +121,5 @@ python proof/src/smoke_editor_mcp.py SESSION_ID IMAGE_ID --region REGION_ID
 자동 Region 제외 기록은 suppressed_regions에 남는다. 이는 실제 처리 대상이 남았다는 뜻이 아니다. 최신 Step 3은 해당 TG를 텍스트 기반 fallback에서도 제외하며, inspect_page의 regions·ocr_region_count와 기록을 구분해 읽는다.
 
 inspect_page는 페이지별 processing_excluded를 함께 반환한다. work/page_policy의 내용도 revision에 포함한다. 페이지 전체 제외는 TG/Region 개별 편집 기록을 삭제하지 않으며, 생성 요청은 처리 대상으로 복원한 뒤 준비해야 한다.
+
+편집기 UI의 새 화자 지정은 R 단위(by_region)이며 구 by_tg를 호환용으로 읽는다. CV가 없어도 분석 적용으로 만든 수동 R은 지정 가능하다. MCP의 기존 조회·검토 초안 도구가 곧바로 화자를 쓰거나 적용하는 것은 아니다. 새 target_key R 제외는 선택된 범위/검출 방식만 대상으로 하며 구 제외 기록도 계속 읽는다.

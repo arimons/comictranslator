@@ -4,7 +4,7 @@ export { BOUNDARY_BASED, TEXT_BASED, regionProcessingBasis, regionTypeLabel } fr
 export const TOOL_LABELS = [
   ["select", "선택"],
   ["hand", "화면 이동"],
-  ["tg-delete", "선택한 TG 제외"],
+  ["tg-delete", "선택한 TG/R 제외"],
   ["tg-split", "TG 분할"],
   ["wall", "Edge 장벽"],
   ["bubble", "경계 기반 시작점"],

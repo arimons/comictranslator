@@ -62,7 +62,7 @@ async(page)=>{
   await preview.screenshot({path:'proof/misc/toolbar-contextmenu.png',scale:'css'});
   await preview.getByRole('menuitem',{name:'이 처리 영역 제외',exact:true}).click();
   if((await read()).suppressed_regions.length!==1)throw new Error('R 제외 미반영');
-  if((await pixels())!==deleted)throw new Error('R 제외 시 TG가 남거나 삭제 상자가 남음');
+  if((await pixels())===deleted)throw new Error('R만 제외했는데 독립 TG까지 숨김');
   await preview.keyboard.press('Meta+z');await preview.waitForTimeout(80);
   if((await pixels())!==initial)throw new Error('R 제외 Undo 복원 실패');
   await preview.mouse.click(target.x,target.y);await preview.keyboard.press('Backspace');
@@ -74,7 +74,7 @@ async(page)=>{
   if(applyCount!==1)throw new Error(`명시적 적용 횟수 ${applyCount}`);
   if(await preview.locator('.floating-toolbox button').count()!==8)throw new Error('R 제거 도구가 툴바에 남음');
   if(errors.length||unexpected.length)throw new Error(JSON.stringify({errors,unexpected}));
-  return {ok:true,applyCount,checks:['E B S U 순서','S 모드 진입','D는 선택 TG에만 적용하고 모드 유지','TG 삭제와 R 숨김','Cmd+Z 픽셀 복원','우클릭만으로 삭제 안 함','R 제외와 연결 TG 숨김','일반 Enter 차단','Cmd+Enter 한 번만 실행','툴바 8개'],errors,unexpected};
+  return {ok:true,applyCount,checks:['E B S U 순서','S 모드 진입','D는 선택 대상에 적용하고 모드 유지','TG 삭제와 R 숨김','Cmd+Z 픽셀 복원','우클릭만으로 삭제 안 함','R만 제외하고 독립 TG 유지','일반 Enter 차단','Cmd+Enter 한 번만 실행','툴바 8개'],errors,unexpected};
  }finally{
   await preview.close();
   for(const p of page.context().pages()){p.removeAllListeners('filechooser');const c=await p.context().newCDPSession(p);await c.send('Page.setInterceptFileChooserDialog',{enabled:false});await c.detach();}

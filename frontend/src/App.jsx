@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import EditorCanvas from "./EditorCanvas.jsx";
 import OverlayCanvas from "./OverlayCanvas.jsx";
 import RegionTypeBadge from "./RegionTypeBadge.jsx";
-import { TEXT_BASED, regionProcessingBasis, regionTypeLabel, regionDetectionLabel } from "./regionTypes.js";
+import { TEXT_BASED, regionProcessingBasis, regionTypeLabel, regionDetectionLabel, regionBindingKey } from "./regionTypes.js";
 import { RestoreControls, RestoreStage, useRestore } from "./RestorePanel.jsx";
 import ShortcutHelp from "./ShortcutHelp.jsx";
 import StartScreen from "./StartScreen.jsx";
@@ -84,6 +84,7 @@ export default function App() {
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [tool, setTool] = useState("select");
   const [selectedTg, setSelectedTg] = useState(null);
+  const [selectedGuidanceRegionId, setSelectedGuidanceRegionId] = useState(null);
   const [selectedRegionId, setSelectedRegionId] = useState(null);
   const [guidance, setGuidance] = useState(defaultGuidance(null));
   const [overlayGuidance, setOverlayGuidance] = useState(defaultOverlayGuidance(null));
@@ -126,6 +127,7 @@ export default function App() {
   // 작품 메모(인물 표)와 현재 페이지의 TG별 화자 지정
   const [workMemo, setWorkMemo] = useState(null);
   const [speakerByTg, setSpeakerByTg] = useState({});
+  const [speakerByRegion, setSpeakerByRegion] = useState({});
   const [speakerPickerOpen, setSpeakerPickerOpen] = useState(false);
   const [shortcutToast, setShortcutToast] = useState(null);
   const fileRef = useRef(null);
@@ -208,25 +210,28 @@ export default function App() {
     const lead = (workMemo?.characters || []).find((row) => row.protagonist);
     const labels = {};
     guidanceRegions.forEach((region) => {
-      const assigned = (region.anchor_ids || []).map((id) => speakerByTg[String(id)]).find((id) => names[id]);
+      const key = regionBindingKey(region);
+      const assigned = Object.hasOwn(speakerByRegion,key) ? speakerByRegion[key] : (region.anchor_ids || []).map((id) => speakerByTg[String(id)]).find((id) => names[id]);
       // 텍스트 기반 영역의 자동 기본값은 괄호로 구분한다.
       if (assigned) labels[regionId(region)] = names[assigned];
       else if (lead && regionProcessingBasis(region) === TEXT_BASED) labels[regionId(region)] = `(${lead.name})`;
     });
     return labels;
-  }, [workMemo, speakerByTg, guidanceRegions]);
-  const selectedGuidanceRegion = selectedTg == null ? null
-    : guidanceRegions.find((region) => (region.anchor_ids || []).map(Number).includes(Number(selectedTg))) || null;
+  }, [workMemo, speakerByTg, speakerByRegion, guidanceRegions]);
+  const selectedGuidanceRegion = selectedGuidanceRegionId != null
+    ? guidanceRegions.find(region => regionId(region) === Number(selectedGuidanceRegionId)) || null
+    : null;
   const selectedCvGroups = imageGroups(selected).filter((group) => (selectedGuidanceRegion?.anchor_ids || [selectedTg]).map(Number).includes(tgId(group)));
   const selectedCvText = selectedCvGroups.map((group) => group.text || (group.lines || []).map((line) => line.text || (line.fragments || []).map((fragment) => fragment.text || "").join("")).filter(Boolean).join("\n")).filter(Boolean).join("\n\n");
   const selectedPageId = selected?.id || "";
 
   useEffect(() => {
     setSpeakerByTg({});
+    setSpeakerByRegion({});
     if (!sessionId || !selectedPageId) return undefined;
     let alive = true;
     api(`/api/speakers/${encodeURIComponent(sessionId)}/${encodeURIComponent(selectedPageId)}`)
-      .then((result) => { if (alive) setSpeakerByTg(result.by_tg || {}); })
+      .then((result) => { if (alive) { setSpeakerByTg(result.by_tg || {}); setSpeakerByRegion(result.by_region || {}); } })
       .catch(() => {});
     return () => { alive = false; };
   }, [sessionId, selectedPageId]);
@@ -668,18 +673,16 @@ export default function App() {
   }
 
   function selectGuidanceRegion(region, index, total) {
-    const tg = Number(region.anchor_ids?.[0]);
-    if (!Number.isFinite(tg)) return false;
-    setSelectedTg(tg);
-    editorCanvasRef.current?.ensureTgVisible(tg);
+    setSelectedTg(null);
+    setSelectedGuidanceRegionId(regionId(region));
+    editorCanvasRef.current?.ensureRegionVisible(region);
     setStatus(`R${regionId(region)} 선택 (${index + 1}/${total})`);
     return true;
   }
 
   // 영역 분석 탭: 읽는 순서(region 번호)로 이동. onlyBoundary면 경계 기반 영역만 고른다.
   function cycleGuidanceRegion(step, onlyBoundary = false) {
-    const list = guidanceRegions.filter((region) => region.anchor_ids?.length
-      && (!onlyBoundary || regionProcessingBasis(region) !== TEXT_BASED));
+    const list = guidanceRegions.filter((region) => !onlyBoundary || regionProcessingBasis(region) !== TEXT_BASED);
     if (!list.length) return false;
     const current = selectedGuidanceRegion ? regionId(selectedGuidanceRegion) : null;
     let next;
@@ -723,25 +726,20 @@ export default function App() {
       characterId = row.id;
       name = row.name;
     }
-    const tgIds = (region.anchor_ids || []).map(Number);
     const pageId = selectedPageId;
     // 화면을 먼저 갱신하고 저장은 뒤에서 한다. 실패하면 서버 값으로 되돌린다.
-    setSpeakerByTg((current) => {
-      const next = { ...current };
-      tgIds.forEach((id) => { if (characterId) next[String(id)] = characterId; else delete next[String(id)]; });
-      return next;
-    });
+    setSpeakerByRegion((current) => ({...current,[regionBindingKey(region)]:characterId || null}));
     setStatus(`R${regionId(region)} 화자: ${name}`);
     if (slot !== 0) cycleGuidanceRegion(1, true);
     try {
       const result = await api("/api/speakers", { method: "POST", body: JSON.stringify({
-        session_id: sessionId, image_id: pageId, tg_ids: tgIds, character_id: characterId,
+        session_id: sessionId, image_id: pageId, region_id: regionId(region), region_key: regionBindingKey(region), character_id: characterId,
       }) });
-      if (selectedIdRef.current === pageId || !selectedIdRef.current) setSpeakerByTg(result.by_tg || {});
+      if (selectedIdRef.current === pageId || !selectedIdRef.current) { setSpeakerByTg(result.by_tg || {}); setSpeakerByRegion(result.by_region || {}); }
     } catch (err) {
       setStatus(`화자 저장 실패: ${err.message}`);
       api(`/api/speakers/${encodeURIComponent(sessionId)}/${encodeURIComponent(pageId)}`)
-        .then((result) => setSpeakerByTg(result.by_tg || {})).catch(() => {});
+        .then((result) => { setSpeakerByTg(result.by_tg || {}); setSpeakerByRegion(result.by_region || {}); }).catch(() => {});
     }
     return true;
   }
@@ -974,7 +972,7 @@ export default function App() {
     setOverlayEditVersion(nextVersion);
     // 이전 페이지에서 대기 중이던 floating editor 적용 요청은 버린다.
     handledOverlayApplyRequestRef.current = overlayApplyRequest;
-    setSelectedTg(null);
+    setSelectedTg(null); setSelectedGuidanceRegionId(null);
     setSelectedRegionTracked(null);
   }, [selectedDetailKey]);
 
@@ -1096,7 +1094,7 @@ export default function App() {
     regionSelected: () => Boolean(selectedRegionRefValue()),
     nothingSelected: () => {
       if (activeTab === "overlay") return !selectedRegionRefValue() && !overlayCanvasRef.current?.hasSelectedEraser();
-      if (activeTab === "guidance") return selectedTg == null;
+      if (activeTab === "guidance") return selectedTg == null && selectedGuidanceRegionId == null;
       return true;
     },
     inFloatingEditor: (event) => Boolean(event.target?.closest?.(".floating-text-editor")),
@@ -1140,8 +1138,8 @@ export default function App() {
         }
         return false;
       }
-      if (selectedTg != null) {
-        setSelectedTg(null);
+      if (selectedTg != null || selectedGuidanceRegionId != null) {
+        setSelectedTg(null); setSelectedGuidanceRegionId(null);
         setStatus("선택 해제");
         return true;
       }
@@ -1154,7 +1152,7 @@ export default function App() {
     },
     undo: () => (activeTab === "overlay" ? stepOverlayHistory(-1) : undoGuidance()),
     redo: () => (activeTab === "overlay" ? stepOverlayHistory(1) : redoGuidance()),
-    "guidance.tg.delete": () => editorCanvasRef.current?.excludeSelectedTg() ?? false,
+    "guidance.tg.delete": () => editorCanvasRef.current?.excludeSelection() ?? false,
     delete: () => {
       if (activeTab === "guidance") return editorCanvasRef.current?.deleteSelection() ?? false;
       if (overlayCanvasRef.current?.hasSelectedEraser()) return overlayCanvasRef.current.deleteSelectedEraser();
@@ -1583,7 +1581,7 @@ export default function App() {
         currentGuidanceRef.current = next;
         setGuidance(next);
         resetGuidanceHistory();
-        setSelectedTg(null);
+        setSelectedTg(null); setSelectedGuidanceRegionId(null);
       }
       return { logs: "영역 분석 산출물 삭제 완료" };
     });
@@ -2087,7 +2085,7 @@ export default function App() {
         const nextSelected = nextImages[Math.min(removedIndex, nextImages.length - 1)] || null;
         setSelectedId(nextSelected?.id || "");
         selectedIdRef.current = nextSelected?.id || "";
-        setSelectedTg(null);
+        setSelectedTg(null); setSelectedGuidanceRegionId(null);
         setSelectedRegionTracked(null);
       }
       return { logs: nextImages.length ? "이미지 제거 완료" : "이미지 제거 완료. 세션에 남은 파일이 없습니다." };
@@ -2183,7 +2181,7 @@ export default function App() {
   function clearUnsavedGuidance() {
     if (!selected) return;
     setGuidanceTracked(defaultGuidance({ ...selected, guidance: {} }), "가이드 전체 비우기");
-    setSelectedTg(null);
+    setSelectedTg(null); setSelectedGuidanceRegionId(null);
     setStatus("화면의 가이드를 모두 비웠습니다. 저장 결과는 분석 적용 시 변경되며, 적용 전에는 실행 취소로 되돌릴 수 있습니다.");
   }
 
@@ -2412,7 +2410,7 @@ export default function App() {
               <div className="card-head editor-head">
                 <div className="editor-title">
                   <span>Analysis Workspace</span>
-                  <strong>{selectedTg ? `TG${selectedTg}` : selectedToolLabel}</strong>
+                  <strong>{selectedGuidanceRegionId != null ? `R${selectedGuidanceRegionId}` : selectedTg ? `TG${selectedTg}` : selectedToolLabel}</strong>
                 </div>
                 <div className="editor-meta">
                   <span>{selected?.processing_excluded ? "페이지 처리 제외 · 원본 출력" : selected?.has_analysis && selected?.ocr_region_count === 0 ? "처리 대상 없음 · 원본 유지" : "Original + live analysis overlay"}</span>
@@ -2429,6 +2427,9 @@ export default function App() {
                   layers={layers}
                   selectedTg={selectedTg}
                 setSelectedTg={setSelectedTg}
+                selectedRegionId={selectedGuidanceRegionId}
+                setSelectedRegionId={setSelectedGuidanceRegionId}
+                onToolComplete={() => setTool("select")}
                 setStatus={setStatus}
                 speakerLabels={speakerLabels}
               />
@@ -2437,8 +2438,8 @@ export default function App() {
                   <button
                     key={id}
                     className={`${tool === id ? "active" : ""} ${["tg-delete","wall"].includes(id) ? "tool-group-start" : ""}`}
-                    onClick={() => id === "tg-delete" ? editorCanvasRef.current?.excludeSelectedTg() : setTool(id)}
-                    disabled={id === "tg-delete" && selectedTg == null}
+                    onClick={() => id === "tg-delete" ? editorCanvasRef.current?.excludeSelection() : setTool(id)}
+                    disabled={id === "tg-delete" && selectedTg == null && selectedGuidanceRegionId == null}
                     aria-pressed={id === "tg-delete" ? undefined : tool === id}
                     aria-label={label}
                     title={`${label} (${(id === "tg-delete" ? shortcutById("guidance.tg.delete") : shortcutFor("guidance", "tool", id))})`}
@@ -2839,14 +2840,14 @@ export default function App() {
         </div>
 
         <div className="section speaker-section">
-          <h2>화자 지정 {selectedGuidanceRegion ? <small>R{regionId(selectedGuidanceRegion)}</small> : selectedTg != null ? <small>TG{selectedTg}</small> : null}</h2>
+          <h2>{selectedTg != null ? "TG 선택" : "화자 지정"} {selectedGuidanceRegion ? <small>R{regionId(selectedGuidanceRegion)}</small> : selectedTg != null ? <small>TG{selectedTg}</small> : null}</h2>
           {selectedGuidanceRegion ? <div className="selected-region-method" style={{borderColor:overlayRegionColor(selectedGuidanceRegion),background:`${overlayRegionColor(selectedGuidanceRegion)}12`}}><span aria-hidden="true" style={{color:overlayRegionColor(selectedGuidanceRegion)}}>● </span>{regionDetectionLabel(selectedGuidanceRegion)}</div> : null}
-          {selectedTg != null ? <div className="selected-cv-context">
-            <div><label htmlFor="selected-cv-text">CV 감지 텍스트</label><span className="speaker-assignment-label">화자: {selectedGuidanceRegion ? speakerLabels[regionId(selectedGuidanceRegion)] || "미지정" : "영역 없음"}</span></div>
+          {selectedTg != null || selectedGuidanceRegion ? <div className="selected-cv-context">
+            <div><label htmlFor="selected-cv-text">CV 감지 텍스트</label><span className="speaker-assignment-label">화자: {selectedGuidanceRegion ? speakerLabels[regionId(selectedGuidanceRegion)] || "미지정" : "R 선택 필요"}</span></div>
             <textarea id="selected-cv-text" aria-label="선택 영역 CV 텍스트" readOnly value={selectedCvText} placeholder="이 영역에 연결된 CV 텍스트가 없습니다." rows={4} />
             <small>자동 인식된 원문 · 인식 오류가 있을 수 있습니다.</small>
           </div> : null}
-          {!selectedGuidanceRegion ? <p className="hint">화자를 지정할 영역을 선택하세요.</p> : speakerCharacters.length ? <div className="speaker-keys">
+          {!selectedGuidanceRegion ? <p className="hint">화자를 지정할 R을 선택하세요. 겹친 곳은 한 번 더 클릭합니다.</p> : speakerCharacters.length ? <div className="speaker-keys">
             {speakerCharacters.map((row, index) => (
               <button key={row.id} disabled={!selectedGuidanceRegion} onClick={() => assignSpeaker(index + 1)} title={row.speech || row.personality || ""}>
                 <kbd>{index + 1}</kbd>{row.name}{row.protagonist ? " ★" : ""}

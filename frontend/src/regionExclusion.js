@@ -1,3 +1,4 @@
+import { regionBindingKey } from "./regionTypes.js";
 // 제외 기록은 재분석 때 유지하되, 적용 완료한 삭제 표시를 캔버스에 계속 남기지 않는다.
 export function pendingRegionExclusions(image, guidance) {
   const applied = new Set((image?.guidance?.suppressed_regions || []).map(item => item.id || JSON.stringify(item)));
@@ -16,17 +17,20 @@ export function tgIsExcluded(group, guidance) {
   if ((guidance?.disabled_tg_ids || []).map(Number).includes(id)) return true;
   const bounds = group.fallback_rect || group.tight_rect || group.bounding_rect;
   return (guidance?.suppressed_regions || []).some(item => {
+    if (item.target_key) return false;
     if (item.anchor_ids?.length && !item.anchor_ids.map(Number).includes(id)) return false;
     return rectCovered(bounds, item.rect || item.unboxed_rect || item.bubble_rect || item.source_rect);
   });
 }
 
 export function regionIsExcluded(region, guidance) {
+  if ((guidance?.suppressed_regions || []).some(item => item.target_key === regionBindingKey(region))) return true;
   if (String(region.source_method || region.method || "").startsWith("manual_")) return false;
   const disabled = new Set((guidance?.disabled_tg_ids || []).map(Number));
   if (region.anchor_ids?.length && region.anchor_ids.every(id => disabled.has(Number(id)))) return true;
   const bounds = region.unboxed_rect || region.bubble_rect || region.erase_rect || region.source_rect;
   return (guidance?.suppressed_regions || []).some(item => {
+    if (item.target_key) return false;
     const r = item.rect || item.unboxed_rect || item.bubble_rect || item.source_rect;
     return rectCovered(bounds, r);
   });

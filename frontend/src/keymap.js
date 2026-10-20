@@ -53,7 +53,7 @@ export const KEYMAP = [
   // 도구
   { id: "guidance.tool.select", context: "guidance", group: "도구", label: "선택", kind: "key", keys: [["V"]], match: { code: "KeyV" }, action: "tool", arg: "select" },
   { id: "guidance.tool.hand", context: "guidance", group: "도구", label: "화면 이동", kind: "key", keys: [["H"]], match: { code: "KeyH" }, action: "tool", arg: "hand" },
-  { id: "guidance.tg.delete", context: "guidance", group: "편집", label: "선택한 TG 제외", kind: "key", keys: [["D"]], match: { code: "KeyD" }, action: "guidance.tg.delete" },
+  { id: "guidance.tg.delete", context: "guidance", group: "편집", label: "선택한 TG/R 제외", kind: "key", keys: [["D"]], match: { code: "KeyD" }, action: "guidance.tg.delete" },
   { id: "guidance.tool.tg-split", context: "guidance", group: "도구", label: "TG 분할", kind: "key", keys: [["T"]], match: { code: "KeyT" }, action: "tool", arg: "tg-split" },
   { id: "guidance.tool.wall", context: "guidance", group: "도구", label: "Edge 장벽", kind: "key", keys: [["E"]], match: { code: "KeyE" }, action: "tool", arg: "wall" },
   { id: "guidance.tool.bubble", context: "guidance", group: "도구", label: "경계 기반 시작점", kind: "key", keys: [["B"]], match: { code: "KeyB" }, action: "tool", arg: "bubble" },
@@ -69,7 +69,7 @@ export const KEYMAP = [
   { id: "edit.undo", context: CANVAS, group: "편집", label: "실행 취소", kind: "key", keys: [["Ctrl", "Z"]], match: { code: "KeyZ", mod: true }, action: "undo" },
   { id: "edit.redo", context: CANVAS, group: "편집", label: "다시 실행", kind: "key", keys: [["Ctrl", "Shift", "Z"]], match: { code: "KeyZ", mod: true, shift: true }, action: "redo" },
   { id: "edit.redo.y", context: CANVAS, group: "편집", label: "다시 실행 (Windows·Linux)", kind: "key", platform: "nonMac", keys: [["Ctrl", "Y"]], match: { code: "KeyY", mod: true }, action: "redo" },
-  { id: "guidance.delete", context: "guidance", group: "편집", label: "선택한 TG를 끄기. 선택이 없으면 포인터 아래 guide/TG/region 삭제", kind: "key", keys: [["Delete"], ["Backspace"]], match: { code: ["Delete", "Backspace"] }, action: "delete" },
+  { id: "guidance.delete", context: "guidance", group: "편집", label: "선택한 TG/R 제외. 선택이 없으면 포인터 아래 guide/TG/region 삭제", kind: "key", keys: [["Delete"], ["Backspace"]], match: { code: ["Delete", "Backspace"] }, action: "delete" },
   { id: "guidance.nextRegion", context: "guidance", group: "화자", label: "다음 영역 선택 (읽는 순서)", kind: "key", keys: [["Tab"]], match: { code: "Tab" }, action: "guidance.cycleRegion", arg: 1 },
   { id: "guidance.prevRegion", context: "guidance", group: "화자", label: "이전 영역 선택", kind: "key", keys: [["Shift", "Tab"]], match: { code: "Tab", shift: true }, action: "guidance.cycleRegion", arg: -1 },
   { id: "guidance.speaker", context: "guidance", group: "화자", label: "선택 영역의 화자를 작품 메모 n번 인물로 지정 후 다음 경계 기반 영역으로 이동 (주인공 1번)", kind: "key", keys: [["1-8"]], match: { code: [1, 2, 3, 4, 5, 6, 7, 8].flatMap(DIGIT_CODES) }, action: "guidance.speaker", arg: "digit" },

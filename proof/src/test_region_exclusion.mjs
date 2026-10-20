@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
-const {pendingRegionExclusions,regionIsExcluded,tgIsExcluded} = await import(`data:text/javascript;base64,${readFileSync('frontend/src/regionExclusion.js').toString('base64')}`);
+const {pendingRegionExclusions,regionIsExcluded,tgIsExcluded} = await import(`data:text/javascript;base64,${Buffer.from(readFileSync('frontend/src/regionExclusion.js','utf8').replace('./regionTypes.js', `data:text/javascript;base64,${readFileSync('frontend/src/regionTypes.js').toString('base64')}`)).toString('base64')}`);
 const exclusion={id:'off1',rect:[10,10,50,50]};
 const guidance={suppressed_regions:[exclusion]};
 assert.equal(pendingRegionExclusions({},guidance).length,1);
@@ -21,3 +21,10 @@ assert.equal(tgIsExcluded(group,{disabled_tg_ids:[]}),false);
 assert.equal(tgIsExcluded(group,{suppressed_regions:[{rect:[10,10,50,50],anchor_ids:[3]}]}),true);
 assert.equal(tgIsExcluded({...group,text_group_id:4},{suppressed_regions:[{rect:[10,10,50,50],anchor_ids:[3]}]}),false);
 console.log('삭제/Undo 미리보기: 일부 TG는 R 유지, 모든 TG 제외 시 R 숨김, 지시 복원 시 재표시, 수동 영역 유지, R 제외 시 연결 TG 숨김 통과');
+const {regionBindingKey} = await import(`data:text/javascript;base64,${readFileSync('frontend/src/regionTypes.js').toString('base64')}`);
+const direct={type:'bubble',source_method:'flood',bubble_rect:[10,10,80,80],anchor_ids:[3]};
+const exact={suppressed_regions:[{target_key:regionBindingKey(direct),rect:direct.bubble_rect,anchor_ids:[3]}]};
+assert.equal(regionIsExcluded(direct,exact),true);
+assert.equal(regionIsExcluded({...direct,bubble_rect:[20,20,30,30]},exact),false);
+assert.equal(tgIsExcluded({text_group_id:3,fallback_rect:[25,25,20,20]},exact),false);
+console.log('정확한 R 제외: 대상만 숨김, 겹친 R/TG 유지 통과');
