@@ -25,6 +25,11 @@
 기존 입력 사본과 CV·분석 캐시도 함께 옮기면 재연결 전 작업 및 캐시 재사용이 가능합니다.
 자세한 이전 방법과 브라우저 업로드 예외는 [원본 참조 안내](INPUT_SOURCES.md)를 참고합니다.
 
+배경 복원 데이터는 `projects/{id}/work/restore/{페이지}/`에 둡니다. `state.json`(확정 패치 목록), `patches/`(확정 패치 PNG),
+`preview.png`(확정 패치를 얹은 미리보기, 영역 분석 탭 "마스크"가 사용), `jobs/{작업 ID}/`(실행 후보)로 나뉩니다.
+AI 글자 지우기 작업은 `jobs/` 안에 보낸 이미지(`ai_erase_request.png`)와 후보(`crop_after.png`)를 남깁니다.
+원본 라이브러리 등록은 `local/hosts/{호스트 ID 해시}/source_roots.json`이며, macOS 호스트 ID는 하드웨어 UUID입니다.
+
 ## JSON 호환
 
 새 manifest는 `project.json`이다. 기존 `session.json`도 읽으며 둘 다 있으면 project.json이 우선이다.

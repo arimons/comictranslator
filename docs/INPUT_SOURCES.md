@@ -47,7 +47,12 @@ input_path는 프로젝트 안의 원래 별칭과 페이지 ID를 유지한다.
 재연결에 CV·번역·이미지 생성 API를 호출하지 않는다.
 
 실제 원본 경로는 데이터 홈 local/hosts/{호스트 식별 해시}/source_roots.json에 둔다.
-COMIC_TRANSLATOR_HOST_ID로 안정적인 호스트 이름을 직접 지정할 수도 있다.
+호스트 식별은 macOS에서는 하드웨어 UUID(`stable_host_id`), 다른 OS에서는 호스트 이름을 쓴다. macOS 호스트 이름은 네트워크에 따라 바뀌어
+(예: `…-MacBook-M3-Pro.local` → `Mac`) 원본 등록을 잃고, 원본 직접 참조 페이지의 서빙이 거부되거나 예비 경로가 없으면 입력 링크가
+'원본 없음'으로 바뀌었기 때문이다. 새 ID의 등록이 없으면 이 기기의 여러 이름(`this_host_names`: 호스트 이름, LocalHostName,
+LocalHostName.local, HostName, ComputerName)으로 저장된 예전 등록만 이어받고, 예전 파일은 남긴다. 다른 기기의 등록은 받지 않는다.
+COMIC_TRANSLATOR_HOST_ID로 호스트 ID를 직접 지정할 수도 있다.
+파일 서빙(`allowed_source`)은 등록된 원본뿐 아니라, 해시가 맞는 예비 경로(`source_fallback_path`)도 등록된 페이지로 인정한다.
 동일한 폴더 구조를 다른 기기에 연결하면 논리 root_id를 유지하고 그 기기의 경로만 등록한다.
 폴더 내부 구조·파일명이 바뀌면 source_ref도 갱신한다. 여러 기기에서 데이터 홈을 복제하더라도 동시에 편집하지 않고 서버 한 대를 실행 주체로 사용한다.
 

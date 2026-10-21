@@ -158,3 +158,33 @@ def test_migration_preview_and_apply_preserve_caches_and_owned_crops(setup,monke
     assert alias.resolve()==image.resolve()
     second=module.migrate(home,[root],True)
     assert second['linked']==0
+
+
+def test_hostname_change_adopts_this_machines_legacy_registry_only(tmp_path,monkeypatch):
+    # 호스트 이름이 바뀌어도(예: '...-Pro.local' → 'Mac') 이 기기의 예전 원본 등록을 이어받는다.
+    import pipeline.source_library as sl
+    home=tmp_path/'data';root=tmp_path/'original';root.mkdir()
+    old=sl.SourceLibrary(home,host_id='Old-Name.local');key=old.register(root)
+    stranger=sl.SourceLibrary(home,host_id='other-machine');stranger.register(tmp_path)
+    monkeypatch.setattr(sl,'stable_host_id',lambda:'hw:TEST-UUID')
+    monkeypatch.setattr(sl,'this_host_names',lambda:('Mac','Old-Name.local'))
+    monkeypatch.delenv('COMIC_TRANSLATOR_HOST_ID',raising=False)
+    lib=sl.SourceLibrary(home)
+    assert set(lib.roots())=={key}  # 다른 기기의 등록은 받지 않는다
+    assert lib.registry.is_file() and old.registry.is_file()  # 예전 파일은 남긴다
+    # 호스트를 직접 지정한 경우(다른 기기 흉내)는 이어받지 않는다
+    assert sl.SourceLibrary(home,host_id='fresh-host').roots()=={}
+
+
+def test_fallback_path_is_served_when_source_root_unknown(setup):
+    home,root,image=setup
+    app.copy_images_into_session([image],'book');base=app.session_dir('book')
+    data=load_json(base/'project.json');item=data['images'][0]
+    cache=home/'cache/input/page.png';cache.parent.mkdir(parents=True,exist_ok=True);cache.write_bytes(image.read_bytes())
+    item['source_ref']={'root_id':'unknown-root','relative_path':'page.png'}
+    item['source_fallback_path']=str(cache)
+    write_json(base/'project.json',data)
+    lib=SourceLibrary(home,host_id='no-roots-host')
+    assert lib.allowed_source(cache,home/'projects')
+    other=home/'cache/input/other.png';Image.new('RGB',(60,80),'black').save(other)
+    assert not lib.allowed_source(other,home/'projects')

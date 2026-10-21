@@ -5,8 +5,12 @@ import hashlib
 import copy
 import json
 import os
+from functools import lru_cache
 from pathlib import Path
 import platform
+import socket
+import subprocess
+import sys
 import threading
 from uuid import uuid4
 from pipeline.manual_guidance import load_json, write_json
@@ -50,15 +54,66 @@ def atomic_link(target,alias):
     finally:temporary.unlink(missing_ok=True)
 
 
+def _host_hash(host_id):
+    return hashlib.sha256(host_id.encode()).hexdigest()[:20]
+
+
+def _scutil(key):
+    try:
+        out=subprocess.run(['scutil','--get',key],capture_output=True,text=True,timeout=3)
+    except (OSError,subprocess.SubprocessError):return ''
+    return out.stdout.strip() if out.returncode==0 else ''
+
+
+@lru_cache(maxsize=1)
+def stable_host_id():
+    """호스트 이름은 네트워크에 따라 바뀐다(예: 'Chang-…-Pro.local' → 'Mac'). 바뀌면 원본 등록을 못 찾아
+    원본 직접 참조 페이지가 서빙 거부되고, 예비 경로가 없으면 입력 링크가 '원본 없음'으로 바뀐다.
+    그래서 macOS는 하드웨어 UUID를 기본 호스트 ID로 쓴다. 다른 OS는 지금처럼 호스트 이름을 쓴다."""
+    if sys.platform=='darwin':
+        try:
+            out=subprocess.run(['ioreg','-rd1','-c','IOPlatformExpertDevice'],capture_output=True,text=True,timeout=3).stdout
+        except (OSError,subprocess.SubprocessError):out=''
+        for line in out.splitlines():
+            if 'IOPlatformUUID' in line and '"' in line:
+                return 'hw:'+line.rsplit('"',2)[-2]
+    return platform.node()
+
+
+@lru_cache(maxsize=1)
+def this_host_names():
+    """이 기기가 지금까지 쓸 수 있었던 이름들. 예전(호스트 이름 기반) 등록을 이어받을 때 같은 기기인지 확인한다."""
+    names={platform.node(),socket.gethostname()}
+    if sys.platform=='darwin':
+        local=_scutil('LocalHostName')
+        names|={local,local+'.local' if local else '',_scutil('HostName'),_scutil('ComputerName')}
+    return tuple(sorted(n for n in names if n))
+
+
 class SourceLibrary:
     def __init__(self,home,host_id=None):
         self.home=Path(home).absolute()
-        host_id=host_id or os.environ.get('COMIC_TRANSLATOR_HOST_ID') or platform.node()
-        host=hashlib.sha256(host_id.encode()).hexdigest()[:20]
-        self.registry=self.home/'local/hosts'/host/'source_roots.json'
+        explicit=host_id or os.environ.get('COMIC_TRANSLATOR_HOST_ID')
+        self.registry=self.home/'local/hosts'/_host_hash(explicit or stable_host_id())/'source_roots.json'
+        # 생성자에 호스트를 직접 지정하면(테스트·다른 기기 흉내) 예전 등록을 이어받지 않는다.
+        self._legacy=() if host_id else tuple(
+            self.home/'local/hosts'/_host_hash(name)/'source_roots.json' for name in this_host_names())
 
     def roots(self):
+        if not self.registry.exists() and self._legacy:
+            self._adopt_legacy()
         return load_json(self.registry,{}).get('roots',{})
+
+    def _adopt_legacy(self):
+        """이 기기의 예전 이름으로 저장된 원본 등록을 새 호스트 ID로 옮긴다. 예전 파일은 남긴다."""
+        with _LOCK:
+            if self.registry.exists():return
+            roots={}
+            for legacy in self._legacy:
+                if legacy==self.registry or not legacy.is_file():continue
+                for key,value in load_json(legacy,{}).get('roots',{}).items():
+                    roots.setdefault(key,value)
+            if roots:write_json(self.registry,{'version':1,'roots':roots})
 
     def register(self,root,preferred_id=None):
         root=Path(root).expanduser().resolve()
@@ -120,6 +175,21 @@ class SourceLibrary:
                 candidate=self.target(ref,roots)
                 try:
                     if candidate and candidate.resolve()==path and digest(path)==item.get('image_sha256'):return True
+                except (OSError,ValueError):continue
+        return self._allowed_fallback(path,projects)
+
+    def _allowed_fallback(self,path,projects=None):
+        """프로젝트를 열 때(refresh)처럼, 해시가 맞는 예비 경로(source_fallback_path)도 등록된 페이지로 인정한다.
+        원본 등록을 잃어도 입력은 예비 경로로 이어지는데 서빙만 거부되던 어긋남을 막는다."""
+        for metadata in manifest_files(Path(projects or self.home/'projects')):
+            data=load_json(metadata,{})
+            for item in data.get('images',[]):
+                fallback=item.get('source_fallback_path')
+                if not fallback:continue
+                candidate=Path(fallback)
+                if not candidate.is_absolute():candidate=Path(metadata).parent/candidate
+                try:
+                    if candidate.resolve()==path and digest(path)==item.get('image_sha256'):return True
                 except (OSError,ValueError):continue
         return False
 
