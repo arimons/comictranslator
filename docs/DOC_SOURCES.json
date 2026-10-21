@@ -155,7 +155,7 @@
     },
     "README.md": {
       "role": "hub",
-      "topic": "현재 정본 문서 연결 및 초기 구현 기록 안내",
+      "topic": "현재 React·Konva GUI, 표준 5단계 파이프라인, API 키 인증 및 운영 안내",
       "sources": []
     },
     "docs/editor_mcp.md": {

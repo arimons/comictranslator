@@ -1,634 +1,146 @@
 # Comic Translator Studio
 
-로컬 만화 번역·영역 편집 도구. Python FastAPI 편집기와 React 화면, OCR·번역·글자 입히기 파이프라인을 함께 제공합니다.
+일본어 만화를 한국어로 번역하고, 검출 영역·화자·번역문·글자 배치를 직접 보정하는 웹 편집기입니다.
+현재 GUI는 **FastAPI + React + Konva(Canvas)**이며, 영역 분석·글자인식/번역·글자 입히기·내보내기·배경 복원 탭으로 작업합니다.
 
-```sh
-python3 -m venv .venv
-.venv/bin/pip install -r requirements.txt
-.venv/bin/python app.py --no-browser --port 7873
-```
-
-현재 API 키는 `.env`에 준비합니다. Cloud Vision은 REST API 키 방식이며 Google 인증 JSON은 필요하지 않습니다. 사용자 폰트는 Fonts에 넣습니다.
-작업물과 LaMa 모델은 코드 저장소 밖 `~/ComicTranslator`에 저장됩니다. 테스트·개발은 requirements-dev.txt, Google Batch는 batch/requirements.txt를 별도로 설치합니다. [설치 의존성](docs/DEPENDENCIES.md).
-[원본 직접 참조·재연결](docs/INPUT_SOURCES.md) · [데이터 이전·맥 미니 운영](docs/STORAGE_LAYOUT.md) · [편집기 매뉴얼](docs/editor_manual.html) · [코드 지도](docs/CODEBASE_FILE_MAP.md)
-
----
-
-# Comic Translator — 프로젝트 안내 및 초기 구현 기록
-
-**작성일**: 2025-12-22 | **최종 업데이트**: v89da0d9
-
-일본어 만화를 한국어로 자동 번역하는 AI 기반 번역 시스템입니다.
-
-> **현재 문서 안내 (2026-10-19)**: 현재 사용법은 [편집기 매뉴얼](docs/editor_manual.html), 구조는 [코드베이스 해설](docs/CODEBASE_FILE_MAP.md)과 [파이프라인 해설](docs/pipeline_guide.html)을 기준으로 봅니다. 현재 처리 기준은 **경계 기반 / 텍스트 기반**, 화면은 **R 번호 + 타입 배지**입니다. [용어·호환 변경 기록](docs/REGION_PROCESSING_BASIS_CHANGELOG.md)을 함께 참고하세요.
->
-> 아래 상세 설명은 2025-12-22 초기 구현 기록입니다. 예시의 `location: in_bubble`, 코너 페이드, Gradio 등은 현재 구현을 선언하지 않습니다. 당시의 위치 분류와 현재의 처리 기준은 구분하며, 저장 예시·파일명·알고리즘 이름은 이력을 위해 보존합니다.
-
-
-## 📋 목차
-
-1. [주요 기능](#주요-기능)
-2. [빠른 시작](#빠른-시작)
-3. [상세 설치](#상세-설치)
-4. [사용법](#사용법)
-5. [파이프라인 구조](#파이프라인-구조)
-6. [각 단계 상세 설명](#각-단계-상세-설명)
-7. [데이터 구조](#데이터-구조)
-8. [텍스트 렌더링 로직](#텍스트-렌더링-로직)
-9. [기술 결정사항](#기술-결정사항)
-10. [성능 및 비용](#성능-및-비용)
-11. [트러블슈팅](#트러블슈팅)
-
----
-
-## ✨ 주요 기능
-
-- **작품별 자동 용어집**: 작품 확인 후 웹 조사, 근거 있는 표기 자동 적용, 충돌·불확실 항목만 검토 ([사용법](docs/WORK_GLOSSARY.md))
-- **Grid CV 처리**: 여러 이미지를 한 번의 Cloud Vision API 호출로 처리 (비용 절감)
-- **2-Pass BFS 클러스터링**: Block → Line → Cluster 단계적 그룹화
-- **청크 기반 매칭**: 개행 기준 청크로 문장-클러스터 정확 매칭
-- **가중 글자수 시스템**: 실제 픽셀 너비 기반 렌더링 (한글 1.0, 띄어 0.5, 마침 0.3)
-- **편차 기반 재배열**: 극단적 불균형 자동 감지 및 단어 재배치
-- **코너 페이드 마스킹**: 우측 그래디언트로 자연스러운 텍스트 전환
-- **의미 단위 줄바꿈**: 최소 4글자/줄, 띄어쓰기 기준 자연스러운 줄바꿈
-- **말줄임표 처리**: `...` 또는 `…`을 별도 줄로 분리
-- **짧은 텍스트 중앙 정렬**: 4글자 이하 텍스트는 원본 bbox 중간부터 렌더링
-- **병렬 처리**: 최대 5개 이미지 동시 처리로 빠른 속도
-
----
+2026-10-21 현재 실행 코드 기준. [사용자 매뉴얼](docs/editor_manual.html) · [코드 지도](docs/CODEBASE_FILE_MAP.md) · [파이프라인 해설](docs/pipeline_guide.html)
 
 ## 빠른 시작
 
-### 1. 환경 설정
+새 환경은 Python 3.11을 기준으로 설치합니다. 의존성 제약과 플랫폼별 차이는 [설치 의존성](docs/DEPENDENCIES.md)을 참고하세요.
 
-```bash
-# Python 3.10 이상 필요
-python3 -m venv .venv
-source .venv/bin/activate  # Windows: .venv\Scripts\activate
-
-# 패키지 설치
-pip install -r requirements.txt
+```sh
+python3.11 -m venv .venv
+.venv/bin/python -m pip install -r requirements.txt
 ```
 
-### 2. API 키 설정
+저장소 루트에 `.env`를 만듭니다. 실제 키와 인증 파일은 Git에 올리지 않습니다.
 
-`.env` 파일 생성:
-```bash
-GEMINI_API_KEY=your_gemini_api_key_here
-GOOGLE_APPLICATION_CREDENTIALS=/path/to/your/service-account-key.json
+```dotenv
+# Step 1: Google Cloud Vision REST API
+CLOUD_VISION_API_KEY=your_cloud_vision_api_key
+# Step 4 OCR·번역 및 작품 메모 관련 OpenAI 기능
+OPENAI_API_KEY=your_openai_api_key
+# 선택: 작업 데이터 위치. 기본값은 ~/ComicTranslator
+# COMIC_TRANSLATOR_HOME=/path/to/ComicTranslator
 ```
 
-### 3. 폰트 설치
-
-`Fonts/` 디렉토리에 `Freesentation-4Regular.ttf` 추가
-
-### 4. 실행
-
-```bash
-python3 main.py
-# 브라우저에서 http://localhost:7860 접속
+```sh
+.venv/bin/python app.py --no-browser --port 7873
+# 브라우저에서 http://127.0.0.1:7873 접속
 ```
 
----
+빌드된 프론트엔드 `web/`가 저장소에 포함돼 있어 UI 실행만 할 때 Node.js 빌드는 필요하지 않습니다.
+폰트는 `Fonts/`에서 읽습니다. LaMa 패키지는 requirements에 포함되지만 모델 파일은 별도이며, 모델이 없는 환경에서는 최초 사용 시 다운로드합니다. 기존 모델 캐시를 복사해 재사용할 수 있습니다.
 
-## 상세 설치
+### Cloud Vision 인증과 JSON
 
-### API 인증 설정
+**현재 구현은 `CLOUD_VISION_API_KEY`를 사용하는 REST 방식입니다.** `pipeline/cloud_vision_api.py`가 이 키를 읽고 이미지 한 장씩 요청합니다. 서비스 계정 인증 JSON과 `GOOGLE_APPLICATION_CREDENTIALS`는 현재 표준 CV 경로에서 사용하지 않습니다.
 
-#### Google Gemini API
-1. https://aistudio.google.com/app/apikey 방문
-2. API 키 생성
-3. `.env`에 `GEMINI_API_KEY=` 추가
+`*_cv.json`은 Cloud Vision의 **검출 결과 캐시**이고, `project.json`은 **프로젝트 상태 파일**입니다. 둘 다 인증용 JSON이 아닙니다. 이전 README의 서비스 계정 JSON·Grid CV 인증/실행 안내는 초기 구현에 대한 설명이었습니다.
 
-#### Google Cloud Vision API
-1. Google Cloud Console 접속
-2. Service Account 생성
-3. JSON 키 파일 다운로드
-4. `.env`에 `GOOGLE_APPLICATION_CREDENTIALS=/path/to/key.json` 추가
+## 편집 흐름
 
-### 폰트 선택
+1. **프로젝트 불러오기**: 서버의 원본 폴더 경로로 불러오면 일반 페이지는 복사 없이 참조합니다. 브라우저 파일/폴더 업로드는 서버가 원본 절대 경로를 알 수 없어 프로젝트에 사본을 보관합니다.
+2. **페이지 준비**: 펼침·표지 분할/크롭 미리보기를 확인하고 별도 단일 페이지 프로젝트로 만듭니다. 원본 프로젝트는 유지합니다.
+3. **영역 분석**: CV 텍스트를 TG(Text Group)로 묶고 R(처리 영역)을 검출합니다. Canvas에서 TG/R 선택·제외, Edge 장벽·시작점·분할선·수동 영역으로 보정합니다.
+4. **글자인식/번역**: indexed OCR sheet와 영역 정보를 이용해 OCR·번역합니다. 작품 메모의 용어·인물·말투와 R 단위 화자를 활용합니다.
+5. **글자 입히기·배경 복원**: Canvas에서 번역문·글자 배치·스타일을 보정하고, 필요한 배경 복원 패치를 적용합니다.
+6. **내보내기**: 페이지별 최종 이미지와 ZIP을 출력합니다. 처리 제외 페이지는 원본으로 출력하고 나중에 복원할 수 있습니다.
 
-`render_text_overlay.py`에서 폰트 변경 가능:
-```python
-font_path = "Fonts/YourFont.ttf"  # 다른 폰트 사용 가능
+처리 기준은 **경계 기반 / 텍스트 기반** 두 가지입니다. Edge는 별도 타입이 아닌 경계 검출 방법이며, 화면은 R 번호와 색상으로 구분합니다. 기존 `bubble`·`unboxed` JSON 값과 캐시는 호환을 유지합니다.
+
+삭제·실행 취소는 화면에 즉시 반영하고 무거운 재분석은 **Cmd/Ctrl+Enter**로 모아서 적용합니다. 이미지 생성 권장 페이지는 검토 후 생성 결과를 등록·선택할 수 있으며, 권장 표시만으로 자동 생성하지 않습니다.
+
+단축키·도구별 상세 동작은 [편집기 매뉴얼](docs/editor_manual.html), 영역 용어 이력은 [변경 기록](docs/REGION_PROCESSING_BASIS_CHANGELOG.md)을 참고하세요.
+
+## 표준 파이프라인
+
+이미지마다 아래 다섯 단계를 subprocess로 실행합니다. Step 1은 여러 페이지를 그리드로 합쳐 한 번에 요청하는 방식이 아닙니다.
+
+| 단계 | 실행 모듈 | 입력 → 주요 산출물 |
+|---|---|---|
+| 1. Cloud Vision | `pipeline/cloud_vision_api.py` | 이미지 → `json/{name}_cv.json` |
+| 2. Text Grouping | `pipeline/text_group_builder_v2.py` | CV block → Text Line → TG, `json/{name}_text_groups.json` |
+| 3. 영역 검출·글자 제거 | `pipeline/dialogue_extractor.py` | 경계 기반 검출 / 텍스트 기반 제거 → `json/{name}_regions.json`, `masked/{name}_masked.jpg`, `sheets/{name}_indexed_sheet.jpg` |
+| 4. OCR·번역 | `pipeline/gemini_ocr_translate_v5.py` | indexed OCR sheet + regions → `json/{name}_integrated.json` |
+| 5. 글자 입히기 | `pipeline/render_text_overlay.py` | 번역·영역·배치 정보 → `output_dir/final/{name}_final.jpg` |
+
+Step 3은 FloodFill·Edge 기반 검출, 텍스트 기반 LaMa/Telea 제거, OCR sheet 구성을 담당합니다. Step 4의 파일명에 `gemini`가 남아 있지만 **현재 표준 OCR·번역은 OpenAI 경로**입니다. 모델 기본값·선택지는 코드와 편집기에서 확인합니다. Google Batch는 별도 보존 도구로, 표준 처리와 구분합니다.
+
+배경 복원 패치는 최종 렌더에 합성합니다. 페이지 처리 제외·이미지 생성 결과 선택은 프로젝트의 페이지 정책에 저장합니다. 상세는 [파이프라인 해설](docs/pipeline_guide.html)을 참고하세요.
+
+### CLI
+
+```sh
+# OCR·번역 직전(Step 1–3)까지만 처리. 캐시가 없으면 Cloud Vision API는 호출됩니다.
+.venv/bin/python run_pipeline.py \
+  --input /path/to/pages --output ~/ComicTranslator/cli_output \
+  --work-dir ~/ComicTranslator/cli_work --pre-ocr --keep-cache
+
+# 전체 처리. CV 및 OCR·번역 API 비용이 발생할 수 있습니다.
+.venv/bin/python run_pipeline.py \
+  --input /path/to/pages --output ~/ComicTranslator/cli_output \
+  --work-dir ~/ComicTranslator/cli_work --keep-cache
 ```
 
----
+기본 병렬 수는 4이며 `--workers`로 조정합니다. `--ocr-model`로 OCR·번역 모델을 지정할 수 있습니다. CLI의 가로 이미지 처리는 비율 기준 중앙 분할이며, 편집기의 표지 여백 판정·미리보기와 구분합니다. CLI 자동 분할을 끄려면 `--no-split-landscape`를 사용합니다.
 
-## 사용법
+## 코드와 작업 데이터
 
-### Gradio UI (권장)
+```text
+NEW_COMIC_TRANSLATOR/         코드 저장소
+├── app.py                   FastAPI API·정적 UI 서버
+├── frontend/src/            React·Konva 편집기 소스
+├── web/                     배포 화면·빌드된 JavaScript·CSS
+├── pipeline/                CV·TG·영역·OCR/번역·렌더 엔진
+├── run_pipeline.py          CLI 진입점
+├── scripts/                 MCP·이전·검증 보조 실행기
+├── deploy/pm2/              맥 미니 PM2 설정
+├── tests/                   pytest
+├── docs/                    현재 사용법·설계 문서
+└── reports/                 작업 기록·과거 설명
 
-```bash
-python3 main.py
+~/ComicTranslator/           코드와 분리한 데이터 홈
+├── projects/                project.json, 분할 입력, 편집 상태, 최종 출력
+├── cache/                   CV·분석·LaMa 모델 및 기존 입력 호환 사본
+├── glossaries/              작품 메모·용어집
+├── exports/                 내보낸 파일
+├── local/hosts/             호스트별 원본 폴더 연결
+└── legacy/                  보존한 이전 작업물
 ```
 
-**기능**:
-- 이미지 업로드 (복수 선택 가능)
-- 추가 번역 프롬프트 입력
-- 배치 처리로 여러 이미지 동시 번역
-- 결과 이미지 다운로드 및 ZIP 생성
+일반 페이지는 원본을 읽기 전용 참조하고 분할·크롭 결과만 프로젝트가 소유합니다. 맥 미니에서 경로가 다르면 **원본 연결**에서 폴더를 지정하고 해시가 일치하는 파일만 재연결합니다. CV·분석 캐시와 기존 JSON 호환은 유지하며 `cache/input`을 일괄 삭제하지 않습니다.
 
-### CLI (개별 스크립트)
+[원본 참조·재연결](docs/INPUT_SOURCES.md) · [저장 구조와 이전](docs/STORAGE_LAYOUT.md) · [작품 메모](docs/WORK_GLOSSARY.md) · [이미지 생성 결과 등록](docs/IMAGE_GENERATION_REVIEW.md)
 
-```bash
-# 1. Cloud Vision API
-python3 pipeline/cloud_vision_api.py input.jpg output/image_cv.json
+## 맥 미니 운영과 유지보수
 
-# 2. 클러스터링
-python3 pipeline/cluster_cv_v5.py output/image_cv.json output/image_cv_clusters_v5.json
+상시 서버는 PM2의 `comictranslator`로 관리하고, Tailscale Serve HTTPS를 통해 접속합니다. [PM2 운영 가이드](deploy/pm2/README.md).
 
-# 3. Gemini OCR + 번역 + integrated JSON 생성
-python3 pipeline/gemini_ocr_translate_v5.py input.jpg output/image_cv_clusters_v5.json output/image_integrated.json
+맥북의 코드 수정은 Syncthing으로 맥 미니에 동기화됩니다. Python 변경은 동기화 완료 후 맥 미니에서 `pm2 restart comictranslator`로 반영합니다. 실행 중 작업을 보호하기 위해 PM2 watch는 꺼져 있습니다.
 
-# 4. White Masking
-python3 pipeline/apply_masking.py input.jpg output/image_integrated.json output/image_cv_clusters_v5.json output/image_masked.jpg
+프론트엔드를 수정했다면 먼저 빌드합니다.
 
-# 5. Text Overlay
-python3 pipeline/render_text_overlay.py output/image_masked.jpg output/image_integrated.json output/image_cv_clusters_v5.json output/image_final.jpg
+```sh
+npm --prefix frontend ci
+npm --prefix frontend run build
+# web/ 동기화 완료 후 브라우저 새로고침
 ```
 
----
+`.venv`, `node_modules`, `.git`은 기기별로 관리합니다. 새 Python 의존성은 대상 맥의 `.venv`에도 설치해야 합니다. **데이터 홈 `~/ComicTranslator`는 현재 Syncthing 자동 동기화 대상이 아니며, 실제 운영 데이터는 맥 미니를 기준으로 사용합니다.**
 
-## 파이프라인 구조
+## 개발·MCP·문서
 
-### 전체 아키텍처
-
-```
-┌─────────────────┐
-│  입력 이미지들   │
-│  (JPG/PNG)      │
-└────────┬────────┘
-         │
-         ▼
-┌────────────────────────────────────┐
-│ Step 1: Cloud Vision Grid API     │
-│ • N개 이미지 → 1회 API 호출        │
-│ • 그리드 레이아웃 (3x3, 4x4 등)    │
-│ • 출력: *_cv.json                  │
-└────────┬───────────────────────────┘
-         │
-         ▼
-┌────────────────────────────────────┐
-│ Step 2-6: 병렬 처리 (각 이미지)    │
-│ ThreadPoolExecutor (max 5개)       │
-└────────┬───────────────────────────┘
-         │
-    ├─ Step 2: 클러스터링 V5 (2-Pass BFS)
-    │         출력: *_cv_clusters_v5.json
-    │
-    ├─ Step 3: Gemini OCR + 번역 + integrated JSON 생성
-    │         출력: *_integrated.json
-    │
-    ├─ Step 4: White Masking (코너 페이드)
-    │         출력: *_masked.jpg
-    │
-    └─ Step 5: Text Overlay (가중 글자수)
-              출력: *_final.jpg (최종 결과)
-         │
-         ▼
-┌─────────────────┐
-│  최종 번역 이미지  │
-│  (*_final.jpg)  │
-└─────────────────┘
+```sh
+.venv/bin/python -m pip install -r requirements-dev.txt
+.venv/bin/python -m pytest -q
 ```
 
----
-
-## 각 단계 상세 설명
-
-### Step 1: Cloud Vision Grid API
-
-**목적**: 여러 이미지를 하나의 그리드로 결합하여 1회 API 호출로 처리
-
-**처리 과정**:
-1. N개 이미지 로드
-2. Grid 크기 계산: `cols = ceil(√N)`, `rows = ceil(N/cols)`
-3. 각 이미지를 Grid 셀에 배치
-4. 결합된 이미지로 Cloud Vision API 호출
-5. 각 bbox를 원본 이미지 좌표로 역변환
-6. 이미지별 `*_cv.json` 파일 저장
-
-**비용 절감**:
-- 기존: N개 이미지 = N회 API 호출
-- Grid: N개 이미지 = 1회 API 호출
-- **절감 비율**: ~N배
-
----
-
-### Step 2: 클러스터링 V5
-
-**목적**: CV bbox를 의미있는 텍스트 단위로 그룹화
-
-#### 알고리즘: 2-Pass BFS Clustering
-
-**Pass 1: Block → Line (Y축 확장)**
-- CV에서 감지된 개별 텍스트 블록을 "행(Line)"으로 통합
-- 같은 X 영역에서 세로(Y축)로 인접한 블록 병합
-- 방법: BFS (Breadth-First Search)
-
-```
-Stage 1 조건: Y축 오버랩 + X 근접성
-├─ Y_overlap_ratio > 0.5
-└─ X_distance < avg_width * 1.5
-```
-
-**Pass 2: Line → Cluster (4-Stage Rule)**
-- 라인들을 더 큰 단위(클러스터)로 그룹화
-
-```
-Stage 1: 강한 연결 (거의 같은 위치)
-├─ X_min_diff < 5px
-├─ Y_diff < avg_height
-
-Stage 2: 가운데 인접 (약한 X 오버랩)
-├─ X_overlap_ratio > 0.3
-├─ Y_diff < avg_height * 1.5
-
-Stage 3: 헐거운 인접 (Y만 유사)
-├─ Y_center_diff < avg_height * 2.0
-
-Stage 4: 극단적 경우 (같은 말풍선)
-├─ X_distance < img_width * 0.3
-├─ Y_distance < img_height * 0.3
-```
-
-**Furigana Filtering**: 루비 텍스트(작은 글자) 필터링
-- 조건: 라인 너비 < 상위 글자 너비의 60%
-
----
-
-### Step 3: Gemini OCR + 번역 + Integrated JSON 생성
-
-**목적**: 정확한 일본어 OCR, 문장 분리, 번역, cluster 매칭 결과를 한 번에 생성
-
-**처리 과정**:
-1. 전체 이미지 + cluster 좌표를 Gemini에 전달
-2. 시각적으로 한 문장인 텍스트 조각을 병합
-3. 일본어 → 한국어 번역
-4. 문장별 `matched_cluster` 목록 생성
-5. `union_bbox`와 `matched_cluster_details`를 포함한 integrated JSON 저장
-
-**출력 형식** (`*_integrated.json`):
-```json
-{
-  "clusters": [
-    {
-      "sentence_id": 1,
-      "text": "日本語",
-      "text_translated": "한국어",
-      "matched_cluster": [1, 2],
-      "matched_cluster_details": [],
-      "union_bbox": [100, 120, 80, 240],
-      "bounding_rect": [100, 120, 80, 240],
-      "location": "in_bubble"
-    }
-  ],
-  "unmatched_clusters": []
-}
-```
-
----
-
-### Step 4: White Masking (코너 페이드)
-
-**목적**: 원본 텍스트 영역을 마스킹
-
-#### 마스킹 전략
-
-**초기 구현의 위치 분류: 말풍선 내부 (`in_bubble`)**
-- 코너 페이드 마스킹 (Corner Fade Masking)
-- 우측 모서리에만 투명도 그래디언트 적용
-- 좌측: 100% 불투명, 우측: 50% 투명도로 페이드
-
-```python
-# 거리 기반 그래디언트
-gradient = max(0.0, 1.0 - dist / max_dist)
-# dist = 픽셀과 좌측 모서리 거리
-# max_dist = 우측 모서리까지의 거리
-```
-
-**초기 구현의 위치 분류: 대사 상자 외부**
-- 전체 영역 50% 투명도
-- 균일한 회색 처리
-
----
-
-### Step 5: Text Overlay (텍스트 렌더링)
-
-**목적**: 번역된 한국어 텍스트를 이미지에 자연스럽게 렌더링
-
-#### 핵심 알고리즘
-
-**A. BBox 확장**
-```python
-if line_count < 4:
-    expansion_ratio = 4 / (line_count + 1)
-    expanded_width = bbox_width * expansion_ratio
-else:
-    expanded_width = bbox_width  # 그대로 유지
-```
-
-**B. 가중 글자수 시스템** (최신 개선)
-
-실제 픽셀 측정 결과:
-```
-한글 글자:     26px → 1.0
-띄어쓰기:     25px → 0.5 (약 절반)
-마침표(.!?…): 7px → 0.3 (약 1/3)
-```
-
-구현:
-```python
-def count_chars_weighted(text):
-    punct = '.!?…'
-    weight = 0
-    for c in text:
-        if c == ' ':
-            weight += 0.5
-        elif c in punct:
-            weight += 0.3
-        else:
-            weight += 1.0
-    return weight
-```
-
-**C. 폰트 크기 최적화**
-```python
-for font_size in range(33, 20, -1):
-    max_chars = calculate_max_chars(bbox_width, font_size)
-    lines = split_text_intelligently(text, max_chars)
-    required_height = font_size * len(lines) * 1.3
-
-    if required_height <= bbox_height * 0.95:
-        return font_size, max_chars
-```
-
-범위: 30px ~ 36px (기본 33px ± 3px)
-
-**D. 편차 기반 재배열** (최신 개선)
-
-극단적으로 짧은 줄을 자동 감지하고 균형잡기:
-
-```python
-# 예시
-이전: ['방어도 할', '수', '없겠어.']  (불균형: 4.5 + 1 + 3)
-      ↓
-현재: ['방어도', '할 수', '없겠어.']  (균형: 3 + 2.5 + 3.3)
-```
-
-로직:
-```python
-# 극단적으로 짧은 줄 찾기 (< 1.5 가중수)
-for i, w in enumerate(weights):
-    if w < 1.5 and i > 0:
-        # 앞줄의 마지막 단어를 현재 줄 앞에 추가
-        prev_line_words = lines[i - 1].split()
-        curr_line_words = lines[i].split()
-
-        moved_word = prev_line_words.pop()
-        curr_line_words.insert(0, moved_word)
-```
-
-**E. 의미 단위 줄바꿈**
-
-우선순위:
-1. **말줄임표 분리**: `...` 또는 `…`로 시작하면 별도 줄
-2. **띄어쓰기 우선**: 단어 단위로 분리
-3. **가중 글자수 기준**: 실제 너비 기반 줄바꿈
-4. **균형 조정**: 극단적 불균형 자동 수정
-
-**F. 수직 정렬**
-- 텍스트가 bbox보다 짧으면 중앙 정렬
-- Y 좌표 동적 계산
-
----
-
-## 데이터 구조
-
-### CV JSON (`*_cv.json`)
-```json
-[
-  {
-    "box_2d": [ymin, xmin, ymax, xmax],
-    "label": "認識されたテキスト",
-    "confidence": 0.95
-  }
-]
-```
-
-### CV Clusters V5 (`*_cv_clusters_v5.json`)
-```json
-[
-  {
-    "cluster_id": 1,
-    "orientation": "vertical" | "horizontal",
-    "lines": [
-      {
-        "text": "line text",
-        "box_2d": [ymin, xmin, ymax, xmax]
-      }
-    ],
-    "bounding_rect": [x, y, width, height]
-  }
-]
-```
-
-### Integrated V3 (`*_integrated.json`)
-```json
-{
-  "clusters": [
-    {
-      "cluster_id": 1,
-      "matched_sentence_id": 1,
-      "text_original": "日本語",
-      "text_translated": "한국어",
-      "union_bbox": [x, y, w, h],
-      "match_score": 0.9,
-      "line_count": 2,
-      "text_type": "dialogue",
-      "location": "in_bubble"
-    }
-  ]
-}
-```
-
----
-
-## 텍스트 렌더링 로직
-
-### 렌더링 파이프라인
-
-1. **BBox 확장** (Line 개수 기반)
-2. **폰트 크기 계산** (Width, Height 기반)
-3. **가중 글자수 계산** (실제 픽셀 너비 반영)
-4. **의미 단위 줄바꿈** (띄어쓰기, 마침표 기준)
-5. **편차 기반 재배열** (극단적 불균형 수정)
-6. **수직 정렬** (중앙 또는 전체)
-7. **렌더링** (PIL + 저장)
-
----
-
-## 기술 결정사항
-
-### 1. 2-Pass BFS Clustering (vs 3-Pass)
-- **선택**: 2-Pass (Block → Line → Cluster)
-- **이유**: 3-Pass는 과도한 분할 유발, 2-Pass가 최적 성능
-
-### 2. 가중 글자수 시스템 (vs 단순 글자수)
-- **선택**: 가중 글자수 (한글 1.0, 띄어 0.5, 마침 0.3)
-- **이유**: 실제 픽셀 너비 반영, 더 정확한 레이아웃
-
-### 3. 코너 페이드 마스킹 (vs 균일 마스킹)
-- **선택**: 코너 페이드 (우측 그래디언트)
-- **이유**: 자연스러운 텍스트 렌더링, 시각적 완성도 향상
-
-### 4. 청크 기반 매칭 (vs 전체 문장 매칭)
-- **선택**: 청크 기반 (개행 기준 분리)
-- **이유**: 정확한 bbox 확장, CV 누락 글자 정확 감지
-
-### 5. Gemini 통합 (OCR + 번역)
-- **선택**: 한 번의 API 호출
-- **이유**: 비용 절감 (30% 감소), 성능 향상 (50% 시간 단축)
-
----
-
-## 성능 및 비용
-
-### 처리 시간
-
-| 단계 | 소요 시간 |
-|------|----------|
-| CV API | ~2초 |
-| 클러스터링 | ~0.5초 |
-| Gemini (OCR + 번역) | ~10-15초 |
-| 통합 | ~0.1초 |
-| Masking | ~0.5초 |
-| Overlay | ~1초 |
-| **총합** | **~15-20초 (단일), ~20-30초 (배치 5개)** |
-
-### 비용 (Cloud Vision API)
-
-- **기존**: N개 이미지 → N회 호출 → $1.50/1000 images
-- **Grid**: N개 이미지 → 1회 호출 → $1.50/1000 grids
-- **절감**: ~N배
-
-### 메모리 사용
-
-- **단일 이미지**: ~200MB
-- **배치 (5개)**: ~500MB
-- **Grid (9개)**: ~300MB
-
----
-
-## 트러블슈팅
-
-### API 오류
-
-```
-❌ GEMINI_API_KEY 환경변수 필요
-```
-→ `.env` 파일에 `GEMINI_API_KEY` 설정 확인
-
-```
-❌ GOOGLE_APPLICATION_CREDENTIALS 환경변수 필요
-```
-→ `.env` 파일에 `GOOGLE_APPLICATION_CREDENTIALS` 경로 확인
-
-### 폰트 오류
-
-```
-⚠️ 폰트 로드 실패
-```
-→ `Fonts/Freesentation-4Regular.ttf` 파일 존재 확인
-
-### 텍스트가 bbox를 벗어남
-
-**원인**: Font size가 너무 크거나 줄바꿈 실패
-**해결**:
-- `min_chars` 조정 (기본 4글자)
-- `usable_width` 조정 (기본 105%)
-- BBox 확장 비율 증가
-
-### CV Grid 처리 실패
-
-```
-❌ CV Grid 처리 실패
-```
-→ Google Cloud Vision API 할당량 확인
-→ 이미지 크기 확인 (40MB payload 제한)
-
----
-
-## 디렉토리 구조
-
-```
-NEW_COMIC_TRANSLATOR/
-├── main.py                          # Gradio UI (메인 진입점)
-├── scripts/run_debug_pipeline.py            # Debug 실행 wrapper
-├── run_test_pipeline.py             # Test 실행 wrapper
-├── scripts/visualize_debug.py               # bbox 시각화
-├── pipeline/
-│   ├── cloud_vision_api.py          # Cloud Vision API
-│   ├── cluster_cv_v5.py             # V5 클러스터링 (2-Pass BFS)
-│   ├── gemini_ocr_translate_v5.py   # OCR + 번역 + integrated JSON 생성
-│   ├── apply_masking.py             # White Masking (코너 페이드)
-│   ├── render_text_overlay.py       # Text Overlay (가중 글자수)
-│   └── translate_cover.py           # 컬러 표지 번역
-├── batch/                           # Gemini Batch API 보존 영역
-├── Fonts/                           # 폰트 파일
-│   └── Freesentation-4Regular.ttf
-├── requirements.txt                 # Python 패키지
-└── output/                          # 출력 디렉토리
-```
-
----
-
-## 최신 개선사항
-
-### 최근 업데이트
-
-1. **가중 글자수 시스템** (v89da0d9)
-   - 한글: 1.0, 띄어쓰기: 0.5, 마침표: 0.3
-   - 실제 픽셀 너비 기반 정확한 계산
-
-2. **편차 기반 재배열** (v89da0d9)
-   - 극단적으로 짧은 줄(< 1.5 가중수) 자동 감지
-   - 앞줄에서 단어를 끌어와 균형잡기
-
-3. **usable_width 최적화** (최신)
-   - 85% → 105%로 변경
-   - 좁은 말풍선도 자연스러운 렌더링
-
-4. **다중 클러스터 처리**
-   - Union BBox 계산
-   - 동적 Expansion ratio
-
-5. **Gemini integrated JSON 직접 사용**
-   - `matched_cluster`, `matched_cluster_details`, `union_bbox` 기준 렌더링
-   - 별도 integration 단계 없이 masking/overlay로 전달
-
----
-
-## 참고 자료
-
-- [Google Cloud Vision API](https://cloud.google.com/vision/docs)
-- [Google Gemini API](https://ai.google.dev/docs)
-- [OpenCV Documentation](https://docs.opencv.org/)
-- [Pillow Documentation](https://pillow.readthedocs.io/)
-- [Gradio Documentation](https://www.gradio.app/docs/)
-
----
-
-## 라이선스
-
-MIT License
-
-## Credits
-
-- Google Cloud Vision API
-- Google Gemini API
-- Freesentation Font
-- OpenCV, Pillow, Gradio
-
-저장 경로(2026-10-20): 기본 데이터 홈은 `~/ComicTranslator`입니다. 프로젝트 JSON은 상대 경로를 저장하고, 읽을 때 기존 절대 경로와 `session.json`도 지원합니다.
+- [코드 지도](docs/CODEBASE_FILE_MAP.md): 파일별 역할과 현재 실행 경로
+- [편집기 MCP](docs/editor_mcp.md): 페이지 관찰·검토 제안과 안전한 적용 경계
+- [이미지 생성 연결](docs/IMAGE_GENERATION_REVIEW.md): 권장 표시·생성 요청·후보 등록
+- [후속 할 일](docs/EDITOR_TODO.md): 매뉴얼 실제 전후 예시와 UI/MCP 개선 목록
+- [이전 README 보존본](reports/README_LEGACY_20251222.md): Gradio·Grid CV 등 초기 구현 기록
+
+이전 Gradio UI와 폐기 실행기는 `archive/`에 보관돼 있으며 현재 진입점은 `app.py`입니다.
