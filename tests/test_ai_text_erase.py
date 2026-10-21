@@ -50,6 +50,25 @@ def test_page_is_padded_to_multiple_of_16_and_cropped_back(tmp_path):
     assert meta["estimated_cost_usd"] == pytest.approx(1564 * 8e-6 + 471 * 30e-6, abs=1e-4)
 
 
+def test_default_client_disables_sdk_retries(tmp_path, monkeypatch):
+    """자동 재시도가 켜져 있으면 실패한 이미지 편집 요청이 다시 나가 이중 과금될 수 있다."""
+    import openai
+
+    created = {}
+    images = FakeImages()
+
+    class RecordingOpenAI:
+        def __init__(self, **kwargs):
+            created.update(kwargs)
+            self.images = images
+
+    monkeypatch.setattr(openai, "OpenAI", RecordingOpenAI)
+    monkeypatch.setenv("OPENAI_API_KEY", "fixture-key")
+    ate.erase_page_text(np.full((1920, 1350, 3), 255, np.uint8), tmp_path)
+    assert created["max_retries"] == 0
+    assert len(images.calls) == 1
+
+
 def test_response_with_different_size_is_rejected(tmp_path):
     page = np.full((1920, 1350, 3), 255, np.uint8)
     with pytest.raises(ate.AiEraseError, match="다른 응답"):

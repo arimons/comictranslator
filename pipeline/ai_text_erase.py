@@ -77,7 +77,8 @@ def erase_page_text(
             raise AiEraseError("OPENAI_API_KEY 환경 변수가 필요합니다")
         from openai import OpenAI
 
-        client = OpenAI(api_key=api_key, timeout=300)
+        # SDK 자동 재시도는 끈다. 시간 초과·5xx 뒤 같은 요청이 다시 나가면 이미지 편집이 이중 과금될 수 있다.
+        client = OpenAI(api_key=api_key, timeout=300, max_retries=0)
 
     started = time.perf_counter()
     with request_path.open("rb") as handle:
