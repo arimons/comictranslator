@@ -292,6 +292,12 @@ class RestoreAcceptRequest(BaseModel):
     job_id: str
 
 
+class AiEraseRequest(BaseModel):
+    session_id: str
+    image_id: str
+    quality: str = "medium"
+
+
 class RestorePatchRemoveRequest(BaseModel):
     session_id: str
     image_id: str
@@ -1238,6 +1244,8 @@ def image_record(
         "restore_mask_png": str(restore_dir / "mask.png"),
         "restore_mask_url": file_url(restore_dir / "mask.png"),
         "restore_patch_count": len(load_json(restore_dir / "state.json", default={}).get("patches", [])),
+        # 확정 패치를 얹은 현재 지우기 결과. 분석 탭 "마스크" 미리보기가 masked.jpg 대신 이것을 보여 준다.
+        "restore_preview_url": file_url(restore_dir / "preview.png"),
         "has_effective_text_groups": (json_dir / f"{stem}_text_groups_effective.json").exists(),
         "has_integrated_json": not excluded and (json_dir / f"{stem}_integrated.json").exists(),
         "ocr_status": load_json(json_dir / f"{stem}_ocr_status.json", default={}),
@@ -1305,6 +1313,7 @@ IMAGE_SUMMARY_KEYS = (
     "final_url",
     "restore_mask_url",
     "restore_patch_count",
+    "restore_preview_url",
     "has_effective_text_groups",
     "has_integrated_json",
     "has_analysis",
@@ -2623,6 +2632,69 @@ def submit_restore_job(req: RestoreRunRequest) -> dict[str, Any]:
     return _restore_job_public(job)
 
 
+AI_ERASE_ENGINE = "ai-erase"
+
+
+def submit_ai_erase_job(req: AiEraseRequest) -> dict[str, Any]:
+    """원본 페이지를 이미지 편집 모델로 보내 글자를 지운 배경을 만든다. 결과는 미리보기 후보이고,
+    확정(/api/restore/accept)하면 페이지 전체 배경 복원 패치로 저장되어 렌더 때 합성된다."""
+    import cv2
+    import numpy as np
+
+    if req.quality not in {"low", "medium", "high"}:
+        raise HTTPException(status_code=400, detail="quality는 low, medium, high 중 하나여야 합니다")
+    record = _restore_record(req.session_id, req.image_id)
+    page = _read_bgr(record["input_path"])  # 이전 지우기 결과가 아니라 원본에서 지운다
+    h, w = page.shape[:2]
+    job_id = f"{dt.datetime.now().strftime('%H%M%S')}_{AI_ERASE_ENGINE}_{hashlib.sha1(str(time.time_ns()).encode()).hexdigest()[:6]}"
+    job_dir = Path(record["restore_dir"]) / "jobs" / job_id
+    job: dict[str, Any] = {
+        "job_id": job_id,
+        "session_id": req.session_id,
+        "image_id": req.image_id,
+        "engine": AI_ERASE_ENGINE,
+        "source": "original",
+        "status": "queued",
+        "progress": {"step": 0, "total": 1},
+        "created_at": time.time(),
+        "_job_dir": str(job_dir),
+    }
+    with _RESTORE_JOBS_LOCK:
+        _RESTORE_JOBS[job_id] = job
+
+    def work() -> None:
+        from pipeline.ai_text_erase import erase_page_text
+
+        job["status"] = "running"
+        job["started_at"] = time.time()
+        try:
+            job_dir.mkdir(parents=True, exist_ok=True)
+            erased, meta = erase_page_text(page, job_dir, quality=req.quality)
+            # 배경 복원 확정 흐름이 그대로 쓰도록 같은 파일 이름으로 남긴다(페이지 전체 = rect, 마스크 전부 255)
+            cv2.imwrite(str(job_dir / "crop_before.png"), page)
+            cv2.imwrite(str(job_dir / "crop_after.png"), erased)
+            cv2.imwrite(str(job_dir / "crop_mask.png"), np.full((h, w), 255, dtype=np.uint8))
+            job["meta"] = {
+                "context_rect": [0, 0, w, h],
+                "params": {"engine": AI_ERASE_ENGINE, "model": meta["model"], "quality": meta["quality"]},
+                "timing": {"total_sec": meta["elapsed_sec"]},
+                "usage": {k: meta[k] for k in ("input_tokens", "output_tokens", "estimated_cost_usd", "request_size")},
+            }
+            job["result"] = {
+                "crop_before_url": file_url(job_dir / "crop_before.png"),
+                "crop_after_url": file_url(job_dir / "crop_after.png"),
+            }
+            job["status"] = "done"
+        except Exception as exc:  # noqa: BLE001 - 실패는 작업 상태로 돌려주고 기존 결과는 건드리지 않는다
+            job["status"] = "error"
+            job["error"] = f"{type(exc).__name__}: {exc}"
+        finally:
+            job["finished_at"] = time.time()
+
+    _RESTORE_EXECUTOR.submit(work)
+    return _restore_job_public(job)
+
+
 def accept_restore_job(req: RestoreAcceptRequest) -> dict[str, Any]:
     with _RESTORE_JOBS_LOCK:
         job = _RESTORE_JOBS.get(req.job_id)
@@ -2646,6 +2718,7 @@ def accept_restore_job(req: RestoreAcceptRequest) -> dict[str, Any]:
         "mask_png": f"patches/{patch_id}_mask.png",
         "params": meta.get("params"),
         "timing": meta.get("timing"),
+        "usage": meta.get("usage"),
         "source": job.get("source"),
         "accepted_at": dt.datetime.now().isoformat(timespec="seconds"),
     }
@@ -3289,6 +3362,10 @@ def create_app() -> FastAPI:
         Path(record["restore_dir"]).mkdir(parents=True, exist_ok=True)
         cv2.imwrite(record["restore_mask_png"], mask)
         return restore_info(_restore_record(req.session_id, req.image_id))
+
+    @app.post("/api/restore/ai-erase")
+    def restore_ai_erase(req: AiEraseRequest) -> dict[str, Any]:
+        return submit_ai_erase_job(req)
 
     @app.post("/api/restore/run")
     def restore_run(req: RestoreRunRequest) -> dict[str, Any]:

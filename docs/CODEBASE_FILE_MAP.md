@@ -36,6 +36,7 @@ NEW_COMIC_TRANSLATOR/
 │       ├── EditorCanvas.jsx      # Step 3 영역 분석 캔버스 (Konva)
 │       ├── OverlayCanvas.jsx     # Step 5 텍스트 오버레이 편집 캔버스 (Konva)
 │       ├── RestorePanel.jsx      # 배경 복원 탭 (마스크 브러시 + LaMa 복원)
+│       ├── AiErasePanel.jsx      # 영역 분석 탭의 AI 글자 지우기 (이미지 편집 모델, 페이지 전체 패치)
 │       ├── keymap.js             # 키보드·마우스 단축키 단일 정의
 │       ├── viewportControls.js   # 두 캔버스 공용 확대/이동/맞춤
 │       ├── ShortcutHelp.jsx      # ? 단축키 도움말
@@ -82,6 +83,7 @@ NEW_COMIC_TRANSLATOR/
     ├── render_text_overlay.py  # Step 5
     ├── overlay_anchor.py       # 글자 입히기 수동값을 region 번호 대신 영역 위치로 재매칭
     ├── background_restore.py   # 배경 복원 탭 엔진 (문맥 영역·마스크 분리, LaMa, 확정 패치 합성)
+    ├── ai_text_erase.py        # 이미지 편집 모델로 페이지 글자 지우기 (16배수 덧대기·잘라내기)
     ├── openai_image_redraw.py  # 렌더 생략 페이지 OpenAI 이미지 재생성 (app export)
     ├── vis/                    # pipeline 진단 시각화 도구
     ├── experimental/           # pipeline 승격 후보 실험 모듈
@@ -164,6 +166,7 @@ guidance(수동 보정)가 있는 이미지는 `guidance_digest`(guidance 내용
 | `GET /api/session/{id}/export`, `POST /api/export/generate-missing` | 결과 ZIP 내보내기, 실패 이미지 OpenAI 이미지 생성 fallback |
 | `GET /api/file` | 세션·입력 캐시·분석 캐시 폴더 아래 이미지 파일 서빙 |
 | `/api/restore/*` | 배경 복원 탭: 상태·자동 마스크·마스크 저장·LaMa 작업 실행/조회·확정·패치 제거 (`pipeline/background_restore.py`) |
+| `POST /api/restore/ai-erase` | 원본 페이지를 이미지 편집 모델로 보내 글자를 지운 후보를 만드는 작업. 조회·확정·제거는 위 `/api/restore/job`·`accept`·`patch/remove`를 그대로 쓴다. 확정하면 페이지 전체 패치(engine `ai-erase`) (`pipeline/ai_text_erase.py`) |
 | `GET /manual` | 사용자 매뉴얼 `docs/editor_manual.html`을 그대로 제공. 시작 화면과 `?` 도움말에서 링크 |
 
 **동작 메모**
@@ -192,6 +195,7 @@ guidance(수동 보정)가 있는 이미지는 `guidance_digest`(guidance 내용
 | `frontend/src/keymap.js` | 단축키 단일 정의(키 조합, 탭 범위, 조건, 동작 id, 설명). App 디스패처·툴바 tooltip·도움말이 읽고, `tests/test_docs_sync.py`가 `docs/editor_manual.html` 단축키 표와 대조 |
 | `frontend/src/viewportControls.js` | 두 Konva 캔버스 공용 보기 조작 — 휠=이동, 핀치·Ctrl/Cmd+휠=확대, Space·휠버튼·Hand 도구 드래그 이동, 맞춤/100%/선택 확대 |
 | `frontend/src/ShortcutHelp.jsx` | `?`로 여는 단축키 도움말. 현재 탭의 keymap 항목을 묶어 표시 |
+| `frontend/src/AiErasePanel.jsx` | 영역 분석 탭 오른쪽 패널의 AI 글자 지우기. 후보를 비교 미리보기 "AI 지움 후보" 탭에 띄우고 적용·버리기·해제. 적용하면 이전 AI 지움 패치를 교체한다 |
 | `frontend/src/RestorePanel.jsx` | 배경 복원 탭 — 제거 마스크 브러시·지우개, 문맥 영역 사각형, 자동 마스크, LaMa 작업 실행·확정·패치 제거. 자기 캔버스 키를 직접 처리한다(keymap의 `passive` 항목) |
 | `frontend/src/App.jsx` | 세션 관리, 이미지 목록, 워크플로우 탭(분석/OCR/오버레이/배경 복원/내보내기) 전체 상태. Action History의 텍스트 기반 줄에서 LaMa 강제 토글(`manual_regions[].inpaint_engine = "lama"`) |
 | `frontend/src/main.jsx` | React 엔트리포인트 |
@@ -435,6 +439,15 @@ indexed sheet crop의 획두께·ink density를 재서 OpenAI가 준 `render_hin
 - 처리 해상도는 긴 변 512/768/원본 중 고르며 기본은 원본이다. 16의 배수 패딩과 역변환은 `prepare_model_input`/`restore_from_model_output`이 맡고, 이진 마스크는 최근접 보간만 쓴다.
 - 자동 마스크(`build_text_stroke_mask`)는 `regions.json`의 텍스트 기반 영역과 CV 단어 bbox를 seed로 글자 획만 고른다.
 - 확정 패치는 세션 작업 폴더의 `restore/<이미지>/`에 PNG로 저장해 페이지 JPEG를 다시 저장하지 않는다.
+- 확정 패치를 얹은 미리보기 `restore/<이미지>/preview.png`는 페이지 레코드의 `restore_preview_url`로 나가고, 영역 분석 탭 "마스크" 미리보기가 masked.jpg 대신 이것을 보여 준다.
+
+### `pipeline/ai_text_erase.py`
+
+LaMa·Telea 지우기 결과가 아쉬운 페이지를 이미지 편집 모델(`gpt-image-2.5-sunburst`, quality medium)로 통째로 보내 글자만 지운 배경을 받는다. 번역 글자는 오버레이가 따로 얹는다.
+
+- 모델은 16의 배수 크기만 받는다. 비율을 바꿔 늘이면 그림이 틀어지므로 원본 오른쪽·아래를 가장자리 픽셀로 덧대 보내고, 받은 뒤 잘라 원본 크기로 되돌린다(`padded_size`). 응답 크기가 요청과 다르면 쓰지 않는다. 최소 픽셀 수(655,360) 미만 페이지는 보내기 전에 거절한다.
+- 결과는 배경 복원 작업과 같은 형식(`crop_after.png`, 전부 255인 `crop_mask.png`, `context_rect`=페이지 전체)으로 남겨 기존 확정 흐름이 페이지 전체 패치로 저장한다. Step 3를 다시 돌려도 패치는 유지되고, 영역·OCR 시트는 원본에서 만든 기존 것을 쓴다.
+- 실측(2026-10-20·21, medium): 1350×1920 약 24초·2.7센트, 960×1080 약 20〜23초·2.1센트. 메타에 토큰 수와 추정 비용(입력 $8, 출력 $30 / 100만 토큰)을 남긴다.
 
 ### 보관·폐기된 pipeline 모듈
 

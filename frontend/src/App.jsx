@@ -10,6 +10,7 @@ import StartScreen from "./StartScreen.jsx";
 import ImagePreview from "./ImagePreview.jsx";
 import GuidanceToolIcon from "./GuidanceToolIcon.jsx";
 import ImageGenerationPanel from "./ImageGenerationPanel.jsx";
+import AiErasePanel from "./AiErasePanel.jsx";
 import ServerStatus from "./ServerStatus.jsx";
 import PagePreparation from "./PagePreparation.jsx";
 import GlossaryPanel from "./GlossaryPanel.jsx";
@@ -104,6 +105,7 @@ export default function App() {
   const [routeBusy, setRouteBusy] = useState(false);
   const [generationStatus, setGenerationStatus] = useState(null);
   const [guidanceCompareMode, setGuidanceCompareMode] = useState("auto");
+  const [aiEraseCandidateUrl, setAiEraseCandidateUrl] = useState(null);
   const [autoOverlayPreview, setAutoOverlayPreview] = useState(true);
   const [exportImageModel, setExportImageModel] = useState("gpt-image-2");
   const [exportTextModel, setExportTextModel] = useState("gpt-6.1-sol");
@@ -182,13 +184,15 @@ export default function App() {
   const latestGeneratedCandidate = generatedCandidates.at(-1);
   const generationRecommended = selected?.analysis_route !== "standard" && (selected?.image_generation_recommendation?.priority === "recommended" || selected?.analysis_skip_reason === "cover_image_gen_redraw");
   const guidanceCompareTabs = [
+    ["ai_erase", "AI 지움 후보", aiEraseCandidateUrl],
     ["generated", "생성 결과", latestGeneratedCandidate?.preview_url],
-    ["masked", "마스크", selected?.masked_url],
+    // 확정한 배경 복원 패치(AI 지움 포함)가 있으면 그것까지 얹은 현재 지우기 결과를 보여 준다.
+    ["masked", "마스크", selected?.restore_preview_url || selected?.masked_url],
     ["source", "원본", selected?.input_url],
     ["final", "최종 출력", selected?.final_url],
     ["sheet", "OCR 시트", selected?.indexed_sheet_url],
   ];
-  const preferredCompareMode = guidanceCompareMode === "auto" ? (latestGeneratedCandidate && generationRecommended ? "generated" : "masked") : guidanceCompareMode;
+  const preferredCompareMode = guidanceCompareMode === "auto" ? (aiEraseCandidateUrl ? "ai_erase" : latestGeneratedCandidate && generationRecommended ? "generated" : "masked") : guidanceCompareMode;
   const guidanceCompareTab = guidanceCompareTabs.find(([id, _label, url]) => id === preferredCompareMode && url) || guidanceCompareTabs.find(([_id, _label, url]) => url) || guidanceCompareTabs[0];
   const effectiveGuidanceCompareMode = guidanceCompareTab?.[0] || guidanceCompareMode;
   const guidanceCompareUrl = guidanceCompareTab?.[2] || selected?.masked_url || selected?.input_url || null;
@@ -882,6 +886,25 @@ export default function App() {
       if (hydrationPendingRef.current && count < maxRounds && sid === sessionIdRef.current) window.setTimeout(tick, intervalMs);
     };
     if (hydrationPendingRef.current) window.setTimeout(tick, intervalMs);
+  }
+
+  // AI 지움 후보가 생기면 비교 미리보기를 그 탭으로 돌리고, 사라지면 자동 선택으로 되돌린다.
+  function handleAiEraseCandidate(url) {
+    setAiEraseCandidateUrl(url || null);
+    setGuidanceCompareMode(url ? "ai_erase" : "auto");
+  }
+
+  // 선택 페이지 상세를 다시 받아 반영한다(복원 패치 적용·해제 뒤 미리보기 갱신).
+  async function reloadSelectedPage() {
+    const sid = sessionIdRef.current;
+    const imageId = selectedIdRef.current;
+    if (!sid || !imageId) return;
+    try {
+      const data = await api(`/api/session/${encodeURIComponent(sid)}/page/${encodeURIComponent(imageId)}`);
+      if (data?.image) applyImageRecord(data.image);
+    } catch (err) {
+      setStatus(String(err.message || err));
+    }
   }
 
   // 서버가 돌려준 전체 레코드 하나를 반영한다. 목록에는 요약만, 선택 페이지면 상세에도 넣는다.
@@ -2839,6 +2862,15 @@ export default function App() {
             </div>
           </div>
         </div>
+
+        <AiErasePanel
+          sessionId={sessionId}
+          page={selected?.detail_loaded ? selected : null}
+          disabled={anyBusy || selected?.processing_excluded}
+          onCandidate={handleAiEraseCandidate}
+          onApplied={reloadSelectedPage}
+          setStatus={setStatus}
+        />
 
         <div className="section speaker-section">
           <h2>{selectedTg != null ? "TG 선택" : "화자 지정"} {selectedGuidanceRegion ? <small>R{regionId(selectedGuidanceRegion)}</small> : selectedTg != null ? <small>TG{selectedTg}</small> : null}</h2>

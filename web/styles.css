@@ -3453,3 +3453,14 @@ select.memo-key { width: 100%; padding: 2px; font-size: 12px; }
 .source-link-body small { display:block; margin-top:12px; line-height:1.5; white-space:normal; }
 .home-page-preparation .source-link-control { margin-top:8px; }
 .home-page-preparation .source-link-body { left:0; right:auto; }
+
+/* 분석 탭: AI 글자 지우기 */
+.ai-erase-applied {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 8px;
+  font-size: 12px;
+  color: var(--muted);
+}

@@ -53,7 +53,8 @@
         "frontend/src/StartScreen.jsx",
         "frontend/src/PagePreparation.jsx",
         "frontend/src/ServerStatus.jsx",
-        "frontend/src/ImagePreview.jsx"
+        "frontend/src/ImagePreview.jsx",
+        "frontend/src/AiErasePanel.jsx"
       ]
     },
     "docs/editor_agent_bridge_review.md": {
@@ -80,7 +81,9 @@
         "frontend/src/regionTypes.js",
         "frontend/src/RegionTypeBadge.jsx",
         "scripts/run_editor_mcp.py",
-        "pipeline/editor_review_bridge.py"
+        "pipeline/editor_review_bridge.py",
+        "pipeline/ai_text_erase.py",
+        "frontend/src/AiErasePanel.jsx"
       ]
     },
     "docs/AGENT_WORKSPACE_RULES.md": {
