@@ -54,7 +54,7 @@ def test_require_api_key_per_provider(monkeypatch):
 
 
 def test_gemini_request_shape_without_network(monkeypatch, tmp_path):
-    """이미지는 high 해상도 Part로, 응답은 JSON mime·thinking low로 요청한다."""
+    """이미지는 medium 해상도 Part로, 응답은 JSON mime·thinking low로 요청한다."""
     pytest.importorskip("google.genai")
     from types import SimpleNamespace
     sheet = tmp_path / "sheet.jpg"; sheet.write_bytes(b"jpeg-bytes")
@@ -73,7 +73,7 @@ def test_gemini_request_shape_without_network(monkeypatch, tmp_path):
     assert kw["config"].thinking_config.thinking_level.value == "LOW"
     parts = kw["contents"][0].parts
     assert parts[0].text == "prompt" and parts[1].inline_data.data == b"jpeg-bytes"
-    assert parts[1].media_resolution.level.value == "MEDIA_RESOLUTION_HIGH"
+    assert parts[1].media_resolution.level.value == "MEDIA_RESOLUTION_MEDIUM"
 
 
 def test_gemini_retries_rate_limit_then_raises_other_errors(monkeypatch, tmp_path):

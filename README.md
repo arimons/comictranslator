@@ -91,6 +91,7 @@ OPENAI_API_KEY=your_openai_api_key
 
 - [코드 지도](docs/CODEBASE_FILE_MAP.md): 파일별 역할과 실행 경로
 - [설치 의존성](docs/DEPENDENCIES.md): 버전 제약과 모델 파일
+- [작품 메모와 화자 지정](docs/WORK_GLOSSARY.md): 인물·말투·고유 용어를 번역에 반영하는 방법
 - [저장 구조](docs/STORAGE_LAYOUT.md): 작업 데이터가 놓이는 위치
 - [편집기 MCP](docs/editor_mcp.md): 외부 에이전트가 페이지를 관찰하고 검토 제안을 남기는 방법
 - [운영 메모](docs/OPERATIONS.md): 상시 서버 운영과 개발 환경 동기화

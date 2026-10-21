@@ -71,6 +71,8 @@ OPENAI_REASONING_EFFORT = "low"
 GEMINI_THINKING_LEVEL = "LOW"
 # thinking 토큰이 출력 한도에 함께 계산되므로 OpenAI(12000)보다 넉넉히 잡는다.
 GEMINI_MAX_OUTPUT_TOKENS = 16000
+# 이미지 토큰 비용을 줄이려고 medium으로 시작한다. 품질 비교 후 high로 올릴지 정한다.
+GEMINI_MEDIA_RESOLUTION = "MEDIA_RESOLUTION_MEDIUM"
 
 OCR_SHEET_TARGET_REGIONS = 5
 OCR_SHEET_SOFT_MAX_REGIONS = 6
@@ -354,7 +356,7 @@ def _run_gemini_json(
                 types.Part.from_bytes(
                     data=image_file.read(),
                     mime_type=_mime_type(path),
-                    media_resolution="MEDIA_RESOLUTION_HIGH",
+                    media_resolution=GEMINI_MEDIA_RESOLUTION,
                 )
             )
     config = types.GenerateContentConfig(
