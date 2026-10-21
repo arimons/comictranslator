@@ -95,6 +95,8 @@ Return:
 3. Layout constraints: speech bubble positions, vertical/horizontal writing, SFX/title style, font mood.
 4. Any text that should be preserved as-is.
 
+Do not mention watermarks, scanlation credits or website names; leave them out of the guidance entirely.
+
 Global user guide:
 {prompt_guide or "(none)"}
 """
@@ -112,8 +114,9 @@ def _layout_notes_with_gemini(
 
     _emit(f"🧭 번역/레이아웃 가이드 추출: {model_name}", log_callback)
     mime_type = mimetypes.guess_type(image_path.name)[0] or "image/jpeg"
+    client = genai.Client(api_key=api_key)  # 임시 객체로 두면 호출 중 수거되어 연결이 닫힌다
     try:
-        response = genai.Client(api_key=api_key).models.generate_content(
+        response = client.models.generate_content(
             model=model_name,
             contents=[prompt, types.Part.from_bytes(data=image_path.read_bytes(), mime_type=mime_type)],
             config=types.GenerateContentConfig(thinking_config=types.ThinkingConfig(thinking_level="low")),
