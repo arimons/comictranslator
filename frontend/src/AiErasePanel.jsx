@@ -12,7 +12,7 @@ function fmtUsage(meta) {
   return [sec != null ? `${Number(sec).toFixed(0)}초` : null, cost != null ? `약 $${Number(cost).toFixed(3)}` : null].filter(Boolean).join(" · ");
 }
 
-export default function AiErasePanel({ sessionId, page, disabled, onCandidate, onApplied, setStatus }) {
+export default function AiErasePanel({ sessionId, page, disabled, onCandidate, onApplied, setStatus, ocrModel, imageModel }) {
   const [job, setJob] = useState(null);
   const [applied, setApplied] = useState([]);
   const [error, setError] = useState("");
@@ -59,7 +59,7 @@ export default function AiErasePanel({ sessionId, page, disabled, onCandidate, o
   async function start() {
     setError("");
     try {
-      const started = await api("/api/restore/ai-erase", { method: "POST", body: JSON.stringify({ session_id: sessionId, image_id: page.id }) });
+      const started = await api("/api/restore/ai-erase", { method: "POST", body: JSON.stringify({ session_id: sessionId, image_id: page.id, ocr_model: ocrModel || null }) });
       setJob(started);
       onCandidate?.(null);
       setStatus?.("AI 글자 지우기를 시작했습니다. 20초 안팎 걸립니다.");
@@ -114,7 +114,8 @@ export default function AiErasePanel({ sessionId, page, disabled, onCandidate, o
   return (
     <div className="section compact-section ai-erase-section">
       <h2>AI 글자 지우기</h2>
-      <p className="hint">마스크 결과가 아쉬운 페이지만 씁니다. 원본 페이지를 이미지 모델로 보내 글자를 지운 배경을 받습니다(20초 안팎, 약 3센트). 영역·OCR은 그대로이고 번역은 글자 입히기로 얹습니다.</p>
+      <p className="hint">마스크 결과가 아쉬운 페이지만 씁니다. 원본 페이지를 이미지 모델로 보내 글자를 지운 배경을 받습니다(20초 안팎, 장당 3〜5센트). 영역·OCR은 그대로이고 번역은 글자 입히기로 얹습니다.</p>
+      {imageModel ? <p className="hint">모델: {imageModel} (OCR·번역 모델 제공자를 따름)</p> : null}
       {applied.length ? (
         <div className="ai-erase-applied">
           <span>적용됨{applied[0].accepted_at ? ` · ${applied[0].accepted_at.replace("T", " ").slice(5, 16)}` : ""}</span>

@@ -94,6 +94,7 @@ export default function App() {
   const [extraPrompt, setExtraPrompt] = useState("");
   const [ocrModels, setOcrModels] = useState([]);
   const [ocrDefaultModel, setOcrDefaultModel] = useState("");
+  const [imageModels, setImageModels] = useState({ openai: "gpt-image-2.5-sunburst" });
   const [ocrModel, setOcrModel] = useState("");
   const [fonts, setFonts] = useState([]);
   const [fontPath, setFontPath] = useState("");
@@ -179,6 +180,8 @@ export default function App() {
   const guidanceDirty = Boolean(selected?.detail_loaded && !guidanceEquals(guidance, defaultGuidance(selected)));
   const selectedDetailKey = selected ? `${selectedKey}|${selected.detail_loaded ? "detail" : "summary"}` : "";
   const effectiveOcrModel = ocrModels.some((model) => model.id === ocrModel) ? ocrModel : ocrDefaultModel;
+  // 이미지 작업(글자 지우기·통번역 재생성)은 OCR·번역 모델의 제공자를 따라간다
+  const ocrProvider = ocrModels.find((model) => model.id === effectiveOcrModel)?.provider || "openai";
   const guidanceEditorUrl = selected?.input_url || null;
   const generatedCandidates = generationStatus?.session_id === sessionId && generationStatus?.image_id === selected?.id ? generationStatus.results || [] : [];
   const latestGeneratedCandidate = generatedCandidates.at(-1);
@@ -953,8 +956,16 @@ export default function App() {
     api("/api/ocr-models").then((data) => {
       setOcrModels(Array.isArray(data.models) ? data.models : []);
       setOcrDefaultModel(data.default || "");
+      if (data.image_models) setImageModels(data.image_models);
     }).catch(() => {});
   }, []);
+
+  // OCR·번역 제공자를 바꾸면 통번역 재생성 모델도 같은 제공자로 맞춘다(입력란에서 직접 고칠 수는 있다)
+  useEffect(() => {
+    const gemini = ocrProvider === "gemini";
+    setExportImageModel((gemini ? imageModels.gemini : imageModels.openai) || "gpt-image-2.5-sunburst");
+    setExportTextModel(gemini ? effectiveOcrModel : "gpt-6.1-sol");
+  }, [ocrProvider, effectiveOcrModel, imageModels]);
 
   useEffect(() => {
     if (!sessionId || !baseSelected?.id) return;
@@ -2870,6 +2881,8 @@ export default function App() {
           onCandidate={handleAiEraseCandidate}
           onApplied={reloadSelectedPage}
           setStatus={setStatus}
+          ocrModel={effectiveOcrModel}
+          imageModel={ocrProvider === "gemini" ? imageModels.gemini : imageModels.openai}
         />
 
         <div className="section speaker-section">

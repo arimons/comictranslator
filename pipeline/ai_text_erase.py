@@ -21,6 +21,7 @@ from typing import Any
 import cv2
 import numpy as np
 
+from pipeline import gemini_image
 from pipeline.openai_tasks import IMAGE_MODEL
 
 # 모델 문자열은 llm-model-reference(2026-10-06)의 이미지 편집 최고 품질 모델. 단가: 입력 $8 / 출력 $30 (100만 토큰당)
@@ -61,7 +62,13 @@ def erase_page_text(
     prompt: str = ERASE_PROMPT,
     client: Any = None,
 ) -> tuple[np.ndarray, dict[str, Any]]:
-    """페이지(BGR)를 보내 글자를 지운 같은 크기의 페이지와 메타(시간·토큰·추정 비용)를 돌려준다."""
+    """페이지(BGR)를 보내 글자를 지운 같은 크기의 페이지와 메타(시간·토큰·추정 비용)를 돌려준다.
+    model이 gemini-*이면 Gemini 이미지 모델 경로로 보낸다(크기 맞추기 방식이 다르다)."""
+    if gemini_image.is_gemini_model(model):
+        try:
+            return gemini_image.edit_image(image, prompt, work_dir, model=model, quality=quality, client=client)
+        except gemini_image.GeminiImageError as exc:
+            raise AiEraseError(str(exc)) from exc
     height, width = image.shape[:2]
     pad_w, pad_h = padded_size(width, height)
     if max(pad_w, pad_h) > MAX_SIDE:

@@ -44,7 +44,7 @@ input_path는 프로젝트 안의 원래 별칭과 페이지 ID를 유지한다.
 
 미리보기 뒤 파일/프로젝트가 바뀌면 적용을 거부하고 다시 확인하도록 한다.
 기존 manifest와 링크 정보는 프로젝트 work/source_history에 보존한다.
-재연결에 CV·번역·이미지 생성 API를 호출하지 않는다.
+재연결에 CV·번역·이미지 생성 API(OpenAI·Gemini 모두)를 호출하지 않는다.
 
 실제 원본 경로는 데이터 홈 local/hosts/{호스트 식별 해시}/source_roots.json에 둔다.
 호스트 식별은 macOS에서는 하드웨어 UUID(`stable_host_id`), 다른 OS에서는 호스트 이름을 쓴다. macOS 호스트 이름은 네트워크에 따라 바뀌어

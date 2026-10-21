@@ -297,6 +297,7 @@ class AiEraseRequest(BaseModel):
     session_id: str
     image_id: str
     quality: str = "medium"
+    ocr_model: str | None = None  # 세션의 OCR·번역 모델. gemini-*이면 Gemini 이미지 모델로 지운다
 
 
 class RestorePatchRemoveRequest(BaseModel):
@@ -2665,12 +2666,13 @@ def submit_ai_erase_job(req: AiEraseRequest) -> dict[str, Any]:
 
     def work() -> None:
         from pipeline.ai_text_erase import erase_page_text
+        from pipeline.gemini_image import image_model_for
 
         job["status"] = "running"
         job["started_at"] = time.time()
         try:
             job_dir.mkdir(parents=True, exist_ok=True)
-            erased, meta = erase_page_text(page, job_dir, quality=req.quality)
+            erased, meta = erase_page_text(page, job_dir, model=image_model_for(req.ocr_model, IMAGE_MODEL), quality=req.quality)
             # 배경 복원 확정 흐름이 그대로 쓰도록 같은 파일 이름으로 남긴다(페이지 전체 = rect, 마스크 전부 255)
             cv2.imwrite(str(job_dir / "crop_before.png"), page)
             cv2.imwrite(str(job_dir / "crop_after.png"), erased)
@@ -3391,9 +3393,12 @@ def create_app() -> FastAPI:
     @app.get("/api/ocr-models")
     def list_ocr_models() -> dict[str, Any]:
         """Step 4에서 선택 가능한 OCR/번역 모델 목록."""
+        from pipeline.gemini_image import GEMINI_IMAGE_MODEL
         from pipeline.gemini_ocr_translate_v5 import MODEL_NAME, SUPPORTED_OCR_MODELS
 
-        return {"default": MODEL_NAME, "models": SUPPORTED_OCR_MODELS}
+        # 이미지 작업(글자 지우기·통번역 재생성)은 OCR·번역 모델의 제공자를 따라간다
+        return {"default": MODEL_NAME, "models": SUPPORTED_OCR_MODELS,
+                "image_models": {"openai": IMAGE_MODEL, "gemini": GEMINI_IMAGE_MODEL}}
 
     @app.get("/api/fonts")
     def list_fonts() -> dict[str, Any]:

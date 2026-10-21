@@ -1,4 +1,4 @@
-# OpenAI 이미지 모델로 렌더링 생략 페이지를 번역 이미지로 재생성하는 모듈
+# 이미지 모델로 렌더링 생략 페이지를 번역 이미지로 재생성하는 모듈 (OpenAI gpt-image / Gemini 이미지 모델)
 #!/usr/bin/env python3
 
 from __future__ import annotations
@@ -12,6 +12,7 @@ from pathlib import Path
 from dotenv import load_dotenv
 from PIL import Image
 
+from pipeline import gemini_image
 from pipeline.openai_tasks import IMAGE_MODEL
 
 load_dotenv()
@@ -83,26 +84,8 @@ def resolved_image_size(image_path: str | Path, size: str = "match_input") -> st
     return size or "auto"
 
 
-def build_translation_layout_notes(
-    image_path: str | Path,
-    model_name: str = "gpt-6.1-sol",
-    prompt_guide: str = "",
-    log_callback: LogCallback | None = None,
-) -> str:
-    """비전 텍스트 모델로 이미지 생성용 번역/레이아웃 지시문을 만든다."""
-    api_key = os.getenv("OPENAI_API_KEY")
-    if not api_key:
-        _emit("❌ OPENAI_API_KEY 환경변수가 필요합니다", log_callback)
-        return ""
-    try:
-        from openai import OpenAI
-    except ImportError:
-        _emit("❌ openai 패키지가 필요합니다. requirements.txt를 설치하세요", log_callback)
-        return ""
-
-    image_path = Path(image_path)
-    client = OpenAI(api_key=api_key)
-    prompt = f"""You are preparing a manga page for image-to-image translation.
+def _layout_notes_prompt(prompt_guide: str) -> str:
+    return f"""You are preparing a manga page for image-to-image translation.
 
 Read the page and produce concise Korean image-generation guidance.
 
@@ -115,6 +98,57 @@ Return:
 Global user guide:
 {prompt_guide or "(none)"}
 """
+
+
+def _layout_notes_with_gemini(
+    image_path: Path, prompt: str, model_name: str, log_callback: LogCallback | None = None
+) -> str:
+    api_key = os.getenv("GEMINI_API_KEY")
+    if not api_key:
+        _emit("❌ GEMINI_API_KEY 환경변수가 필요합니다", log_callback)
+        return ""
+    from google import genai
+    from google.genai import types
+
+    _emit(f"🧭 번역/레이아웃 가이드 추출: {model_name}", log_callback)
+    mime_type = mimetypes.guess_type(image_path.name)[0] or "image/jpeg"
+    try:
+        response = genai.Client(api_key=api_key).models.generate_content(
+            model=model_name,
+            contents=[prompt, types.Part.from_bytes(data=image_path.read_bytes(), mime_type=mime_type)],
+            config=types.GenerateContentConfig(thinking_config=types.ThinkingConfig(thinking_level="low")),
+        )
+    except Exception as exc:
+        _emit(f"⚠️ 번역/레이아웃 가이드 추출 실패: {exc}", log_callback)
+        return ""
+    notes = str(getattr(response, "text", "") or "").strip()
+    if notes:
+        _emit("✅ 번역/레이아웃 가이드 추출 완료", log_callback)
+    return notes
+
+
+def build_translation_layout_notes(
+    image_path: str | Path,
+    model_name: str = "gpt-6.1-sol",
+    prompt_guide: str = "",
+    log_callback: LogCallback | None = None,
+) -> str:
+    """비전 텍스트 모델로 이미지 생성용 번역/레이아웃 지시문을 만든다. gemini-* 모델이면 Gemini로 보낸다."""
+    image_path = Path(image_path)
+    prompt = _layout_notes_prompt(prompt_guide)
+    if gemini_image.is_gemini_model(model_name):
+        return _layout_notes_with_gemini(image_path, prompt, model_name, log_callback)
+    api_key = os.getenv("OPENAI_API_KEY")
+    if not api_key:
+        _emit("❌ OPENAI_API_KEY 환경변수가 필요합니다", log_callback)
+        return ""
+    try:
+        from openai import OpenAI
+    except ImportError:
+        _emit("❌ openai 패키지가 필요합니다. requirements.txt를 설치하세요", log_callback)
+        return ""
+
+    client = OpenAI(api_key=api_key)
     _emit(f"🧭 번역/레이아웃 가이드 추출: {model_name}", log_callback)
     try:
         response = client.responses.create(
@@ -153,16 +187,12 @@ def redraw_image_with_openai(
     output_compression: int | None = 92,
     log_callback: LogCallback | None = None,
 ) -> bool:
-    """OpenAI 이미지 편집 모델로 원본 페이지의 일본어 텍스트를 한국어 이미지로 재생성한다."""
-    api_key = os.getenv("OPENAI_API_KEY")
+    """이미지 편집 모델로 원본 페이지의 일본어 텍스트를 한국어 이미지로 재생성한다.
+    model_name이 gemini-*이면 Gemini 이미지 모델로 보낸다."""
+    use_gemini = gemini_image.is_gemini_model(model_name)
+    api_key = os.getenv("GEMINI_API_KEY" if use_gemini else "OPENAI_API_KEY")
     if not api_key:
-        _emit("❌ OPENAI_API_KEY 환경변수가 필요합니다", log_callback)
-        return False
-
-    try:
-        from openai import OpenAI
-    except ImportError:
-        _emit("❌ openai 패키지가 필요합니다. requirements.txt를 설치하세요", log_callback)
+        _emit(f"❌ {'GEMINI_API_KEY' if use_gemini else 'OPENAI_API_KEY'} 환경변수가 필요합니다", log_callback)
         return False
 
     image_path = Path(image_path)
@@ -172,7 +202,6 @@ def redraw_image_with_openai(
         return False
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    client = OpenAI(api_key=api_key)
     if analyze_first and not translation_layout_notes:
         translation_layout_notes = build_translation_layout_notes(
             image_path,
@@ -193,6 +222,17 @@ Requirements:
     if translation_layout_notes.strip():
         prompt += f"\n\nPage-specific translation and layout notes:\n{translation_layout_notes.strip()}"
 
+    if use_gemini:
+        return _redraw_with_gemini(image_path, output_path, prompt, model_name, quality,
+                                   output_format, output_compression, log_callback)
+
+    try:
+        from openai import OpenAI
+    except ImportError:
+        _emit("❌ openai 패키지가 필요합니다. requirements.txt를 설치하세요", log_callback)
+        return False
+
+    client = OpenAI(api_key=api_key)
     _emit(f"🎨 OpenAI 이미지 생성 시작: {image_path.name}", log_callback)
     _emit(f"🤖 모델: {model_name}", log_callback)
     request_size = resolved_image_size(image_path, size)
@@ -225,4 +265,50 @@ Requirements:
         return False
     output_path.write_bytes(base64.b64decode(b64_json))
     _emit(f"✅ 이미지 생성 완료: {output_path}", log_callback)
+    return True
+
+
+def _redraw_with_gemini(
+    image_path: Path,
+    output_path: Path,
+    prompt: str,
+    model_name: str,
+    quality: str,
+    output_format: str,
+    output_compression: int | None,
+    log_callback: LogCallback | None = None,
+) -> bool:
+    """Gemini 이미지 모델 경로. 크기는 비율 프리셋 덧대기로 원본 크기에 맞추므로 size 설정은 쓰지 않는다."""
+    import tempfile
+
+    import cv2
+
+    image = cv2.imread(str(image_path), cv2.IMREAD_COLOR)
+    if image is None:
+        _emit(f"❌ 원본 이미지를 읽을 수 없습니다: {image_path}", log_callback)
+        return False
+    level = quality if quality in gemini_image.IMAGE_SIZE_FOR_QUALITY else "medium"
+    _emit(f"🎨 Gemini 이미지 생성 시작: {image_path.name}", log_callback)
+    _emit(f"🤖 모델: {model_name}", log_callback)
+    _emit(f"🖼️ 출력 설정: {gemini_image.IMAGE_SIZE_FOR_QUALITY[level]}, 원본 크기로 맞춤, format={output_format}", log_callback)
+    try:
+        with tempfile.TemporaryDirectory() as work_dir:
+            result, meta = gemini_image.edit_image(image, prompt, Path(work_dir), model=model_name, quality=level)
+    except Exception as exc:
+        _emit(f"❌ Gemini 이미지 생성 실패: {exc}", log_callback)
+        return False
+
+    fmt = (output_format or "jpeg").lower()
+    params: list[int] = []
+    if fmt in {"jpeg", "jpg"}:
+        params = [cv2.IMWRITE_JPEG_QUALITY, max(0, min(100, int(output_compression if output_compression is not None else 92)))]
+    elif fmt == "webp":
+        params = [cv2.IMWRITE_WEBP_QUALITY, max(0, min(100, int(output_compression if output_compression is not None else 92)))]
+    ext = {"jpeg": ".jpg", "jpg": ".jpg", "png": ".png", "webp": ".webp"}.get(fmt, ".jpg")
+    ok, buf = cv2.imencode(ext, result, params)
+    if not ok:
+        _emit("❌ 생성 이미지를 저장 형식으로 바꾸지 못했습니다", log_callback)
+        return False
+    output_path.write_bytes(buf.tobytes())
+    _emit(f"✅ 이미지 생성 완료: {output_path} ({meta['elapsed_sec']}초, 약 ${meta['estimated_cost_usd']})", log_callback)
     return True

@@ -83,8 +83,9 @@ NEW_COMIC_TRANSLATOR/
     ├── render_text_overlay.py  # Step 5
     ├── overlay_anchor.py       # 글자 입히기 수동값을 region 번호 대신 영역 위치로 재매칭
     ├── background_restore.py   # 배경 복원 탭 엔진 (문맥 영역·마스크 분리, LaMa, 확정 패치 합성)
-    ├── ai_text_erase.py        # 이미지 편집 모델로 페이지 글자 지우기 (16배수 덧대기·잘라내기)
-    ├── openai_image_redraw.py  # 렌더 생략 페이지 OpenAI 이미지 재생성 (app export)
+    ├── ai_text_erase.py        # 이미지 편집 모델로 페이지 글자 지우기 (16배수 덧대기·잘라내기, gemini-*는 gemini_image로)
+    ├── gemini_image.py         # Gemini 이미지 모델(Nano Banana 2.1) 편집. 비율 프리셋 덧대기·축소·잘라내기
+    ├── openai_image_redraw.py  # 렌더 생략 페이지 이미지 재생성 (app export, OpenAI·Gemini 분기)
     ├── vis/                    # pipeline 진단 시각화 도구
     ├── experimental/           # pipeline 승격 후보 실험 모듈
     ├── ocr_reference/          # 글꼴 스타일 참고 이미지
@@ -166,7 +167,7 @@ guidance(수동 보정)가 있는 이미지는 `guidance_digest`(guidance 내용
 | `GET /api/session/{id}/export`, `POST /api/export/generate-missing` | 결과 ZIP 내보내기, 실패 이미지 OpenAI 이미지 생성 fallback |
 | `GET /api/file` | 세션·입력 캐시·분석 캐시 폴더 아래 이미지 파일 서빙 |
 | `/api/restore/*` | 배경 복원 탭: 상태·자동 마스크·마스크 저장·LaMa 작업 실행/조회·확정·패치 제거 (`pipeline/background_restore.py`) |
-| `POST /api/restore/ai-erase` | 원본 페이지를 이미지 편집 모델로 보내 글자를 지운 후보를 만드는 작업. 조회·확정·제거는 위 `/api/restore/job`·`accept`·`patch/remove`를 그대로 쓴다. 확정하면 페이지 전체 패치(engine `ai-erase`) (`pipeline/ai_text_erase.py`) |
+| `POST /api/restore/ai-erase` | 원본 페이지를 이미지 편집 모델로 보내 글자를 지운 후보를 만드는 작업. 조회·확정·제거는 위 `/api/restore/job`·`accept`·`patch/remove`를 그대로 쓴다. 확정하면 페이지 전체 패치(engine `ai-erase`). 요청의 `ocr_model`이 `gemini-*`이면 Gemini 이미지 모델로 지운다 (`pipeline/ai_text_erase.py`) |
 | `GET /manual` | 사용자 매뉴얼 `docs/editor_manual.html`을 그대로 제공. 시작 화면과 `?` 도움말에서 링크 |
 
 **동작 메모**
@@ -417,7 +418,7 @@ indexed sheet crop의 획두께·ink density를 재서 OpenAI가 준 `render_hin
 
 ### `pipeline/openai_image_redraw.py`
 
-렌더링을 건너뛴 페이지(표지·컬러 일러스트 등)를 OpenAI 이미지 모델로 번역 이미지로 다시 만든다(`redraw_image_with_openai()`). `app.py`의 export 단계 "generate missing" 경로에서 쓴다.
+렌더링을 건너뛴 페이지(표지·컬러 일러스트 등)를 이미지 모델로 번역 이미지로 다시 만든다(`redraw_image_with_openai()`). `app.py`의 export 단계 "generate missing" 경로에서 쓴다. 이미지 모델이 `gemini-*`이면 `gemini_image.edit_image()`로 보내고(size 설정은 쓰지 않고 원본 크기로 맞춘다), 번역·레이아웃 가이드 모델이 `gemini-*`이면 가이드도 Gemini로 뽑는다. 편집기는 OCR·번역 모델 제공자에 맞춰 두 모델 입력란을 자동으로 바꾼다.
 
 ### `pipeline/render_text_overlay.py`
 
@@ -448,6 +449,16 @@ LaMa·Telea 지우기 결과가 아쉬운 페이지를 이미지 편집 모델(`
 - 모델은 16의 배수 크기만 받는다. 비율을 바꿔 늘이면 그림이 틀어지므로 원본 오른쪽·아래를 가장자리 픽셀로 덧대 보내고, 받은 뒤 잘라 원본 크기로 되돌린다(`padded_size`). 응답 크기가 요청과 다르면 쓰지 않는다. 최소 픽셀 수(655,360) 미만 페이지는 보내기 전에 거절한다.
 - 결과는 배경 복원 작업과 같은 형식(`crop_after.png`, 전부 255인 `crop_mask.png`, `context_rect`=페이지 전체)으로 남겨 기존 확정 흐름이 페이지 전체 패치로 저장한다. Step 3를 다시 돌려도 패치는 유지되고, 영역·OCR 시트는 원본에서 만든 기존 것을 쓴다.
 - 실측(2026-10-20·21, medium): 1350×1920 약 24초·2.7센트, 960×1080 약 20〜23초·2.1센트. 메타에 토큰 수와 추정 비용(입력 $8, 출력 $30 / 100만 토큰)을 남긴다.
+- `model`이 `gemini-*`이면 `gemini_image.edit_image()`로 보낸다. 앱은 세션의 OCR·번역 모델 제공자를 따라 모델을 고른다(`gemini_image.image_model_for`).
+
+### `pipeline/gemini_image.py`
+
+OCR·번역 모델로 Gemini를 고른 세션의 이미지 작업(글자 지우기·통번역 재생성)을 `gemini-nano-banana-2.1`(Nano Banana 2.1, Interactions API)로 보낸다.
+
+- 이 모델은 픽셀 크기를 받지 않고 비율 프리셋(`aspect_ratio`)과 해상도 등급(`image_size` 1K/2K/4K)만 받는다. quality low/medium/high를 1K/2K/4K로 옮긴다.
+- 원본 오른쪽·아래를 덧댈 픽셀이 가장 적은 비율 프리셋까지 덧대 보내고(`fit_aspect_ratio`, 1350×1920은 2:3으로 1350×2025), 받은 이미지를 같은 배율로 덧댄 크기에 맞춘 뒤 잘라 원본 크기로 되돌린다. 응답 비율이 요청과 다르면 쓰지 않는다.
+- 응답 형식은 `image/jpeg`만 받는다. SDK 자동 재시도는 이중 과금을 막으려고 끈다.
+- 단가(2026-10-21 공식 가격표): 입력 $1.50, 출력 이미지 $30 / 100만 토큰. 장당 1K $0.0336, 2K $0.0504, 4K $0.113. 실측은 아직 없다(선불 크레딧 소진으로 402).
 
 ### 보관·폐기된 pipeline 모듈
 
