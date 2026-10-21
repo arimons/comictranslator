@@ -97,6 +97,7 @@ def test_ai_erase_job_accepts_as_full_page_patch(tmp_path, monkeypatch):
     job = _wait_job(client, started["job_id"])
     assert job["status"] == "done", job
     assert job["meta"]["context_rect"] == [0, 0, 160, 200]
+    assert job["meta"]["params"]["quality"] == "medium"  # gpt-image 글자 지우기 기본
 
     info = client.post("/api/restore/accept", json={"session_id": "s1", "image_id": "p1", "job_id": job["job_id"]}).json()
     assert len(info["patches"]) == 1 and info["patches"][0]["engine"] == "ai-erase"

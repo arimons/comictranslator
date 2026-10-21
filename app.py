@@ -296,7 +296,7 @@ class RestoreAcceptRequest(BaseModel):
 class AiEraseRequest(BaseModel):
     session_id: str
     image_id: str
-    quality: str = "medium"
+    quality: str | None = None  # 비우면 모델별 기본값: gpt-image medium, Gemini low(1K가 반투명 말풍선을 주변 색에 더 잘 맞춤)
     ocr_model: str | None = None  # 세션의 OCR·번역 모델. gemini-*이면 Gemini 이미지 모델로 지운다
 
 
@@ -2643,7 +2643,11 @@ def submit_ai_erase_job(req: AiEraseRequest) -> dict[str, Any]:
     import cv2
     import numpy as np
 
-    if req.quality not in {"low", "medium", "high"}:
+    from pipeline.gemini_image import image_model_for, is_gemini_model
+
+    model = image_model_for(req.ocr_model, IMAGE_MODEL)
+    quality = req.quality or ("low" if is_gemini_model(model) else "medium")
+    if quality not in {"low", "medium", "high"}:
         raise HTTPException(status_code=400, detail="quality는 low, medium, high 중 하나여야 합니다")
     record = _restore_record(req.session_id, req.image_id)
     page = _read_bgr(record["input_path"])  # 이전 지우기 결과가 아니라 원본에서 지운다
@@ -2666,13 +2670,12 @@ def submit_ai_erase_job(req: AiEraseRequest) -> dict[str, Any]:
 
     def work() -> None:
         from pipeline.ai_text_erase import erase_page_text
-        from pipeline.gemini_image import image_model_for
 
         job["status"] = "running"
         job["started_at"] = time.time()
         try:
             job_dir.mkdir(parents=True, exist_ok=True)
-            erased, meta = erase_page_text(page, job_dir, model=image_model_for(req.ocr_model, IMAGE_MODEL), quality=req.quality)
+            erased, meta = erase_page_text(page, job_dir, model=model, quality=quality)
             # 배경 복원 확정 흐름이 그대로 쓰도록 같은 파일 이름으로 남긴다(페이지 전체 = rect, 마스크 전부 255)
             cv2.imwrite(str(job_dir / "crop_before.png"), page)
             cv2.imwrite(str(job_dir / "crop_after.png"), erased)

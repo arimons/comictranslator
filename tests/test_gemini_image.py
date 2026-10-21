@@ -76,7 +76,7 @@ def test_ai_erase_job_uses_gemini_when_session_ocr_is_gemini(tmp_path, monkeypat
     client = TestClient(app.create_app())
     seen = {}
 
-    def fake_erase(page, work_dir, *, model, quality="medium", **_kw):
+    def fake_erase(page, work_dir, *, model, quality, **_kw):
         seen["model"] = model
         return page.copy(), {"model": model, "quality": quality, "request_size": [160, 240], "elapsed_sec": 1.0,
                              "input_tokens": 1, "output_tokens": 1, "estimated_cost_usd": 0.05}
@@ -86,6 +86,7 @@ def test_ai_erase_job_uses_gemini_when_session_ocr_is_gemini(tmp_path, monkeypat
     job = _wait_job(client, started["job_id"])
     assert job["status"] == "done", job
     assert seen["model"] == gi.GEMINI_IMAGE_MODEL
+    assert job["meta"]["params"]["quality"] == "low"  # Gemini 글자 지우기 기본은 1K
     assert job["meta"]["params"]["model"] == gi.GEMINI_IMAGE_MODEL
 
     models = client.get("/api/ocr-models").json()
