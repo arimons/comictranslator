@@ -107,7 +107,7 @@ export default function App() {
   const [guidanceCompareMode, setGuidanceCompareMode] = useState("auto");
   const [aiEraseCandidateUrl, setAiEraseCandidateUrl] = useState(null);
   const [autoOverlayPreview, setAutoOverlayPreview] = useState(true);
-  const [exportImageModel, setExportImageModel] = useState("gpt-image-2");
+  const [exportImageModel, setExportImageModel] = useState("gpt-image-2.5-sunburst");
   const [exportTextModel, setExportTextModel] = useState("gpt-6.1-sol");
   const [exportImageQuality, setExportImageQuality] = useState("medium");
   const [exportImageSize, setExportImageSize] = useState("match_input");
@@ -1844,7 +1844,7 @@ export default function App() {
         body: JSON.stringify({
           session_id: requestSid,
           image_ids: targetIds,
-          model: exportImageModel || "gpt-image-2",
+          model: exportImageModel || "gpt-image-2.5-sunburst",
           prompt_guide: exportPromptGuide,
           analyze_first: exportAnalyzeFirst,
           text_model: exportTextModel || "gpt-6.1-sol",

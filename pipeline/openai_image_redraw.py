@@ -12,6 +12,8 @@ from pathlib import Path
 from dotenv import load_dotenv
 from PIL import Image
 
+from pipeline.openai_tasks import IMAGE_MODEL
+
 load_dotenv()
 
 LogCallback = Callable[[str], None]
@@ -39,7 +41,10 @@ def nearest_multiple(value: float, step: int = 16) -> int:
 
 
 def gpt_image_2_size_from_image(image_path: str | Path) -> str:
-    """원본 이미지 크기를 gpt-image-2 제약에 맞는 16px 배수 size 문자열로 변환한다."""
+    """원본 이미지 크기를 이미지 모델 제약에 맞는 16px 배수 size 문자열로 변환한다.
+
+    제약 수치는 gpt-image-2 기준으로 정했고, 2.5-sunburst에서도 같다고 보고 쓴다(최소 픽셀은 2.5 실측과 일치).
+    """
     with Image.open(image_path) as img:
         width, height = img.size
     if width <= 0 or height <= 0:
@@ -137,7 +142,7 @@ Global user guide:
 def redraw_image_with_openai(
     image_path: str | Path,
     output_path: str | Path,
-    model_name: str = "gpt-image-2",
+    model_name: str = IMAGE_MODEL,
     prompt_guide: str = "",
     translation_layout_notes: str = "",
     text_model_name: str = "gpt-6.1-sol",

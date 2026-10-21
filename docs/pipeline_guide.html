@@ -911,7 +911,7 @@ python3 run_pipeline.py \
 
   <h3>모델 선택</h3>
   <p>Step 4는 모델 이름의 접두어로 제공자를 고릅니다. <code>gpt-*</code>는 OpenAI Responses API, <code>gemini-*</code>는 Gemini <code>generate_content</code>로 보냅니다. 선택지는 <code>gpt-6.1-sol</code>(기본, reasoning <code>low</code>), <code>gpt-6-luna</code>, <code>gemini-3.8-flash</code>, <code>gemini-3.5-flash-lite</code> 네 가지이고, Gemini는 thinking <code>low</code>와 이미지 해상도 <code>medium</code>으로 호출합니다. Gemini를 고르려면 <code>.env</code>에 <code>GEMINI_API_KEY</code>가 필요합니다. CLI 예: <code>run_pipeline.py --ocr-model gpt-6.1-sol</code>. 편집기 OCR 모델 선택에서 나머지 모델을 수동으로 고를 수 있지만, 실제 만화의 OCR·번역 품질은 별도 확인이 필요합니다. 이전 모델의 비교 기록을 새 모델의 품질 보증으로 사용하지 않습니다.</p>
-  <p>저장 자료의 용어 정리는 <code>pipeline/openai_tasks.py</code>가 길이·자료 수만으로 자동 라우팅합니다. 짧은 자료는 GPT-6 Luna, 긴 다중 자료는 GPT-6.1 Sol이며 분류용 API 호출은 없습니다. 이미지 생성은 전용 <code>gpt-image-2</code>, 번역·레이아웃 가이드는 GPT-6.1 Sol입니다. 첫 단계 Cloud Vision 좌표 추출은 별도 경로입니다.</p>
+  <p>저장 자료의 용어 정리는 <code>pipeline/openai_tasks.py</code>가 길이·자료 수만으로 자동 라우팅합니다. 짧은 자료는 GPT-6 Luna, 긴 다중 자료는 GPT-6.1 Sol이며 분류용 API 호출은 없습니다. 이미지 생성은 전용 <code>gpt-image-2.5-sunburst</code>, 번역·레이아웃 가이드는 GPT-6.1 Sol입니다. 첫 단계 Cloud Vision 좌표 추출은 별도 경로입니다.</p>
 
   <h3>OCR 청크 분할 전략</h3>
   <p>한 페이지에 region이 많으면 OpenAI 한 번에 보내는 대신 여러 청크로 나눠 전송합니다.</p>

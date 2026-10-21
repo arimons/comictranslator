@@ -6,13 +6,14 @@ import os
 
 SOL_MODEL = 'gpt-6.1-sol'
 LUNA_MODEL = 'gpt-6-luna'
-IMAGE_MODEL = 'gpt-image-2'
+# 이미지 편집(통번역 재생성·글자 지우기)이 함께 쓰는 모델. 바꿀 때는 이 값 하나만 고친다.
+IMAGE_MODEL = 'gpt-image-2.5-sunburst'
 ROUTING_VERSION = 'openai-tasks-v1'
 
 
 def route_task(task: str, *, text_chars: int = 0, source_count: int = 0, override: str | None = None) -> dict:
     if override and override != 'auto':
-        if not override.startswith('gpt-') or override == IMAGE_MODEL:
+        if not override.startswith('gpt-') or override.startswith('gpt-image'):
             raise ValueError('텍스트 작업은 OpenAI GPT 모델을 지정하세요. Gemini는 사용하지 않습니다.')
         return {'model': override, 'reason': '사용자가 지정한 모델', 'policy': ROUTING_VERSION}
     if task == 'glossary' and text_chars <= 12000 and source_count <= 3:

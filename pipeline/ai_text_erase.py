@@ -21,8 +21,10 @@ from typing import Any
 import cv2
 import numpy as np
 
+from pipeline.openai_tasks import IMAGE_MODEL
+
 # 모델 문자열은 llm-model-reference(2026-10-06)의 이미지 편집 최고 품질 모델. 단가: 입력 $8 / 출력 $30 (100만 토큰당)
-ERASE_MODEL = "gpt-image-2.5-sunburst"
+ERASE_MODEL = IMAGE_MODEL
 PRICE_PER_INPUT_TOKEN = 8 / 1_000_000
 PRICE_PER_OUTPUT_TOKEN = 30 / 1_000_000
 MIN_PIXELS = 655_360  # 이보다 작은 크기는 API가 거절한다 (512×512 실측 거절)

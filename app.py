@@ -44,6 +44,7 @@ from pipeline.source_library import SourceLibrary, atomic_link, digest as source
 from pipeline.page_preparation import build_plan, materialize_plan
 from pipeline.image_generation_bridge import ImageGenerationStore
 from pipeline.openai_image_redraw import redraw_image_with_openai
+from pipeline.openai_tasks import IMAGE_MODEL
 from pipeline.pipeline_runner import DEFAULT_FONT, run_single_image, stream_subprocess
 from pipeline.render_text_overlay import apply_text_overlay
 from pipeline.work_glossary import (NARRATION, GlossaryStore, character_map, cv_page_text, glossary_snapshot, match_works,
@@ -307,7 +308,7 @@ class RestorePatchRemoveRequest(BaseModel):
 class GenerateMissingFinalRequest(BaseModel):
     session_id: str
     image_ids: list[str] = []
-    model: str = "gpt-image-2"
+    model: str = IMAGE_MODEL
     prompt_guide: str = ""
     analyze_first: bool = True
     text_model: str = "gpt-6.1-sol"
@@ -1406,7 +1407,7 @@ def write_export_recovery_generated(record: dict[str, Any], req: GenerateMissing
         "source": "image_generation_fallback",
         "generated_at": dt.datetime.now(dt.timezone.utc).isoformat(),
         "attempts": attempts,
-        "model": req.model or "gpt-image-2",
+        "model": req.model or IMAGE_MODEL,
         "text_model": req.text_model or "gpt-6.1-sol",
         "analyze_first": bool(req.analyze_first),
         "quality": req.quality or "medium",
@@ -2329,7 +2330,7 @@ def generate_missing_finals_with_openai(req: GenerateMissingFinalRequest) -> dic
         ok = redraw_image_with_openai(
             record["input_path"],
             record["final_jpg"],
-            model_name=req.model or "gpt-image-2",
+            model_name=req.model or IMAGE_MODEL,
             prompt_guide=req.prompt_guide or "",
             text_model_name=req.text_model or "gpt-6.1-sol",
             analyze_first=req.analyze_first,
@@ -2404,7 +2405,7 @@ def stream_generate_missing_finals(req: GenerateMissingFinalRequest):
                 ok = redraw_image_with_openai(
                     record["input_path"],
                     record["final_jpg"],
-                    model_name=req.model or "gpt-image-2",
+                    model_name=req.model or IMAGE_MODEL,
                     prompt_guide=req.prompt_guide or "",
                     text_model_name=req.text_model or "gpt-6.1-sol",
                     analyze_first=req.analyze_first,

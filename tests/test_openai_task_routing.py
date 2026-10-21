@@ -55,3 +55,23 @@ def test_valid_empty_entries_do_not_trigger_paid_escalation(monkeypatch):
     calls = fake_provider(monkeypatch,['{"work_matches":true,"entries":[]}'])
     value, route = response_json('JSON',route_task('glossary'))
     assert len(calls)==1 and value['entries']==[]
+
+
+def test_image_model_is_shared_by_redraw_erase_and_export_defaults():
+    """통번역 재생성·글자 지우기·내보내기 요청이 같은 이미지 모델 상수를 기본으로 쓴다."""
+    import inspect
+
+    import app
+    from pipeline import ai_text_erase
+    from pipeline.openai_image_redraw import redraw_image_with_openai
+    from pipeline.openai_tasks import IMAGE_MODEL
+
+    assert IMAGE_MODEL == 'gpt-image-2.5-sunburst'
+    assert inspect.signature(redraw_image_with_openai).parameters['model_name'].default == IMAGE_MODEL
+    assert ai_text_erase.ERASE_MODEL == IMAGE_MODEL
+    assert app.GenerateMissingFinalRequest(session_id='s').model == IMAGE_MODEL
+
+
+@pytest.mark.parametrize('image_model', ['gpt-image-2', 'gpt-image-2.5-sunburst', 'gpt-image-2.5-flare'])
+def test_text_tasks_reject_image_models(image_model):
+    with pytest.raises(ValueError): route_task('glossary', override=image_model)
