@@ -10,6 +10,7 @@ requests==2.32.5
 
 # OCR·번역·이미지 편집. OpenAI 또는 Gemini 중 선택해 쓴다.
 openai==2.8.1
+# 버전 고정 필수: pipeline/gemini_image.py가 SDK 내부 속성(_nextgen_client)을 쓴다.
 google-genai==2.6.0
 
 # CV·글자 입히기·LaMa. wrapper 0.1.2의 Pillow<10 / NumPy<2 제약 유지.

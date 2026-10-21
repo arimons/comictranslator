@@ -87,7 +87,11 @@ def _client(client: Any) -> Any:
     # google-genai 2.6은 HttpRetryOptions(attempts=0)을 1로 바꿔 interactions에 재시도 1회가 남으므로,
     # interactions 전용 클라이언트에서 직접 0으로 맞춘다. 원래 Client가 수거되면 HTTP 연결이 닫히므로 함께 붙잡아 둔다.
     owner = genai.Client(api_key=api_key)
-    nextgen = owner._nextgen_client.with_options(max_retries=0, timeout=300)
+    nextgen_client = getattr(owner, "_nextgen_client", None)
+    if nextgen_client is None:
+        # SDK 내부 속성에 기대는 부분이라 버전이 바뀌면 사라질 수 있다. 원인을 바로 알 수 있게 막는다.
+        raise GeminiImageError("google-genai 버전이 바뀌어 interactions 클라이언트를 만들 수 없습니다. requirements.txt의 고정 버전을 사용하세요")
+    nextgen = nextgen_client.with_options(max_retries=0, timeout=300)
     return SimpleNamespace(interactions=nextgen.interactions, _owner=owner)
 
 

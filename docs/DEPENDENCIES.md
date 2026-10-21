@@ -22,6 +22,7 @@ python3.11 -m venv .venv
 
 기존 requirements의 google-cloud-vision은 실제 코드가 REST requests 방식이어서 제거했다.
 OCR·번역은 OpenAI SDK(기본)와 google-genai(Gemini 선택 시)를 쓴다. 이미지 편집은 OpenAI SDK를 쓴다. Gemini는 `GEMINI_API_KEY`가 있을 때만 호출되고, SDK는 호출 시점에 불러온다.
+`pipeline/gemini_image.py`(Nano Banana 이미지 편집)는 `google-genai`의 내부 속성(`_nextgen_client`)으로 재시도를 끄므로, 이 패키지는 `requirements.txt`의 고정 버전(2.6.0)을 올리지 않는다. 버전이 바뀌어 속성이 없으면 이미지 편집이 안내 오류로 멈춘다.
 선택 배치 파일 업로드는 google-generativeai에서 google-genai의 client.files.upload로 변경하여 구형 SDK를 제거했다.
 Gradio, pandas, Hugging Face 도구 및 그 전용 의존성도 현재 실행 그래프에 없어 로컬 .venv에서 제거했다.
 직접 의존성 목록을 무차별 pip freeze 결과로 덮지 않고, 전체 freeze는 별도 플랫폼 잠금 파일로 관리한다.

@@ -128,3 +128,15 @@ def test_cost_prices_only_image_modality_at_image_rate(tmp_path):
     assert meta["image_tokens"] == 1120
     # 이미지 1,120은 이미지 단가, 텍스트 580 + 생각 580은 텍스트 단가
     assert meta["estimated_cost_usd"] == pytest.approx(1200 * 1.5e-6 + 1120 * 30e-6 + 1160 * 7.5e-6, abs=1e-4)
+
+
+def test_default_client_requires_pinned_sdk_internals(monkeypatch):
+    """SDK 내부 속성이 사라지면 AttributeError 대신 원인을 알려 주는 오류를 낸다."""
+    from types import SimpleNamespace
+
+    from google import genai
+
+    monkeypatch.setenv("GEMINI_API_KEY", "fixture-key")
+    monkeypatch.setattr(genai, "Client", lambda api_key: SimpleNamespace())
+    with pytest.raises(gi.GeminiImageError, match="고정 버전"):
+        gi._client(None)
