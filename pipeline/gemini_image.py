@@ -25,8 +25,8 @@ import numpy as np
 
 GEMINI_IMAGE_MODEL = "gemini-nano-banana-2.1"
 PRICE_PER_INPUT_TOKEN = 1.5 / 1_000_000
-PRICE_PER_OUTPUT_TOKEN = 30 / 1_000_000  # 출력 이미지 토큰
-PRICE_PER_THOUGHT_TOKEN = 7.5 / 1_000_000
+PRICE_PER_IMAGE_TOKEN = 30 / 1_000_000  # 출력 이미지 토큰
+PRICE_PER_TEXT_TOKEN = 7.5 / 1_000_000  # 출력 텍스트·생각 토큰
 # 문서에 나열된 비율 프리셋. 모델이 받지 않는 비율이 있으면 400으로 돌아온다.
 ASPECT_RATIOS = ("1:1", "3:2", "2:3", "3:4", "4:3", "4:5", "5:4", "9:16", "16:9", "21:9")
 # 기존 quality 선택지(low/medium/high)를 해상도 등급으로 옮긴다
@@ -62,9 +62,17 @@ def fit_aspect_ratio(width: int, height: int) -> tuple[str, int, int]:
     return best[1], best[2], best[3]
 
 
-def estimate_cost(input_tokens: int, output_tokens: int, thought_tokens: int = 0) -> float:
-    return (input_tokens * PRICE_PER_INPUT_TOKEN + output_tokens * PRICE_PER_OUTPUT_TOKEN
-            + thought_tokens * PRICE_PER_THOUGHT_TOKEN)
+def estimate_cost(input_tokens: int, image_tokens: int, text_tokens: int = 0) -> float:
+    """추정치. 이미지 출력은 이미지 단가, 나머지 출력(텍스트·생각)은 텍스트 단가로 센다."""
+    return input_tokens * PRICE_PER_INPUT_TOKEN + image_tokens * PRICE_PER_IMAGE_TOKEN + text_tokens * PRICE_PER_TEXT_TOKEN
+
+
+def _image_output_tokens(usage: Any) -> int | None:
+    """응답의 종류별 출력 토큰에서 이미지 몫만 꺼낸다. 내역이 없으면 None."""
+    items = getattr(usage, "output_tokens_by_modality", None)
+    if not items:
+        return None
+    return sum(int(getattr(item, "tokens", 0) or 0) for item in items if getattr(item, "modality", None) == "image")
 
 
 def _client(client: Any) -> Any:
@@ -133,6 +141,12 @@ def edit_image(
     input_tokens = int(getattr(usage, "total_input_tokens", 0) or 0)
     output_tokens = int(getattr(usage, "total_output_tokens", 0) or 0)
     thought_tokens = int(getattr(usage, "total_thought_tokens", 0) or 0)
+    # 출력 합계에 생각 토큰이 들어 있는지 문서로 확인되지 않아, 종류별 내역의 이미지 몫만 이미지 단가로 센다.
+    # 내역이 없으면 출력 합계를 이미지로 본다(높게 잡힌다).
+    image_tokens = _image_output_tokens(usage)
+    if image_tokens is None:
+        image_tokens = output_tokens
+    text_tokens = max(0, output_tokens - image_tokens) + thought_tokens
     meta = {
         "model": model,
         "quality": quality,
@@ -144,6 +158,7 @@ def edit_image(
         "input_tokens": input_tokens,
         "output_tokens": output_tokens,
         "thought_tokens": thought_tokens,
-        "estimated_cost_usd": round(estimate_cost(input_tokens, output_tokens, thought_tokens), 4),
+        "image_tokens": image_tokens,
+        "estimated_cost_usd": round(estimate_cost(input_tokens, image_tokens, text_tokens), 4),
     }
     return result, meta

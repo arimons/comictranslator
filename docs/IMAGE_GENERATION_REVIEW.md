@@ -60,7 +60,7 @@
 
 OpenAI 모델 전환(2026-10-20): 편집기 내보내기의 별도 API 생성 경로는 gpt-image-2.5-sunburst와 GPT-6.1 Sol 번역·레이아웃 가이드를 기본으로 사용한다(2026-10-21 갱신). 이 문서의 호스트 도구 후보 등록 경로는 호스트가 반환한 실제 모델 정보만 기록한다.
 
-Gemini 분기(2026-10-21): Step 4 OCR·번역 모델로 Gemini를 고르면 내보내기 입력란이 이미지 모델 `gemini-nano-banana-2.1`, 가이드 모델은 고른 Gemini 모델로 바뀐다. 영역 분석 탭 AI 글자 지우기도 같은 기준으로 모델을 고른다(`pipeline/gemini_image.py`).
+Gemini 분기(2026-10-21): Step 4 OCR·번역 모델로 Gemini를 고르면 내보내기 입력란이 이미지 모델 `gemini-nano-banana-2.1`, 가이드 모델은 고른 Gemini 모델로 바뀐다. 영역 분석 탭 AI 글자 지우기도 같은 기준으로 모델을 고른다(`pipeline/gemini_image.py`). 기본 품질은 통번역은 두 모델 모두 medium, 글자 지우기는 gpt-image medium·Gemini low(1K)다. 화면의 비용은 응답 토큰으로 계산한 추정치이고, Gemini는 종류별 출력 내역의 이미지 몫만 이미지 단가로 센다.
 
 수동 Region 제외로 페이지 분석 문맥이 바뀌면 기존 생성 요청의 revision도 달라질 수 있다. 처리 대상 0개와 이미지 생성 권장은 별도 상태이며, 제외만으로 이미지 생성이나 번역을 자동 실행하지 않는다.
 

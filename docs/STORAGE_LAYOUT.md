@@ -27,7 +27,7 @@
 
 배경 복원 데이터는 `projects/{id}/work/restore/{페이지}/`에 둡니다. `state.json`(확정 패치 목록), `patches/`(확정 패치 PNG),
 `preview.png`(확정 패치를 얹은 미리보기, 영역 분석 탭 "마스크"가 사용), `jobs/{작업 ID}/`(실행 후보)로 나뉩니다.
-AI 글자 지우기 작업은 `jobs/` 안에 보낸 이미지(OpenAI는 `ai_erase_request.png`, Gemini는 `gemini_image_request.png`)와 후보(`crop_after.png`)를 남깁니다.
+AI 글자 지우기 작업은 `jobs/` 안에 보낸 이미지(OpenAI는 `ai_erase_request.png`, Gemini는 `gemini_image_request.png`)와 후보(`crop_after.png`)를 남깁니다. 확정 패치의 `usage`에는 토큰 수와 추정 비용(실제 청구액이 아님)이 남습니다.
 원본 라이브러리 등록은 `local/hosts/{호스트 ID 해시}/source_roots.json`이며, macOS 호스트 ID는 하드웨어 UUID입니다.
 
 ## JSON 호환

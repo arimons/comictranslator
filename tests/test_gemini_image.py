@@ -106,3 +106,25 @@ def test_redraw_with_gemini_model_writes_original_size(tmp_path, monkeypatch):
     assert ok
     assert fake.calls[0]["model"] == gi.GEMINI_IMAGE_MODEL
     assert cv2.imread(str(out)).shape == (1920, 1350, 3)
+
+
+def test_cost_prices_only_image_modality_at_image_rate(tmp_path):
+    fake = FakeInteractions()
+    original = fake.create
+
+    def create(**kw):
+        response = original(**kw)
+        response.usage = types.SimpleNamespace(
+            total_input_tokens=1200, total_output_tokens=1700, total_thought_tokens=580,
+            output_tokens_by_modality=[types.SimpleNamespace(modality="image", tokens=1120),
+                                       types.SimpleNamespace(modality="text", tokens=580)],
+        )
+        return response
+
+    fake.create = create
+    page = np.full((1080, 960, 3), 255, np.uint8)
+    _, meta = gi.edit_image(page, "erase", tmp_path, quality="low", client=_client(fake))
+
+    assert meta["image_tokens"] == 1120
+    # 이미지 1,120은 이미지 단가, 텍스트 580 + 생각 580은 텍스트 단가
+    assert meta["estimated_cost_usd"] == pytest.approx(1200 * 1.5e-6 + 1120 * 30e-6 + 1160 * 7.5e-6, abs=1e-4)
