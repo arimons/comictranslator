@@ -251,6 +251,13 @@
         "batch/submit_batch_folder.py"
       ]
     },
+    "docs/OPERATIONS.md": {
+      "role": "canonical",
+      "topic": "맥 미니 상시 서버(PM2)와 기기 간 코드 동기화 운영 방식",
+      "sources": [
+        "deploy/pm2/ecosystem.config.cjs"
+      ]
+    },
     "docs/INPUT_SOURCES.md": {
       "role": "canonical",
       "topic": "원본 직접 참조·분할 소유 입력·기기별 해시 재연결",
