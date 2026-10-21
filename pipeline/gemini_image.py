@@ -17,6 +17,7 @@ import base64
 import os
 import time
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import cv2
@@ -76,8 +77,10 @@ def _client(client: Any) -> Any:
 
     # SDK 자동 재시도는 끈다. 시간 초과·5xx 뒤 같은 요청이 다시 나가면 이미지 편집이 이중 과금될 수 있다.
     # google-genai 2.6은 HttpRetryOptions(attempts=0)을 1로 바꿔 interactions에 재시도 1회가 남으므로,
-    # interactions 전용 클라이언트에서 직접 0으로 맞춘다.
-    return genai.Client(api_key=api_key)._nextgen_client.with_options(max_retries=0, timeout=300)
+    # interactions 전용 클라이언트에서 직접 0으로 맞춘다. 원래 Client가 수거되면 HTTP 연결이 닫히므로 함께 붙잡아 둔다.
+    owner = genai.Client(api_key=api_key)
+    nextgen = owner._nextgen_client.with_options(max_retries=0, timeout=300)
+    return SimpleNamespace(interactions=nextgen.interactions, _owner=owner)
 
 
 def edit_image(
