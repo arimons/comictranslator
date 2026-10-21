@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
-OpenAI OCR + Translation + Integrated JSON 생성.
+OCR + Translation + Integrated JSON 생성.
 
-표준 경로는 flood indexed OCR sheet를 OpenAI 입력으로 사용한다.
+표준 경로는 flood indexed OCR sheet를 LLM 입력으로 사용한다.
 OCR sheet가 없을 때만 기존 원본 이미지 + CV cluster 힌트 경로로 fallback한다.
 """
 
@@ -59,6 +59,7 @@ except ImportError:
 
 load_dotenv()
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
 # Step 4 기본 모델. --model 인자로 교체할 수 있다.
 MODEL_NAME = "gpt-6.1-sol"
@@ -66,29 +67,45 @@ MODEL_NAME = "gpt-6.1-sol"
 # GPT-6.1 Sol은 none을 지원하지 않으므로 low를 유지한다.
 OPENAI_REASONING_EFFORT = "low"
 
+# Gemini 3.8 Flash는 minimal을 지원하지 않으므로(오류), 두 Gemini 모델 모두 low로 맞춘다.
+GEMINI_THINKING_LEVEL = "LOW"
+# thinking 토큰이 출력 한도에 함께 계산되므로 OpenAI(12000)보다 넉넉히 잡는다.
+GEMINI_MAX_OUTPUT_TOKENS = 16000
+# 이미지 토큰 비용을 줄이려고 medium으로 시작한다. 품질 비교 후 high로 올릴지 정한다.
+GEMINI_MEDIA_RESOLUTION = "MEDIA_RESOLUTION_MEDIUM"
+
 OCR_SHEET_TARGET_REGIONS = 5
 OCR_SHEET_SOFT_MAX_REGIONS = 6
 
 
 # UI에 노출할 모델 목록. 근거는 docs/OCR_MODEL_COMPARISON.md 참고.
+# id는 각 제공자의 API 식별자 그대로다. Sol은 6과 6.1 가격이 같아 6.1만 쓴다.
 SUPPORTED_OCR_MODELS = [
-    {"id": "gpt-6.1-sol", "label": "GPT-6.1 Sol (기본)", "note": "문맥 OCR·번역 기본. reasoning low"},
-    {"id": "gpt-6-luna", "label": "GPT-6 Luna (수동 선택)", "note": "저비용 모델. OCR·번역 품질은 페이지별 확인 필요"},
+    {"id": "gpt-6.1-sol", "provider": "openai", "label": "GPT-6.1 Sol (기본)", "note": "문맥 OCR·번역 기본. reasoning low"},
+    {"id": "gpt-6-luna", "provider": "openai", "label": "GPT-6 Luna (수동 선택)", "note": "저비용 모델. OCR·번역 품질은 페이지별 확인 필요"},
+    {"id": "gemini-3.8-flash", "provider": "gemini", "label": "Gemini 3.8 Flash (수동 선택)", "note": "GEMINI_API_KEY 필요. thinking low. 페이지별 확인 필요"},
+    {"id": "gemini-3.5-flash-lite", "provider": "gemini", "label": "Gemini 3.5 Flash-Lite (수동 선택)", "note": "GEMINI_API_KEY 필요. 저비용. thinking low. 페이지별 확인 필요"},
 ]
 
 
 def resolve_provider(model_name: str) -> str:
     if model_name.startswith("gpt-"):
         return "openai"
-    raise ValueError("OCR/번역은 OpenAI GPT 모델만 지원합니다. 기존 OpenAI 선택을 변경하세요.")
+    if model_name.startswith("gemini-"):
+        return "gemini"
+    raise ValueError("OCR/번역은 OpenAI GPT 또는 Gemini 모델만 지원합니다. 모델 선택을 변경하세요.")
 
 
 def _require_api_key(provider: str) -> str:
-    if provider != "openai":
-        raise ValueError("OpenAI만 지원합니다.")
-    if not OPENAI_API_KEY:
-        raise RuntimeError("OPENAI_API_KEY 환경 변수가 설정되어 있지 않습니다")
-    return OPENAI_API_KEY
+    if provider == "openai":
+        if not OPENAI_API_KEY:
+            raise RuntimeError("OPENAI_API_KEY 환경 변수가 설정되어 있지 않습니다")
+        return OPENAI_API_KEY
+    if provider == "gemini":
+        if not GEMINI_API_KEY:
+            raise RuntimeError("GEMINI_API_KEY 환경 변수가 설정되어 있지 않습니다")
+        return GEMINI_API_KEY
+    raise ValueError(f"지원하지 않는 제공자입니다: {provider}")
 
 
 def _normalize_text_for_rendering(text: Any) -> str:
@@ -123,7 +140,7 @@ def _region_ocr_problem(rid: int, r: Any) -> str | None:
 
 
 def validate_gemini_ocr_regions(regions: list, expected_region_ids: set[int]) -> tuple[bool, str]:
-    """OpenAI OCR 응답이 후속 integrated 변환에 충분한지 검증한다."""
+    """OCR 응답이 후속 integrated 변환에 충분한지 검증한다."""
     if not isinstance(regions, list):
         return True, "반환된 regions가 리스트 형태가 아님"
 
@@ -314,6 +331,65 @@ def _run_openai_json(
     raise RuntimeError(f"OpenAI API {max_retries}회 재시도 실패: {last_exc}") from last_exc
 
 
+def _run_gemini_json(
+    image_path: str | list[str],
+    prompt: str,
+    temperature: float,
+    model_name: str,
+    max_retries: int = 4,
+) -> tuple[Dict[str, Any], float]:
+    """Gemini generate_content로 OCR sheet를 처리한다.
+
+    temperature는 받지만 사용하지 않는다. Gemini 3 계열은 기본 temperature를 권장하고,
+    출력 성향은 thinking level로 제어한다.
+    """
+    from google import genai
+    from google.genai import types
+
+    client = genai.Client(api_key=_require_api_key("gemini"))
+    image_paths = image_path if isinstance(image_path, list) else [image_path]
+
+    parts: list[Any] = [types.Part(text=prompt)]
+    for path in image_paths:
+        with open(path, "rb") as image_file:
+            parts.append(
+                types.Part.from_bytes(
+                    data=image_file.read(),
+                    mime_type=_mime_type(path),
+                    media_resolution=GEMINI_MEDIA_RESOLUTION,
+                )
+            )
+    config = types.GenerateContentConfig(
+        response_mime_type="application/json",
+        max_output_tokens=GEMINI_MAX_OUTPUT_TOKENS,
+        thinking_config=types.ThinkingConfig(thinking_level=GEMINI_THINKING_LEVEL),
+    )
+
+    started_at = time.time()
+    last_exc: Exception | None = None
+    for attempt in range(max_retries):
+        if attempt > 0:
+            wait = 2 ** attempt
+            print(f"  ⏳ Gemini 재시도 {attempt}/{max_retries - 1} ({wait}s 대기)...")
+            time.sleep(wait)
+        try:
+            response = client.models.generate_content(
+                model=model_name,
+                contents=[types.Content(role="user", parts=parts)],
+                config=config,
+            )
+            text = (response.text or "").strip()
+            if not text:
+                raise ValueError("Gemini 응답이 비어 있습니다")
+            return _extract_json_response(text), time.time() - started_at
+        except Exception as exc:
+            last_exc = exc
+            if getattr(exc, "code", None) in (429, 500, 502, 503, 504):
+                continue
+            raise
+    raise RuntimeError(f"Gemini API {max_retries}회 재시도 실패: {last_exc}") from last_exc
+
+
 def _run_model_json(
     image_path: str | list[str],
     prompt: str,
@@ -323,8 +399,9 @@ def _run_model_json(
 ) -> tuple[Dict[str, Any], float]:
     """모델명에 맞는 provider로 분기해 JSON 응답을 받는다."""
     model = model_name or MODEL_NAME
-    resolve_provider(model)
-    return _run_openai_json(image_path, prompt, temperature, model, max_retries)
+    provider = resolve_provider(model)
+    runner = _run_gemini_json if provider == "gemini" else _run_openai_json
+    return runner(image_path, prompt, temperature, model, max_retries)
 
 
 def _bbox_union(rects: list[list[int]]) -> list[int]:
@@ -445,7 +522,7 @@ def _resolve_segment_anchor_ids(
     region_anchor_ids: list[int],
     cv_cluster_map: dict[int, dict],
 ) -> list[list[int]]:
-    """OpenAI의 matched_tg_ids가 흔들릴 때 OCR 원문 기준으로 TG 매핑을 보정한다."""
+    """LLM의 matched_tg_ids가 흔들릴 때 OCR 원문 기준으로 TG 매핑을 보정한다."""
     if len(segments) <= 1:
         return [region_anchor_ids]
 
@@ -824,7 +901,7 @@ def _process_sheet_ocr(
                 "skipped": True,
                 "stage": "ocr_translation",
                 "reason": "missing_ocr_sheet",
-                "message": "OCR sheet 산출물이 불완전해 OpenAI OCR/번역을 건너뜁니다.",
+                "message": "OCR sheet 산출물이 불완전해 OCR/번역을 건너뜁니다.",
                 "missing_inputs": missing_inputs,
                 "analysis_status": sheet_meta.get("analysis_status") or "unknown",
                 "ocr_region_count": len(sheet_regions) if sheet_regions else None,
@@ -854,7 +931,7 @@ def _process_sheet_ocr(
             if rid is not None:
                 expected_ids.add(int(rid))
 
-        # regions가 없으면 OpenAI 호출 없이 빈 integrated.json 생성 후 즉시 반환
+        # regions가 없으면 LLM 호출 없이 빈 integrated.json 생성 후 즉시 반환
         if not sheet_regions:
             _build_integrated_from_sheet_regions([], sheet_json_path, cv_clusters_path, output_integrated_path)
             return {
@@ -916,8 +993,8 @@ def _process_sheet_ocr(
                     total_elapsed += elapsed
                 except Exception as e:
                     for rid in pending_ids:
-                        problems[rid] = f"OpenAI API 호출 실패: {str(e)}"
-                    print(f"  ⚠️ OpenAI API 호출 실패 chunk {chunk_index}/{len(ocr_chunks)} — {str(e)} (시도 {attempt}/{max_content_retries})")
+                        problems[rid] = f"LLM API 호출 실패: {str(e)}"
+                    print(f"  ⚠️ LLM API 호출 실패 chunk {chunk_index}/{len(ocr_chunks)} — {str(e)} (시도 {attempt}/{max_content_retries})")
                     if attempt < max_content_retries:
                         time.sleep(2)
                     continue
@@ -928,9 +1005,9 @@ def _process_sheet_ocr(
                 still = sorted(chunk_expected_ids - set(good))
                 if not still:
                     if attempt > 1:
-                        print(f"  ✨ OpenAI OCR/번역 검증 통과 chunk {chunk_index}/{len(ocr_chunks)} (시도 {attempt}/{max_content_retries})")
+                        print(f"  ✨ OCR/번역 검증 통과 chunk {chunk_index}/{len(ocr_chunks)} (시도 {attempt}/{max_content_retries})")
                     break
-                print(f"  ⚠️ OpenAI OCR/번역 일부 실패 chunk {chunk_index}/{len(ocr_chunks)} — 남은 region {still}: {problems.get(still[0], '')} (시도 {attempt}/{max_content_retries})")
+                print(f"  ⚠️ OCR/번역 일부 실패 chunk {chunk_index}/{len(ocr_chunks)} — 남은 region {still}: {problems.get(still[0], '')} (시도 {attempt}/{max_content_retries})")
                 if attempt < max_content_retries:
                     time.sleep(2)
 
@@ -964,7 +1041,7 @@ def _process_sheet_ocr(
         if expected_ids and not all_returned_regions:
             # 한 region도 받지 못했다면(API 키·네트워크 문제 등) 지금처럼 페이지를 실패로 둔다.
             first_reason = next(iter(missing_reasons.values()), "")
-            raise RuntimeError(f"OpenAI OCR 전체 실패: {first_reason}")
+            raise RuntimeError(f"OCR 전체 실패: {first_reason}")
 
         result = {"regions": all_returned_regions}
 
@@ -1008,9 +1085,9 @@ def _process_single_ocr(
         )
         gemini_clusters = result.get("clusters", [])
 
-        # OpenAI가 비어있는 응답을 반환했으면 1회 재시도
+        # LLM이 비어있는 응답을 반환했으면 1회 재시도
         if not gemini_clusters and cv_clusters:
-            print(f"  ⚠️ OpenAI OCR 응답 비어있음 — 재시도...")
+            print(f"  ⚠️ OCR 응답 비어있음 — 재시도...")
             time.sleep(2)
             result, elapsed = _run_model_json(
                 image_path,
@@ -1089,7 +1166,7 @@ def process_ocr_and_translation_batch(
     max_workers: int = 8,
 ) -> Dict[str, Any]:
     print(f"\n{'=' * 60}")
-    print("🚀 OpenAI OCR + Translation 병렬 처리 시작")
+    print("🚀 OCR + Translation 병렬 처리 시작")
     print(f"{'=' * 60}")
     print(f"📊 이미지 개수: {len(image_paths)}개")
     print(f"⚙️ 워커: {max_workers}개 병렬 처리")
@@ -1150,7 +1227,7 @@ def process_ocr_and_translation(
     extra_prompt: str = "",
 ) -> bool:
     print(f"\n{'=' * 60}")
-    print("🚀 OpenAI OCR + Translation + Integrated JSON 생성 시작")
+    print("🚀 OCR + Translation + Integrated JSON 생성 시작")
     print(f"{'=' * 60}")
 
     result = _process_single_ocr(image_path, cv_clusters_path, output_integrated_path, extra_prompt)
@@ -1165,7 +1242,7 @@ def main() -> None:
     # 모델을 모듈 전역으로 반영한다. integrated.json의 model 필드도 이 값을 따른다.
     global MODEL_NAME
 
-    parser = argparse.ArgumentParser(description="OpenAI OCR + Translation + Integrated JSON 생성")
+    parser = argparse.ArgumentParser(description="OCR + Translation + Integrated JSON 생성 (OpenAI / Gemini)")
     parser.add_argument("image_path", help="원본 이미지 경로")
     parser.add_argument("cv_clusters_json", help="cv_clusters JSON 경로")
     parser.add_argument("output_integrated_json", help="integrated JSON 출력 경로")
@@ -1176,7 +1253,7 @@ def main() -> None:
     parser.add_argument(
         "--model",
         default=MODEL_NAME,
-        help=f"OCR/번역 모델. OpenAI gpt-* (기본값: {MODEL_NAME})",
+        help=f"OCR/번역 모델. OpenAI gpt-* 또는 gemini-* (기본값: {MODEL_NAME})",
     )
     args = parser.parse_args()
 
@@ -1205,9 +1282,9 @@ def main() -> None:
         )
 
     if not result.get("success"):
-        print(f"❌ OpenAI OCR 실패: {result.get('error')}")
+        print(f"❌ OCR 실패: {result.get('error')}")
         sys.exit(1)
-    print(f"✅ OpenAI OCR 완료: {result.get('sentences', 0)}개 sentence")
+    print(f"✅ OCR 완료: {result.get('sentences', 0)}개 sentence")
     if result.get("missing_region_ids"):
         print(f"⚠️ 번역 누락 region {result['missing_region_ids']}: 원본으로 남습니다. 편집기에서 직접 입력하세요.")
 

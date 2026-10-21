@@ -75,7 +75,7 @@ NEW_COMIC_TRANSLATOR/
     ├── region_types.py         # 처리 기준 상수·기존 JSON 타입 호환·비파괴 projection
     ├── editor_review_bridge.py # 세션 산출물 조회·이미지 crop·revision·미적용 검토 초안
     ├── geometry.py             # 사각형 좌표 유틸
-    ├── gemini_ocr_translate_v5.py  # Step 4 (GPT-6.1 Sol 기본, OpenAI Responses API)
+    ├── gemini_ocr_translate_v5.py  # Step 4 (GPT-6.1 Sol 기본, OpenAI Responses API · Gemini generate_content 선택)
     ├── openai_tasks.py        # OpenAI 작업별 Sol/Luna 라우팅·JSON 출력·제한 승격
     ├── work_glossary.py        # 작품 메모 저장·이전 형식 이관·URL 초안(OpenAI 1회)·번역 참고문·region 화자 프롬프트
     ├── work_sources.py         # 공개 작품 URL의 제한 수집·본문 추출
@@ -118,7 +118,7 @@ Step 5: Text Overlay (regions.json으로 bbox·safe rect 결정)
 
 각 단계는 별도 subprocess로 실행되며, 어느 단계든 실패하면 그 이미지는 실패로 끝난다. 예전 Step 5 White Masking(`apply_masking.py`)은 없어졌고 마스킹은 Step 3이 직접 만든다.
 
-예전 `integrate_ocr_v3.py` 단계는 메인 파이프라인에서 제거됐다. 현재는 `pipeline/gemini_ocr_translate_v5.py`가 OpenAI 응답을 바로 overlay가 읽는 integrated JSON 구조로 저장한다.
+예전 `integrate_ocr_v3.py` 단계는 메인 파이프라인에서 제거됐다. 현재는 `pipeline/gemini_ocr_translate_v5.py`가 LLM 응답을 바로 overlay가 읽는 integrated JSON 구조로 저장한다.
 
 ## Root Wrapper
 
@@ -385,7 +385,7 @@ flood 실패 후보에 TELEA inpaint를 적용하는 승격 후보 실험 모듈
 OCR, 번역, Text Group 매칭을 한 번에 수행하고 integrated JSON을 생성한다.
 
 - 표준 입력: `--ocr-sheet-image`(indexed OCR sheet) + `--ocr-sheet-json`(`*_regions.json`) + `*_text_groups.json`. OCR sheet가 없을 때만 원본 이미지 + CV cluster 힌트 경로로 fallback한다.
-- `--model`로 모델을 고른다. `gemini-*`는 OpenAI, `gpt-*`는 OpenAI로 보낸다. UI 노출 목록은 `SUPPORTED_OCR_MODELS`, 기본값은 `MODEL_NAME`이다.
+- `--model`로 모델을 고른다. `gpt-*`는 OpenAI Responses API, `gemini-*`는 Gemini `generate_content`로 보낸다(`resolve_provider`). 선택지는 `gpt-6.1-sol`(기본)·`gpt-6-luna`·`gemini-3.8-flash`·`gemini-3.5-flash-lite`이고, UI 노출 목록은 `SUPPORTED_OCR_MODELS`, 기본값은 `MODEL_NAME`이다. Gemini는 `GEMINI_API_KEY`가 있어야 하며 thinking low·이미지 해상도 medium(`GEMINI_MEDIA_RESOLUTION`)으로 호출한다.
 - OCR 직후 `font_style_analyzer.update_integrated_render_hints()`로 render_hint를 보정한다.
 - 출력: `*_integrated.json`
 - 출력 구조: `clusters`(=Text Group), `unmatched_clusters`, `model`, `ocr_source`. 번역을 끝내 받지 못한 region이 있으면 `missing_region_ids`도 쓴다.
