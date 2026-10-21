@@ -8,8 +8,9 @@ mcp==1.30.0
 python-dotenv==1.2.4
 requests==2.32.5
 
-# OpenAI OCR·번역·이미지 편집
+# OCR·번역·이미지 편집. OpenAI 또는 Gemini 중 선택해 쓴다.
 openai==2.8.1
+google-genai==2.6.0
 
 # CV·글자 입히기·LaMa. wrapper 0.1.2의 Pillow<10 / NumPy<2 제약 유지.
 # https://github.com/enesmsahin/simple-lama-inpainting/blob/main/pyproject.toml

@@ -1,3 +1,3 @@
 -r ../requirements.txt
-# 별도 보존한 Google Batch 도구를 사용할 때만 설치한다.
+# google-genai는 기본 requirements에 포함돼 있다. 별도 보존한 Google Batch 도구용 설치 진입점으로 남긴다.
 google-genai==2.6.0

@@ -5,9 +5,9 @@ Python 3.11 / macOS Apple Silicon 환경에서 검증한다. 다른 플랫폼은
 
 | 파일 | 용도 |
 |---|---|
-| requirements.txt | FastAPI 편집기, MCP, REST Cloud Vision, OpenAI, CV·렌더, LaMa |
+| requirements.txt | FastAPI 편집기, MCP, REST Cloud Vision, OpenAI, Gemini(google-genai), CV·렌더, LaMa |
 | requirements-dev.txt | 기본 설치 + pytest·HTTP 테스트 |
-| batch/requirements.txt | 기본 설치 + 선택 Google Batch SDK |
+| batch/requirements.txt | 기본 설치 진입점. google-genai는 기본 requirements에 포함 |
 | requirements-lock-macos-arm64-py311.txt | 정리한 실제 환경의 전체 설치 버전. 개발·선택 배치 포함 |
 
 ```sh
@@ -21,7 +21,7 @@ python3.11 -m venv .venv
 ```
 
 기존 requirements의 google-cloud-vision은 실제 코드가 REST requests 방식이어서 제거했다.
-메인 OCR·번역·이미지 편집은 OpenAI SDK를 사용한다. Google SDK는 표준 파이프라인에 필요하지 않다.
+OCR·번역은 OpenAI SDK(기본)와 google-genai(Gemini 선택 시)를 쓴다. 이미지 편집은 OpenAI SDK를 쓴다. Gemini는 `GEMINI_API_KEY`가 있을 때만 호출되고, SDK는 호출 시점에 불러온다.
 선택 배치 파일 업로드는 google-generativeai에서 google-genai의 client.files.upload로 변경하여 구형 SDK를 제거했다.
 Gradio, pandas, Hugging Face 도구 및 그 전용 의존성도 현재 실행 그래프에 없어 로컬 .venv에서 제거했다.
 직접 의존성 목록을 무차별 pip freeze 결과로 덮지 않고, 전체 freeze는 별도 플랫폼 잠금 파일로 관리한다.

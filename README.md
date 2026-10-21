@@ -42,7 +42,7 @@
 이 프로젝트는 외부 서비스 두 가지를 직접 연결해야 동작합니다. 키는 각자 발급받아야 하고, 사용량에 따라 비용이 발생할 수 있습니다.
 
 1. **Google Cloud Vision API 키**: 글자 상자의 위치를 얻는 데 씁니다. Google Cloud Platform에서 프로젝트를 만들고 Cloud Vision API를 켠 뒤 API 키를 발급받습니다.
-2. **LLM API 키**: 인식과 번역에 씁니다. 현재 표준 경로는 OpenAI API이고, 중간 단계는 Gemini 계열로도 검토했습니다. 사용할 서비스의 키를 발급받아 넣습니다.
+2. **LLM API 키**: 인식과 번역에 씁니다. 기본은 OpenAI이고, Gemini 모델을 고를 수도 있습니다. 사용할 서비스의 키를 발급받아 넣습니다.
 
 그 밖에 Python 3.11이 필요합니다. 인식 단계 외의 글자 제거(LaMa)는 로컬에서 실행되며, 모델 파일(약 196MB)은 처음 사용할 때 내려받습니다.
 
@@ -58,6 +58,8 @@ python3.11 -m venv .venv
 ```dotenv
 CLOUD_VISION_API_KEY=your_cloud_vision_api_key
 OPENAI_API_KEY=your_openai_api_key
+# 선택: Gemini 모델로 인식·번역할 때만 필요합니다
+# GEMINI_API_KEY=your_gemini_api_key
 # 선택: 작업 데이터 위치. 기본값은 ~/ComicTranslator
 # COMIC_TRANSLATOR_HOME=/path/to/ComicTranslator
 ```
