@@ -39,6 +39,7 @@ NEW_COMIC_TRANSLATOR/
 │       ├── AiErasePanel.jsx      # AI 글자 지우기: 도구 모음 AI 지우개 확인 창 + 진행·후보·적용 카드 (이미지 편집 모델, 페이지 전체 패치)
 │       ├── keymap.js             # 키보드·마우스 단축키 단일 정의
 │       ├── viewportControls.js   # 두 캔버스 공용 확대/이동/맞춤
+│       ├── OcrBatchPrompt.jsx    # 확인한 페이지가 쌓이면 백그라운드 번역을 묻는 알림·진행 표시
 │       ├── ShortcutHelp.jsx      # ? 단축키 도움말
 │       ├── regionTypes.js        # 경계 기반/텍스트 기반 용어 및 과거 타입 호환
 │       ├── RegionTypeBadge.jsx   # 공통 처리 기준 배지
@@ -157,7 +158,7 @@ guidance(수동 보정)가 있는 이미지는 `guidance_digest`(guidance 내용
 | `POST /api/import-path`, `/api/upload` | 이미지 폴더/파일을 세션에 추가 |
 | `POST /api/analyze(-stream)` | Step 1~3 실행 (pre_ocr까지), 캐시 우선 재사용 |
 | `POST /api/guidance`, `/api/guidance/clear` | 수동 보정(TG 삭제/split, edge barrier, manual region 등) 반영 후 Step 3 재실행 |
-| `POST /api/run-final(-stream)` | Step 4(OCR/번역) + Step 5(오버레이) 실행. body의 `ocr_model`로 모델 지정 |
+| `POST /api/run-final(-stream)` | Step 4(OCR/번역) + Step 5(오버레이) 실행. body의 `ocr_model`로 모델 지정. `image_id`는 페이지 ID·`all`·`failed`·`batch`(`image_ids`로 지정한 페이지만, 이미 번역된 페이지는 건너뜀) |
 | `GET /api/ocr-models` | OCR/번역 모델 목록(`id`, `label`, `note`)과 기본값 |
 | `GET /api/glossary/{session_id}`, `POST /api/glossary/bind`, `/api/glossary/unbind`, `/api/glossary/save`, `/api/glossary/draft` | 작품 메모 연결·저장·URL 초안. 메모 참고문을 Step 4 프롬프트에 붙인다 |
 | `POST /api/server/restart` | 같은 명령으로 서버 프로세스를 다시 띄운다. 진행 중 작업이 있으면 409, `?force=true`면 중단하고 재시작 |
@@ -195,6 +196,7 @@ guidance(수동 보정)가 있는 이미지는 `guidance_digest`(guidance 내용
 | `frontend/src/OverlayCanvas.jsx` | Step 5 캔버스 — 오버레이 안전 영역 이동/리사이즈/회전, eraser rect 편집. 화면 기준 3px 이상 끌었을 때만 수동 위치로 저장 |
 | `frontend/src/keymap.js` | 단축키 단일 정의(키 조합, 탭 범위, 조건, 동작 id, 설명). App 디스패처·툴바 tooltip·도움말이 읽고, `tests/test_docs_sync.py`가 `docs/editor_manual.html` 단축키 표와 대조 |
 | `frontend/src/viewportControls.js` | 두 Konva 캔버스 공용 보기 조작 — 휠=이동, 핀치·Ctrl/Cmd+휠=확대, Space·휠버튼·Hand 도구 드래그 이동, 맞춤/100%/선택 확대 |
+| `frontend/src/OcrBatchPrompt.jsx` | 확인한 페이지(영역 분석 탭에서 적용 안 한 변경 없이 넘긴 페이지, `App.jsx`가 브라우저에 세션별로 기억)가 기준 수(8·10·12·16, 기본 10)만큼 쌓이면 비차단 알림을 띄우고, 시작하면 `image_id: "batch"`로 백그라운드 OCR·번역을 돌린다. 진행 중에는 그 페이지만 편집을 잠근다 |
 | `frontend/src/ShortcutHelp.jsx` | `?`로 여는 단축키 도움말. 현재 탭의 keymap 항목을 묶어 표시 |
 | `frontend/src/AiErasePanel.jsx` | 영역 분석 탭의 AI 글자 지우기. 시작은 도구 모음의 AI 지우개 버튼(`App.jsx`)이 여는 확인 창(모델·시간·비용 안내, 취소 포커스, Esc 닫기)에서 하고, 오른쪽 패널에는 진행·후보·적용됨 상태일 때만 카드가 뜬다. 후보를 비교 미리보기 "AI 지움 후보" 탭에 띄우고 적용·버리기·해제. 적용하면 이전 AI 지움 패치를 교체한다 |
 | `frontend/src/RestorePanel.jsx` | 배경 복원 탭 — 제거 마스크 브러시·지우개, 문맥 영역 사각형, 자동 마스크, LaMa 작업 실행·확정·패치 제거. 자기 캔버스 키를 직접 처리한다(keymap의 `passive` 항목) |

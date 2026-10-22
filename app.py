@@ -245,6 +245,8 @@ class RunFinalRequest(BaseModel):
     ocr_model: str | None = None
     # True면 overlay_guidance를 기존 파일과 병합하지 않고 그대로 저장한다(OverlayRequest.replace와 같은 의미).
     replace: bool = False
+    # image_id가 "batch"일 때 처리할 페이지 목록. 확인한 페이지를 모아 백그라운드로 번역할 때 쓴다.
+    image_ids: list[str] = []
 
 
 class OverlayRequest(BaseModel):
@@ -2118,6 +2120,8 @@ def run_final_for_item(
 def stream_run_final(req: RunFinalRequest):
     event_queue: queue.Queue[dict[str, Any] | None] = queue.Queue()
     glossary_context: dict = {}
+    # 여러 페이지를 한 번에 처리하는 요청(전체 또는 지정한 목록)은 페이지별 overlay 편집값을 받지 않는다.
+    multi_target = req.image_id in ("all", "batch")
 
     def emit(payload: dict[str, Any]) -> None:
         event_queue.put(payload)
@@ -2141,11 +2145,11 @@ def stream_run_final(req: RunFinalRequest):
                 req.extra_prompt,
                 req.font_path,
                 req.tracking_offset,
-                req.overlay_guidance if req.image_id != "all" else None,
+                req.overlay_guidance if not multi_target else None,
                 force=req.force,
                 log_callback=log_emit,
                 ocr_model=req.ocr_model,
-                replace_overlay=req.replace and req.image_id != "all",
+                replace_overlay=req.replace and not multi_target,
                 glossary_context=glossary_context,
             )
             skip_detail = integrated_skip_detail(refreshed.get("integrated"))
@@ -2184,6 +2188,9 @@ def stream_run_final(req: RunFinalRequest):
             data = ensure_session(req.session_id)
             if req.image_id == "all":
                 targets = sorted_image_records(data.get("images", []))
+            elif req.image_id == "batch":
+                wanted = set(req.image_ids)
+                targets = [item for item in sorted_image_records(data.get("images", [])) if item["id"] in wanted]
             elif req.image_id == "failed":
                 targets = [
                     item for item in sorted_image_records(data.get("images", []))
@@ -2195,7 +2202,7 @@ def stream_run_final(req: RunFinalRequest):
             if targets:
                 glossary_context = session_glossary_snapshot(req.session_id)
             total = len(targets)
-            if req.image_id == "all" and not req.force:
+            if multi_target and not req.force:
                 pending_targets = []
                 skipped_complete = 0
                 for item in targets:

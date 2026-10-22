@@ -9,6 +9,7 @@ import SourceLinks from "./SourceLinks.jsx";
 import StartScreen from "./StartScreen.jsx";
 import ImagePreview from "./ImagePreview.jsx";
 import GuidanceToolIcon from "./GuidanceToolIcon.jsx";
+import OcrBatchPrompt, { OCR_BATCH_SIZES } from "./OcrBatchPrompt.jsx";
 import ImageGenerationPanel from "./ImageGenerationPanel.jsx";
 import AiErasePanel from "./AiErasePanel.jsx";
 import ServerStatus from "./ServerStatus.jsx";
@@ -60,6 +61,20 @@ const OVERLAY_HISTORY_MERGE_MS = 1500;
 
 const RESUME_KEY = "comic-translator-resume-after-restart";
 
+// 브라우저 저장소는 막혀 있을 수 있어 모든 읽기·쓰기를 감싼다. 값이 없거나 올바르지 않으면 기본값을 쓴다.
+function readStored(key, fallback, valid = () => true) {
+  try {
+    const value = JSON.parse(window.localStorage.getItem(key));
+    return value !== null && valid(value) ? value : fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+function writeStored(key, value) {
+  try { window.localStorage.setItem(key, JSON.stringify(value)); } catch { /* 저장소를 쓸 수 없어도 기능은 동작한다 */ }
+}
+
 export default function App() {
   const [sessionId, setSessionId] = useState("");
   const [projectName, setProjectName] = useState("");
@@ -108,6 +123,12 @@ export default function App() {
   const [guidanceCompareMode, setGuidanceCompareMode] = useState("auto");
   const [aiEraseCandidateUrl, setAiEraseCandidateUrl] = useState(null);
   const [aiEraseConfirmOpen, setAiEraseConfirmOpen] = useState(false);
+  // 확인한 페이지(영역 분석 탭에서 보고 넘어간 페이지)가 쌓이면 번역을 백그라운드로 돌릴지 묻는다.
+  const [reviewedIds, setReviewedIds] = useState(() => new Set());
+  const [ocrBatchSize, setOcrBatchSize] = useState(() => readStored("ct.ocrBatchSize", 10, (v) => v === 0 || OCR_BATCH_SIZES.includes(v)));
+  const [ocrPromptAnchor, setOcrPromptAnchor] = useState(0);
+  const [bgOcr, setBgOcr] = useState({ running: false, total: 0, done: 0, failed: 0, ids: [] });
+  const prevPageRef = useRef({ id: null, ready: false });
   const [autoOverlayPreview, setAutoOverlayPreview] = useState(true);
   const [exportImageModel, setExportImageModel] = useState("gpt-image-2.5-sunburst");
   const [exportTextModel, setExportTextModel] = useState("gpt-6.1-sol");
@@ -275,10 +296,12 @@ export default function App() {
   const inputBusy = Boolean(busyTasks.input);
   const analyzeBusy = Boolean(busyTasks.analyze);
   const guidanceBusy = Boolean(busyTasks.guidance);
-  const ocrBusy = Boolean(busyTasks.ocr);
+  const ocrBusy = Boolean(busyTasks.ocr) || bgOcr.running;
   const overlayBusy = Boolean(busyTasks.overlay);
   const exportBusy = Boolean(busyTasks.export);
-  const anyBusy = routeBusy || Object.values(busyTasks).some(Boolean);
+  // 백그라운드 번역 중에는 번역 중인 페이지만 편집을 잠근다(다른 페이지는 계속 편집할 수 있다).
+  const selectedInBackgroundOcr = bgOcr.running && bgOcr.ids.includes(selected?.id);
+  const anyBusy = routeBusy || Object.values(busyTasks).some(Boolean) || selectedInBackgroundOcr;
   const currentIndex = selected ? Math.max(0, images.findIndex((img) => img.id === selected.id)) : -1;
   const needsAttentionImages = images.filter((img) => {
     const state = imageStatuses[img.id]?.status;
@@ -288,6 +311,30 @@ export default function App() {
     const state = ocrStateForImage(img);
     return !img.processing_excluded && state === "idle" && Boolean(img.indexed_sheet_url) && !img.final_url;
   });
+  // 확인한 페이지: 영역 분석 탭에서 분석이 끝난 페이지를 적용하지 않은 변경 없이 넘기면 센다.
+  // 세션별로 브라우저에 기억해 새로고침해도 이어진다. 저장소를 못 쓰면 이번 화면에서만 센다.
+  useEffect(() => {
+    setReviewedIds(new Set(readStored(`ct.reviewed.${sessionId || ""}`, [], Array.isArray)));
+  }, [sessionId]);
+  useEffect(() => {
+    const prev = prevPageRef.current;
+    if (prev.id && prev.sid === sessionId && prev.id !== selected?.id && prev.ready) {
+      setReviewedIds((current) => {
+        if (current.has(prev.id)) return current;
+        const next = new Set(current).add(prev.id);
+        writeStored(`ct.reviewed.${sessionId || ""}`, [...next]);
+        return next;
+      });
+    }
+    prevPageRef.current = {
+      sid: sessionId,
+      id: selected?.id || null,
+      ready: Boolean(activeTab === "guidance" && selected?.detail_loaded && selected?.indexed_sheet_url && !selected?.processing_excluded && !guidanceDirty),
+    };
+  });
+  const ocrBatchCandidates = ocrReadyImages.filter((img) => reviewedIds.has(img.id));
+  const showOcrPrompt = ocrBatchSize > 0 && !bgOcr.running && !ocrBusy
+    && ocrBatchCandidates.length - Math.min(ocrPromptAnchor, ocrBatchCandidates.length) >= ocrBatchSize;
   const ocrInProgressImages = images.filter((img) => {
     const state = ocrStateForImage(img);
     return state === "running" || state === "queued";
@@ -1752,6 +1799,77 @@ export default function App() {
     });
   }
 
+  function dismissOcrPrompt() {
+    // 다음 알림은 확인한 페이지가 지금보다 기준 수만큼 더 쌓이면 띄운다
+    setOcrPromptAnchor(ocrBatchCandidates.length);
+  }
+
+  function changeOcrBatchSize(value) {
+    setOcrBatchSize(value);
+    writeStored("ct.ocrBatchSize", value);
+    setOcrPromptAnchor(0);
+  }
+
+  // 확인한 페이지만 모아 OCR·번역을 백그라운드로 돌린다. 작업 잠금(busyTasks)을 쓰지 않아 다른 페이지는 계속 편집할 수 있다.
+  async function startBackgroundOcr() {
+    const ids = ocrBatchCandidates.map((img) => img.id);
+    if (!ids.length || bgOcr.running || ocrBusy) return;
+    const requestSid = sessionId;
+    setOcrPromptAnchor(0);
+    setBgOcr({ running: true, total: ids.length, done: 0, failed: 0, ids });
+    setImageStatuses((current) => {
+      const next = { ...current };
+      ids.forEach((id) => { next[id] = { phase: "ocr", status: "queued", detail: "대기" }; });
+      return next;
+    });
+    setStatus(`확인한 ${ids.length}장의 OCR/번역을 백그라운드로 시작했습니다.`);
+    const finished = new Set();
+    try {
+      await apiStream(
+        "/api/run-final-stream",
+        {
+          method: "POST",
+          body: JSON.stringify({
+            session_id: requestSid,
+            image_id: "batch",
+            image_ids: ids,
+            extra_prompt: extraPrompt,
+            font_path: fontPath,
+            overlay_guidance: null,
+            replace: false,
+            max_workers: analyzeWorkers,
+            force: false,
+            ocr_model: ocrModelForRequest(),
+          }),
+        },
+        (event) => {
+          if (sessionIdRef.current !== requestSid) return;
+          if (event.type === "image_status") {
+            setImageStatuses((current) => ({ ...current, [event.image_id]: { phase: "ocr", status: event.status, detail: event.detail || "" } }));
+            if (event.image) applyImageRecord(event.image);
+            if (["done", "skipped", "failed"].includes(event.status) && !finished.has(event.image_id)) {
+              finished.add(event.image_id);
+              setBgOcr((current) => ({ ...current, done: current.done + 1, failed: current.failed + (event.status === "failed" ? 1 : 0) }));
+            }
+          }
+          if (event.type === "error") throw new Error(event.message);
+          if (event.type === "complete") setImages(event.images || []);
+        },
+      );
+      setStatus(`백그라운드 OCR/번역이 끝났습니다 (${finished.size}/${ids.length}장).`);
+    } catch (err) {
+      // 중간에 끊기면 끝나지 않은 페이지를 실패로 표시해 OCR 탭의 Retry Failed로 다시 돌릴 수 있게 한다
+      setImageStatuses((current) => {
+        const next = { ...current };
+        ids.filter((id) => !finished.has(id)).forEach((id) => { next[id] = { phase: "ocr", status: "failed", detail: "중단됨" }; });
+        return next;
+      });
+      setStatus(`백그라운드 OCR/번역이 중단됐습니다: ${String(err.message || err)}`);
+    } finally {
+      setBgOcr((current) => ({ ...current, running: false }));
+    }
+  }
+
   async function applyOverlayRequest({ image, guidance, font, silent = false, version = overlayEditVersionRef.current } = {}) {
     const targetImage = image || selected;
     if (!targetImage) return null;
@@ -3186,6 +3304,17 @@ export default function App() {
         regionLabel={selectedGuidanceRegion ? `R${regionId(selectedGuidanceRegion)}` : ""}
         onClose={() => setSpeakerPickerOpen(false)}
         onPick={(row) => { setSpeakerPickerOpen(false); assignSpeaker(row); }}
+      />
+      <OcrBatchPrompt
+        show={showOcrPrompt}
+        pending={ocrBatchCandidates.length}
+        size={ocrBatchSize}
+        onSize={changeOcrBatchSize}
+        onStart={startBackgroundOcr}
+        onLater={dismissOcrPrompt}
+        running={bgOcr.running}
+        progress={bgOcr}
+        selectedLocked={selectedInBackgroundOcr}
       />
       <ShortcutHelp open={helpOpen} activeTab={activeTab} onClose={() => setHelpOpen(false)} />
       {guidanceNotice ? (

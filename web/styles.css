@@ -3490,3 +3490,15 @@ select.memo-key { width: 100%; padding: 2px; font-size: 12px; }
 .inpaint-engine-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin: 6px 0 10px; font-size: 12px; }
 .inpaint-engine-row strong { font-weight: 700; }
 .inpaint-engine-row button { font-size: 12px; padding: 4px 8px; white-space: nowrap; }
+
+/* 확인한 페이지가 쌓이면 번역을 백그라운드로 돌릴지 묻는 알림(화면을 가리지 않는다) */
+.ocr-batch-toast { position: fixed; right: 16px; bottom: 48px; z-index: 150; width: min(340px, calc(100vw - 32px)); padding: 14px 16px; background: var(--panel, #fff); border: 1px solid var(--line, #d7dce3); border-radius: 12px; box-shadow: 0 10px 30px #0f172a30; font-size: 13px; }
+.ocr-batch-toast strong { font-size: 13px; }
+.ocr-batch-toast p { margin: 8px 0 10px; line-height: 1.6; }
+.ocr-batch-toast.running { display: grid; gap: 4px; padding: 10px 14px; }
+.ocr-batch-toast.running small { color: var(--muted, #64748b); }
+.ocr-batch-failed { color: #b91c1c; }
+.ocr-batch-actions { display: flex; justify-content: flex-end; gap: 8px; }
+.ocr-batch-size { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 10px; color: var(--muted, #64748b); font-size: 12px; }
+.ocr-batch-size span { white-space: nowrap; }
+.ocr-batch-size select { flex: 1; min-width: 0; }

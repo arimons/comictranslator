@@ -57,3 +57,5 @@ google-credentials.json은 과거 구성 보존 파일이며 현재 REST 경로�
 
 projects 아래 폴더 ID는 기존 timestamp ID를 유지한다. project.json의 project_name은 바뀔 수 있는 표시 이름이다.
 작품명 변경 때문에 폴더명·다른 프로젝트 연결을 바꾸지 않는다. 기존 자동분할 프로젝트의 접미 ID도 그대로 유지한다.
+
+<!-- 2026-10-22 dialogue_extractor.py(LaMa 고정) 변경 검토: 의존성·모델 파일 영향 없음 -->

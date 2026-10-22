@@ -72,3 +72,5 @@ AI 글자 지우기 작업은 `jobs/` 안에 보낸 이미지(OpenAI는 `ai_eras
 Syncthing 현황(2026-10-21 MacBook 설정 확인): Developer만 공유하며 기존 temp_output/output/proof/archive/test_image1과 .venv/.git은 제외됩니다. 새 데이터 홈은 공유 범위 밖입니다. 코드 동기화와 별개로 데이터 홈을 직접 복사하거나 별도 공유해야 합니다. 실제 맥 미니 수신 여부는 여기서 확인하지 않았습니다.
 
 2026-10-21: 기본·개발·선택 배치 의존성을 분리했습니다. LaMa 모델은 데이터 홈 cache/models에 두며 기존 Timestamp 프로젝트 ID와 가변 표시 이름을 구분합니다. [의존성 안내](DEPENDENCIES.md) 참고.
+
+<!-- 2026-10-22 app.py 변경 검토: 페이지 가이드 파일에 inpaint_engine_overrides 키가 추가됐을 뿐 저장 위치·구조는 그대로라 이 문서 내용 영향 없음 -->
