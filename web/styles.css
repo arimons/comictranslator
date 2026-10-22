@@ -3468,3 +3468,19 @@ select.memo-key { width: 100%; padding: 2px; font-size: 12px; }
   font-size: 12px;
   color: var(--muted);
 }
+
+/* AI 지우개: 도구 모음 버튼 + 비용 확인 창. 설명은 확인 창에서만 보여 준다. */
+.floating-toolbox .ai-erase-tool em { font-style: normal; font-weight: 700; color: #7c3aed; }
+.ai-erase-backdrop { position: fixed; inset: 0; z-index: 190; background: #0f172a70; display: grid; place-items: center; padding: 16px; }
+.ai-erase-dialog { width: min(440px, 100%); background: var(--panel, #fff); border: 1px solid var(--line, #d7dce3); border-radius: 12px; padding: 20px 22px; box-shadow: 0 18px 50px #0f172a40; }
+.ai-erase-dialog h2 { margin: 0 0 10px; font-size: 17px; }
+.ai-erase-dialog p { margin: 0 0 12px; line-height: 1.65; font-size: 13px; }
+.ai-erase-facts { margin: 0 0 12px; display: grid; gap: 6px; font-size: 13px; }
+.ai-erase-facts > div { display: grid; grid-template-columns: 44px minmax(0, 1fr); gap: 8px; }
+.ai-erase-facts dt { color: var(--muted, #64748b); }
+.ai-erase-facts dd { margin: 0; }
+.ai-erase-facts small { color: var(--muted, #64748b); }
+.ai-erase-dialog .ai-erase-note { color: #b45309; font-size: 12px; }
+.ai-erase-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; }
+.ai-erase-applied { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.ai-erase-applied > span { flex: 1 1 auto; font-size: 12px; }

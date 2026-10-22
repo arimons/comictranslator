@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { api } from "./lib.js";
 
 // 분석 탭: LaMa·Telea 지우기 결과가 아쉬운 페이지를 이미지 편집 모델로 통째로 다시 지운다.
@@ -12,7 +12,7 @@ function fmtUsage(meta) {
   return [sec != null ? `${Number(sec).toFixed(0)}초` : null, cost != null ? `약 $${Number(cost).toFixed(3)}` : null].filter(Boolean).join(" · ");
 }
 
-export default function AiErasePanel({ sessionId, page, disabled, onCandidate, onApplied, setStatus, ocrModel, imageModel }) {
+export default function AiErasePanel({ sessionId, page, disabled, onCandidate, onApplied, setStatus, ocrModel, imageModel, confirmOpen, onConfirmClose, onRequestConfirm }) {
   const [job, setJob] = useState(null);
   const [applied, setApplied] = useState([]);
   const [error, setError] = useState("");
@@ -109,33 +109,68 @@ export default function AiErasePanel({ sessionId, page, disabled, onCandidate, o
     }
   }
 
+  // 확인 창: 비용이 드는 작업이라 한 번 더 묻는다. 기본 포커스는 취소에 둔다.
+  const cancelRef = useRef(null);
+  useEffect(() => {
+    if (!confirmOpen) return undefined;
+    cancelRef.current?.focus();
+    const onKey = (event) => { if (event.key === "Escape") { event.stopPropagation(); onConfirmClose?.(); } };
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
+  }, [confirmOpen]);
+
+  async function confirmStart() {
+    onConfirmClose?.();
+    await start();
+  }
+
   if (!page) return null;
   const done = job?.status === "done";
+  // 대기 상태에서는 아무것도 그리지 않는다. 시작은 도구 모음의 AI 지우개에서 한다.
+  const showCard = Boolean(running || done || applied.length || error);
   return (
-    <div className="section compact-section ai-erase-section">
-      <h2>AI 글자 지우기</h2>
-      <p className="hint">마스크 결과가 아쉬운 페이지만 씁니다. 원본 페이지를 이미지 모델로 보내 글자를 지운 배경을 받습니다(20초 안팎, 장당 3〜5센트). 영역·OCR은 그대로이고 번역은 글자 입히기로 얹습니다.</p>
-      {imageModel ? <p className="hint">모델: {imageModel} (OCR·번역 모델 제공자를 따름)</p> : null}
-      {applied.length ? (
-        <div className="ai-erase-applied">
-          <span>적용됨{applied[0].accepted_at ? ` · ${applied[0].accepted_at.replace("T", " ").slice(5, 16)}` : ""}</span>
-          <button className="danger" onClick={() => remove(applied[0].id)} disabled={busy || running}>해제</button>
+    <>
+      {showCard ? (
+        <div className="section compact-section ai-erase-section">
+          <h2>AI 글자 지우기</h2>
+          {running ? <p className="hint">지우는 중… 20초 안팎 걸립니다.</p> : null}
+          {applied.length ? (
+            <div className="ai-erase-applied">
+              <span>적용됨{applied[0].accepted_at ? ` · ${applied[0].accepted_at.replace("T", " ").slice(5, 16)}` : ""}</span>
+              <button onClick={() => onRequestConfirm?.()} disabled={disabled || busy || running}>다시 지우기</button>
+              <button className="danger" onClick={() => remove(applied[0].id)} disabled={busy || running}>해제</button>
+            </div>
+          ) : null}
+          {done ? (
+            <>
+              <p className="hint">후보: {fmtUsage(job.meta)} · 미리보기의 "AI 지움 후보" 탭에서 확인하세요.</p>
+              <div className="side-action-grid">
+                <button className="primary" onClick={apply} disabled={busy}>적용</button>
+                <button onClick={discard} disabled={busy}>버리기</button>
+              </div>
+            </>
+          ) : null}
+          {error ? <div className="restore-error">{error}</div> : null}
         </div>
       ) : null}
-      {done ? (
-        <>
-          <p className="hint">후보: {fmtUsage(job.meta)} · 미리보기의 "AI 지움 후보" 탭에서 확인하세요.</p>
-          <div className="side-action-grid">
-            <button className="primary" onClick={apply} disabled={busy}>적용</button>
-            <button onClick={discard} disabled={busy}>버리기</button>
+      {confirmOpen ? (
+        <div className="ai-erase-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) onConfirmClose?.(); }}>
+          <div className="ai-erase-dialog" role="dialog" aria-modal="true" aria-labelledby="ai-erase-title">
+            <h2 id="ai-erase-title">AI로 글자를 지울까요?</h2>
+            <p>마스크 결과가 아쉬운 페이지에만 쓰세요. 원본 페이지를 이미지 모델로 보내 글자를 지운 배경을 받습니다. 영역과 OCR은 그대로이고, 번역은 글자 입히기에서 얹습니다.</p>
+            <dl className="ai-erase-facts">
+              <div><dt>모델</dt><dd>{imageModel || "-"}<small> OCR·번역 모델 제공자를 따릅니다</small></dd></div>
+              <div><dt>시간</dt><dd>20초 안팎</dd></div>
+              <div><dt>비용</dt><dd>한 장에 약 3~5센트 (외부 API 요금이 발생합니다)</dd></div>
+            </dl>
+            {applied.length ? <p className="ai-erase-note">이미 적용된 AI 지움이 있습니다. 새 결과를 적용하면 교체됩니다.</p> : null}
+            <div className="ai-erase-actions">
+              <button ref={cancelRef} onClick={() => onConfirmClose?.()}>취소</button>
+              <button className="primary" onClick={confirmStart} disabled={disabled || running || busy}>AI로 글자 지우기</button>
+            </div>
           </div>
-        </>
-      ) : (
-        <button className="wide" onClick={start} disabled={disabled || running || busy}>
-          {running ? "지우는 중…" : applied.length ? "다시 지우기" : "AI로 글자 지우기"}
-        </button>
-      )}
-      {error ? <div className="restore-error">{error}</div> : null}
-    </div>
+        </div>
+      ) : null}
+    </>
   );
 }

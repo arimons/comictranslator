@@ -107,6 +107,7 @@ export default function App() {
   const [generationStatus, setGenerationStatus] = useState(null);
   const [guidanceCompareMode, setGuidanceCompareMode] = useState("auto");
   const [aiEraseCandidateUrl, setAiEraseCandidateUrl] = useState(null);
+  const [aiEraseConfirmOpen, setAiEraseConfirmOpen] = useState(false);
   const [autoOverlayPreview, setAutoOverlayPreview] = useState(true);
   const [exportImageModel, setExportImageModel] = useState("gpt-image-2.5-sunburst");
   const [exportTextModel, setExportTextModel] = useState("gpt-6.1-sol");
@@ -2483,6 +2484,16 @@ export default function App() {
                     <em>{(id === "tg-delete" ? shortcutById("guidance.tg.delete") : shortcutFor("guidance", "tool", id))}</em>
                   </button>
                 ))}
+                <button
+                  className="tool-group-start ai-erase-tool"
+                  onClick={() => setAiEraseConfirmOpen(true)}
+                  disabled={anyBusy || !selected?.detail_loaded || selected?.processing_excluded}
+                  aria-label="AI 지우개"
+                  title="AI 지우개: 이 페이지의 글자를 이미지 모델로 지웁니다 (확인 후 실행, 비용 발생)"
+                >
+                  <span><GuidanceToolIcon tool="ai-eraser" /></span>
+                  <em>AI</em>
+                </button>
               </div>
             </section>
           </div>
@@ -2883,6 +2894,9 @@ export default function App() {
           setStatus={setStatus}
           ocrModel={effectiveOcrModel}
           imageModel={ocrProvider === "gemini" ? imageModels.gemini : imageModels.openai}
+          confirmOpen={aiEraseConfirmOpen}
+          onConfirmClose={() => setAiEraseConfirmOpen(false)}
+          onRequestConfirm={() => setAiEraseConfirmOpen(true)}
         />
 
         <div className="section speaker-section">
