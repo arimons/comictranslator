@@ -3484,3 +3484,9 @@ select.memo-key { width: 100%; padding: 2px; font-size: 12px; }
 .ai-erase-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; }
 .ai-erase-applied { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 .ai-erase-applied > span { flex: 1 1 auto; font-size: 12px; }
+
+/* 텍스트 기반 영역의 지우기 엔진 표시와 LaMa 고정 버튼 */
+.floating-toolbox .lama-tool em { font-style: normal; font-weight: 700; color: #0f766e; font-size: 9px; }
+.inpaint-engine-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin: 6px 0 10px; font-size: 12px; }
+.inpaint-engine-row strong { font-weight: 700; }
+.inpaint-engine-row button { font-size: 12px; padding: 4px 8px; white-space: nowrap; }

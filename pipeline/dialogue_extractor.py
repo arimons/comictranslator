@@ -371,6 +371,27 @@ def _engine_for_color(engine: str, roi: np.ndarray, background_class: str | None
     return engine
 
 
+def _crop_binding_key(item: Dict[str, Any]) -> str:
+    """출력 영역(region_data)과 같은 영역 키. 텍스트 기반 영역은 unboxed_rect(=source_rect)가 erase_rect보다 우선한다."""
+    from pipeline.region_types import region_binding_key
+
+    return region_binding_key({
+        "type": item.get("type"),
+        "processing_basis": item.get("processing_basis"),
+        "source_method": item.get("source_method"),
+        "unboxed_rect": item.get("source_rect"),
+    })
+
+
+def _forced_lama_keys(overrides: List[Dict[str, Any]] | None) -> set[str]:
+    """사용자가 LaMa로 고정한 영역 키. 가이드의 inpaint_engine_overrides에서 읽는다."""
+    return {
+        str(item["target_key"])
+        for item in overrides or []
+        if isinstance(item, dict) and item.get("engine") == "lama" and item.get("target_key")
+    }
+
+
 def _apply_manual_ubox_lama(
     image: np.ndarray,
     masked_image: np.ndarray,
@@ -439,6 +460,8 @@ def _apply_manual_ubox_lama(
     item["inpaint_context_rect"] = context_rect
     item["manual_inpaint_background_class"] = background_meta.get("background_class")
     item["manual_inpaint_engine"] = engine
+    item["inpaint_engine_used"] = engine
+    item["inpaint_engine_source"] = "forced" if item.get("inpaint_engine_override") else "auto"
     item["manual_mask_polarity"] = background_meta.get("manual_mask_polarity")
     item["quality_flags"] = list(dict.fromkeys(
         [str(flag) for flag in item.get("quality_flags", [])] + [f"manual_ubox_{engine}"]
@@ -2799,6 +2822,7 @@ def build_dialogue_sheet(
     indexed_label_gutter: int = 48,
     base_masked_path: str | None = None,
     reuse_existing_unboxed_inpaint: bool = False,
+    inpaint_engine_overrides: List[Dict[str, Any]] | None = None,
     force_standard: bool = False,
 ) -> Dict[str, Any]:
     """
@@ -2879,6 +2903,7 @@ def build_dialogue_sheet(
     _invalidate_containing_bubbles(regions)
 
     masked_image = image.copy()
+    forced_lama_keys = _forced_lama_keys(inpaint_engine_overrides)
     reused_unboxed_inpaint = False
     if reuse_existing_unboxed_inpaint and base_masked_path:
         base_masked = cv2.imread(base_masked_path)
@@ -2986,6 +3011,8 @@ def build_dialogue_sheet(
             continue
         crops.append(item)
         manual_unboxed_tg_ids.update(int(tid) for tid in item.get("anchor_ids", []))
+        if _crop_binding_key(item) in forced_lama_keys:
+            item["inpaint_engine_override"] = "lama"
         if not _apply_manual_ubox_lama(image, masked_image, item, group_by_id):
             item["inpaint_skipped"] = True
             item["quality_flags"] = list(dict.fromkeys(
@@ -3082,9 +3109,29 @@ def build_dialogue_sheet(
         roi_protected = protected_mask[ry : ry + rh, rx : rx + rw]
 
         safe_text_mask = np.where((text_mask > 0) & (roi_protected == 0), 255, 0).astype(np.uint8)
-        if safe_text_mask.max() > 0 and not reused_unboxed_inpaint:
-            engine = str(mask_strategy_meta.get("recommended_inpaint_engine_override") or cand.get("recommended_inpaint_engine") or "lama")
-            engine = _engine_for_color(engine, cand["roi"], cand.get("background_class"))
+        # 영역 키를 먼저 알아야 사용자가 LaMa로 고정한 영역을 가려낼 수 있어, 영역 기록을 지우기 전에 만든다
+        unboxed_crop = _make_consolidated_unboxed_crop(
+            image,
+            cluster,
+            img_w,
+            img_h,
+            source_meta_by_anchor,
+            inpaint_skipped=False,
+            extra_quality_flags=_style_meta_for_cluster(cluster).get("quality_flags", []),
+            extra_review_tags=_style_meta_for_cluster(cluster).get("review_tags", []),
+        )
+        engine = None
+        if safe_text_mask.max() > 0:
+            forced_lama = _crop_binding_key(unboxed_crop) in forced_lama_keys
+            if forced_lama:
+                engine = "lama"
+            else:
+                engine = str(mask_strategy_meta.get("recommended_inpaint_engine_override") or cand.get("recommended_inpaint_engine") or "lama")
+                engine = _engine_for_color(engine, cand["roi"], cand.get("background_class"))
+            # 이전 지우기 결과를 재사용해도 어떤 엔진이었는지는 화면에 보여 줄 수 있게 기록한다
+            unboxed_crop["inpaint_engine_used"] = engine
+            unboxed_crop["inpaint_engine_source"] = "forced" if forced_lama else "auto"
+        if engine and not reused_unboxed_inpaint:
             if engine == "telea":
                 inpaint_roi = cv2.inpaint(
                     cand["roi"],
@@ -3107,16 +3154,7 @@ def build_dialogue_sheet(
 
         # unboxed fallback은 과소 영역보다 과대 영역이 낫다.
         # 인접 TG cluster를 하나의 OCR/overlay region으로 유지해 번역 문맥과 rect를 함께 보존한다.
-        crops.append(_make_consolidated_unboxed_crop(
-            image,
-            cluster,
-            img_w,
-            img_h,
-            source_meta_by_anchor,
-            inpaint_skipped=False,
-            extra_quality_flags=_style_meta_for_cluster(cluster).get("quality_flags", []),
-            extra_review_tags=_style_meta_for_cluster(cluster).get("review_tags", []),
-        ))
+        crops.append(unboxed_crop)
         region_id_counter += 1
 
     for parent_rect, split_mask in split_parent_masks.items():
@@ -3219,6 +3257,9 @@ def build_dialogue_sheet(
             region_data["unboxed_rect"] = item["source_rect"]
             region_data["consolidated_text_group"] = item.get("consolidated_text_group")
             region_data["inpaint_skipped"] = item.get("inpaint_skipped", False)
+            if item.get("inpaint_engine_used"):
+                region_data["inpaint_engine_used"] = item["inpaint_engine_used"]
+                region_data["inpaint_engine_source"] = item.get("inpaint_engine_source", "auto")
         else:
             region_data["bubble_rect"] = item["source_rect"]
             if item.get("polygon"):

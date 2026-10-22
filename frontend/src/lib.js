@@ -155,6 +155,7 @@ export function defaultGuidance(image) {
     manual_regions: image?.guidance?.manual_regions || [],
     manual_seed_points: image?.guidance?.manual_seed_points || [],
     suppressed_regions: image?.guidance?.suppressed_regions || [],
+    inpaint_engine_overrides: image?.guidance?.inpaint_engine_overrides || [],
   };
 }
 

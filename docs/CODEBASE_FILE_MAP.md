@@ -198,7 +198,7 @@ guidance(수동 보정)가 있는 이미지는 `guidance_digest`(guidance 내용
 | `frontend/src/ShortcutHelp.jsx` | `?`로 여는 단축키 도움말. 현재 탭의 keymap 항목을 묶어 표시 |
 | `frontend/src/AiErasePanel.jsx` | 영역 분석 탭의 AI 글자 지우기. 시작은 도구 모음의 AI 지우개 버튼(`App.jsx`)이 여는 확인 창(모델·시간·비용 안내, 취소 포커스, Esc 닫기)에서 하고, 오른쪽 패널에는 진행·후보·적용됨 상태일 때만 카드가 뜬다. 후보를 비교 미리보기 "AI 지움 후보" 탭에 띄우고 적용·버리기·해제. 적용하면 이전 AI 지움 패치를 교체한다 |
 | `frontend/src/RestorePanel.jsx` | 배경 복원 탭 — 제거 마스크 브러시·지우개, 문맥 영역 사각형, 자동 마스크, LaMa 작업 실행·확정·패치 제거. 자기 캔버스 키를 직접 처리한다(keymap의 `passive` 항목) |
-| `frontend/src/App.jsx` | 세션 관리, 이미지 목록, 워크플로우 탭(분석/OCR/오버레이/배경 복원/내보내기) 전체 상태. Action History의 텍스트 기반 줄에서 LaMa 강제 토글(`manual_regions[].inpaint_engine = "lama"`) |
+| `frontend/src/App.jsx` | 세션 관리, 이미지 목록, 워크플로우 탭(분석/OCR/오버레이/배경 복원/내보내기) 전체 상태. Action History의 텍스트 기반 줄에서 LaMa 강제 토글(`manual_regions[].inpaint_engine = "lama"`). 선택한 텍스트 기반 영역(자동·수동 모두)은 도구 모음 LaMa 버튼·오른쪽 패널로 영역 키에 고정하며(`guidance.inpaint_engine_overrides = [{target_key, engine: "lama"}]`), 분석 적용 때 Step 3가 반영한다 |
 | `frontend/src/main.jsx` | React 엔트리포인트 |
 
 프론트엔드 코드를 수정하면 `frontend/`에서 `npm install`(최초 1회) 후 `npm run build`로 `web/app.bundle.js`를 다시 생성해야 한다. `web/app.bundle.js`는 결과물이므로 커밋 대상이며, 앱을 실행만 할 때는 Node.js가 필요 없다.
@@ -306,6 +306,7 @@ Step 3 진입점이다. `pipeline_runner`가 `python -m pipeline.dialogue_extrac
 - LaMa 실행 장치(`_lama_device`): `LAMA_DEVICE`(cpu|mps|cuda)가 없으면 cuda → mps → cpu 순으로 고른다. M3 Pro에서 MPS는 첫 호출(GPU 준비)이 CPU보다 조금 느리고 이후 호출은 약 3배 빠르며, 결과 차이는 최대 수 단계(0〜255)다. MPS 초기화가 실패하면 CPU로 돈다. 상주 서버에서는 `background_restore`도 이 모델 하나를 같이 쓴다.
 - LaMa 동시 실행 제한(`_acquire_lama_process_slot`): 분석은 페이지마다 Step 3 프로세스를 따로 띄우고, LaMa를 올린 프로세스는 2〜3.7GB를 쓴다. 그래서 LaMa를 올리기 전에 임시 폴더의 슬롯 파일(`comic_translator_lama_slots/slotN.lock`)에 배타 잠금을 걸어, LaMa를 쓰는 프로세스를 머신 전체에서 `LAMA_MAX_PROCESSES`개(기본 2)로 묶는다. 자리가 없으면 기다리고, 슬롯은 프로세스가 끝날 때 풀린다. 상주 서버가 모델을 올리면 슬롯 하나를 계속 쓰므로 1로 줄이지 않는다. fcntl이 없는 Windows에서는 제한하지 않는다.
 - 컬러 영역의 엔진(`_engine_for_color`): 배경 분류가 Telea를 골라도, 지울 영역이 컬러이고 완전히 흰 평면(`white_flat`)이 아니면 LaMa로 지운다. Telea는 흑백 원고의 흰 바탕 나레이션용이고, 컬러 무늬·반투명 말풍선에서는 색 덩어리 모자이크가 된다. 사용자가 엔진을 지정한 영역은 그대로 둔다.
+- LaMa 고정(`inpaint_engine_overrides`): 가이드에 영역 키(`region_binding_key`, 출력 영역과 같게 `unboxed_rect` 기준 `_crop_binding_key`)로 저장하면 Step 3가 자동 판정(Telea·`_engine_for_color`)을 건너뛰고 LaMa로 지운다. 수동 텍스트 기반 영역도 같은 키로 고정할 수 있다. 고정이 바뀌면 이전 지우기 결과를 재사용하지 않는다(`guidance_allows_unboxed_mask_reuse`). 사용한 엔진은 영역에 `inpaint_engine_used`(`telea`·`lama`)와 `inpaint_engine_source`(`auto`·`forced`)로 기록해 화면이 보여 준다.
 - 자동 텍스트 기반 영역(`_select_unboxed_inpaint_mask`): 배경이 선화 섞임·어두움이면 TG 사각형(+8px)을 박스로 보고 수동 텍스트 기반 영역과 같은 글자 마스크로 지운다(`_ubox_style_mask_in_roi`). 글자가 안 잡힐 때만 사각형 전체로 지운다. 사각형 전체를 지우면 머리카락 같은 그림을 LaMa가 통째로 다시 그려 뭉개졌다. 위치마다 글자 색을 따로 정하는 마스크는 흰 글자+검은 외곽선에서 외곽선이 남아 흰 얼룩이 생겨 쓰지 않는다.
 - 수동 텍스트 기반 영역(`_apply_manual_ubox_lama`): 박스 안에서 글자 색 픽셀만 마스크로 잡고, 문맥은 박스 바깥 24px까지 본다. 박스가 어두우면 밝은 글자로 보고 마스크를 6px 넓힌다(흰 테두리가 남으면 LaMa가 글자 모양 얼룩을 되살린다). 엔진은 `_classify_inpaint_background` 배경 분류로 Telea/LaMa를 고르고, guidance의 `inpaint_engine: "lama"`가 있으면 그 값이 우선한다.
 

@@ -230,6 +230,21 @@ export default function App() {
   const selectedGuidanceRegion = selectedGuidanceRegionId != null
     ? guidanceRegions.find(region => regionId(region) === Number(selectedGuidanceRegionId)) || null
     : null;
+  // 텍스트 기반 영역의 지우기 엔진: 자동 판정(Telea/LaMa) 또는 사용자가 LaMa로 고정.
+  // 고정은 분석 적용 때 Step 3에서 반영되므로, 화면의 가이드와 저장된 가이드를 따로 본다.
+  const selectedIsTextBased = Boolean(selectedGuidanceRegion && regionProcessingBasis(selectedGuidanceRegion) === TEXT_BASED);
+  const selectedRegionKey = selectedGuidanceRegion ? regionBindingKey(selectedGuidanceRegion) : "";
+  const hasLamaOverride = (source) => (source?.inpaint_engine_overrides || []).some((item) => item.target_key === selectedRegionKey && item.engine === "lama");
+  const lamaForcedPending = selectedIsTextBased && hasLamaOverride(guidance);
+  const lamaForcedSaved = selectedIsTextBased && hasLamaOverride(selected?.guidance);
+  const inpaintEngineLabel = (() => {
+    if (!selectedIsTextBased) return "";
+    if (lamaForcedPending !== lamaForcedSaved) return lamaForcedPending ? "LaMa로 고정 예정" : "자동 판정으로 되돌릴 예정";
+    const used = selectedGuidanceRegion.inpaint_engine_used;
+    if (!used) return lamaForcedPending ? "LaMa (고정)" : "자동 (분석 적용 후 표시)";
+    const name = used === "telea" ? "Telea" : "LaMa";
+    return `${name} (${selectedGuidanceRegion.inpaint_engine_source === "forced" || lamaForcedSaved ? "고정" : "자동"})`;
+  })();
   const selectedCvGroups = imageGroups(selected).filter((group) => (selectedGuidanceRegion?.anchor_ids || [selectedTg]).map(Number).includes(tgId(group)));
   const selectedCvText = selectedCvGroups.map((group) => group.text || (group.lines || []).map((line) => line.text || (line.fragments || []).map((fragment) => fragment.text || "").join("")).filter(Boolean).join("\n")).filter(Boolean).join("\n\n");
   const selectedPageId = selected?.id || "";
@@ -2162,6 +2177,9 @@ export default function App() {
     (guidance.suppressed_regions || []).forEach((item, index) => {
       items.push({ key: `region-off-${index}`, kind: "suppressed_regions", index, label: `R${item.display_region_id || item.region_id || item.source_region_id || "?"} 제외 기록`, detail: "자동 처리 대상에서 제외" });
     });
+    (guidance.inpaint_engine_overrides || []).forEach((item, index) => {
+      items.push({ key: `engine-${index}`, kind: "inpaint_engine_overrides", index, label: `R${item.display_region_id || "?"} LaMa 고정`, detail: "지우기 엔진을 LaMa로 고정" });
+    });
     return items;
   }
 
@@ -2192,6 +2210,25 @@ export default function App() {
       else region.inpaint_engine = "lama";
       return next;
     }, "텍스트 기반 영역 엔진 변경");
+  }
+
+  // 선택한 텍스트 기반 영역(자동·수동 모두)의 지우기 엔진을 LaMa로 고정하거나 자동 판정으로 되돌린다.
+  // 영역 키에 저장하며 분석 적용(재분석) 때 반영된다.
+  function toggleSelectedRegionLama() {
+    const region = selectedGuidanceRegion;
+    if (!region || regionProcessingBasis(region) !== TEXT_BASED) return;
+    const key = regionBindingKey(region);
+    const forcing = !(guidance.inpaint_engine_overrides || []).some((item) => item.target_key === key && item.engine === "lama");
+    setGuidanceTracked((current) => {
+      const next = cloneJson(current || defaultGuidance(null));
+      const list = (next.inpaint_engine_overrides || []).filter((item) => item.target_key !== key);
+      if (forcing) list.push({ target_key: key, engine: "lama", display_region_id: regionId(region) });
+      next.inpaint_engine_overrides = list;
+      return next;
+    }, forcing ? "LaMa로 고정" : "LaMa 고정 해제");
+    setStatus(forcing
+      ? `R${regionId(region)}을 LaMa로 다시 지웁니다. 분석 적용(${shortcutById("guidance.apply")})으로 반영됩니다.`
+      : `R${regionId(region)}의 LaMa 고정을 풀었습니다. 분석 적용(${shortcutById("guidance.apply")})으로 반영됩니다.`);
   }
 
   function removeGuidanceHistoryItem(historyItem, options = {}) {
@@ -2485,7 +2522,20 @@ export default function App() {
                   </button>
                 ))}
                 <button
-                  className="tool-group-start ai-erase-tool"
+                  className="tool-group-start lama-tool"
+                  onClick={toggleSelectedRegionLama}
+                  disabled={anyBusy || !selectedIsTextBased}
+                  aria-pressed={lamaForcedPending}
+                  aria-label="LaMa로 다시 지우기"
+                  title={selectedIsTextBased
+                    ? `선택한 텍스트 기반 영역을 LaMa로 ${lamaForcedPending ? "고정 해제" : "다시 지우기"} (분석 적용 시 반영)`
+                    : "텍스트 기반 영역(R)을 선택하면 LaMa로 다시 지울 수 있습니다"}
+                >
+                  <span><GuidanceToolIcon tool="lama" /></span>
+                  <em>LaMa</em>
+                </button>
+                <button
+                  className="ai-erase-tool"
                   onClick={() => setAiEraseConfirmOpen(true)}
                   disabled={anyBusy || !selected?.detail_loaded || selected?.processing_excluded}
                   aria-label="AI 지우개"
@@ -2902,6 +2952,10 @@ export default function App() {
         <div className="section speaker-section">
           <h2>{selectedTg != null ? "TG 선택" : "화자 지정"} {selectedGuidanceRegion ? <small>R{regionId(selectedGuidanceRegion)}</small> : selectedTg != null ? <small>TG{selectedTg}</small> : null}</h2>
           {selectedGuidanceRegion ? <div className="selected-region-method" style={{borderColor:overlayRegionColor(selectedGuidanceRegion),background:`${overlayRegionColor(selectedGuidanceRegion)}12`}}><span aria-hidden="true" style={{color:overlayRegionColor(selectedGuidanceRegion)}}>● </span>{regionDetectionLabel(selectedGuidanceRegion)}</div> : null}
+          {selectedIsTextBased ? <div className="inpaint-engine-row">
+            <span>지우기: <strong>{inpaintEngineLabel}</strong></span>
+            <button onClick={toggleSelectedRegionLama} disabled={anyBusy} title="분석 적용 시 반영됩니다">{lamaForcedPending ? "LaMa 고정 해제" : "LaMa로 다시 지우기"}</button>
+          </div> : null}
           {selectedTg != null || selectedGuidanceRegion ? <div className="selected-cv-context">
             <div><label htmlFor="selected-cv-text">CV 감지 텍스트</label><span className="speaker-assignment-label">화자: {selectedGuidanceRegion ? speakerLabels[regionId(selectedGuidanceRegion)] || "미지정" : "R 선택 필요"}</span></div>
             <textarea id="selected-cv-text" aria-label="선택 영역 CV 텍스트" readOnly value={selectedCvText} placeholder="이 영역에 연결된 CV 텍스트가 없습니다." rows={4} />

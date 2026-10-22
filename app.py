@@ -1838,6 +1838,7 @@ def guidance_has_edits(guidance: dict[str, Any]) -> bool:
         "manual_regions",
         "manual_seed_points",
         "suppressed_regions",
+        "inpaint_engine_overrides",
     )
     return any(bool(guidance.get(key)) for key in keys)
 
@@ -1851,7 +1852,8 @@ def _canonical_guidance_items(items: Any) -> set[str]:
 def guidance_allows_unboxed_mask_reuse(previous: dict[str, Any], current: dict[str, Any]) -> bool:
     if not guidance_has_edits(previous):
         return False
-    stable_keys = ("disabled_tg_ids", "tg_splits", "suppressed_regions")
+    # 지우기 엔진 고정이 바뀌면 이전 지우기 결과를 재사용하지 않고 해당 영역을 다시 지운다
+    stable_keys = ("disabled_tg_ids", "tg_splits", "suppressed_regions", "inpaint_engine_overrides")
     for key in stable_keys:
         if previous.get(key, []) != current.get(key, []):
             return False
@@ -1906,6 +1908,7 @@ def run_step3_with_effective_text_groups(session_id: str, image_id: str, guidanc
         manual_virtual_walls=guidance.get("virtual_walls", []),
         manual_split_guides=guidance.get("split_guides", []),
         suppressed_regions=guidance.get("suppressed_regions", []),
+        inpaint_engine_overrides=guidance.get("inpaint_engine_overrides", []),
         base_masked_path=record["masked_jpg"] if can_reuse_unboxed_mask else None,
         reuse_existing_unboxed_inpaint=can_reuse_unboxed_mask,
         force_standard=record.get("analysis_route") == "standard",
