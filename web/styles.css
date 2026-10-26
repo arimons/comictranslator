@@ -194,8 +194,8 @@ textarea {
   border-bottom: 1px solid var(--line);
   background: var(--panel);
   display: grid;
-  /* 마지막 열은 파일 이동 줄(컨트롤 7개, 최소 약 364px) 몫이다 */
-  grid-template-columns: max-content minmax(180px, 1fr) minmax(380px, 1fr) minmax(364px, 400px);
+  /* 마지막 열은 파일 이동 줄(컨트롤 6개, 최소 약 270px) 몫이다 */
+  grid-template-columns: max-content minmax(180px, 1fr) minmax(380px, 1fr) minmax(300px, 380px);
   grid-template-rows: minmax(0, 1fr);
   gap: 14px;
   align-items: stretch;
@@ -3302,11 +3302,10 @@ button.wide {
 .project-identity .project-name-input { flex: 0 1 220px; width: 220px; min-width: 120px; }
 .workspace-global-topbar .top-workflow-tabs { width: 100%; min-width: 0; }
 .workspace-global-topbar .top-workflow-tabs button { min-width: 0; flex: 1 0 auto; padding: 0 6px; font-size: 12px; }
-/* 자식 7개: 페이지 정리 · 원본 연결 · ‹ · 파일 선택 · › · × · ?  (열 수가 자식 수와 다르면 버튼이 한 칸씩 밀린다) */
-.workspace-global-topbar .file-navigator.top-file-nav { grid-template-columns: 70px minmax(72px, 96px) 26px minmax(70px, 1fr) 26px 26px 26px; width: 100%; max-width: 100%; gap: 4px; }
+/* 자식 6개: 원본 연결 · ‹ · 파일 선택 · › · × · ?  (열 수가 자식 수와 다르면 버튼이 한 칸씩 밀린다) */
+.workspace-global-topbar .file-navigator.top-file-nav { grid-template-columns: minmax(72px, 96px) 26px minmax(70px, 1fr) 26px 26px 26px; width: 100%; max-width: 100%; gap: 4px; }
 .workspace-global-topbar .top-file-nav .source-link-control { min-width: 0; }
 .workspace-global-topbar .top-file-nav .source-link-control > summary { overflow: hidden; text-overflow: ellipsis; padding: 6px 8px; min-height: 30px; box-sizing: border-box; display: flex; align-items: center; }
-.workspace-global-topbar .top-file-nav > button:first-child { font-size: 10px; line-height: 1.15; padding: 0 4px; }
 @media (max-width: 1280px) {
   .app.workspace-mode { grid-template-rows: 94px minmax(0, 1fr) 32px; }
   .workspace-global-topbar { grid-template-columns: max-content minmax(190px, 1fr) minmax(340px, 1fr); grid-template-rows: 52px 34px; }
@@ -3502,3 +3501,8 @@ select.memo-key { width: 100%; padding: 2px; font-size: 12px; }
 .ocr-batch-size { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 10px; color: var(--muted, #64748b); font-size: 12px; }
 .ocr-batch-size span { white-space: nowrap; }
 .ocr-batch-size select { flex: 1; min-width: 0; }
+
+/* 가로 이미지 나누기: 시작 화면 선택과 미리보기 창의 작업 흔적 안내 */
+.split-option { margin-top: 10px; }
+.page-prep-worked { display: flex; align-items: flex-start; gap: 8px; margin: 0 0 12px; font-size: 12px; line-height: 1.55; color: #92400e; }
+.page-prep-worked input { margin-top: 3px; }

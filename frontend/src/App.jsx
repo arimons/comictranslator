@@ -123,6 +123,8 @@ export default function App() {
   const [guidanceCompareMode, setGuidanceCompareMode] = useState("auto");
   const [aiEraseCandidateUrl, setAiEraseCandidateUrl] = useState(null);
   const [aiEraseConfirmOpen, setAiEraseConfirmOpen] = useState(false);
+  // 불러온 가로 이미지를 분석 시작 때 나눌지(기본 켜짐). 표지처럼 가운데 한 장인 이미지는 가운데만 남긴다.
+  const [splitLandscape, setSplitLandscape] = useState(() => readStored("ct.splitLandscape", true, (v) => typeof v === "boolean"));
   // 확인한 페이지(영역 분석 탭에서 보고 넘어간 페이지)가 쌓이면 번역을 백그라운드로 돌릴지 묻는다.
   const [reviewedIds, setReviewedIds] = useState(() => new Set());
   const [ocrBatchSize, setOcrBatchSize] = useState(() => readStored("ct.ocrBatchSize", 10, (v) => v === 0 || OCR_BATCH_SIZES.includes(v)));
@@ -1533,9 +1535,23 @@ export default function App() {
     if (!images.length || analyzeBusy || inputBusy) return;
     const force = analysisPolicy === "refresh";
     if (force && !window.confirm(`${images.length}개 이미지를 다시 분석합니다. 기존 분석결과를 활용하지 않으며 Cloud Vision API 호출 비용이 발생할 수 있습니다. 진행할까요?`)) return;
+    if (splitLandscape && images.some((image) => image.wide_spread_candidate && !image.parent_id)) {
+      try {
+        const result = await api("/api/pages/split", { method: "POST", body: JSON.stringify({ session_id: sessionId, include_worked: false }) });
+        await adoptSplitResult(result);
+      } catch (err) {
+        setStatus(`가로 이미지를 나누지 못했습니다: ${String(err.message || err)}`);
+        return;
+      }
+    }
     setWorkspaceStarted(true);
     setActiveTab("guidance");
     await analyze("all", { force });
+  }
+
+  function changeSplitLandscape(value) {
+    setSplitLandscape(value);
+    writeStored("ct.splitLandscape", value);
   }
 
   async function analyze(target = "all", options = {}) {
@@ -2378,17 +2394,19 @@ export default function App() {
 
   const guidanceHistory = guidanceHistoryItems();
 
-  async function adoptPreparedProject(result) {
-    setWorkspaceStarted(false);
-    setSessionTracked(result.session_id);
-    projectNameDirtyRef.current = false;
-    selectedIdRef.current = "";
-    setPageDetail(null);
+  // 같은 프로젝트 안에서 가로 이미지를 나눈 결과를 화면에 반영한다.
+  function splitSummary(result) {
+    if (!result.split_pages) return result.skipped_worked?.length ? `분석·편집 흔적이 있는 ${result.skipped_worked.length}장은 나누지 않았습니다.` : "나눌 가로 이미지가 없습니다.";
+    const parts = [`가로 이미지 ${result.split_pages}장을 ${result.created}쪽으로 나눴습니다`];
+    if (result.center_kept) parts.push(`가운데 한 장만 남긴 이미지 ${result.center_kept}장 포함`);
+    if (result.skipped_worked?.length) parts.push(`작업 흔적이 있는 ${result.skipped_worked.length}장은 건너뜀`);
+    return `${parts.join(" · ")}.`;
+  }
+
+  async function adoptSplitResult(result) {
+    setImages(result.images || []);
     setImageStatuses({});
-    setAnalysisPolicy("reuse");
-    await refresh(result.session_id);
-    loadRecentSessions();
-    setStatus(`${result.image_count}장의 단일 페이지 프로젝트를 만들었습니다. 원본 프로젝트는 유지됩니다.`);
+    setStatus(splitSummary(result));
   }
   useEffect(() => {
     const query = new URLSearchParams(window.location.search);
@@ -2404,7 +2422,9 @@ export default function App() {
     return () => { cancelled = true; };
   }, []);
   const previewSessionId = new URLSearchParams(window.location.search).get("page_preview");
-  const pagePreparationControl = (sessionId || previewSessionId) ? <><PagePreparation sessionId={sessionId || previewSessionId} disabled={anyBusy} onPrepared={adoptPreparedProject} autoOpen={Boolean(previewSessionId)} /><SourceLinks key={sessionId || previewSessionId} sessionId={sessionId || previewSessionId} disabled={anyBusy} onChanged={() => refresh(sessionId || previewSessionId)} /></> : null;
+  const sourceLinksControl = (sessionId || previewSessionId) ? <SourceLinks key={sessionId || previewSessionId} sessionId={sessionId || previewSessionId} disabled={anyBusy} onChanged={() => refresh(sessionId || previewSessionId)} /> : null;
+  // 가로 이미지 나누기는 분석 전에 한 번 쓰는 준비 단계라 시작 화면에서만 보여 준다.
+  const pagePreparationControl = (sessionId || previewSessionId) ? <><PagePreparation sessionId={sessionId || previewSessionId} disabled={anyBusy} onSplit={adoptSplitResult} autoOpen={Boolean(previewSessionId)} />{sourceLinksControl}</> : null;
 
   if (!workspaceStarted) {
     return <StartScreen
@@ -2417,6 +2437,7 @@ export default function App() {
       fileRef={fileRef} uploadFiles={uploadFiles} uploadFromInput={uploadFromInput} importPath={importPath}
       inputBusy={inputBusy} analyzeBusy={analyzeBusy} analyzeWorkers={analyzeWorkers} setAnalyzeWorkers={setAnalyzeWorkers}
       analysisPolicy={analysisPolicy} setAnalysisPolicy={setAnalysisPolicy} startRegionAnalysis={startRegionAnalysis}
+      splitLandscape={splitLandscape} setSplitLandscape={changeSplitLandscape}
       removeLoadedImage={removeLoadedImage} openRecentSession={openRecentSession}
       recentMenuId={recentMenuId} setRecentMenuId={setRecentMenuId}
       renameRecentSession={renameRecentSession} deleteRecentSession={deleteRecentSession}
@@ -2452,7 +2473,7 @@ export default function App() {
           ))}
         </nav>
         <div className="file-navigator top-file-nav">
-          {pagePreparationControl}
+          {sourceLinksControl}
           <button onClick={() => selectImageByIndex(currentIndex - 1)} disabled={currentIndex <= 0}>‹</button>
           <select value={selected?.id || ""} onChange={(event) => selectImage(images.find((img) => img.id === event.target.value))}>
             {images.map((img, index) => <option key={img.id} value={img.id}>{`${index + 1}. ${img.name || img.id}`}</option>)}

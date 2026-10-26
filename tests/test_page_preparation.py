@@ -52,28 +52,95 @@ def test_odd_spread_preserves_every_column_and_portrait_is_unchanged(tmp_path):
     assert page_plan(path)["mode"] == "keep"
 
 
-def test_preview_is_read_only_and_apply_creates_separate_project(tmp_path, monkeypatch):
+def _project(tmp_path, monkeypatch, with_portrait=True):
     monkeypatch.setattr(app, "SESSION_ROOT", tmp_path / "sessions")
-    data = app.ensure_session("original")
-    data["images"] = samples(tmp_path)
+    data = app.ensure_session("book")
+    images = samples(tmp_path)
+    if with_portrait:
+        portrait = tmp_path / "003.png"
+        Image.new("RGB", (600, 800), "green").save(portrait)
+        images.append({"id": "003", "name": "003.png", "input_path": str(portrait)})
+    data["images"] = images
     data["project_name"] = "Ore_3"
     app.save_session(data)
-    before = app.session_file("original").read_bytes()
-    client = TestClient(app.create_app())
-    plan = client.post("/api/pages/preview", json={"session_id": "original"}).json()
-    assert plan["output_count"] == 3
-    assert before == app.session_file("original").read_bytes()
-    assert len(list(app.SESSION_ROOT.iterdir())) == 1
-    response = client.post("/api/pages/prepare", json={"session_id": "original", "revision": plan["revision"]})
-    assert response.status_code == 200
-    result = app.ensure_session(response.json()["session_id"])
-    assert result["parent_session_id"] == "original"
-    assert len(result["images"]) == 3
-    assert result["images"][1]["page_side"] == "right"
-    assert before == app.session_file("original").read_bytes()
-    assert not list(app.SESSION_ROOT.glob("*/work/json/*"))
-    assert client.post("/api/pages/prepare", json={"session_id": "original", "revision": "stale"}).status_code == 409
+    return TestClient(app.create_app())
+
+
+def test_preview_is_read_only_and_marks_worked_pages(tmp_path, monkeypatch):
+    client = _project(tmp_path, monkeypatch)
+    before = app.session_file("book").read_bytes()
+    plan = client.post("/api/pages/preview", json={"session_id": "book"}).json()
+    assert plan["output_count"] == 4 and plan["changed_count"] == 2
+    assert [page["outputs"][0]["name"] for page in plan["pages"]] == ["001_p01_C.png", "002_p01_R.png", "003.png"]
+    assert not any(page["has_work"] for page in plan["pages"])
+    assert before == app.session_file("book").read_bytes()
+    assert list((app.session_dir("book") / "input").iterdir()) == []
     assert client.post("/api/pages/preview", json={"session_id": "missing"}).status_code == 404
+
+
+def test_split_happens_inside_the_same_project_and_keeps_reading_order(tmp_path, monkeypatch):
+    client = _project(tmp_path, monkeypatch)
+    originals = {item["input_path"]: open(item["input_path"], "rb").read() for item in samples(tmp_path)}
+    response = client.post("/api/pages/split", json={"session_id": "book"})
+    assert response.status_code == 200, response.text
+    result = response.json()
+    assert (result["split_pages"], result["created"], result["center_kept"], result["skipped_worked"]) == (2, 3, 1, [])
+
+    data = app.ensure_session("book")
+    names = [item["name"] for item in data["images"]]
+    # 표지(가운데 한 장) → 펼침 오른쪽 → 왼쪽 → 세로 페이지. 자연 정렬이 읽기 순서를 그대로 유지한다
+    assert names == ["001_p01_C.png", "002_p01_R.png", "002_p02_L.png", "003.png"]
+    assert "parent_session_id" not in data  # 별도 프로젝트를 만들지 않는다
+    by_name = {item["name"]: item for item in data["images"]}
+    assert by_name["002_p01_R.png"]["page_side"] == "right" and by_name["002_p01_R.png"]["parent_id"] == "002"
+    assert by_name["002_p01_R.png"]["reading_order"] == "rtl" and by_name["002_p01_R.png"]["input_storage"] == "derived"
+    assert by_name["003.png"].get("parent_id") is None  # 세로 페이지는 손대지 않는다
+    with Image.open(by_name["002_p01_R.png"]["input_path"]) as image:
+        assert image.size == (600, 800) and image.getpixel((0, 0)) == (255, 0, 0)
+    with Image.open(by_name["002_p02_L.png"]["input_path"]) as image:
+        assert image.getpixel((0, 0)) == (0, 0, 255)
+    # 원본 파일은 그대로 있다
+    assert originals == {path: open(path, "rb").read() for path in originals}
+
+    # 다시 눌러도 이미 나눈 페이지는 나누지 않는다
+    again = client.post("/api/pages/split", json={"session_id": "book"}).json()
+    assert (again["split_pages"], again["created"]) == (0, 0)
+    assert [item["name"] for item in app.ensure_session("book")["images"]] == names
+
+
+def test_pages_with_work_are_skipped_unless_included(tmp_path, monkeypatch):
+    client = _project(tmp_path, monkeypatch)
+    item = next(item for item in app.ensure_session("book")["images"] if item["id"] == "002")
+    record = app.image_record("book", app.Path(item["input_path"]), item.get("image_sha256"))
+    app.Path(record["regions_json"]).parent.mkdir(parents=True, exist_ok=True)
+    app.Path(record["regions_json"]).write_text("{}", encoding="utf-8")
+
+    plan = client.post("/api/pages/preview", json={"session_id": "book"}).json()
+    assert {page["image_id"]: page["has_work"] for page in plan["pages"]} == {"001": False, "002": True, "003": False}
+    result = client.post("/api/pages/split", json={"session_id": "book"}).json()
+    assert result["skipped_worked"] == ["002.png"] and result["split_pages"] == 1
+    assert "002.png" in [i["name"] for i in app.ensure_session("book")["images"]]
+    forced = client.post("/api/pages/split", json={"session_id": "book", "include_worked": True}).json()
+    assert forced["split_pages"] == 1 and forced["skipped_worked"] == []
+    assert "002.png" not in [i["name"] for i in app.ensure_session("book")["images"]]
+
+
+def test_name_collision_rolls_back_without_changing_the_project(tmp_path, monkeypatch):
+    client = _project(tmp_path, monkeypatch)
+    input_dir = app.session_dir("book") / "input"
+    input_dir.mkdir(parents=True, exist_ok=True)
+    (input_dir / "002_p02_L.png").write_bytes(b"occupied")  # 두 번째 조각의 이름이 이미 쓰이고 있다
+    before = app.session_file("book").read_bytes()
+    response = client.post("/api/pages/split", json={"session_id": "book"})
+    assert response.status_code == 409
+    assert before == app.session_file("book").read_bytes()
+    assert sorted(path.name for path in input_dir.iterdir()) == ["002_p02_L.png"]  # 먼저 저장한 조각도 지워졌다
+
+
+def test_prepare_endpoint_no_longer_creates_separate_projects(tmp_path, monkeypatch):
+    client = _project(tmp_path, monkeypatch)
+    assert client.post("/api/pages/prepare", json={"session_id": "book", "revision": "x"}).status_code in {404, 405}
+    assert len(list(app.SESSION_ROOT.iterdir())) == 1
 
 
 def test_health_does_not_create_sessions(tmp_path, monkeypatch):

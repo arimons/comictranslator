@@ -54,7 +54,7 @@ def page_plan(path: Path) -> dict:
     return {"mode": mode, "width": width, "height": height, "rects": rects, "sides": sides, "reason": reason}
 
 
-def build_plan(images: list[dict]) -> dict:
+def build_plan(images: list[dict], numbered: bool = True) -> dict:
     pages = []
     for index, image in enumerate(images):
         path = Path(image["input_path"])
@@ -63,7 +63,12 @@ def build_plan(images: list[dict]) -> dict:
         for number, (rect, side) in enumerate(zip(plan["rects"], plan["sides"]), 1):
             # 접두 번호가 원본의 자연 정렬과 페이지 순서를 모두 보존한다.
             suffix = {"right": "R", "left": "L", "center": "C", "single": "S"}[side]
-            outputs.append({"name": f"{index + 1:05d}_{path.stem}_p{number:02d}_{suffix}.png" if plan["mode"] != "keep" else f"{index + 1:05d}_{path.name}", "crop_rect": rect, "side": side})
+            if numbered:
+                name = f"{index + 1:05d}_{path.stem}_p{number:02d}_{suffix}.png" if plan["mode"] != "keep" else f"{index + 1:05d}_{path.name}"
+            else:
+                # 같은 프로젝트 안에서 나눌 때는 원본 이름을 그대로 앞에 둬, 자연 정렬이 원래 페이지 순서와 오른쪽→왼쪽 순서를 유지한다.
+                name = f"{path.stem}_p{number:02d}_{suffix}.png" if plan["mode"] != "keep" else path.name
+            outputs.append({"name": name, "crop_rect": rect, "side": side})
         pages.append({"image_id": image["id"], "source_name": image.get("name") or path.name, "source_path": str(path), "source_sha256": file_digest(path), "source_ref":image.get("source_ref"), "source_fallback_path":image.get("source_fallback_path"), **plan, "outputs": outputs})
     content = {"schema_version": 1, "reading_order": "rtl", "pages": pages}
     revision = hashlib.sha256(json.dumps(content, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
@@ -101,4 +106,49 @@ def materialize_plan(plan: dict, output_dir: Path) -> list[dict]:
             if page["mode"]=="keep" and page.get("source_fallback_path"):
                 storage["source_fallback_path"]=page["source_fallback_path"]
             results.append({**storage,"path": target, "parent_id": page["image_id"], "parent_name": page["source_name"], "parent_input_path": page["source_path"], "source_image_sha256": page["source_sha256"], "crop_rect": output["crop_rect"], "page_side": output["side"], "reading_order": "rtl", "split_policy": page["mode"]})
+    return results
+
+
+def is_split_page(image: dict) -> bool:
+    """이미 나눈(또는 잘라낸) 페이지는 다시 나누지 않는다."""
+    return bool(image.get("parent_id")) or image.get("input_storage") == "derived"
+
+
+def split_in_place(images: list[dict], output_dir: Path) -> list[dict]:
+    """같은 프로젝트 안에서 가로 펼침을 나눈다. 나눌 페이지의 조각만 PNG로 저장하고 원본 파일은 건드리지 않는다.
+
+    반환 항목은 새 페이지 기록의 추가 필드(원본 id·좌표·읽기 방향)와 저장한 경로(path)다.
+    중간에 실패하면 이미 저장한 조각을 지운다.
+    """
+    output_dir.mkdir(parents=True, exist_ok=True)
+    plan = build_plan([image for image in images if not is_split_page(image)], numbered=False)
+    created: list[Path] = []
+    results: list[dict] = []
+    try:
+        for page in plan["pages"]:
+            if page["mode"] == "keep":
+                continue
+            source = Path(page["source_path"])
+            if file_digest(source) != page["source_sha256"]:
+                raise ValueError("원본이 변경되었습니다. 다시 시도하세요.")
+            for output in page["outputs"]:
+                target = output_dir / output["name"]
+                if target.exists() or target.is_symlink():
+                    raise FileExistsError(target)
+                x, y, width, height = output["crop_rect"]
+                with Image.open(source) as image:
+                    crop = image.crop((x, y, x + width, y + height))
+                    if crop.mode not in {"1", "L", "LA", "P", "RGB", "RGBA", "I", "I;16"}:
+                        crop = crop.convert("RGB")
+                    crop.save(target, format="PNG")
+                created.append(target)
+                results.append({
+                    "input_storage": "derived", "path": target, "parent_id": page["image_id"], "parent_name": page["source_name"],
+                    "parent_input_path": page["source_path"], "source_image_sha256": page["source_sha256"],
+                    "crop_rect": output["crop_rect"], "page_side": output["side"], "reading_order": "rtl", "split_policy": page["mode"],
+                })
+    except Exception:
+        for path in created:
+            path.unlink(missing_ok=True)
+        raise
     return results

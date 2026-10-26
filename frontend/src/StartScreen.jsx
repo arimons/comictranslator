@@ -19,7 +19,7 @@ export default function StartScreen({
   pagePreparationControl,
   folderPath, setFolderPath, fileRef, uploadFiles, uploadFromInput, importPath,
   inputBusy, analyzeBusy, analyzeWorkers, setAnalyzeWorkers, analysisPolicy, setAnalysisPolicy,
-  startRegionAnalysis, removeLoadedImage, openRecentSession, recentMenuId, setRecentMenuId,
+  startRegionAnalysis, splitLandscape, setSplitLandscape, removeLoadedImage, openRecentSession, recentMenuId, setRecentMenuId,
   renameRecentSession, deleteRecentSession, status, setStatus,
 }) {
   const folderRef = useRef(null);
@@ -147,6 +147,14 @@ export default function StartScreen({
                   <span><strong>처음부터 다시 분석</strong><small>전체 이미지를 다시 분석합니다.<em>API 호출 비용이 발생할 수 있습니다.</em></small></span>
                 </label>
               </fieldset>
+              {(() => {
+                const wideCount = images.filter((image) => image.wide_spread_candidate && !image.parent_id).length;
+                if (!wideCount) return null;
+                return <label className={`policy-option split-option${splitLandscape ? " selected" : ""}`}>
+                  <input type="checkbox" checked={splitLandscape} disabled={busy} onChange={(event) => setSplitLandscape(event.target.checked)} />
+                  <span><strong>가로 이미지 {wideCount}장을 두 쪽으로 나누기</strong><small>오른쪽 → 왼쪽 순서로 나눕니다. 표지처럼 가운데에 한 장만 있는 이미지는 가운데만 남깁니다. 분석 시작 때 적용되고 원본 파일은 그대로 둡니다.</small></span>
+                </label>;
+              })()}
               <details className="home-advanced"><summary>고급 설정</summary>
                 <div className="field"><label htmlFor="home-workers">동시 분석 이미지 수</label><input id="home-workers" type="number" min="1" max="12" value={analyzeWorkers} disabled={busy} onChange={(event) => setAnalyzeWorkers(Math.max(1, Math.min(12, Number(event.target.value) || 1)))} /><p className="home-hint">기본 4장. 컴퓨터 성능에 따라 조절하세요.</p></div>
               </details>

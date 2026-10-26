@@ -41,7 +41,7 @@ from pipeline.project_paths import manifest_files, manifest_path, project_base
 from pipeline.manual_guidance import build_effective_text_groups, load_json, write_json
 from pipeline.region_types import regions_with_processing_basis
 from pipeline.source_library import SourceLibrary, atomic_link, digest as source_digest
-from pipeline.page_preparation import build_plan, materialize_plan
+from pipeline.page_preparation import build_plan, is_split_page, split_in_place
 from pipeline.image_generation_bridge import ImageGenerationStore
 from pipeline.openai_image_redraw import redraw_image_with_openai
 from pipeline.openai_tasks import IMAGE_MODEL
@@ -160,6 +160,66 @@ GUIDANCE_OUTPUT_REQUIRED = (
 class PagePreparationRequest(BaseModel):
     session_id: str
     revision: str | None = None
+
+
+class PageSplitRequest(BaseModel):
+    session_id: str
+    # 분석·편집·번역 흔적이 있는 가로 페이지도 나눈다. 나누면 그 흔적은 원래 페이지에 남고 새 페이지에는 이어지지 않는다.
+    include_worked: bool = False
+
+
+def page_has_work(session_id: str, item: dict[str, Any]) -> bool:
+    """분석·가이드·번역 결과가 있거나 처리 제외한 페이지. 나누면 그 작업이 새 페이지로 이어지지 않는다."""
+    record = image_record(session_id, Path(item["input_path"]), item.get("image_sha256"))
+    return page_processing_excluded(session_id, item["id"]) or any(Path(record[key]).exists() for key in ("regions_json", "guidance_json", "integrated_json"))
+
+
+def split_wide_pages_in_session(session_id: str, include_worked: bool = False) -> dict[str, Any]:
+    """같은 프로젝트 안에서 가로 펼침을 오른쪽 → 왼쪽 두 쪽으로 나눈다(표지처럼 가운데 한 장은 가운데만 남긴다).
+
+    원본 파일은 그대로 두고 프로젝트에 나눈 PNG를 저장한다. 작업 흔적이 있는 페이지는 기본으로 건너뛴다.
+    """
+    data = ensure_session(session_id)
+    candidates = [item for item in sorted_image_records(data.get("images", [])) if not is_split_page(item)]
+    plan = build_plan(candidates, numbered=False)
+    by_id = {item["id"]: item for item in candidates}
+    to_split: list[dict[str, Any]] = []
+    skipped_worked: list[str] = []
+    center_kept = 0
+    for page in plan["pages"]:
+        if page["mode"] == "keep":
+            continue
+        item = by_id[page["image_id"]]
+        if not include_worked and page_has_work(session_id, item):
+            skipped_worked.append(item.get("name") or item["id"])
+            continue
+        to_split.append(item)
+        center_kept += page["mode"] == "center_crop"
+    created: list[dict[str, Any]] = []
+    if to_split:
+        records = split_in_place(to_split, session_dir(session_id) / "input")
+        try:
+            split_ids = {item["id"] for item in to_split}
+            created = [
+                image_manifest_item(record["path"], file_sha256(record["path"]), {key: value for key, value in record.items() if key != "path"})
+                for record in records
+            ]
+            data["images"] = [item for item in data.get("images", []) if item["id"] not in split_ids] + created
+            data["page_preparation"] = {"reading_order": "rtl", "split_source_count": len(to_split), "output_count": len(created)}
+            save_session(data)
+        except Exception:
+            for record in records:
+                record["path"].unlink(missing_ok=True)
+            raise
+        hydrate_load_cache_for_records(session_id, created, sync_limit=IMPORT_CACHE_SYNC_LIMIT)
+    return {
+        "ok": True,
+        "split_pages": len(to_split),
+        "created": len(created),
+        "center_kept": center_kept,
+        "skipped_worked": skipped_worked,
+        "images": session_image_summaries(session_id),
+    }
 
 
 class ImportPathRequest(BaseModel):
@@ -3078,34 +3138,24 @@ def create_app() -> FastAPI:
     def preview_pages(req: PagePreparationRequest) -> dict[str, Any]:
         source = preparation_source(req.session_id)
         try:
-            plan = build_plan(sorted_image_records(source["images"]))
+            plan = build_plan([item for item in sorted_image_records(source["images"]) if not is_split_page(item)], numbered=False)
         except (OSError, ValueError) as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
+        by_id = {item["id"]: item for item in source["images"]}
         for page in plan["pages"]:
             page["source_url"] = file_url(page["source_path"])
+            page["has_work"] = page["mode"] != "keep" and page_has_work(req.session_id, by_id[page["image_id"]])
         return plan
 
-    @app.post("/api/pages/prepare")
-    def prepare_pages(req: PagePreparationRequest) -> dict[str, Any]:
-        source = preparation_source(req.session_id)
-        plan = build_plan(sorted_image_records(source["images"]))
-        if not req.revision or req.revision != plan["revision"]:
-            raise HTTPException(status_code=409, detail="원본이나 분할 계획이 바뀌었습니다. 미리보기를 다시 열어주세요.")
-        if not plan["changed_count"]:
-            raise HTTPException(status_code=400, detail="나누거나 여백을 정리할 가로 이미지가 없습니다.")
-        sid = f"{now_id()}_pages_{uuid4().hex[:8]}"
-        target = ensure_session(sid)
+    @app.post("/api/pages/split")
+    def split_pages(req: PageSplitRequest) -> dict[str, Any]:
+        preparation_source(req.session_id)
         try:
-            records = materialize_plan(plan, session_dir(sid) / "input")
-            target["images"] = [image_manifest_item(record["path"], file_sha256(record["path"]), {key: value for key, value in record.items() if key != "path"}) for record in records]
-            target["project_name"] = f"{source.get('project_name') or '프로젝트'} · 단일 페이지"
-            target["parent_session_id"] = req.session_id
-            target["page_preparation"] = {"revision": plan["revision"], "reading_order": "rtl", "source_count": plan["source_count"], "output_count": plan["output_count"]}
-            save_session(target)
-        except Exception:
-            shutil.rmtree(session_dir(sid), ignore_errors=True)
-            raise
-        return {"session_id": sid, "project_name": target["project_name"], "image_count": len(target["images"])}
+            return split_wide_pages_in_session(req.session_id, include_worked=req.include_worked)
+        except FileExistsError as exc:
+            raise HTTPException(status_code=409, detail=f"같은 이름의 파일이 이미 있어 나눌 수 없습니다: {Path(str(exc)).name}") from exc
+        except (OSError, ValueError) as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     @app.get("/api/session/{session_id}")
     def read_session(session_id: str) -> dict[str, Any]:
