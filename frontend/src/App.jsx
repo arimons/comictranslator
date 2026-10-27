@@ -60,6 +60,7 @@ import { regionIsExcluded } from "./regionExclusion.js";
 const OVERLAY_HISTORY_LIMIT = 100;
 const OVERLAY_HISTORY_MERGE_MS = 1500;
 
+const ENGINE_NAMES = { lama: "LaMa", telea: "Telea" };
 const RESUME_KEY = "comic-translator-resume-after-restart";
 
 // 브라우저 저장소는 막혀 있을 수 있어 모든 읽기·쓰기를 감싼다. 값이 없거나 올바르지 않으면 기본값을 쓴다.
@@ -265,21 +266,18 @@ export default function App() {
   const selectedGuidanceRegion = selectedGuidanceRegionId != null
     ? guidanceRegions.find(region => regionId(region) === Number(selectedGuidanceRegionId)) || null
     : null;
-  // 텍스트 기반 영역의 지우기 엔진: 자동 판정(Telea/LaMa) 또는 사용자가 LaMa로 고정.
-  // 고정은 분석 적용 때 Step 3에서 반영되므로, 화면의 가이드와 저장된 가이드를 따로 본다.
+  // 텍스트 기반 영역의 지우기 엔진: 자동 판정(Telea/LaMa) 또는 사용자가 LaMa·Telea로 고정.
+  // 고정은 변경사항 적용 때 Step 3에서 반영되므로, 화면의 가이드와 저장된 가이드를 따로 본다.
   const selectedIsTextBased = Boolean(selectedGuidanceRegion && regionProcessingBasis(selectedGuidanceRegion) === TEXT_BASED);
   const selectedRegionKey = selectedGuidanceRegion ? regionBindingKey(selectedGuidanceRegion) : "";
-  const hasLamaOverride = (source) => (source?.inpaint_engine_overrides || []).some((item) => item.target_key === selectedRegionKey && item.engine === "lama");
-  const lamaForcedPending = selectedIsTextBased && hasLamaOverride(guidance);
-  const lamaForcedSaved = selectedIsTextBased && hasLamaOverride(selected?.guidance);
-  const inpaintEngineLabel = (() => {
-    if (!selectedIsTextBased) return "";
-    if (lamaForcedPending !== lamaForcedSaved) return lamaForcedPending ? "LaMa로 고정 예정" : "자동 판정으로 되돌릴 예정";
-    const used = selectedGuidanceRegion.inpaint_engine_used;
-    if (!used) return lamaForcedPending ? "LaMa (고정)" : "자동 (분석 적용 후 표시)";
-    const name = used === "telea" ? "Telea" : "LaMa";
-    return `${name} (${selectedGuidanceRegion.inpaint_engine_source === "forced" || lamaForcedSaved ? "고정" : "자동"})`;
-  })();
+  const engineOverrideOf = (source) => (source?.inpaint_engine_overrides || []).find((item) => item.target_key === selectedRegionKey)?.engine || null;
+  const enginePending = selectedIsTextBased ? engineOverrideOf(guidance) : null;
+  const engineSaved = selectedIsTextBased ? engineOverrideOf(selected?.guidance) : null;
+  const lamaForcedPending = enginePending === "lama";
+  // 자동일 때 마지막 분석에서 실제로 쓰인 엔진을 함께 보여 준다.
+  const autoEngineUsed = selectedIsTextBased && selectedGuidanceRegion.inpaint_engine_source !== "forced"
+    ? ENGINE_NAMES[selectedGuidanceRegion.inpaint_engine_used] || ""
+    : "";
   const selectedCvGroups = imageGroups(selected).filter((group) => (selectedGuidanceRegion?.anchor_ids || [selectedTg]).map(Number).includes(tgId(group)));
   const selectedCvText = selectedCvGroups.map((group) => group.text || (group.lines || []).map((line) => line.text || (line.fragments || []).map((fragment) => fragment.text || "").join("")).filter(Boolean).join("\n")).filter(Boolean).join("\n\n");
   const selectedPageId = selected?.id || "";
@@ -1674,7 +1672,7 @@ export default function App() {
     if (!selected || selected.processing_excluded || !pageDetailReady()) return;
     const requestSid = sessionId;
     const requestImageId = selected.id;
-    await runTask("guidance", "영역 분석 적용", async () => {
+    await runTask("guidance", "변경사항 적용", async () => {
       const result = await api("/api/guidance", { method: "POST", body: JSON.stringify({ session_id: requestSid, image_id: requestImageId, guidance }) });
       const refreshedImages = await refresh(requestSid);
       if (!refreshedImages || sessionIdRef.current !== requestSid) return { logs: "Step 3 재생성 완료 (다른 세션으로 이동해 화면 갱신 생략)" };
@@ -2324,7 +2322,7 @@ export default function App() {
       items.push({ key: `region-off-${index}`, kind: "suppressed_regions", index, label: `R${item.display_region_id || item.region_id || item.source_region_id || "?"} 제외 기록`, detail: "자동 처리 대상에서 제외" });
     });
     (guidance.inpaint_engine_overrides || []).forEach((item, index) => {
-      items.push({ key: `engine-${index}`, kind: "inpaint_engine_overrides", index, label: `R${item.display_region_id || "?"} LaMa 고정`, detail: "지우기 엔진을 LaMa로 고정" });
+      items.push({ key: `engine-${index}`, kind: "inpaint_engine_overrides", index, label: `R${item.display_region_id || "?"} ${ENGINE_NAMES[item.engine] || item.engine} 고정`, detail: `지우기 엔진을 ${ENGINE_NAMES[item.engine] || item.engine}로 고정` });
     });
     return items;
   }
@@ -2358,23 +2356,27 @@ export default function App() {
     }, "텍스트 기반 영역 엔진 변경");
   }
 
-  // 선택한 텍스트 기반 영역(자동·수동 모두)의 지우기 엔진을 LaMa로 고정하거나 자동 판정으로 되돌린다.
-  // 영역 키에 저장하며 분석 적용(재분석) 때 반영된다.
-  function toggleSelectedRegionLama() {
+  // 선택한 텍스트 기반 영역(자동·수동 모두)의 지우기 엔진을 고정(lama/telea)하거나 자동(null)으로 되돌린다.
+  // 영역 키에 저장하며 변경사항 적용 때 반영된다.
+  function setSelectedRegionEngine(engine) {
     const region = selectedGuidanceRegion;
     if (!region || regionProcessingBasis(region) !== TEXT_BASED) return;
     const key = regionBindingKey(region);
-    const forcing = !(guidance.inpaint_engine_overrides || []).some((item) => item.target_key === key && item.engine === "lama");
-    setGuidanceTracked((current) => {
-      const next = cloneJson(current || defaultGuidance(null));
+    const current = (guidance.inpaint_engine_overrides || []).find((item) => item.target_key === key)?.engine || null;
+    if (current === engine) return;
+    setGuidanceTracked((value) => {
+      const next = cloneJson(value || defaultGuidance(null));
       const list = (next.inpaint_engine_overrides || []).filter((item) => item.target_key !== key);
-      if (forcing) list.push({ target_key: key, engine: "lama", display_region_id: regionId(region) });
+      if (engine) list.push({ target_key: key, engine, display_region_id: regionId(region) });
       next.inpaint_engine_overrides = list;
       return next;
-    }, forcing ? "LaMa로 고정" : "LaMa 고정 해제");
-    setStatus(forcing
-      ? `R${regionId(region)}을 LaMa로 다시 지웁니다. 분석 적용(${shortcutById("guidance.apply")})으로 반영됩니다.`
-      : `R${regionId(region)}의 LaMa 고정을 풀었습니다. 분석 적용(${shortcutById("guidance.apply")})으로 반영됩니다.`);
+    }, engine ? `${ENGINE_NAMES[engine]}로 고정` : "지우기 자동 판정");
+    setStatus(`R${regionId(region)} 지우기: ${engine ? `${ENGINE_NAMES[engine]} 고정` : "자동 판정"} · 변경사항 적용(${shortcutById("guidance.apply")})으로 반영됩니다.`);
+  }
+
+  // 도구 모음의 LaMa 버튼: LaMa 고정을 켜고 끈다.
+  function toggleSelectedRegionLama() {
+    setSelectedRegionEngine(lamaForcedPending ? null : "lama");
   }
 
   function removeGuidanceHistoryItem(historyItem, options = {}) {
@@ -2401,7 +2403,7 @@ export default function App() {
     if (!selected) return;
     setGuidanceTracked(defaultGuidance({ ...selected, guidance: {} }), "가이드 전체 비우기");
     setSelectedTg(null); setSelectedGuidanceRegionId(null);
-    setStatus("화면의 가이드를 모두 비웠습니다. 저장 결과는 분석 적용 시 변경되며, 적용 전에는 실행 취소로 되돌릴 수 있습니다.");
+    setStatus("화면의 가이드를 모두 비웠습니다. 저장 결과는 변경사항 적용 시 변경되며, 적용 전에는 실행 취소로 되돌릴 수 있습니다.");
   }
 
   const guidanceHistory = guidanceHistoryItems();
@@ -2553,7 +2555,7 @@ export default function App() {
             <textarea value={extraPrompt} onChange={(e) => updateExtraPrompt(e.target.value)} />
           </div>
           <div className="row">
-            <button className="primary" onClick={applyGuidance} onKeyDown={preventPlainAnalysisEnter} disabled={guidanceBusy || analyzeBusy || !selected || selected.processing_excluded}>분석 적용 ({shortcutById("guidance.apply")})</button>
+            <button className="primary" onClick={applyGuidance} onKeyDown={preventPlainAnalysisEnter} disabled={guidanceBusy || analyzeBusy || !selected || selected.processing_excluded}>변경사항 적용 ({shortcutById("guidance.apply")})</button>
             <button onClick={() => runFinal()} disabled={ocrBusy || !selected || selected.processing_excluded}>Run Final</button>
           </div>
           <button className="wide" onClick={() => setActiveTab("export")} disabled={!sessionId || !images.length}>Export Page</button>
@@ -2706,7 +2708,7 @@ export default function App() {
           />
           </details>
           <div className="guidance-reset-actions">
-            <p className="hint">저장된 가이드도 포함해 화면의 가이드를 모두 비웁니다. 분석 적용 전에는 저장 결과가 유지되고 실행 취소로 되돌릴 수 있습니다.</p>
+            <p className="hint">저장된 가이드도 포함해 화면의 가이드를 모두 비웁니다. 변경사항 적용 전에는 저장 결과가 유지되고 실행 취소로 되돌릴 수 있습니다.</p>
             <button onClick={clearUnsavedGuidance} disabled={anyBusy || !selected?.detail_loaded || selected.processing_excluded}>가이드 전체 비우기</button>
             <p className="hint">이 페이지의 가이드·분석·번역·최종 이미지를 삭제합니다. 원본 이미지·CV·TG·등록된 생성 결과는 유지합니다.</p>
             {!clearOutputsConfirm ? <button className="danger" onClick={() => setClearOutputsConfirm(true)} disabled={anyBusy || !selected?.detail_loaded || selected.processing_excluded}>이 페이지 작업 결과 삭제…</button> : <div className="guidance-delete-confirm" role="group" aria-label="작업 결과 삭제 확인">
@@ -2751,31 +2753,38 @@ export default function App() {
           onRequestConfirm={() => setAiEraseConfirmOpen(true)}
         />
 
-        <div className="section speaker-section">
-          <h2>{selectedTg != null ? "TG 선택" : "화자 지정"} {selectedGuidanceRegion ? <small>R{regionId(selectedGuidanceRegion)}</small> : selectedTg != null ? <small>TG{selectedTg}</small> : null}</h2>
-          {selectedGuidanceRegion ? <div className="selected-region-method" style={{borderColor:overlayRegionColor(selectedGuidanceRegion),background:`${overlayRegionColor(selectedGuidanceRegion)}12`}}><span aria-hidden="true" style={{color:overlayRegionColor(selectedGuidanceRegion)}}>● </span>{regionDetectionLabel(selectedGuidanceRegion)}</div> : null}
-          {selectedIsTextBased ? <div className="inpaint-engine-row">
-            <span>지우기: <strong>{inpaintEngineLabel}</strong></span>
-            <button onClick={toggleSelectedRegionLama} disabled={anyBusy} title="분석 적용 시 반영됩니다">{lamaForcedPending ? "LaMa 고정 해제" : "LaMa로 다시 지우기"}</button>
-          </div> : null}
-          {selectedTg != null || selectedGuidanceRegion ? <div className="selected-cv-context">
-            <div><label htmlFor="selected-cv-text">CV 감지 텍스트</label><span className="speaker-assignment-label">화자: {selectedGuidanceRegion ? speakerLabels[regionId(selectedGuidanceRegion)] || "미지정" : "R 선택 필요"}</span></div>
-            <textarea id="selected-cv-text" aria-label="선택 영역 CV 텍스트" readOnly value={selectedCvText} placeholder="이 영역에 연결된 CV 텍스트가 없습니다." rows={4} />
-            <small>자동 인식된 원문 · 인식 오류가 있을 수 있습니다.</small>
-          </div> : null}
-          {!selectedGuidanceRegion ? <p className="hint">화자를 지정할 R을 선택하세요. 겹친 곳은 한 번 더 클릭합니다.</p> : speakerCharacters.length ? <div className="speaker-keys">
-            {speakerCharacters.map((row, index) => (
-              <button key={row.id} disabled={!selectedGuidanceRegion} onClick={() => assignSpeaker(index + 1)} title={row.speech || row.personality || ""}>
-                <kbd>{index + 1}</kbd>{row.name}{row.protagonist ? " ★" : ""}
-              </button>
-            ))}
-            {allSpeakerCharacters.length > 0 ? <button disabled={!selectedGuidanceRegion} onClick={() => assignSpeaker(9)}><kbd>9</kbd>기타{allSpeakerCharacters.length > 8 ? ` (${allSpeakerCharacters.length - 8})` : ""}…</button> : null}
-            <button disabled={!selectedGuidanceRegion} onClick={() => assignSpeaker("narration")}><kbd>N</kbd>내레이션</button>
-            <button disabled={!selectedGuidanceRegion} onClick={() => assignSpeaker(0)}><kbd>0</kbd>해제</button>
-          </div> : <p className="hint">상단 작품 메모에 인물을 추가하면 숫자키로 화자를 지정할 수 있습니다.</p>}
-          {selectedGuidanceRegion ? <p className="hint" title="화자를 지정하면 다음 경계 기반 영역으로 이동합니다. 텍스트 기반 영역의 미지정 화자는 주인공으로 처리합니다.">숫자키로 지정 · Tab으로 다음 영역</p> : null}
-        </div>
-
+                {selectedGuidanceRegion || selectedTg != null ? <div className="inspector">
+                  {selectedIsTextBased ? <div className="inspector-row">
+                    <span className="inspector-label">지우기</span>
+                    <div className="segmented" role="radiogroup" aria-label="지우기 방식">
+                      {[[null, autoEngineUsed ? `자동 · ${autoEngineUsed}` : "자동"], ["lama", "LaMa"], ["telea", "Telea"]].map(([value, label]) => (
+                        <button key={label} role="radio" aria-checked={enginePending === value} className={enginePending === value ? "active" : ""} disabled={anyBusy} onClick={() => setSelectedRegionEngine(value)}
+                          title={value ? `${label}로 고정 (변경사항 적용 시 반영)` : "배경을 보고 Telea·LaMa를 자동으로 고릅니다"}>{label}</button>
+                      ))}
+                    </div>
+                    {enginePending !== engineSaved ? <small className="inspector-pending">변경사항 적용 시 반영</small> : null}
+                  </div> : null}
+                  <div className="inspector-row">
+                    <span className="inspector-label">원문 <small>CV</small></span>
+                    <textarea aria-label="선택 영역 CV 텍스트" readOnly value={selectedCvText} placeholder="연결된 CV 텍스트가 없습니다." rows={3} />
+                  </div>
+                  {selectedGuidanceRegion ? <div className="inspector-row">
+                    <span className="inspector-label">화자 <strong>{speakerLabels[regionId(selectedGuidanceRegion)] || "미지정"}</strong></span>
+                    {speakerCharacters.length ? <div className="speaker-keys">
+                      {speakerCharacters.map((row, index) => (
+                        <button key={row.id} onClick={() => assignSpeaker(index + 1)} title={row.speech || row.personality || ""}>
+                          <kbd>{index + 1}</kbd>{row.name}{row.protagonist ? " ★" : ""}
+                        </button>
+                      ))}
+                      {allSpeakerCharacters.length > 0 ? <button onClick={() => assignSpeaker(9)}><kbd>9</kbd>기타{allSpeakerCharacters.length > 8 ? ` (${allSpeakerCharacters.length - 8})` : ""}…</button> : null}
+                      <button onClick={() => assignSpeaker("narration")}><kbd>N</kbd>내레이션</button>
+                      <button onClick={() => assignSpeaker(0)}><kbd>0</kbd>해제</button>
+                    </div> : <p className="hint">상단 작품 메모에 인물을 추가하면 숫자키로 화자를 지정할 수 있습니다.</p>}
+                  </div> : <p className="hint">TG만 선택했습니다. 화자는 R(처리 영역)을 선택해 지정합니다. 같은 곳을 한 번 더 클릭하면 R이 선택됩니다.</p>}
+                  <div className="inspector-actions">
+                    <button onClick={() => editorCanvasRef.current?.excludeSelection()} disabled={anyBusy} title={`선택한 ${selectedGuidanceRegion ? "R" : "TG"}을 처리에서 제외 (${shortcutById("guidance.tg.delete")})`}>{selectedGuidanceRegion ? "이 영역 제외" : "이 TG 제외"} <kbd>{shortcutById("guidance.tg.delete")}</kbd></button>
+                  </div>
+                </div> : <p className="hint inspector-empty">말풍선(R)을 클릭하세요 · Tab으로 다음 영역 · 숫자키로 화자 지정</p>}
               </FloatingPanel>
               <div className="floating-toolbox" aria-label="영역 분석 도구">
                 {TOOL_LABELS.map(([id, label]) => (
@@ -2799,7 +2808,7 @@ export default function App() {
                   aria-pressed={lamaForcedPending}
                   aria-label="LaMa로 다시 지우기"
                   title={selectedIsTextBased
-                    ? `선택한 텍스트 기반 영역을 LaMa로 ${lamaForcedPending ? "고정 해제" : "다시 지우기"} (분석 적용 시 반영)`
+                    ? `선택한 텍스트 기반 영역을 LaMa로 ${lamaForcedPending ? "고정 해제" : "다시 지우기"} (변경사항 적용 시 반영)`
                     : "텍스트 기반 영역(R)을 선택하면 LaMa로 다시 지울 수 있습니다"}
                 >
                   <span><GuidanceToolIcon tool="lama" /></span>

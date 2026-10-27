@@ -860,7 +860,7 @@ python3 run_pipeline.py \
     <strong>수동 텍스트 기반 영역 지우기</strong>
     편집기에서 그린 텍스트 기반 영역은 <code>_apply_manual_ubox_lama()</code>가 따로 처리합니다. 박스 안에서 글자 색 픽셀만 마스크로 잡고, 박스 바깥 24px를 문맥으로 넘깁니다.
     박스가 어두우면 흰 글자로 보고 마스크를 6px 넓힙니다. 흰 테두리가 남으면 LaMa가 글자 모양 얼룩을 되살리기 때문입니다.
-    엔진은 배경 분류(<code>_classify_inpaint_background</code>)로 Telea/LaMa를 고르고, guidance에 <code>inpaint_engine: "lama"</code>가 있으면 LaMa로 고정합니다. 자동·수동 텍스트 기반 영역 모두 영역 키로 고정할 수 있고(<code>guidance.inpaint_engine_overrides</code>), 쓴 엔진은 영역에 <code>inpaint_engine_used</code>·<code>inpaint_engine_source</code>로 기록됩니다.
+    엔진은 배경 분류(<code>_classify_inpaint_background</code>)로 Telea/LaMa를 고르고, guidance에 <code>inpaint_engine: "lama"</code> 또는 <code>"telea"</code>가 있으면 그 엔진으로 고정합니다. 자동·수동 텍스트 기반 영역 모두 영역 키로 LaMa·Telea를 고정할 수 있고(<code>guidance.inpaint_engine_overrides</code>의 <code>engine</code>, <code>_forced_engine_by_key</code>), 쓴 엔진은 영역에 <code>inpaint_engine_used</code>·<code>inpaint_engine_source</code>로 기록됩니다.
   </div>
 
   <div class="info-box info-warn">

@@ -71,6 +71,7 @@ def test_override_for_other_region_or_other_engine_is_ignored(tmp_path, monkeypa
     calls, _ = _run(paths, monkeypatch, overrides=[
         {"target_key": '["text_based","other",[0,0,1,1]]', "engine": "lama"},
         {"target_key": "x", "engine": "telea"},
+        {"target_key": '["text_based","other",[0,0,1,1]]', "engine": "unknown"},
         {"engine": "lama"},
         "bad",
     ])
@@ -97,3 +98,14 @@ def test_changing_lama_overrides_disables_unboxed_inpaint_reuse():
     # 고정을 새로 켜거나 풀면 이전 지우기 결과를 쓰지 않고 다시 지운다
     assert not app.guidance_allows_unboxed_mask_reuse(base, {**base, "inpaint_engine_overrides": [key]})
     assert not app.guidance_allows_unboxed_mask_reuse(prev, base)
+
+
+def test_text_based_region_can_be_forced_to_telea(tmp_path, monkeypatch):
+    paths = _page_with_vertical_text(tmp_path)
+    _, regions = _run(paths, monkeypatch)
+    key = region_binding_key([r for r in regions if r.get("type") == "unboxed"][0])
+
+    calls, regions = _run(paths, monkeypatch, overrides=[{"target_key": key, "engine": "telea"}])
+    region = [r for r in regions if r.get("type") == "unboxed"][0]
+    assert calls["lama"] == 0
+    assert region["inpaint_engine_used"] == "telea" and region["inpaint_engine_source"] == "forced"

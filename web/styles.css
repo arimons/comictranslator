@@ -3534,3 +3534,18 @@ select.memo-key { width: 100%; padding: 2px; font-size: 12px; }
 .floating-panel-grip { color: var(--muted); font-size: 12px; }
 .floating-panel-body { overflow: auto; padding: 10px 12px; display: grid; gap: 10px; }
 .floating-panel-body > .section { padding: 0; border: 0; margin: 0; }
+.inspector { display: grid; gap: 12px; }
+.inspector-row { display: grid; gap: 6px; }
+.inspector-label { font-size: 11px; font-weight: 600; color: var(--muted); display: flex; align-items: baseline; gap: 6px; }
+.inspector-label strong { color: var(--text); font-size: 12px; }
+.inspector-label small { font-weight: 400; }
+.inspector textarea { width: 100%; min-height: 0; font-size: 12px; resize: vertical; }
+.inspector-pending { font-size: 11px; color: var(--orange); }
+.inspector-actions { display: flex; gap: 6px; border-top: 1px solid var(--line); padding-top: 10px; }
+.inspector-actions button { font-size: 12px; }
+.inspector-actions kbd { font-size: 10px; opacity: .7; margin-left: 4px; font-family: inherit; }
+.inspector-empty { margin: 0; font-size: 12px; color: var(--muted); }
+.segmented { display: inline-flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; width: 100%; }
+.segmented button { flex: 1; border: 0; border-radius: 0; min-height: 28px; font-size: 12px; background: transparent; }
+.segmented button + button { border-left: 1px solid var(--line); }
+.segmented button.active { background: var(--blue); color: #fff; font-weight: 600; }

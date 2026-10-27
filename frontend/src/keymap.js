@@ -101,7 +101,7 @@ export const KEYMAP = [
   { id: "overlay.orientation", context: "overlay", group: "스타일", label: "쓰기 방향 순환: 자동 → 가로 → 세로", kind: "key", when: ["regionSelected"], keys: [["O"]], match: { code: "KeyO" }, action: "overlay.orientation" },
 
   // 적용
-  { id: "guidance.apply", context: "guidance", group: "적용", label: "현재 페이지 분석 적용 (미적용 변경을 모아서 실행)", kind: "key", keys: [["Ctrl", "Enter"]], allowInInput: true, match: { code: ["Enter", "NumpadEnter"], mod: true }, action: "apply" },
+  { id: "guidance.apply", context: "guidance", group: "적용", label: "변경사항 적용 (그어 둔 가이드로 영역 다시 계산)", kind: "key", keys: [["Ctrl", "Enter"]], allowInInput: true, match: { code: ["Enter", "NumpadEnter"], mod: true }, action: "apply" },
   { id: "overlay.apply", context: "overlay", group: "적용", label: "Overlay 적용 (Apply Overlay)", kind: "key", keys: [["Ctrl", "Enter"]], allowInInput: true, when: ["notInFloatingEditor"], match: { code: ["Enter", "NumpadEnter"], mod: true }, action: "apply" },
 
   // 대사 편집 팝업

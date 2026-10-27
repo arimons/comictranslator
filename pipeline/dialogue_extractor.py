@@ -383,13 +383,21 @@ def _crop_binding_key(item: Dict[str, Any]) -> str:
     })
 
 
-def _forced_lama_keys(overrides: List[Dict[str, Any]] | None) -> set[str]:
-    """사용자가 LaMa로 고정한 영역 키. 가이드의 inpaint_engine_overrides에서 읽는다."""
+FORCEABLE_INPAINT_ENGINES = ("lama", "telea")
+
+
+def _forced_engine_by_key(overrides: List[Dict[str, Any]] | None) -> Dict[str, str]:
+    """사용자가 지우기 엔진을 고정한 영역 키 → 엔진(lama/telea). 가이드의 inpaint_engine_overrides에서 읽는다."""
     return {
-        str(item["target_key"])
+        str(item["target_key"]): str(item["engine"])
         for item in overrides or []
-        if isinstance(item, dict) and item.get("engine") == "lama" and item.get("target_key")
+        if isinstance(item, dict) and item.get("engine") in FORCEABLE_INPAINT_ENGINES and item.get("target_key")
     }
+
+
+def _forced_lama_keys(overrides: List[Dict[str, Any]] | None) -> set[str]:
+    """LaMa로 고정한 영역 키(이전 호출부 호환)."""
+    return {key for key, engine in _forced_engine_by_key(overrides).items() if engine == "lama"}
 
 
 def _apply_manual_ubox_lama(
@@ -2907,7 +2915,7 @@ def build_dialogue_sheet(
     _invalidate_containing_bubbles(regions)
 
     masked_image = image.copy()
-    forced_lama_keys = _forced_lama_keys(inpaint_engine_overrides)
+    forced_engines = _forced_engine_by_key(inpaint_engine_overrides)
     reused_unboxed_inpaint = False
     if reuse_existing_unboxed_inpaint and base_masked_path:
         base_masked = cv2.imread(base_masked_path)
@@ -3015,8 +3023,8 @@ def build_dialogue_sheet(
             continue
         crops.append(item)
         manual_unboxed_tg_ids.update(int(tid) for tid in item.get("anchor_ids", []))
-        if _crop_binding_key(item) in forced_lama_keys:
-            item["inpaint_engine_override"] = "lama"
+        if _crop_binding_key(item) in forced_engines:
+            item["inpaint_engine_override"] = forced_engines[_crop_binding_key(item)]
         if not _apply_manual_ubox_lama(image, masked_image, item, group_by_id):
             item["inpaint_skipped"] = True
             item["quality_flags"] = list(dict.fromkeys(
@@ -3126,15 +3134,15 @@ def build_dialogue_sheet(
         )
         engine = None
         if safe_text_mask.max() > 0:
-            forced_lama = _crop_binding_key(unboxed_crop) in forced_lama_keys
-            if forced_lama:
-                engine = "lama"
+            forced_engine = forced_engines.get(_crop_binding_key(unboxed_crop))
+            if forced_engine:
+                engine = forced_engine
             else:
                 engine = str(mask_strategy_meta.get("recommended_inpaint_engine_override") or cand.get("recommended_inpaint_engine") or "lama")
                 engine = _engine_for_color(engine, cand["roi"], cand.get("background_class"))
             # 이전 지우기 결과를 재사용해도 어떤 엔진이었는지는 화면에 보여 줄 수 있게 기록한다
             unboxed_crop["inpaint_engine_used"] = engine
-            unboxed_crop["inpaint_engine_source"] = "forced" if forced_lama else "auto"
+            unboxed_crop["inpaint_engine_source"] = "forced" if forced_engine else "auto"
         if engine and not reused_unboxed_inpaint:
             if engine == "telea":
                 inpaint_roi = cv2.inpaint(
