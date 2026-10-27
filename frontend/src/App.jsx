@@ -61,6 +61,14 @@ const OVERLAY_HISTORY_LIMIT = 100;
 const OVERLAY_HISTORY_MERGE_MS = 1500;
 
 const ENGINE_NAMES = { lama: "LaMa", telea: "Telea" };
+// 그리기 도구를 고르면 캔버스 아래에 띄우는 안내. 도구를 한 번 쓰면 선택 도구로 돌아가며 함께 사라진다.
+const TOOL_HINTS = {
+  "tg-split": "나눌 TG 위로 선을 그으세요",
+  wall: "글자 영역이 번지는 곳을 상자로 드래그해 막으세요",
+  bubble: "말풍선 안쪽 빈 곳을 클릭하세요",
+  "region-split": "나눌 경계를 따라 선을 그으세요",
+  ubox: "글자를 감싸도록 상자를 드래그하세요",
+};
 const RESUME_KEY = "comic-translator-resume-after-restart";
 
 // 브라우저 저장소는 막혀 있을 수 있어 모든 읽기·쓰기를 감싼다. 값이 없거나 올바르지 않으면 기본값을 쓴다.
@@ -2821,6 +2829,11 @@ export default function App() {
                   </div>
                 </div> : <p className="hint inspector-empty">말풍선(R)을 클릭하세요 · Tab으로 다음 영역 · 숫자키로 화자 지정</p>}
               </FloatingPanel>
+              {TOOL_HINTS[tool] && !selected?.processing_excluded ? <div className="tool-hint" role="status">
+                <strong>{TOOL_LABELS.find(([id]) => id === tool)?.[1]} <kbd>{shortcutFor("guidance", "tool", tool)}</kbd></strong>
+                <span>{TOOL_HINTS[tool]}</span>
+                <em>Esc 취소</em>
+              </div> : null}
               <div className="floating-toolbox" aria-label="영역 분석 도구">
                 {TOOL_LABELS.map(([id, label]) => (
                   <button
