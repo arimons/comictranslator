@@ -1260,3 +1260,25 @@ def test_color_region_uses_lama_instead_of_telea_unless_white_flat():
     assert _engine_for_color("telea", color, "white_flat") == "telea"
     assert _engine_for_color("telea", gray, "fallback_lightish") == "telea"  # 흑백 원고는 그대로
     assert _engine_for_color("lama", gray, "light_flat") == "lama"
+
+
+def test_manual_split_guide_splits_seed_region_without_any_tg():
+    # TG 없이 seed만 찍은 말풍선도 사용자가 그은 선으로 나뉘어야 한다.
+    mask = np.zeros((120, 200), dtype=np.uint8)
+    mask[10:110, 10:190] = 255
+    regions = [{
+        "is_valid": True,
+        "method": "manual_bubble_seed_rescue",
+        "anchor_ids": [],
+        "seed_points": [[50, 60]],
+        "bubble_rect": [10, 10, 180, 100],
+        "mask": mask,
+        "quality_flags": ["manual_bubble_seed"],
+    }]
+    split = _split_manual_seed_regions(regions, [], [{"line": [[100, 0], [100, 120]]}])
+
+    assert len(split) == 2
+    assert all(item["anchor_ids"] == [] for item in split)
+    left, right = sorted(item["bubble_rect"][0] for item in split)
+    assert left == 10 and right in (100, 101)
+    assert all(item["split_parent_rect"] == [10, 10, 180, 100] for item in split)

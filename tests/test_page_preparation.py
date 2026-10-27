@@ -147,3 +147,37 @@ def test_health_does_not_create_sessions(tmp_path, monkeypatch):
     monkeypatch.setattr(app, "SESSION_ROOT", tmp_path / "sessions")
     assert TestClient(app.create_app()).get("/api/health").json()["status"] == "ok"
     assert not app.SESSION_ROOT.exists()
+
+
+def test_split_page_reuses_parent_spread_cv_without_cloud_vision(tmp_path, monkeypatch):
+    import app
+    from pipeline.manual_guidance import load_json, write_json
+
+    monkeypatch.setattr(app, "CV_CACHE_DIR", tmp_path / "cv")
+    parent = "p" * 64
+    rows = [
+        {"box_2d": [100, 1000, 300, 1040], "label": "오른쪽 조각 글자"},
+        {"box_2d": [100, 100, 300, 140], "label": "왼쪽 조각 글자"},
+        {"box_2d": [500, 900, 540, 990], "label": "경계 걸침(중심은 왼쪽)"},
+    ]
+    write_json(app.cv_cache_path(parent), rows)
+    work = tmp_path / "work"
+    record = {"cv_json": str(work / "page_cv.json"), "text_groups_json": str(work / "page_text_groups.json")}
+    item = {"source_image_sha256": parent, "crop_rect": [960, 0, 960, 1080], "width": 960, "height": 1080}
+    logs = []
+
+    assert app.hydrate_cv_cache(record, "c" * 64, False, logs.append, item) is True
+    assert load_json(work / "page_cv.json") == [{"box_2d": [100, 40, 300, 80], "label": "오른쪽 조각 글자"}]
+    assert "분할 전 원본 CV 재사용" in logs[0]
+
+    # 이미 TG가 있는 페이지의 일반 분석은 건드리지 않고, 다시 분석(force)은 원본 CV로 다시 채운다.
+    (work / "page_cv.json").unlink()
+    write_json(work / "page_text_groups.json", [])
+    assert app.hydrate_cv_cache(record, "c" * 64, False, logs.append, item) is False
+    write_json(work / "page_cv.json", [])
+    assert app.hydrate_cv_cache(record, "c" * 64, True, logs.append, item) is True
+    assert len(load_json(work / "page_cv.json")) == 1
+
+    left = app.crop_parent_cv_rows(rows, [0, 0, 960, 1080])
+    assert [row["label"] for row in left] == ["왼쪽 조각 글자", "경계 걸침(중심은 왼쪽)"]
+    assert left[1]["box_2d"] == [500, 900, 540, 960]

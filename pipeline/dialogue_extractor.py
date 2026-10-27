@@ -1352,6 +1352,9 @@ def _split_region_variants(
 
     split_result = None
     split_source = None
+    # TG가 하나도 없는 영역(예: TG 없이 seed만 찍은 말풍선)은 사용자가 그은 선을 그대로 따른다.
+    # TG가 있으면 기존 규칙대로 TG가 있는 조각만 남긴다(1개면 선 밖을 다듬고, 2개 이상이면 양쪽에 나뉠 때 자른다).
+    follow_line_only = False
     for guide in split_guides or []:
         points = _line_points(guide)
         if not points:
@@ -1360,6 +1363,7 @@ def _split_region_variants(
         if not _line_touches_rect(p1, p2, parent_rect):
             continue
         guide_anchor_ids = _augment_manual_split_anchors(anchor_ids, groups_by_id, parent_rect)
+        follow_line_only = not guide_anchor_ids
         guide_anchor_rects = [_group_rect(groups_by_id[aid]) for aid in guide_anchor_ids if aid in groups_by_id]
         guide_anchor_centers = [
             (rect[0] + rect[2] // 2, rect[1] + rect[3] // 2)
@@ -1368,7 +1372,7 @@ def _split_region_variants(
         if mask is not None:
             split_result = _split_mask_by_manual_line(mask, guide_anchor_ids, guide_anchor_centers, guide_anchor_rects, p1, p2)
             if split_result is not None:
-                if sum(1 for item in split_result if item.get("anchor_ids")) >= 2:
+                if follow_line_only or sum(1 for item in split_result if item.get("anchor_ids")) >= 2:
                     split_source = next((str(item.get("split_source")) for item in split_result if item.get("split_source")), None) or "manual_split_guide"
                     break
                 split_result = None
@@ -1402,7 +1406,7 @@ def _split_region_variants(
     for index, sub in enumerate(sorted(split_result, key=lambda item: (_as_rect(item.get("bubble_rect", [0, 0, 0, 0]))[1], -_as_rect(item.get("bubble_rect", [0, 0, 0, 0]))[0]))):
         child_rect = [int(v) for v in _as_rect(sub.get("bubble_rect", parent_rect))]
         child_anchor_ids = [int(aid) for aid in sub.get("anchor_ids", [])]
-        if not child_anchor_ids:
+        if not child_anchor_ids and not follow_line_only:
             continue
         child_anchor_rects = [_group_rect(groups_by_id[aid]) for aid in child_anchor_ids if aid in groups_by_id]
         child = {

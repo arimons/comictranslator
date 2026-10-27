@@ -1092,16 +1092,62 @@ def clear_guidance_cache(image_hash: str) -> None:
     write_json(guidance_cache_tombstone_path(image_hash), {"cleared_at": dt.datetime.now().isoformat(timespec="seconds")})
 
 
-def hydrate_cv_cache(record: dict[str, Any], image_hash: str, force: bool, log_callback) -> bool:
-    if force:
-        return False
+def crop_parent_cv_rows(rows: list[dict[str, Any]], crop_rect: list[int], size: tuple[int, int] | None = None) -> list[dict[str, Any]]:
+    """원본(분할 전) CV 결과를 조각 좌표로 옮긴다. box_2d는 [ymin, xmin, ymax, xmax] 픽셀이다.
+
+    글자 상자의 중심이 조각 안에 있으면 그 조각 것으로 보고, 조각 경계에서 자른다.
+    조각 이미지가 원본 crop과 다른 크기로 저장됐으면 비율대로 맞춘다."""
+    x0, y0, cw, ch = (int(v) for v in crop_rect)
+    sx = size[0] / cw if size and cw else 1.0
+    sy = size[1] / ch if size and ch else 1.0
+    out = []
+    for row in rows:
+        box = row.get("box_2d") if isinstance(row, dict) else None
+        if not isinstance(box, list) or len(box) != 4:
+            continue
+        ymin, xmin, ymax, xmax = (float(v) for v in box)
+        cx, cy = (xmin + xmax) / 2, (ymin + ymax) / 2
+        if not (x0 <= cx < x0 + cw and y0 <= cy < y0 + ch):
+            continue
+        nx1, ny1 = max(0.0, xmin - x0), max(0.0, ymin - y0)
+        nx2, ny2 = min(float(cw), xmax - x0), min(float(ch), ymax - y0)
+        if nx2 <= nx1 or ny2 <= ny1:
+            continue
+        out.append({**row, "box_2d": [round(ny1 * sy), round(nx1 * sx), round(ny2 * sy), round(nx2 * sx)]})
+    return out
+
+
+def hydrate_cv_cache(record: dict[str, Any], image_hash: str, force: bool, log_callback, item: dict[str, Any] | None = None) -> bool:
     cache = cv_cache_path(image_hash)
     cv_json = Path(record["cv_json"])
-    if cv_json.exists() or not cache.exists():
+    if force:
+        # 다시 분석이어도 분할 조각은 원본 CV를 잘라 쓴다(같은 글자를 다시 사는 셈이라). 조각 자신의 캐시만 건너뛴다.
+        if cv_json.exists() or cv_json.is_symlink():
+            cv_json.unlink()
+    elif cv_json.exists():
         return False
-    cv_json.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(cache, cv_json)
-    log_callback("  ♻️ CV 전역 캐시 사용")
+    if not force and cache.exists():
+        cv_json.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(cache, cv_json)
+        log_callback("  ♻️ CV 전역 캐시 사용")
+        return True
+    # 가로 이미지를 나눈 조각: 분할 전 원본의 CV가 있으면 잘라 쓴다(새 Cloud Vision 요청 없음).
+    # 일반 분석에서는 TG가 아직 없는 페이지에만 넣는다. 이미 만든 TG가 있으면 Step 2가 그것을 재사용하므로
+    # CV만 바꾸면 결과가 어긋난다. 그런 페이지는 '처음부터 다시 분석'(force)이 Step 2-3까지 다시 만든다.
+    if not force and Path(record["text_groups_json"]).exists():
+        return False
+    meta = item or record
+    parent_hash, crop_rect = meta.get("source_image_sha256"), meta.get("crop_rect")
+    if not parent_hash or parent_hash == image_hash or not isinstance(crop_rect, list) or len(crop_rect) != 4:
+        return False
+    parent_cache = cv_cache_path(str(parent_hash))
+    rows = load_json(parent_cache, default=None) if parent_cache.exists() else None
+    if not isinstance(rows, list):
+        return False
+    size = (int(meta["width"]), int(meta["height"])) if meta.get("width") and meta.get("height") else None
+    cropped = crop_parent_cv_rows(rows, crop_rect, size)
+    write_json(cv_json, cropped)
+    log_callback(f"  ♻️ 분할 전 원본 CV 재사용 (글자 {len(cropped)}/{len(rows)}개)")
     return True
 
 
@@ -1770,13 +1816,14 @@ def analyze_one_image(session_id: str, item: dict[str, Any], index: int, total: 
             "image": refreshed,
         })
         return True
-    hydrate_cv_cache(record, image_hash, force, log_emit)
+    cv_ready = hydrate_cv_cache(record, image_hash, force, log_emit, item)
     _unlink_symlinked_analysis_outputs(record)
     ok, log = run_single_image(
         record["input_path"],
         record["work_dir"],
         record["final_jpg"],
         force=force,
+        _skip_step1=cv_ready,
         stop_after="pre_ocr",
         log_callback=log_emit,
     )
@@ -3286,13 +3333,14 @@ def create_app() -> FastAPI:
             if hydrate_analysis_cache(record, image_hash, req.force, logs.append, allow_backfill=True):
                 reapply_guidance_if_present(req.session_id, record, logs.append)
                 continue
-            hydrate_cv_cache(record, image_hash, req.force, logs.append)
+            cv_ready = hydrate_cv_cache(record, image_hash, req.force, logs.append, item)
             _unlink_symlinked_analysis_outputs(record)
             ok, log = run_single_image(
                 record["input_path"],
                 record["work_dir"],
                 record["final_jpg"],
                 force=req.force,
+                _skip_step1=cv_ready,
                 stop_after="pre_ocr",
             )
             logs.append(log)
