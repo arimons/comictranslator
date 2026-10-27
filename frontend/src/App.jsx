@@ -158,6 +158,9 @@ export default function App() {
   const [workMemo, setWorkMemo] = useState(null);
   const [speakerByTg, setSpeakerByTg] = useState({});
   const [speakerByRegion, setSpeakerByRegion] = useState({});
+  // R별 번역 메모(영역 키 → 글). 다음 OCR/번역 때 '영역별 번역 가이드'로 붙는다.
+  const [contextByRegion, setContextByRegion] = useState({});
+  const [contextDraft, setContextDraft] = useState(null);
   const [speakerPickerOpen, setSpeakerPickerOpen] = useState(false);
   // 영역 분석 상단 바의 펼침 메뉴("history" | "more" | null). 바깥을 누르면 닫는다.
   const [guidanceMenu, setGuidanceMenu] = useState(null);
@@ -285,10 +288,11 @@ export default function App() {
   useEffect(() => {
     setSpeakerByTg({});
     setSpeakerByRegion({});
+    setContextByRegion({});
     if (!sessionId || !selectedPageId) return undefined;
     let alive = true;
     api(`/api/speakers/${encodeURIComponent(sessionId)}/${encodeURIComponent(selectedPageId)}`)
-      .then((result) => { if (alive) { setSpeakerByTg(result.by_tg || {}); setSpeakerByRegion(result.by_region || {}); } })
+      .then((result) => { if (alive) { setSpeakerByTg(result.by_tg || {}); setSpeakerByRegion(result.by_region || {}); setContextByRegion(result.context_by_region || {}); } })
       .catch(() => {});
     return () => { alive = false; };
   }, [sessionId, selectedPageId]);
@@ -2374,6 +2378,28 @@ export default function App() {
     setStatus(`R${regionId(region)} 지우기: ${engine ? `${ENGINE_NAMES[engine]} 고정` : "자동 판정"} · 변경사항 적용(${shortcutById("guidance.apply")})으로 반영됩니다.`);
   }
 
+  // 선택한 R이 바뀌면 메모 입력칸을 저장된 값으로 되돌린다.
+  useEffect(() => { setContextDraft(null); }, [selectedRegionKey, selectedPageId]);
+  const savedRegionContext = selectedRegionKey ? contextByRegion[selectedRegionKey] || "" : "";
+  const regionContextValue = contextDraft ?? savedRegionContext;
+
+  // 입력칸을 벗어나면 저장한다. 번역은 실행하지 않는다.
+  async function saveRegionContext() {
+    const region = selectedGuidanceRegion;
+    if (!region || contextDraft == null || contextDraft.trim() === savedRegionContext) { setContextDraft(null); return; }
+    const pageId = selectedPageId;
+    try {
+      const result = await api("/api/region-context", { method: "POST", body: JSON.stringify({
+        session_id: sessionId, image_id: pageId, region_id: regionId(region), region_key: regionBindingKey(region), text: contextDraft,
+      }) });
+      if (selectedPageId === pageId) setContextByRegion(result.context_by_region || {});
+      setContextDraft(null);
+      setStatus(`R${regionId(region)} 번역 메모 ${contextDraft.trim() ? "저장" : "삭제"} · 다음 OCR/번역 때 반영됩니다.`);
+    } catch (err) {
+      setStatus(`번역 메모 저장 실패: ${err.message}`);
+    }
+  }
+
   // 도구 모음의 LaMa 버튼: LaMa 고정을 켜고 끈다.
   function toggleSelectedRegionLama() {
     setSelectedRegionEngine(lamaForcedPending ? null : "lama");
@@ -2781,6 +2807,15 @@ export default function App() {
                       <button onClick={() => assignSpeaker(0)}><kbd>0</kbd>해제</button>
                     </div> : <p className="hint">상단 작품 메모에 인물을 추가하면 숫자키로 화자를 지정할 수 있습니다.</p>}
                   </div> : <p className="hint">TG만 선택했습니다. 화자는 R(처리 영역)을 선택해 지정합니다. 같은 곳을 한 번 더 클릭하면 R이 선택됩니다.</p>}
+                  {selectedGuidanceRegion ? <div className="inspector-row">
+                    <label className="inspector-label" htmlFor="region-context-input">번역 메모 <small>이 영역 번역에만 · 선택</small></label>
+                    <textarea id="region-context-input" rows={2} maxLength={500} value={regionContextValue}
+                      placeholder="예: 비꼬는 말투 / 앞 칸 대사에 대한 대답 / 효과음이라 짧게"
+                      onChange={(event) => setContextDraft(event.target.value)}
+                      onBlur={saveRegionContext}
+                      onKeyDown={(event) => { if (event.key === "Escape") { setContextDraft(null); event.currentTarget.blur(); } }} />
+                    <small className="inspector-note">{contextDraft != null && contextDraft.trim() !== savedRegionContext ? "칸을 벗어나면 저장" : savedRegionContext ? "저장됨 · 다음 번역 때 반영" : "작품 메모·화자와 함께 번역 가이드로 들어갑니다"}</small>
+                  </div> : null}
                   <div className="inspector-actions">
                     <button onClick={() => editorCanvasRef.current?.excludeSelection()} disabled={anyBusy} title={`선택한 ${selectedGuidanceRegion ? "R" : "TG"}을 처리에서 제외 (${shortcutById("guidance.tg.delete")})`}>{selectedGuidanceRegion ? "이 영역 제외" : "이 TG 제외"} <kbd>{shortcutById("guidance.tg.delete")}</kbd></button>
                   </div>

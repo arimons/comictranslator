@@ -56,7 +56,9 @@ Step 4 직전에 서버가 현재 `regions.json`과 `by_region`(기존 `by_tg` �
 
 ## 번역 요청에 붙는 순서
 
-`작품 참고문(인물·용어·메모)` → `화자 지정` → `Additional Translation Prompt`. 실행한 값은 `json/{id}_glossary_snapshot.json`과 `integrated.json`의 `glossary.speakers`에 남는다. 메모나 화자를 바꿔도 기존 번역은 자동으로 다시 실행하지 않는다.
+`작품 참고문(인물·용어·메모)` → `화자 지정` → `영역별 번역 가이드` → `Additional Translation Prompt`. 실행한 값은 `json/{id}_glossary_snapshot.json`과 `integrated.json`의 `glossary.speakers`·`glossary.region_contexts`에 남는다.
+
+영역별 번역 가이드는 영역 분석 탭 선택 정보 패널의 **번역 메모**(R마다, 500자 이내)다. `work/speakers/{image_id}.json`의 `context_by_region`에 영역 키로 저장하며(`POST /api/region-context`, 빈 글은 삭제) 칸을 벗어날 때 저장한다. 저장만으로 번역을 실행하지 않고, 이후 OCR/번역(분석 뒤 뜨는 OCR·번역 권장 팝업의 실행 포함) 때 `page_region_contexts`·`region_context_prompt`로 "region_id N: 메모" 형태로 붙는다. R 번호가 바뀌어도 같은 범위면 유지된다. 메모나 화자를 바꿔도 기존 번역은 자동으로 다시 실행하지 않는다.
 
 
 2026-10-20 UI 동기화: 페이지를 이미지 생성 권장에서 기존 CV·영역 분석 방식으로 전환해도 연결된 작품 메모와 생성 후보는 유지한다. 경로 전환은 번역을 실행하지 않으며 이후 OCR/번역의 작품 메모 주입 계약은 동일하다.

@@ -48,7 +48,8 @@ from pipeline.openai_tasks import IMAGE_MODEL
 from pipeline.pipeline_runner import DEFAULT_FONT, run_single_image, stream_subprocess
 from pipeline.render_text_overlay import apply_text_overlay
 from pipeline.work_glossary import (NARRATION, GlossaryStore, character_map, cv_page_text, glossary_snapshot, match_works,
-                                    page_speakers, speaker_prompt)
+                                    page_region_contexts, page_speakers, region_context_prompt, speaker_prompt,
+                                    REGION_CONTEXT_LIMIT)
 
 load_dotenv()
 
@@ -264,6 +265,14 @@ class SpeakerRequest(BaseModel):
     region_id: int | None = None
     region_key: str | None = None
     character_id: str | None = None
+
+
+class RegionContextRequest(BaseModel):
+    session_id: str
+    image_id: str
+    region_id: int
+    region_key: str | None = None
+    text: str = ""
 
 
 class SessionDeleteRequest(BaseModel):
@@ -2162,10 +2171,12 @@ def run_final_for_item(
         return page_record(session_id, item["id"])
     context = glossary_context if glossary_context is not None else session_glossary_snapshot(session_id)
     record = image_record(session_id, Path(item["input_path"]), item.get("image_sha256"))
-    speakers = page_speakers(load_json(record["regions_json"], default={}).get("regions", []),
-                             page_speaker_map(session_id, record["id"]), context,
-                             load_json(speakers_path(session_id, record["id"]), default={}).get("by_region", {}))
-    translation_prompt = "\n\n".join(part for part in (context.get("prompt", ""), speaker_prompt(speakers), extra_prompt) if part)
+    page_regions = load_json(record["regions_json"], default={}).get("regions", [])
+    speaker_store = load_json(speakers_path(session_id, record["id"]), default={})
+    speakers = page_speakers(page_regions, page_speaker_map(session_id, record["id"]), context, speaker_store.get("by_region", {}))
+    # 작품 메모 → 화자 → 영역별 번역 가이드 → 추가 프롬프트 순서로 붙인다.
+    region_contexts = page_region_contexts(page_regions, speaker_store.get("context_by_region", {}))
+    translation_prompt = "\n\n".join(part for part in (context.get("prompt", ""), speaker_prompt(speakers), region_context_prompt(region_contexts), extra_prompt) if part)
     clusters = current_clusters_path(record, record["id"])
     font = font_path or DEFAULT_FONT
     if overlay_guidance is not None:
@@ -2213,10 +2224,10 @@ def run_final_for_item(
         log_callback("Step 4 OpenAI OCR/번역 시작")
         run_subprocess_stream(ocr_cmd, timeout=360, log_callback=log_callback)
         log_callback("Step 6 Text Overlay 시작")
-    write_json(Path(record["work_dir"]) / "json" / f"{record['id']}_glossary_snapshot.json", {**context, "speakers": speakers})
+    write_json(Path(record["work_dir"]) / "json" / f"{record['id']}_glossary_snapshot.json", {**context, "speakers": speakers, "region_contexts": region_contexts})
     integrated = load_json(record["integrated_json"], default={})
     if integrated:
-        integrated["glossary"] = {"work_id": context.get("work_id"), "version": context.get("version"), "speakers": speakers}
+        integrated["glossary"] = {"work_id": context.get("work_id"), "version": context.get("version"), "speakers": speakers, "region_contexts": region_contexts}
         write_json(record["integrated_json"], integrated)
     remap_overlay_guidance_for_record(record, log_callback=log_callback)
     render_overlay_for_record(record, font, tracking_offset, log_callback=log_callback)
@@ -3108,7 +3119,9 @@ def create_app() -> FastAPI:
     def read_speakers(session_id: str, image_id: str) -> dict:
         try:
             get_image(session_id, image_id)
-            return {"by_tg": page_speaker_map(session_id, image_id), "by_region": load_json(speakers_path(session_id, image_id), default={}).get("by_region", {})}
+            stored = load_json(speakers_path(session_id, image_id), default={})
+            return {"by_tg": page_speaker_map(session_id, image_id), "by_region": stored.get("by_region", {}),
+                    "context_by_region": stored.get("context_by_region", {})}
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -3145,7 +3158,34 @@ def create_app() -> FastAPI:
                 else:
                     by_tg.pop(str(int(tg)), None)
             write_json(speakers_path(req.session_id, req.image_id), {**stored, "by_tg": by_tg, "by_region": by_region})
-            return {"by_tg": by_tg, "by_region": by_region}
+            return {"by_tg": by_tg, "by_region": by_region, "context_by_region": stored.get("context_by_region", {})}
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @app.post("/api/region-context")
+    def save_region_context(req: RegionContextRequest) -> dict:
+        # R별 번역 메모. 저장만 하고 번역은 실행하지 않는다. 다음 OCR/번역 때 프롬프트에 붙는다.
+        try:
+            get_image(req.session_id, req.image_id)
+            from pipeline.region_types import region_binding_key
+            regions = page_record(req.session_id, req.image_id).get("regions", {}).get("regions", [])
+            region = next((r for r in regions if r.get("region_id") == req.region_id), None)
+            if region is None:
+                raise ValueError("현재 페이지에 없는 처리 영역입니다.")
+            key = region_binding_key(region)
+            if req.region_key is not None and req.region_key != key:
+                raise ValueError("처리 영역이 변경됐습니다. 다시 선택하세요.")
+            text = req.text.strip()
+            if len(text) > REGION_CONTEXT_LIMIT:
+                raise ValueError(f"번역 메모는 {REGION_CONTEXT_LIMIT}자 이내로 적어 주세요.")
+            stored = load_json(speakers_path(req.session_id, req.image_id), default={})
+            contexts = dict(stored.get("context_by_region", {}))
+            if text:
+                contexts[key] = text
+            else:
+                contexts.pop(key, None)
+            write_json(speakers_path(req.session_id, req.image_id), {**stored, "context_by_region": contexts})
+            return {"context_by_region": contexts}
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 

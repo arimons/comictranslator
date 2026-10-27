@@ -3549,3 +3549,4 @@ select.memo-key { width: 100%; padding: 2px; font-size: 12px; }
 .segmented button { flex: 1; border: 0; border-radius: 0; min-height: 28px; font-size: 12px; background: transparent; }
 .segmented button + button { border-left: 1px solid var(--line); }
 .segmented button.active { background: var(--blue); color: #fff; font-weight: 600; }
+.inspector-note { font-size: 11px; color: var(--muted); }

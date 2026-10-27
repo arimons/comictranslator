@@ -226,6 +226,29 @@ def speaker_prompt(speakers: list[dict]) -> str:
             "지정되지 않은 region은 대사 내용과 등장인물 정보로 판단하세요.\n" + "\n".join(lines))
 
 
+REGION_CONTEXT_LIMIT = 500
+
+
+def page_region_contexts(regions: list[dict], context_by_region: dict | None) -> list[dict]:
+    """사용자가 R마다 적은 번역 메모. 영역 키로 저장해 R 번호가 바뀌어도 같은 범위면 유지된다."""
+    from pipeline.region_types import region_binding_key
+    result = []
+    for region in regions:
+        rid = region.get("region_id")
+        text = str((context_by_region or {}).get(region_binding_key(region)) or "").strip()
+        if rid is not None and text:
+            result.append({"region_id": int(rid), "context": text[:REGION_CONTEXT_LIMIT]})
+    return result
+
+
+def region_context_prompt(contexts: list[dict]) -> str:
+    if not contexts:
+        return ""
+    lines = [f"- region_id {row['region_id']}: {row['context']}" for row in contexts]
+    return ("영역별 번역 가이드 (사용자가 적은 메모). 해당 region의 번역에만 반영하고 다른 region에는 적용하지 마세요. "
+            "OCR 원문을 바꾸거나 이미지에 없는 내용을 지어내지 마세요.\n" + "\n".join(lines))
+
+
 def draft_from_source(title: str, source: dict, existing: dict) -> dict:
     """저장 본문 한 개로 인물·용어 초안을 만든다. 외부 검색 없음, 요청 1회."""
     known = {"characters": [{"name": row["name"], "original": row.get("original", ""),
