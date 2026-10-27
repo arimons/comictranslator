@@ -59,3 +59,5 @@ projects 아래 폴더 ID는 기존 timestamp ID를 유지한다. project.json�
 작품명 변경 때문에 폴더명·다른 프로젝트 연결을 바꾸지 않는다. 기존 자동분할 프로젝트의 접미 ID도 그대로 유지한다.
 
 <!-- 2026-10-22 dialogue_extractor.py(LaMa 고정) 변경 검토: 의존성·모델 파일 영향 없음 -->
+
+<!-- 2026-10-28 app.py(분할 조각의 원본 CV 재사용)·dialogue_extractor.py(TG 없는 영역 분할선) 변경 검토: 이 문서 내용 영향 없음 -->

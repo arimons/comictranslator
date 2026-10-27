@@ -144,7 +144,7 @@ python3 app.py --no-browser --port 7870
 | 캐시 | 위치 | 대상 |
 | --- | --- | --- |
 | 입력 캐시 | `~/ComicTranslator/cache/input/` | 원본 이미지 파일 (심볼릭 링크로 세션에 연결) |
-| CV 캐시 | `~/ComicTranslator/cache/cv/` | Step 1 Cloud Vision 결과 (`*_cv.json`) |
+| CV 캐시 | `~/ComicTranslator/cache/cv/` | Step 1 Cloud Vision 결과 (`*_cv.json`). 가로 이미지를 나눈 조각은 자기 캐시가 없으면 분할 전 원본 캐시를 `crop_rect`로 잘라 쓴다(`app.py` `hydrate_cv_cache`·`crop_parent_cv_rows`) |
 | 분석 캐시 | `~/ComicTranslator/cache/analysis/` | Step 3까지 결과 (`text_groups`, `regions`, `indexed_sheet`, `masked`, `bubble_vis`) + manual guidance 결과 |
 
 guidance(수동 보정)가 있는 이미지는 `guidance_digest`(guidance 내용의 sha256)로 별도 하위 캐시를 둬서, 같은 guidance 조합이면 Step 3 재실행 없이 그대로 재사용한다.

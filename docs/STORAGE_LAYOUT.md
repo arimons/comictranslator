@@ -74,3 +74,5 @@ Syncthing 현황(2026-10-21 MacBook 설정 확인): Developer만 공유하며 �
 2026-10-21: 기본·개발·선택 배치 의존성을 분리했습니다. LaMa 모델은 데이터 홈 cache/models에 두며 기존 Timestamp 프로젝트 ID와 가변 표시 이름을 구분합니다. [의존성 안내](DEPENDENCIES.md) 참고.
 
 <!-- 2026-10-22 app.py 변경 검토: 페이지 가이드 파일에 inpaint_engine_overrides 키가 추가됐을 뿐 저장 위치·구조는 그대로라 이 문서 내용 영향 없음 -->
+
+<!-- 2026-10-28 app.py(분할 조각의 원본 CV 재사용)·dialogue_extractor.py(TG 없는 영역 분할선) 변경 검토: 이 문서 내용 영향 없음 -->

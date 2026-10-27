@@ -100,3 +100,5 @@ UI 검증은 별도 headless Chromium에서 실행한다. `proof/src/run_headles
 <!-- 2026-10-22 app.py(LaMa 고정 가이드 키, run-final-stream batch 대상) 변경 검토: 이 문서 내용 영향 없음 -->
 
 <!-- 2026-10-22 가로 이미지 나누기를 같은 프로젝트 안으로 옮기는 app.py 변경 검토: 이 문서의 생성 요청·후보 등록 흐름에는 영향 없음. 위 별도 단일 페이지 프로젝트 기록은 이전 방식의 이력이다 -->
+
+<!-- 2026-10-28 app.py(분할 조각의 원본 CV 재사용)·dialogue_extractor.py(TG 없는 영역 분할선) 변경 검토: 이 문서 내용 영향 없음 -->
