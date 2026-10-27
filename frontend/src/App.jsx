@@ -16,6 +16,7 @@ import ServerStatus from "./ServerStatus.jsx";
 import PagePreparation from "./PagePreparation.jsx";
 import GlossaryPanel from "./GlossaryPanel.jsx";
 import SpeakerPicker from "./SpeakerPicker.jsx";
+import FloatingPanel from "./FloatingPanel.jsx";
 import { KEYMAP, eventMatches, entryInContext, entryVisibleOnPlatform, shortcutFor, shortcutById } from "./keymap.js";
 import {
   TOOL_LABELS,
@@ -157,6 +158,17 @@ export default function App() {
   const [speakerByTg, setSpeakerByTg] = useState({});
   const [speakerByRegion, setSpeakerByRegion] = useState({});
   const [speakerPickerOpen, setSpeakerPickerOpen] = useState(false);
+  // 영역 분석 상단 바의 펼침 메뉴("history" | "more" | null). 바깥을 누르면 닫는다.
+  const [guidanceMenu, setGuidanceMenu] = useState(null);
+  const guidanceMenuRef = useRef(null);
+  useEffect(() => {
+    if (!guidanceMenu) return undefined;
+    const onDown = (event) => { if (!guidanceMenuRef.current?.contains(event.target)) setGuidanceMenu(null); };
+    const onKey = (event) => { if (event.key === "Escape") setGuidanceMenu(null); };
+    window.addEventListener("mousedown", onDown);
+    window.addEventListener("keydown", onKey);
+    return () => { window.removeEventListener("mousedown", onDown); window.removeEventListener("keydown", onKey); };
+  }, [guidanceMenu]);
   const [shortcutToast, setShortcutToast] = useState(null);
   const fileRef = useRef(null);
   const editorCanvasRef = useRef(null);
@@ -2446,7 +2458,7 @@ export default function App() {
   }
 
   return (
-    <div className={`app workspace-mode ${toolsOpen ? "" : "tools-collapsed"} ${activeTab === "overlay" ? "overlay-mode" : ""} ${activeTab === "ocr" ? "ocr-mode" : ""} ${activeTab === "export" ? "export-mode" : ""} ${activeTab === "restore" ? "restore-mode" : ""}`}>
+    <div className={`app workspace-mode ${toolsOpen ? "" : "tools-collapsed"} ${activeTab === "overlay" ? "overlay-mode" : ""} ${activeTab === "ocr" ? "ocr-mode" : ""} ${activeTab === "export" ? "export-mode" : ""} ${activeTab === "restore" ? "restore-mode" : ""} ${activeTab === "guidance" ? "guidance-mode" : ""}`}>
       <header className="workspace-global-topbar">
         <div className="workspace-brand-group"><button className="workspace-brand" type="button" onClick={returnToStartPage} title="홈으로 돌아가기">Comic Translator Studio</button><ServerStatus onRestarted={reloadAfterServerRestart} /></div>
         <div className="project-identity">
@@ -2624,9 +2636,88 @@ export default function App() {
                   <span>Analysis Workspace</span>
                   <strong>{selectedGuidanceRegionId != null ? `R${selectedGuidanceRegionId}` : selectedTg ? `TG${selectedTg}` : selectedToolLabel}</strong>
                 </div>
-                <div className="editor-meta">
-                  <span>{selected?.processing_excluded ? "페이지 처리 제외 · 원본 출력" : selected?.has_analysis && selected?.ocr_region_count === 0 ? "처리 대상 없음 · 원본 유지" : "Original + live analysis overlay"}</span>
-                  <span className={guidanceDirty ? "guidance-dirty" : ""} role="status">{guidanceDirty ? `미적용 변경 · ${shortcutById("guidance.apply")}로 분석 적용` : `편집 기록 ${guidanceHistory.length}개`}</span>
+                <div className="guidance-topbar" ref={guidanceMenuRef}>
+                  <ImageGenerationPanel key={`${sessionId}:${selected?.id}`} sessionId={sessionId} image={selected} onStatus={setGenerationStatus} />
+                  <span className={`guidance-change-state ${guidanceDirty ? "dirty" : ""}`} role="status">
+                    {selected?.processing_excluded ? "페이지 처리 제외 · 원본 출력" : guidanceDirty ? "미적용 변경 있음" : selected?.has_analysis && selected?.ocr_region_count === 0 ? "처리 대상 없음 · 원본 유지" : "적용할 변경 없음"}
+                  </span>
+                  <button className="primary guidance-apply" onClick={applyGuidance} onKeyDown={preventPlainAnalysisEnter} disabled={anyBusy || !selected?.detail_loaded || selected.processing_excluded} title="그어 둔 가이드로 마스크·OCR 영역을 다시 계산합니다. Cloud Vision·번역은 실행하지 않습니다.">변경사항 적용 <kbd>{shortcutById("guidance.apply")}</kbd></button>
+                  <button className="icon-button" onClick={undoGuidance} disabled={anyBusy || (!guidanceUndoStack.length && !guidanceHistory.length)} aria-label="편집 실행 취소" title={`실행 취소 (${shortcutById("edit.undo")})`}>↶</button>
+                  <button className="icon-button" onClick={redoGuidance} disabled={anyBusy || !guidanceRedoStack.length} aria-label="편집 다시 실행" title={`다시 실행 (${shortcutById("edit.redo")})`}>↷</button>
+                  <div className="topbar-popover-wrap">
+                    <button className={guidanceMenu === "history" ? "active" : ""} onClick={() => setGuidanceMenu(guidanceMenu === "history" ? null : "history")} aria-expanded={guidanceMenu === "history"}>기록 {guidanceHistory.length} ▾</button>
+                    {guidanceMenu === "history" ? <div className="topbar-popover history-popover" role="dialog" aria-label="편집 기록">
+                      <p className="hint">항목을 누르면 그 가이드를 지웁니다. 실행 취소로 되돌릴 수 있습니다.</p>
+          {guidanceHistory.length ? (
+            <div className="history-list side-history-list">
+              {guidanceHistory.slice().reverse().map((item) => (
+                <div key={item.key} className="history-row-wrap">
+                  <button className="history-row" title={`${item.detail || item.label} 제거`} onClick={() => removeGuidanceHistoryItem(item)}>
+                    <span>{item.label}</span>
+                    {item.detail ? <em>{item.detail}</em> : null}
+                  </button>
+                  {item.isTextBased ? (
+                    <button
+                      className={`history-engine-toggle${item.forcedLama ? " active" : ""}`}
+                      title={item.forcedLama ? "LaMa 강제 해제 (배경에 따라 자동 선택)" : "이 텍스트 기반 영역을 LaMa로 지우기"}
+                      onClick={() => toggleTextBasedForcedLama(item)}
+                    >
+                      LaMa
+                    </button>
+                  ) : null}
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="history-empty side-history-empty">아직 추가한 가이드가 없습니다.</div>
+          )}
+                    </div> : null}
+                  </div>
+                  <div className="topbar-popover-wrap">
+                    <button className={guidanceMenu === "more" ? "active" : ""} onClick={() => setGuidanceMenu(guidanceMenu === "more" ? null : "more")} aria-expanded={guidanceMenu === "more"} aria-label="더 보기" title="페이지 처리 제외 · 표시 설정 · 고급 편집">⋯</button>
+                    {guidanceMenu === "more" ? <div className="topbar-popover more-popover" role="dialog" aria-label="더 보기">
+                      <button type="button" className={selected?.processing_excluded ? "page-excluded-control" : ""} disabled={!selected || anyBusy} onClick={togglePageProcessing} title={selected?.processing_excluded ? "현재 페이지는 원본 그대로 출력합니다. 클릭하면 처리 대상으로 복원합니다." : "이 페이지를 처리에서 제외하고 원본 그대로 출력합니다."}>{selected?.processing_excluded ? "처리 대상으로 복원" : "페이지 처리 제외"}</button>
+                      <details className="guidance-disclosure">
+                        <summary>표시 설정{Object.values(layers).some((visible) => !visible) ? <span>일부 숨김</span> : null}</summary>
+          <p className="hint">겹친 표시를 확인할 때만 끕니다. 분석·출력 결과는 바뀌지 않습니다.</p>
+          <div className="region-color-legend"><span><i style={{color:"#22c55e"}}>●</i> Edge</span><span><i style={{color:"#38bdf8"}}>●</i> Bubble</span><span><i style={{color:"#eab308"}}>●</i> Unboxed</span></div>
+          <div className="toggles">
+            {Object.entries({ tg: "텍스트 묶음 (TG)", regions: "처리 영역 (R)", guidance: "가이드" }).map(([key, label]) => (
+              <label className="check" key={key}>
+                <input type="checkbox" checked={layers[key]} onChange={(e) => setLayers({ ...layers, [key]: e.target.checked })} />
+                {label}
+              </label>
+            ))}
+          </div>
+                      </details>
+                      <details className="guidance-disclosure guidance-advanced">
+                        <summary>고급 편집·초기화</summary>
+          <details className="guidance-json-editor"><summary>가이드 JSON 직접 편집</summary>
+          <textarea aria-label="영역 분석 JSON"
+            value={JSON.stringify(guidance, null, 2)}
+            onChange={(e) => {
+              try {
+                setGuidanceTracked(JSON.parse(e.target.value), "Edit guidance JSON");
+              } catch {
+                setStatus("JSON 형식 오류");
+              }
+            }}
+            style={{ minHeight: 280 }}
+          />
+          </details>
+          <div className="guidance-reset-actions">
+            <p className="hint">저장된 가이드도 포함해 화면의 가이드를 모두 비웁니다. 분석 적용 전에는 저장 결과가 유지되고 실행 취소로 되돌릴 수 있습니다.</p>
+            <button onClick={clearUnsavedGuidance} disabled={anyBusy || !selected?.detail_loaded || selected.processing_excluded}>가이드 전체 비우기</button>
+            <p className="hint">이 페이지의 가이드·분석·번역·최종 이미지를 삭제합니다. 원본 이미지·CV·TG·등록된 생성 결과는 유지합니다.</p>
+            {!clearOutputsConfirm ? <button className="danger" onClick={() => setClearOutputsConfirm(true)} disabled={anyBusy || !selected?.detail_loaded || selected.processing_excluded}>이 페이지 작업 결과 삭제…</button> : <div className="guidance-delete-confirm" role="group" aria-label="작업 결과 삭제 확인">
+              <p>이 페이지의 저장된 작업 결과를 삭제할까요?</p>
+              <button className="danger" onClick={() => { setClearOutputsConfirm(false); clearGuidanceOutputs(); }} disabled={anyBusy}>작업 결과 삭제</button>
+              <button onClick={() => setClearOutputsConfirm(false)}>취소</button>
+            </div>}
+          </div>
+                      </details>
+                    </div> : null}
+                  </div>
                 </div>
               </div>
                 <EditorCanvas
@@ -2645,6 +2736,47 @@ export default function App() {
                 setStatus={setStatus}
                 speakerLabels={speakerLabels}
               />
+              <FloatingPanel id="guidance-inspector" title={selectedGuidanceRegion ? `R${regionId(selectedGuidanceRegion)}` : selectedTg != null ? `TG${selectedTg}` : "선택 정보"} subtitle={selectedGuidanceRegion ? regionDetectionLabel(selectedGuidanceRegion) : ""} className="guidance-inspector">
+        <AiErasePanel
+          sessionId={sessionId}
+          page={selected?.detail_loaded ? selected : null}
+          disabled={anyBusy || selected?.processing_excluded}
+          onCandidate={handleAiEraseCandidate}
+          onApplied={reloadSelectedPage}
+          setStatus={setStatus}
+          ocrModel={effectiveOcrModel}
+          imageModel={ocrProvider === "gemini" ? imageModels.gemini : imageModels.openai}
+          confirmOpen={aiEraseConfirmOpen}
+          onConfirmClose={() => setAiEraseConfirmOpen(false)}
+          onRequestConfirm={() => setAiEraseConfirmOpen(true)}
+        />
+
+        <div className="section speaker-section">
+          <h2>{selectedTg != null ? "TG 선택" : "화자 지정"} {selectedGuidanceRegion ? <small>R{regionId(selectedGuidanceRegion)}</small> : selectedTg != null ? <small>TG{selectedTg}</small> : null}</h2>
+          {selectedGuidanceRegion ? <div className="selected-region-method" style={{borderColor:overlayRegionColor(selectedGuidanceRegion),background:`${overlayRegionColor(selectedGuidanceRegion)}12`}}><span aria-hidden="true" style={{color:overlayRegionColor(selectedGuidanceRegion)}}>● </span>{regionDetectionLabel(selectedGuidanceRegion)}</div> : null}
+          {selectedIsTextBased ? <div className="inpaint-engine-row">
+            <span>지우기: <strong>{inpaintEngineLabel}</strong></span>
+            <button onClick={toggleSelectedRegionLama} disabled={anyBusy} title="분석 적용 시 반영됩니다">{lamaForcedPending ? "LaMa 고정 해제" : "LaMa로 다시 지우기"}</button>
+          </div> : null}
+          {selectedTg != null || selectedGuidanceRegion ? <div className="selected-cv-context">
+            <div><label htmlFor="selected-cv-text">CV 감지 텍스트</label><span className="speaker-assignment-label">화자: {selectedGuidanceRegion ? speakerLabels[regionId(selectedGuidanceRegion)] || "미지정" : "R 선택 필요"}</span></div>
+            <textarea id="selected-cv-text" aria-label="선택 영역 CV 텍스트" readOnly value={selectedCvText} placeholder="이 영역에 연결된 CV 텍스트가 없습니다." rows={4} />
+            <small>자동 인식된 원문 · 인식 오류가 있을 수 있습니다.</small>
+          </div> : null}
+          {!selectedGuidanceRegion ? <p className="hint">화자를 지정할 R을 선택하세요. 겹친 곳은 한 번 더 클릭합니다.</p> : speakerCharacters.length ? <div className="speaker-keys">
+            {speakerCharacters.map((row, index) => (
+              <button key={row.id} disabled={!selectedGuidanceRegion} onClick={() => assignSpeaker(index + 1)} title={row.speech || row.personality || ""}>
+                <kbd>{index + 1}</kbd>{row.name}{row.protagonist ? " ★" : ""}
+              </button>
+            ))}
+            {allSpeakerCharacters.length > 0 ? <button disabled={!selectedGuidanceRegion} onClick={() => assignSpeaker(9)}><kbd>9</kbd>기타{allSpeakerCharacters.length > 8 ? ` (${allSpeakerCharacters.length - 8})` : ""}…</button> : null}
+            <button disabled={!selectedGuidanceRegion} onClick={() => assignSpeaker("narration")}><kbd>N</kbd>내레이션</button>
+            <button disabled={!selectedGuidanceRegion} onClick={() => assignSpeaker(0)}><kbd>0</kbd>해제</button>
+          </div> : <p className="hint">상단 작품 메모에 인물을 추가하면 숫자키로 화자를 지정할 수 있습니다.</p>}
+          {selectedGuidanceRegion ? <p className="hint" title="화자를 지정하면 다음 경계 기반 영역으로 이동합니다. 텍스트 기반 영역의 미지정 화자는 주인공으로 처리합니다.">숫자키로 지정 · Tab으로 다음 영역</p> : null}
+        </div>
+
+              </FloatingPanel>
               <div className="floating-toolbox" aria-label="영역 분석 도구">
                 {TOOL_LABELS.map(([id, label]) => (
                   <button
@@ -2927,10 +3059,10 @@ export default function App() {
           </button>
         </div>
 
-        <div className="page-processing-controls">
+        {activeTab !== "guidance" ? <div className="page-processing-controls">
           <button type="button" className={selected?.processing_excluded ? "page-excluded-control" : ""} disabled={!selected || anyBusy} onClick={togglePageProcessing} title={selected?.processing_excluded ? "현재 페이지는 원본 그대로 출력합니다. 클릭하면 처리 대상으로 복원합니다." : "이 페이지를 처리에서 제외하고 원본 그대로 출력합니다."}>{selected?.processing_excluded ? "처리 대상으로 복원" : "페이지 처리 제외"}</button>
           <ImageGenerationPanel key={`${sessionId}:${selected?.id}`} sessionId={sessionId} image={selected} onStatus={setGenerationStatus} />
-        </div>
+        </div> : null}
 
         {toolsOpen ? <>
         {activeTab === "overlay" ? <>
@@ -3061,126 +3193,6 @@ export default function App() {
         </> : null}
 
         {activeTab === "restore" ? (selected?.processing_excluded ? <p>페이지 처리 제외 중입니다. 복원 후 편집할 수 있습니다.</p> : <RestoreControls restore={restore} />) : null}
-
-        {activeTab === "guidance" ? <>
-        <div className="section compact-section guidance-primary-actions">
-          <button className="primary wide" onClick={applyGuidance} onKeyDown={preventPlainAnalysisEnter} disabled={anyBusy || !selected?.detail_loaded || selected.processing_excluded} title="현재 페이지의 가이드를 저장하고 마스크·OCR 영역을 다시 계산합니다. 번역은 실행하지 않습니다.">분석 적용 ({shortcutById("guidance.apply")})</button>
-          <div className="guidance-edit-status">
-            <span>{guidanceDirty ? "미적용 변경 있음" : "적용할 변경 없음"}</span>
-            <div>
-              <button className="icon-button" onClick={undoGuidance} disabled={anyBusy || (!guidanceUndoStack.length && !guidanceHistory.length)} aria-label="편집 실행 취소" title={`실행 취소 (${shortcutById("edit.undo")})`}>↶</button>
-              <button className="icon-button" onClick={redoGuidance} disabled={anyBusy || !guidanceRedoStack.length} aria-label="편집 다시 실행" title={`다시 실행 (${shortcutById("edit.redo")})`}>↷</button>
-            </div>
-          </div>
-        </div>
-
-        <AiErasePanel
-          sessionId={sessionId}
-          page={selected?.detail_loaded ? selected : null}
-          disabled={anyBusy || selected?.processing_excluded}
-          onCandidate={handleAiEraseCandidate}
-          onApplied={reloadSelectedPage}
-          setStatus={setStatus}
-          ocrModel={effectiveOcrModel}
-          imageModel={ocrProvider === "gemini" ? imageModels.gemini : imageModels.openai}
-          confirmOpen={aiEraseConfirmOpen}
-          onConfirmClose={() => setAiEraseConfirmOpen(false)}
-          onRequestConfirm={() => setAiEraseConfirmOpen(true)}
-        />
-
-        <div className="section speaker-section">
-          <h2>{selectedTg != null ? "TG 선택" : "화자 지정"} {selectedGuidanceRegion ? <small>R{regionId(selectedGuidanceRegion)}</small> : selectedTg != null ? <small>TG{selectedTg}</small> : null}</h2>
-          {selectedGuidanceRegion ? <div className="selected-region-method" style={{borderColor:overlayRegionColor(selectedGuidanceRegion),background:`${overlayRegionColor(selectedGuidanceRegion)}12`}}><span aria-hidden="true" style={{color:overlayRegionColor(selectedGuidanceRegion)}}>● </span>{regionDetectionLabel(selectedGuidanceRegion)}</div> : null}
-          {selectedIsTextBased ? <div className="inpaint-engine-row">
-            <span>지우기: <strong>{inpaintEngineLabel}</strong></span>
-            <button onClick={toggleSelectedRegionLama} disabled={anyBusy} title="분석 적용 시 반영됩니다">{lamaForcedPending ? "LaMa 고정 해제" : "LaMa로 다시 지우기"}</button>
-          </div> : null}
-          {selectedTg != null || selectedGuidanceRegion ? <div className="selected-cv-context">
-            <div><label htmlFor="selected-cv-text">CV 감지 텍스트</label><span className="speaker-assignment-label">화자: {selectedGuidanceRegion ? speakerLabels[regionId(selectedGuidanceRegion)] || "미지정" : "R 선택 필요"}</span></div>
-            <textarea id="selected-cv-text" aria-label="선택 영역 CV 텍스트" readOnly value={selectedCvText} placeholder="이 영역에 연결된 CV 텍스트가 없습니다." rows={4} />
-            <small>자동 인식된 원문 · 인식 오류가 있을 수 있습니다.</small>
-          </div> : null}
-          {!selectedGuidanceRegion ? <p className="hint">화자를 지정할 R을 선택하세요. 겹친 곳은 한 번 더 클릭합니다.</p> : speakerCharacters.length ? <div className="speaker-keys">
-            {speakerCharacters.map((row, index) => (
-              <button key={row.id} disabled={!selectedGuidanceRegion} onClick={() => assignSpeaker(index + 1)} title={row.speech || row.personality || ""}>
-                <kbd>{index + 1}</kbd>{row.name}{row.protagonist ? " ★" : ""}
-              </button>
-            ))}
-            {allSpeakerCharacters.length > 0 ? <button disabled={!selectedGuidanceRegion} onClick={() => assignSpeaker(9)}><kbd>9</kbd>기타{allSpeakerCharacters.length > 8 ? ` (${allSpeakerCharacters.length - 8})` : ""}…</button> : null}
-            <button disabled={!selectedGuidanceRegion} onClick={() => assignSpeaker("narration")}><kbd>N</kbd>내레이션</button>
-            <button disabled={!selectedGuidanceRegion} onClick={() => assignSpeaker(0)}><kbd>0</kbd>해제</button>
-          </div> : <p className="hint">상단 작품 메모에 인물을 추가하면 숫자키로 화자를 지정할 수 있습니다.</p>}
-          {selectedGuidanceRegion ? <p className="hint" title="화자를 지정하면 다음 경계 기반 영역으로 이동합니다. 텍스트 기반 영역의 미지정 화자는 주인공으로 처리합니다.">숫자키로 지정 · Tab으로 다음 영역</p> : null}
-        </div>
-
-        <details className="section guidance-disclosure">
-          <summary>편집 내역 <span>{guidanceHistory.length}개</span></summary>
-          {guidanceHistory.length ? (
-            <div className="history-list side-history-list">
-              {guidanceHistory.slice().reverse().map((item) => (
-                <div key={item.key} className="history-row-wrap">
-                  <button className="history-row" title={`${item.detail || item.label} 제거`} onClick={() => removeGuidanceHistoryItem(item)}>
-                    <span>{item.label}</span>
-                    {item.detail ? <em>{item.detail}</em> : null}
-                  </button>
-                  {item.isTextBased ? (
-                    <button
-                      className={`history-engine-toggle${item.forcedLama ? " active" : ""}`}
-                      title={item.forcedLama ? "LaMa 강제 해제 (배경에 따라 자동 선택)" : "이 텍스트 기반 영역을 LaMa로 지우기"}
-                      onClick={() => toggleTextBasedForcedLama(item)}
-                    >
-                      LaMa
-                    </button>
-                  ) : null}
-                </div>
-              ))}
-            </div>
-          ) : (
-            <div className="history-empty side-history-empty">아직 추가한 가이드가 없습니다.</div>
-          )}
-        </details>
-
-        <details className="section guidance-disclosure">
-          <summary>표시 설정{Object.values(layers).some((visible) => !visible) ? <span>일부 숨김</span> : null}</summary>
-          <p className="hint">겹친 표시를 확인할 때만 끕니다. 분석·출력 결과는 바뀌지 않습니다.</p>
-          <div className="region-color-legend"><span><i style={{color:"#22c55e"}}>●</i> Edge</span><span><i style={{color:"#38bdf8"}}>●</i> Bubble</span><span><i style={{color:"#eab308"}}>●</i> Unboxed</span></div>
-          <div className="toggles">
-            {Object.entries({ tg: "텍스트 묶음 (TG)", regions: "처리 영역 (R)", guidance: "가이드" }).map(([key, label]) => (
-              <label className="check" key={key}>
-                <input type="checkbox" checked={layers[key]} onChange={(e) => setLayers({ ...layers, [key]: e.target.checked })} />
-                {label}
-              </label>
-            ))}
-          </div>
-        </details>
-
-        <details className="section guidance-disclosure guidance-advanced">
-          <summary>고급 편집·초기화</summary>
-          <details className="guidance-json-editor"><summary>가이드 JSON 직접 편집</summary>
-          <textarea aria-label="영역 분석 JSON"
-            value={JSON.stringify(guidance, null, 2)}
-            onChange={(e) => {
-              try {
-                setGuidanceTracked(JSON.parse(e.target.value), "Edit guidance JSON");
-              } catch {
-                setStatus("JSON 형식 오류");
-              }
-            }}
-            style={{ minHeight: 280 }}
-          />
-          </details>
-          <div className="guidance-reset-actions">
-            <p className="hint">저장된 가이드도 포함해 화면의 가이드를 모두 비웁니다. 분석 적용 전에는 저장 결과가 유지되고 실행 취소로 되돌릴 수 있습니다.</p>
-            <button onClick={clearUnsavedGuidance} disabled={anyBusy || !selected?.detail_loaded || selected.processing_excluded}>가이드 전체 비우기</button>
-            <p className="hint">이 페이지의 가이드·분석·번역·최종 이미지를 삭제합니다. 원본 이미지·CV·TG·등록된 생성 결과는 유지합니다.</p>
-            {!clearOutputsConfirm ? <button className="danger" onClick={() => setClearOutputsConfirm(true)} disabled={anyBusy || !selected?.detail_loaded || selected.processing_excluded}>이 페이지 작업 결과 삭제…</button> : <div className="guidance-delete-confirm" role="group" aria-label="작업 결과 삭제 확인">
-              <p>이 페이지의 저장된 작업 결과를 삭제할까요?</p>
-              <button className="danger" onClick={() => { setClearOutputsConfirm(false); clearGuidanceOutputs(); }} disabled={anyBusy}>작업 결과 삭제</button>
-              <button onClick={() => setClearOutputsConfirm(false)}>취소</button>
-            </div>}
-          </div>
-        </details>
-        </> : null}
 
         {activeTab === "ocr" ? <>
         <div className="section compact-section">
