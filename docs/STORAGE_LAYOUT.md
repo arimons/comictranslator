@@ -9,7 +9,7 @@
 
 | 위치 | 보존 기준 |
 |---|---|
-| `projects/{id}/` | 사용자 작업물. input, work, output 포함하여 백업 |
+| `projects/{id}/` | 사용자 작업물. input, work, output 포함하여 백업. 화자 지정·R별 번역 메모는 `work/speakers/` |
 | `cache/input/` | 이전 프로젝트의 호환·대체 입력 사본. 신규 일반 페이지는 직접 참조 |
 | `cache/cv/`, `cache/analysis/` | 재생성 가능한 분석 결과. 재생성 시 API 비용 발생 가능 |
 | `glossaries/` | 작품 메모·용어집. 백업 |
@@ -76,3 +76,5 @@ Syncthing 현황(2026-10-21 MacBook 설정 확인): Developer만 공유하며 �
 <!-- 2026-10-22 app.py 변경 검토: 페이지 가이드 파일에 inpaint_engine_overrides 키가 추가됐을 뿐 저장 위치·구조는 그대로라 이 문서 내용 영향 없음 -->
 
 <!-- 2026-10-28 app.py(분할 조각의 원본 CV 재사용)·dialogue_extractor.py(TG 없는 영역 분할선) 변경 검토: 이 문서 내용 영향 없음 -->
+
+<!-- 2026-10-28 app.py(영역별 번역 메모 API) 변경 검토: 이 문서 내용 영향 없음 -->
