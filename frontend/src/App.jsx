@@ -788,8 +788,9 @@ export default function App() {
   }
 
   // 영역 분석 탭: 읽는 순서(region 번호)로 이동. onlyBoundary면 경계 기반 영역만 고른다.
-  function cycleGuidanceRegion(step, onlyBoundary = false) {
-    const list = guidanceRegions.filter((region) => !onlyBoundary || regionProcessingBasis(region) !== TEXT_BASED);
+  // noWrap: 화자 지정 뒤 다음 R로 넘어갈 때는 마지막 R에서 처음으로 돌아가지 않는다
+  function cycleGuidanceRegion(step, noWrap = false) {
+    const list = guidanceRegions;
     if (!list.length) return false;
     const current = selectedGuidanceRegion ? regionId(selectedGuidanceRegion) : null;
     let next;
@@ -797,7 +798,7 @@ export default function App() {
     else if (step > 0) next = list.find((region) => regionId(region) > current);
     else next = [...list].reverse().find((region) => regionId(region) < current);
     if (!next) {
-      if (onlyBoundary) return false;
+      if (noWrap) return false;
       next = step > 0 ? list[0] : list[list.length - 1];
     }
     return selectGuidanceRegion(next, list.indexOf(next), list.length);
