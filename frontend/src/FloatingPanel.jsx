@@ -1,8 +1,9 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 
 // 캔버스 위에 띄우는 패널. 머리줄을 끌어 옮기고, 접을 수 있고, 위치·접힘을 브라우저에 기억한다.
-// 처음에는 부모(position: relative) 오른쪽 위에 붙는다. 가로 위치는 오른쪽 끝에서의 거리로 기억해
-// 창 폭이 바뀌어도 오른쪽 빈 공간에 남는다.
+// 창 전체(position: fixed)에서 움직여 캔버스가 좁을 때 미리보기 쪽으로도 옮길 수 있다.
+// 처음에는 부모 요소의 오른쪽 위에 붙고, 옮긴 뒤에는 창 오른쪽 끝에서의 거리로 기억해
+// 창 폭이 바뀌어도 오른쪽에 남는다.
 const MARGIN = 8;
 
 function readSaved(id) {
@@ -28,20 +29,28 @@ export default function FloatingPanel({ id, title, subtitle, top = 56, className
 
   function clamp(next) {
     const el = ref.current;
-    const parent = el?.offsetParent;
-    if (!el || !parent) return next;
-    const maxX = Math.max(MARGIN, parent.clientWidth - el.offsetWidth - MARGIN);
-    const maxY = Math.max(MARGIN, parent.clientHeight - 40);
+    if (!el) return next;
+    const maxX = Math.max(MARGIN, window.innerWidth - el.offsetWidth - MARGIN);
+    const maxY = Math.max(MARGIN, window.innerHeight - 40);
     return { x: Math.min(Math.max(MARGIN, next.x), maxX), y: Math.min(Math.max(MARGIN, next.y), maxY) };
   }
 
-  const fromRightRef = useRef(Number.isFinite(saved.current?.fromRight) ? saved.current.fromRight : 12);
-  const yRef = useRef(Number.isFinite(saved.current?.y) ? saved.current.y : top);
+  // 예전(부모 기준) 저장값은 쓰지 않고 새 기준으로 다시 잡는다
+  const viewportSaved = saved.current?.scope === "viewport";
+  const fromRightRef = useRef(viewportSaved && Number.isFinite(saved.current?.fromRight) ? saved.current.fromRight : null);
+  const yRef = useRef(viewportSaved && Number.isFinite(saved.current?.y) ? saved.current.y : null);
 
   function placeFromRight() {
     const el = ref.current;
-    if (!el?.offsetParent) return;
-    setPos(clamp({ x: el.offsetParent.clientWidth - el.offsetWidth - fromRightRef.current, y: yRef.current }));
+    if (!el) return;
+    if (fromRightRef.current == null || yRef.current == null) {
+      const box = el.parentElement?.getBoundingClientRect();
+      if (box) {
+        fromRightRef.current = window.innerWidth - box.right + 12;
+        yRef.current = box.top + top;
+      }
+    }
+    setPos(clamp({ x: window.innerWidth - el.offsetWidth - (fromRightRef.current ?? 12), y: yRef.current ?? top }));
   }
 
   // 창 크기가 바뀌면 오른쪽 거리를 지킨 채 화면 안으로 다시 넣는다.
@@ -53,7 +62,7 @@ export default function FloatingPanel({ id, title, subtitle, top = 56, className
   }, []);
 
   useEffect(() => {
-    save(id, { fromRight: fromRightRef.current, y: yRef.current, collapsed });
+    if (fromRightRef.current != null) save(id, { scope: "viewport", fromRight: fromRightRef.current, y: yRef.current, collapsed });
   }, [id, collapsed]);
 
   function onPointerDown(event) {
@@ -74,10 +83,10 @@ export default function FloatingPanel({ id, title, subtitle, top = 56, className
     dragRef.current = null;
     event.currentTarget.releasePointerCapture?.(event.pointerId);
     const el = ref.current;
-    if (el?.offsetParent && pos) {
-      fromRightRef.current = el.offsetParent.clientWidth - el.offsetWidth - pos.x;
+    if (el && pos) {
+      fromRightRef.current = window.innerWidth - el.offsetWidth - pos.x;
       yRef.current = pos.y;
-      save(id, { fromRight: fromRightRef.current, y: yRef.current, collapsed });
+      save(id, { scope: "viewport", fromRight: fromRightRef.current, y: yRef.current, collapsed });
     }
   }
 
@@ -85,7 +94,7 @@ export default function FloatingPanel({ id, title, subtitle, top = 56, className
     <section
       ref={ref}
       className={`floating-panel ${collapsed ? "collapsed" : ""} ${className}`}
-      style={pos ? { left: pos.x, top: pos.y } : { right: 12, top }}
+      style={pos ? { left: pos.x, top: pos.y } : { visibility: "hidden", left: 0, top: 0 }}
       aria-label={title}
     >
       <header

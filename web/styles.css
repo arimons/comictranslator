@@ -3532,7 +3532,7 @@ select.memo-key { width: 100%; padding: 2px; font-size: 12px; }
 .topbar-popover .hint { margin: 0; font-size: 11px; color: var(--muted); }
 .topbar-popover .guidance-disclosure { border-top: 1px solid var(--line); padding-top: 8px; }
 .more-popover > button { justify-self: start; }
-.floating-panel { position: absolute; z-index: 4; width: 300px; max-height: calc(100% - 70px); display: flex; flex-direction: column; background: rgba(255, 255, 255, 0.97); border: 1px solid var(--line); border-radius: 10px; box-shadow: var(--shadow); backdrop-filter: blur(8px); }
+.floating-panel { position: fixed; z-index: 60; width: 300px; max-height: calc(100vh - 80px); display: flex; flex-direction: column; background: rgba(255, 255, 255, 0.97); border: 1px solid var(--line); border-radius: 10px; box-shadow: var(--shadow); backdrop-filter: blur(8px); }
 .floating-panel-head { display: flex; align-items: center; gap: 6px; padding: 6px 8px 6px 10px; border-bottom: 1px solid var(--line); cursor: grab; user-select: none; touch-action: none; }
 .floating-panel-head:active { cursor: grabbing; }
 .floating-panel.collapsed .floating-panel-head { border-bottom: 0; }
