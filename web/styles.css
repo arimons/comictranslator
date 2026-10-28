@@ -2728,13 +2728,21 @@ button.wide {
   background: #eff6ff;
 }
 
-.image-status.done {
+.image-status.done,
+.image-status.skipped {
   border-color: #7db5ad;
   background: #ecfdf5;
 }
 
-.image-status.failed,
-.image-status.skipped {
+/* 대상 아님(번역할 글 없음·처리 제외)은 성공으로 보되 완료와 구분되게 흐리게 */
+.image-status.skipped { opacity: .75; }
+
+.image-status.unanalyzed {
+  border-style: dashed;
+  background: #f8fafc;
+}
+
+.image-status.failed {
   border-color: #f0a2a2;
   background: #fff1f2;
 }

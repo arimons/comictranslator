@@ -319,7 +319,7 @@ export default function App() {
   const selectedStrokeWidth = Number.isFinite(Number(selectedOverlayOverride.stroke_width))
     ? Number(selectedOverlayOverride.stroke_width)
     : 2;
-  const statusLabel = { idle: "대기", queued: "대기", running: "진행", done: "완료", failed: "실패", skipped: "스킵" };
+  const statusLabel = { idle: "대기", unanalyzed: "분석 전", queued: "대기", running: "진행", done: "완료", failed: "실패", skipped: "대상 아님" };
   const inputBusy = Boolean(busyTasks.input);
   const analyzeBusy = Boolean(busyTasks.analyze);
   const guidanceBusy = Boolean(busyTasks.guidance);
@@ -331,8 +331,8 @@ export default function App() {
   const anyBusy = routeBusy || Object.values(busyTasks).some(Boolean) || selectedInBackgroundOcr;
   const currentIndex = selected ? Math.max(0, images.findIndex((img) => img.id === selected.id)) : -1;
   const needsAttentionImages = images.filter((img) => {
-    const state = imageStatuses[img.id]?.status;
-    return state === "failed" || state === "skipped" || !img.indexed_sheet_url;
+    // 분석 전·대상 아님은 할 일이 남은 것이지 문제가 아니다. 실제로 실패한 페이지만 센다.
+    return imageStatuses[img.id]?.status === "failed" || img.ocr_status?.status === "failed";
   });
   const ocrReadyImages = images.filter((img) => {
     const state = ocrStateForImage(img);
@@ -368,6 +368,9 @@ export default function App() {
     ocrAutoStartingRef.current = true;
     startBackgroundOcr().finally(() => { ocrAutoStartingRef.current = false; });
   }, [ocrAutoStart, showOcrPrompt]);
+  // 대기열: 바로 번역할 수 있는 페이지 다음에 영역 분석 전 페이지를 둔다
+  const ocrUnanalyzedImages = images.filter((img) => ocrStateForImage(img) === "unanalyzed");
+  const ocrQueueImages = [...ocrReadyImages, ...ocrUnanalyzedImages];
   const ocrInProgressImages = images.filter((img) => {
     const state = ocrStateForImage(img);
     return state === "running" || state === "queued";
@@ -2105,7 +2108,8 @@ export default function App() {
     if (img.integrated_skipped || img.integrated?.skipped) return "skipped";
     if (img.has_integrated_json) return "done";
     if (img.final_url) return "done";
-    if (!img.indexed_sheet_url) return "failed";
+    // 영역 분석 전인 페이지는 실패가 아니라 아직 손대지 않은 대기열이다. 실패는 OCR·번역 호출이 실제로 실패한 경우만.
+    if (!img.indexed_sheet_url) return "unanalyzed";
     return "idle";
   }
 
@@ -2119,7 +2123,7 @@ export default function App() {
     if (img.has_integrated_json) return "integrated.json 있음";
     if (img.final_url) return "final ready";
     if (img.indexed_sheet_url) return "ready";
-    return "analysis 필요";
+    return "영역 분석을 마치면 번역할 수 있습니다";
   }
 
   function ocrProgressForImage(img, state, detail) {
@@ -2945,8 +2949,8 @@ export default function App() {
                 <div className="ocr-queue-sections">
                   <section className="ocr-queue-group ready">
                     <div className="ocr-queue-head">
-                      <strong>Ready Files</strong>
-                      <span>{ocrReadyImages.length}</span>
+                      <strong>Queue</strong>
+                      <span title={`번역 가능 ${ocrReadyImages.length} · 분석 전 ${ocrUnanalyzedImages.length}`}>{ocrReadyImages.length}{ocrUnanalyzedImages.length ? ` + ${ocrUnanalyzedImages.length}` : ""}</span>
                     </div>
                     <div
                       className="image-status-list large ocr-drop-zone"
@@ -2966,7 +2970,7 @@ export default function App() {
                         runFinalStream(image.id, true);
                       }}
                     >
-                      {ocrReadyImages.length ? ocrReadyImages.map(renderOcrImageButton) : <div className="empty compact-empty">대기 파일 없음</div>}
+                      {ocrQueueImages.length ? ocrQueueImages.map(renderOcrImageButton) : <div className="empty compact-empty">대기 파일 없음</div>}
                     </div>
                   </section>
                   <section className="ocr-queue-group progress">
@@ -2993,7 +2997,7 @@ export default function App() {
                       <span>{ocrNeedsAttentionImages.length}</span>
                     </div>
                     <div className="image-status-list large">
-                      {ocrNeedsAttentionImages.length ? ocrNeedsAttentionImages.map(renderOcrImageButton) : <div className="empty compact-empty">재시도 대상 없음</div>}
+                      {ocrNeedsAttentionImages.length ? ocrNeedsAttentionImages.map(renderOcrImageButton) : <div className="empty compact-empty">OCR·번역 실패 없음</div>}
                     </div>
                   </section>
                 </div>
