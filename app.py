@@ -178,9 +178,12 @@ class PageSplitRequest(BaseModel):
 
 
 def page_has_work(session_id: str, item: dict[str, Any]) -> bool:
-    """분석·가이드·번역 결과가 있거나 처리 제외한 페이지. 나누면 그 작업이 새 페이지로 이어지지 않는다."""
+    """가이드 편집·번역 결과가 있거나 처리 제외한 페이지. 나누면 그 작업이 새 페이지로 이어지지 않는다.
+
+    자동 분석 결과만 있는 페이지는 작업 흔적으로 보지 않는다. 조각은 원본 CV를 잘라 다시 분석하므로 잃는 것이 없다.
+    """
     record = image_record(session_id, Path(item["input_path"]), item.get("image_sha256"))
-    return page_processing_excluded(session_id, item["id"]) or any(Path(record[key]).exists() for key in ("regions_json", "guidance_json", "integrated_json"))
+    return page_processing_excluded(session_id, item["id"]) or any(Path(record[key]).exists() for key in ("guidance_json", "integrated_json"))
 
 
 def split_wide_pages_in_session(session_id: str, include_worked: bool = False) -> dict[str, Any]:

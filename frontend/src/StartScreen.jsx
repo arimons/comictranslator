@@ -20,7 +20,7 @@ export default function StartScreen({
   pagePreparationControl, sourceLinksControl, pagePreviewMode,
   folderPath, setFolderPath, fileRef, uploadFiles, uploadFromInput, importPath,
   inputBusy, analyzeBusy, analyzeWorkers, setAnalyzeWorkers, analysisPolicy, setAnalysisPolicy,
-  startRegionAnalysis, splitLandscape, setSplitLandscape, removeLoadedImage, openRecentSession, recentMenuId, setRecentMenuId,
+  startRegionAnalysis, splitLandscape, setSplitLandscape, removeLoadedImage, openRecentSession, openSessionForSetup, recentMenuId, setRecentMenuId,
   renameRecentSession, deleteRecentSession, status, setStatus,
 }) {
   const folderRef = useRef(null);
@@ -125,6 +125,7 @@ export default function StartScreen({
                       {recentMenuId === recent.session_id && <>
                         <button className="recent-menu-dismiss" aria-label="프로젝트 메뉴 닫기" onClick={() => setRecentMenuId("")} />
                         <div className="recent-session-menu" onKeyDown={(event) => { if (event.key === "Escape") setRecentMenuId(""); }}>
+                          <button onClick={() => safely(() => openSessionForSetup(recent))} title="편집기로 들어가지 않고 이미지 제외·가로 이미지 나누기를 다시 봅니다">준비 화면에서 열기</button>
                           <button onClick={() => safely(() => renameRecentSession(recent))}>이름 변경</button>
                           <button className="danger-text" onClick={() => safely(() => deleteRecentSession(recent))}>프로젝트 삭제</button>
                         </div>

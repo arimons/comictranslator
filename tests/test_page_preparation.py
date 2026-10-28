@@ -112,8 +112,13 @@ def test_pages_with_work_are_skipped_unless_included(tmp_path, monkeypatch):
     client = _project(tmp_path, monkeypatch)
     item = next(item for item in app.ensure_session("book")["images"] if item["id"] == "002")
     record = app.image_record("book", app.Path(item["input_path"]), item.get("image_sha256"))
-    app.Path(record["regions_json"]).parent.mkdir(parents=True, exist_ok=True)
-    app.Path(record["regions_json"]).write_text("{}", encoding="utf-8")
+    app.Path(record["guidance_json"]).parent.mkdir(parents=True, exist_ok=True)
+    app.Path(record["guidance_json"]).write_text("{}", encoding="utf-8")
+    # 자동 분석 결과만 있는 페이지는 작업 흔적이 아니다(조각이 원본 CV를 잘라 다시 분석한다)
+    cover = next(item for item in app.ensure_session("book")["images"] if item["id"] == "001")
+    cover_record = app.image_record("book", app.Path(cover["input_path"]), cover.get("image_sha256"))
+    app.Path(cover_record["regions_json"]).parent.mkdir(parents=True, exist_ok=True)
+    app.Path(cover_record["regions_json"]).write_text("{}", encoding="utf-8")
 
     plan = client.post("/api/pages/preview", json={"session_id": "book"}).json()
     assert {page["image_id"]: page["has_work"] for page in plan["pages"]} == {"001": False, "002": True, "003": False}

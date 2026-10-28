@@ -1537,7 +1537,7 @@ export default function App() {
   function reloadAfterServerRestart() {
     try {
       if (sessionId) {
-        window.sessionStorage.setItem(RESUME_KEY, JSON.stringify({ session_id: sessionId, image_id: selectedIdRef.current || selectedId, tab: activeTab }));
+        window.sessionStorage.setItem(RESUME_KEY, JSON.stringify({ session_id: sessionId, image_id: selectedIdRef.current || selectedId, tab: activeTab, home: !workspaceStarted }));
       }
     } catch { /* 저장소를 못 쓰면 시작 화면으로 돌아간다 */ }
     window.location.reload();
@@ -1576,6 +1576,12 @@ export default function App() {
     let cancelled = false;
     (async () => {
       try {
+        // 홈에서 재시작했으면 편집기로 들어가지 않는다. 나누기·제외를 고르기 전에 분석이 시작되지 않게 한다.
+        if (resume.home) {
+          await openSessionForSetup({ session_id: resume.session_id });
+          if (!cancelled) setStatus("서버를 재시작하고 준비 화면으로 다시 불러왔습니다");
+          return;
+        }
         await openRecentSession({ session_id: resume.session_id });
         if (cancelled) return;
         if (resume.image_id) { setSelectedId(resume.image_id); selectedIdRef.current = resume.image_id; }
@@ -1607,6 +1613,21 @@ export default function App() {
     setWorkspaceStarted(true);
     setActiveTab("guidance");
     setStatus(lastIndex > 0 ? `${recent.session_id} 세션 열기 · 마지막으로 보던 ${lastIndex + 1}페이지` : `${recent.session_id} 세션 열기`);
+  }
+
+  // 편집기로 들어가지 않고 홈의 준비 화면(이미지 확인·제외, 가로 이미지 나누기)에 프로젝트를 불러온다.
+  async function openSessionForSetup(recent) {
+    if (!recent?.session_id) return;
+    setRecentMenuId("");
+    setSessionTracked(recent.session_id);
+    selectedIdRef.current = "";
+    setImageStatuses({});
+    await refresh(recent.session_id);
+    if (sessionIdRef.current !== recent.session_id) return;
+    scheduleLazyRefresh(recent.session_id);
+    setWorkspaceStarted(false);
+    forgetOpenWorkspace();
+    setStatus("준비 화면에서 열었습니다. 나누기·제외를 확인한 뒤 ‘분석하고 작업 시작’을 누르세요.");
   }
 
   async function renameRecentSession(recent) {
@@ -2608,7 +2629,7 @@ export default function App() {
       inputBusy={inputBusy} analyzeBusy={analyzeBusy} analyzeWorkers={analyzeWorkers} setAnalyzeWorkers={setAnalyzeWorkers}
       analysisPolicy={analysisPolicy} setAnalysisPolicy={setAnalysisPolicy} startRegionAnalysis={startRegionAnalysis}
       splitLandscape={splitLandscape} setSplitLandscape={changeSplitLandscape}
-      removeLoadedImage={removeLoadedImage} openRecentSession={openRecentSession}
+      removeLoadedImage={removeLoadedImage} openRecentSession={openRecentSession} openSessionForSetup={openSessionForSetup}
       recentMenuId={recentMenuId} setRecentMenuId={setRecentMenuId}
       renameRecentSession={renameRecentSession} deleteRecentSession={deleteRecentSession}
       status={status} setStatus={setStatus}
