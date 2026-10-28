@@ -157,6 +157,7 @@ guidance(수동 보정)가 있는 이미지는 `guidance_digest`(guidance 내용
 | `GET /api/session/{id}` | 세션 메타 + 페이지 **요약** 목록(URL, 상태 플래그, `detail_rev`)과 `hydration_pending`. 정상 상태에서는 파일을 쓰지 않는다 |
 | `GET /api/session/{id}/page/{image_id}` | 선택한 페이지 하나의 전체 레코드(`regions`, `integrated`, `text_groups`, guidance 등). 읽기 전용 |
 | `POST /api/import-path`, `/api/upload` | 이미지 폴더/파일을 세션에 추가 |
+| `POST /api/pages/override` | 가로 이미지 나누기 페이지별 지정(`split_override`: 가로 그대로·분할선 x) 저장 |
 | `GET /api/fs/list` | 서버 폴더 선택 창용: 하위 폴더 이름, 현재 폴더 이미지 수, 홈·외장 볼륨 바로가기 |
 | `POST /api/analyze(-stream)` | Step 1~3 실행 (pre_ocr까지), 캐시 우선 재사용 |
 | `POST /api/guidance`, `/api/guidance/clear` | 수동 보정(TG 삭제/split, edge barrier, manual region 등) 반영 후 Step 3 재실행 |

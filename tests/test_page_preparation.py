@@ -181,3 +181,30 @@ def test_split_page_reuses_parent_spread_cv_without_cloud_vision(tmp_path, monke
     left = app.crop_parent_cv_rows(rows, [0, 0, 960, 1080])
     assert [row["label"] for row in left] == ["왼쪽 조각 글자", "경계 걸침(중심은 왼쪽)"]
     assert left[1]["box_2d"] == [500, 900, 540, 960]
+
+
+def test_page_override_keeps_or_moves_split_line(tmp_path):
+    images = samples(tmp_path)
+    images[1]["split_override"] = {"mode": "split", "split_x": 500}
+    page = build_plan(images)["pages"][1]
+    assert page["rects"] == [[500, 0, 700, 800], [0, 0, 500, 800]] and page["auto_mode"] == "split"
+    images[1]["split_override"] = {"mode": "keep"}
+    plan = build_plan(images)
+    assert plan["pages"][1]["mode"] == "keep" and plan["output_count"] == 2
+    assert page_plan(tmp_path / "002.png", {"mode": "split", "split_x": 99999})["rects"][1] == [0, 0, 1199, 800]
+
+
+def test_override_endpoint_persists_and_split_follows_it(tmp_path, monkeypatch):
+    client = _project(tmp_path, monkeypatch)
+    response = client.post("/api/pages/override", json={"session_id": "book", "image_id": "002", "mode": "split", "split_x": 400})
+    assert response.status_code == 200
+    assert response.json()["page"]["rects"][1] == [0, 0, 400, 800]
+    assert client.post("/api/pages/override", json={"session_id": "book", "image_id": "001", "mode": "keep"}).json()["page"]["mode"] == "keep"
+    plan = client.post("/api/pages/preview", json={"session_id": "book"}).json()
+    assert plan["changed_count"] == 1
+    result = client.post("/api/pages/split", json={"session_id": "book"}).json()
+    assert result["split_pages"] == 1
+    crops = sorted(item.get("crop_rect") for item in app.ensure_session("book")["images"] if item.get("crop_rect"))
+    assert crops == [[0, 0, 400, 800], [400, 0, 800, 800]]
+    assert client.post("/api/pages/override", json={"session_id": "book", "image_id": "001", "mode": "auto"}).json()["page"]["mode"] == "center_crop"
+    assert client.post("/api/pages/override", json={"session_id": "book", "image_id": "001", "mode": "split"}).status_code == 400

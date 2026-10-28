@@ -163,6 +163,14 @@ class PagePreparationRequest(BaseModel):
     revision: str | None = None
 
 
+class PageSplitOverrideRequest(BaseModel):
+    session_id: str
+    image_id: str
+    # auto: 자동 판정, keep: 가로 그대로, split: split_x에서 직접 나누기
+    mode: str
+    split_x: int | None = None
+
+
 class PageSplitRequest(BaseModel):
     session_id: str
     # 분석·편집·번역 흔적이 있는 가로 페이지도 나눈다. 나누면 그 흔적은 원래 페이지에 남고 새 페이지에는 이어지지 않는다.
@@ -1424,6 +1432,7 @@ IMAGE_SUMMARY_KEYS = (
     "reading_order",
     "split_policy",
     "split_x_ratio",
+    "split_override",
     "integrated_json",
     "overlay_guidance_json",
     "bubble_vis_url",
@@ -1558,6 +1567,7 @@ def merge_manifest_metadata(record: dict[str, Any], item: dict[str, Any]) -> dic
         "reading_order",
         "split_policy",
         "split_x_ratio",
+        "split_override",
         "wide_spread_candidate",
         "left_margin_ratio",
         "right_margin_ratio",
@@ -3274,6 +3284,29 @@ def create_app() -> FastAPI:
             page["source_url"] = file_url(page["source_path"])
             page["has_work"] = page["mode"] != "keep" and page_has_work(req.session_id, by_id[page["image_id"]])
         return plan
+
+    @app.post("/api/pages/override")
+    def override_page_split(req: PageSplitOverrideRequest) -> dict[str, Any]:
+        """페이지별 나누기 방식을 프로젝트에 저장한다. 미리보기와 분석 시작 때의 자동 나누기 모두 이 값을 따른다."""
+        preparation_source(req.session_id)
+        if req.mode not in {"auto", "keep", "split"} or (req.mode == "split" and req.split_x is None):
+            raise HTTPException(status_code=400, detail="나누기 방식이 올바르지 않습니다.")
+        data = ensure_session(req.session_id)
+        item = next((image for image in data.get("images", []) if image["id"] == req.image_id), None)
+        if item is None or is_split_page(item):
+            raise HTTPException(status_code=404, detail="나눌 수 있는 원본 페이지가 아닙니다.")
+        if req.mode == "auto":
+            item.pop("split_override", None)
+        else:
+            item["split_override"] = {"mode": "keep"} if req.mode == "keep" else {"mode": "split", "split_x": int(req.split_x)}
+        save_session(data)
+        try:
+            page = build_plan([item], numbered=False)["pages"][0]
+        except (OSError, ValueError) as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        page["source_url"] = file_url(page["source_path"])
+        page["has_work"] = page["mode"] != "keep" and page_has_work(req.session_id, item)
+        return {"page": page}
 
     @app.post("/api/pages/split")
     def split_pages(req: PageSplitRequest) -> dict[str, Any]:

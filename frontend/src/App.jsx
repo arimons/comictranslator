@@ -2594,14 +2594,14 @@ export default function App() {
   const previewSessionId = new URLSearchParams(window.location.search).get("page_preview");
   const sourceLinksControl = (sessionId || previewSessionId) ? <SourceLinks key={sessionId || previewSessionId} sessionId={sessionId || previewSessionId} disabled={anyBusy} onChanged={() => refresh(sessionId || previewSessionId)} /> : null;
   // 가로 이미지 나누기는 분석 전에 한 번 쓰는 준비 단계라 시작 화면에서만 보여 준다.
-  const pagePreparationControl = (sessionId || previewSessionId) ? <><PagePreparation sessionId={sessionId || previewSessionId} disabled={anyBusy} onSplit={adoptSplitResult} autoOpen={Boolean(previewSessionId)} />{sourceLinksControl}</> : null;
+  const pagePreparationControl = (sessionId || previewSessionId) ? <PagePreparation sessionId={sessionId || previewSessionId} disabled={anyBusy} onSplit={adoptSplitResult} onOverride={() => refresh(sessionId || previewSessionId)} autoOpen={Boolean(previewSessionId)} label="미리보기·페이지별 조정" className="link-button" /> : null;
 
   if (!workspaceStarted) {
     return <StartScreen
       images={images} recentSessions={recentSessions} projectName={projectName}
       recentLoadState={recentLoadState} loadRecentSessions={loadRecentSessions}
       importNameFocusRequest={importNameFocusRequest}
-      pagePreparationControl={pagePreparationControl}
+      pagePreparationControl={pagePreparationControl} sourceLinksControl={sourceLinksControl} pagePreviewMode={Boolean(previewSessionId)}
       onProjectNameChange={(value) => { projectNameDirtyRef.current = true; setProjectName(value); }}
       saveProjectName={saveProjectName} folderPath={folderPath} setFolderPath={setFolderPath}
       fileRef={fileRef} uploadFiles={uploadFiles} uploadFromInput={uploadFromInput} importPath={importPath}

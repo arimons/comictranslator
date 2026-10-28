@@ -3582,3 +3582,16 @@ select.memo-key { width: 100%; padding: 2px; font-size: 12px; }
 .server-folder-error { margin: 0; color: #b42318; font-size: 12px; }
 .server-folder-actions { display: flex; align-items: center; gap: 8px; }
 .server-folder-actions .home-hint { flex: 1; margin: 0; }
+
+/* 홈 '가로 이미지 나누기' 항목: 체크와 미리보기 링크를 한 칸에 둔다 */
+.split-option { flex-direction: column; align-items: stretch; cursor: default; }
+.split-option > label { display: flex; align-items: flex-start; gap: 9px; cursor: pointer; }
+.split-option > .link-button { align-self: flex-start; margin-left: 24px; }
+.link-button { border: 0; background: none; padding: 2px 0; color: #0b57d0; font-size: 12px; text-decoration: underline; text-underline-offset: 2px; cursor: pointer; }
+.link-button:disabled { color: var(--muted); cursor: not-allowed; }
+
+/* 나누기 미리보기: 페이지별 방식 선택과 분할선 끌기 */
+.page-prep-modes { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 0 0 10px; }
+.page-prep-modes button.active { border-color: #0b57d0; background: #e8f0fe; color: #0b57d0; font-weight: 600; }
+.page-prep-mode-hint { font-size: 12px; color: var(--muted); }
+.page-prep-draggable { cursor: col-resize; touch-action: none; }

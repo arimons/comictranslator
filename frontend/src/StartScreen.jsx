@@ -17,7 +17,7 @@ export default function StartScreen({
   images, recentSessions, projectName, onProjectNameChange, saveProjectName,
   recentLoadState, loadRecentSessions,
   importNameFocusRequest,
-  pagePreparationControl,
+  pagePreparationControl, sourceLinksControl, pagePreviewMode,
   folderPath, setFolderPath, fileRef, uploadFiles, uploadFromInput, importPath,
   inputBusy, analyzeBusy, analyzeWorkers, setAnalyzeWorkers, analysisPolicy, setAnalysisPolicy,
   startRegionAnalysis, splitLandscape, setSplitLandscape, removeLoadedImage, openRecentSession, recentMenuId, setRecentMenuId,
@@ -29,6 +29,9 @@ export default function StartScreen({
   const handledFocusRequest = useRef(importNameFocusRequest);
   const busy = inputBusy || analyzeBusy;
   const analyzed = images.filter((image) => image.has_analysis).length;
+  const wideImages = images.filter((image) => image.wide_spread_candidate && !image.parent_id);
+  const keptCount = wideImages.filter((image) => image.split_override?.mode === "keep").length;
+  const wideCount = wideImages.length - keptCount;
   useEffect(() => {
     // 업로드 중에는 이름 입력란이 disabled다. 완료된 뒤 한 번만 이동해 재조회가 편집을 방해하지 않게 한다.
     if (inputBusy || handledFocusRequest.current === importNameFocusRequest) return;
@@ -91,7 +94,8 @@ export default function StartScreen({
                     </div>
                   </details>
                 </div>}
-                {pagePreparationControl && <div className="home-page-preparation">{pagePreparationControl}</div>}
+                {/* 나누기 미리보기는 오른쪽 '가로 이미지 나누기' 항목 안에 둔다. 직접 미리보기 링크로 열었을 때만 여기 둔다 */}
+                {(sourceLinksControl || (pagePreviewMode && !wideCount)) && <div className="home-page-preparation">{pagePreviewMode && !wideCount && pagePreparationControl}{sourceLinksControl}</div>}
               </section>
 
               <section className="home-recent" aria-labelledby="recent-heading">
@@ -152,14 +156,13 @@ export default function StartScreen({
                   <span><strong>처음부터 다시 분석</strong><small>전체 이미지를 다시 분석합니다.<em>API 호출 비용이 발생할 수 있습니다.</em></small></span>
                 </label>
               </fieldset>
-              {(() => {
-                const wideCount = images.filter((image) => image.wide_spread_candidate && !image.parent_id).length;
-                if (!wideCount) return null;
-                return <label className={`policy-option split-option${splitLandscape ? " selected" : ""}`}>
+              {wideImages.length > 0 && <div className={`policy-option split-option${splitLandscape ? " selected" : ""}`}>
+                <label>
                   <input type="checkbox" checked={splitLandscape} disabled={busy} onChange={(event) => setSplitLandscape(event.target.checked)} />
-                  <span><strong>가로 이미지 {wideCount}장을 두 쪽으로 나누기</strong><small>오른쪽 → 왼쪽 순서로 나눕니다. 표지처럼 가운데에 한 장만 있는 이미지는 가운데만 남깁니다. 분석 시작 때 적용되고 원본 파일은 그대로 둡니다.</small></span>
-                </label>;
-              })()}
+                  <span><strong>가로 이미지 {wideCount}장을 두 쪽으로 나누기</strong><small>오른쪽 → 왼쪽 순서로 나눕니다. 표지처럼 가운데에 한 장만 있는 이미지는 가운데만 남깁니다. 분석 시작 때 적용되고 원본 파일은 그대로 둡니다.{keptCount > 0 ? ` 가로 그대로 쓰기로 한 ${keptCount}장은 나누지 않습니다.` : ""}</small></span>
+                </label>
+                {pagePreparationControl}
+              </div>}
               <details className="home-advanced"><summary>고급 설정</summary>
                 <div className="field"><label htmlFor="home-workers">동시 분석 이미지 수</label><input id="home-workers" type="number" min="1" max="12" value={analyzeWorkers} disabled={busy} onChange={(event) => setAnalyzeWorkers(Math.max(1, Math.min(12, Number(event.target.value) || 1)))} /><p className="home-hint">기본 4장. 컴퓨터 성능에 따라 조절하세요.</p></div>
               </details>

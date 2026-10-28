@@ -18,8 +18,11 @@ def file_digest(path: Path) -> str:
     return digest.hexdigest()
 
 
-def page_plan(path: Path) -> dict:
-    """사용자가 확인한 중앙 표지/좌우 펼침 규칙. 원본 픽셀 좌표로 crop을 기록한다."""
+def page_plan(path: Path, override: dict | None = None) -> dict:
+    """사용자가 확인한 중앙 표지/좌우 펼침 규칙. 원본 픽셀 좌표로 crop을 기록한다.
+
+    override는 페이지별 사용자 지정이다. {"mode": "keep"}은 원본 그대로, {"mode": "split", "split_x": x}는 x에서 나눈다.
+    """
     with Image.open(path) as source:
         # 현재 분석 엔진과 같은 저장 픽셀 좌표를 사용한다. EXIF 회전 좌표를 섞지 않는다.
         width, height = source.size
@@ -51,14 +54,23 @@ def page_plan(path: Path) -> dict:
             rects = [[middle, 0, width - middle, height], [0, 0, middle, height]]
             sides = ["right", "left"]
             reason = "가로 펼침을 중앙에서 오른쪽 → 왼쪽 순서로 분할"
-    return {"mode": mode, "width": width, "height": height, "rects": rects, "sides": sides, "reason": reason}
+    auto_mode = mode
+    if override and override.get("mode") == "keep":
+        mode, rects, sides = "keep", [[0, 0, width, height]], ["single"]
+        reason = "사용자 지정: 가로 이미지를 나누지 않고 그대로 사용"
+    elif override and override.get("mode") == "split" and width > 1:
+        # 양쪽 모두 최소 1px이 남도록 분할선을 이미지 안으로 제한한다
+        split_x = min(width - 1, max(1, int(override.get("split_x") or width // 2)))
+        mode, rects, sides = "split", [[split_x, 0, width - split_x, height], [0, 0, split_x, height]], ["right", "left"]
+        reason = f"사용자 지정: x={split_x}에서 오른쪽 → 왼쪽 순서로 분할"
+    return {"mode": mode, "auto_mode": auto_mode, "override": override or None, "width": width, "height": height, "rects": rects, "sides": sides, "reason": reason}
 
 
 def build_plan(images: list[dict], numbered: bool = True) -> dict:
     pages = []
     for index, image in enumerate(images):
         path = Path(image["input_path"])
-        plan = page_plan(path)
+        plan = page_plan(path, image.get("split_override"))
         outputs = []
         for number, (rect, side) in enumerate(zip(plan["rects"], plan["sides"]), 1):
             # 접두 번호가 원본의 자연 정렬과 페이지 순서를 모두 보존한다.
