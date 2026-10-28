@@ -70,6 +70,8 @@ const TOOL_HINTS = {
   ubox: "글자를 감싸도록 상자를 드래그하세요",
 };
 const RESUME_KEY = "comic-translator-resume-after-restart";
+// 새로고침해도 열려 있던 프로젝트로 돌아가도록 탭 단위(sessionStorage)로 기억한다.
+const OPEN_WORKSPACE_KEY = "comic-translator-open-workspace";
 
 // 브라우저 저장소는 막혀 있을 수 있어 모든 읽기·쓰기를 감싼다. 값이 없거나 올바르지 않으면 기본값을 쓴다.
 function readStored(key, fallback, valid = () => true) {
@@ -1484,11 +1486,34 @@ export default function App() {
     window.location.reload();
   }
 
+  // 프로젝트별로 마지막에 보던 페이지를 기억한다. 세션 전환 중 이전 세션의 선택이 섞이지 않도록 목록에 있는 페이지만 저장한다.
+  useEffect(() => {
+    if (!workspaceStarted || !sessionId || !selectedId) return;
+    if (!images.some((img) => img.id === selectedId)) return;
+    writeSessionSettings(sessionId, { lastImageId: selectedId });
+  }, [workspaceStarted, sessionId, selectedId, images]);
+
+  useEffect(() => {
+    if (!workspaceStarted || !sessionId) return;
+    try { window.sessionStorage.setItem(OPEN_WORKSPACE_KEY, JSON.stringify({ session_id: sessionId, tab: activeTab })); } catch { /* 저장소를 못 쓰면 새로고침 때 홈으로 간다 */ }
+  }, [workspaceStarted, sessionId, activeTab]);
+
+  function forgetOpenWorkspace() {
+    try { window.sessionStorage.removeItem(OPEN_WORKSPACE_KEY); } catch { /* 무시 */ }
+  }
+
   useEffect(() => {
     let resume = null;
+    let reopened = false;
     try {
       resume = JSON.parse(window.sessionStorage.getItem(RESUME_KEY) || "null");
       window.sessionStorage.removeItem(RESUME_KEY);
+      // 검토·미리보기 링크는 자기 세션을 직접 연다
+      const query = new URLSearchParams(window.location.search);
+      if (!resume?.session_id && !query.get("generation_review") && !query.get("page_preview")) {
+        resume = JSON.parse(window.sessionStorage.getItem(OPEN_WORKSPACE_KEY) || "null");
+        reopened = Boolean(resume?.session_id);
+      }
     } catch { resume = null; }
     if (!resume?.session_id) return undefined;
     let cancelled = false;
@@ -1498,26 +1523,33 @@ export default function App() {
         if (cancelled) return;
         if (resume.image_id) { setSelectedId(resume.image_id); selectedIdRef.current = resume.image_id; }
         if (resume.tab) setActiveTab(resume.tab);
-        setStatus("서버를 재시작하고 프로젝트를 다시 불러왔습니다");
-      } catch (error) { if (!cancelled) setStatus(error.message); }
+        if (!reopened) setStatus("서버를 재시작하고 프로젝트를 다시 불러왔습니다");
+      } catch (error) {
+        if (reopened) forgetOpenWorkspace();
+        if (!cancelled) setStatus(error.message);
+      }
     })();
     return () => { cancelled = true; };
   }, []);
 
   async function openRecentSession(recent) {
     if (!recent?.session_id) return;
+    // 세션을 바꾸기 전에 읽어야 이전 세션 선택이 저장돼도 영향받지 않는다
+    const lastImageId = readSessionSettings(recent.session_id).lastImageId;
     setSessionTracked(recent.session_id);
     selectedIdRef.current = "";
     const imgs = await refresh(recent.session_id);
     if (sessionIdRef.current !== recent.session_id) return;
     scheduleLazyRefresh(recent.session_id);
+    const lastIndex = imgs?.length ? imgs.findIndex((img) => img.id === lastImageId) : -1;
     if (imgs?.length) {
-      setSelectedId(imgs[0].id);
-      selectedIdRef.current = imgs[0].id;
+      const target = imgs[Math.max(lastIndex, 0)];
+      setSelectedId(target.id);
+      selectedIdRef.current = target.id;
     }
     setWorkspaceStarted(true);
     setActiveTab("guidance");
-    setStatus(`${recent.session_id} 세션 열기`);
+    setStatus(lastIndex > 0 ? `${recent.session_id} 세션 열기 · 마지막으로 보던 ${lastIndex + 1}페이지` : `${recent.session_id} 세션 열기`);
   }
 
   async function renameRecentSession(recent) {
@@ -1553,6 +1585,7 @@ export default function App() {
       setSelectedId("");
       selectedIdRef.current = "";
       setWorkspaceStarted(false);
+      forgetOpenWorkspace();
     }
     setStatus("프로젝트를 삭제했습니다.");
   }
@@ -1560,6 +1593,7 @@ export default function App() {
   function returnToStartPage() {
     if (!window.confirm("홈으로 돌아가시겠습니까? 현재 프로젝트는 저장된 상태로 유지됩니다.")) return;
     setWorkspaceStarted(false);
+    forgetOpenWorkspace();
     setActiveTab("guidance");
     setAnalysisPolicy("reuse");
     api("/api/sessions/recent").then((data) => setRecentSessions(data.sessions || [])).catch(() => {});
