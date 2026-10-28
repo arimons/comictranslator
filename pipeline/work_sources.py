@@ -122,3 +122,36 @@ def fetch_source(value: str) -> dict:
             connection.close()
     raise ValueError('리디렉션이 너무 많습니다. 최종 문서 URL을 입력하세요.')
 
+
+
+NAMU_HOST = 'namu.wiki'
+
+
+def namu_lookup(title: str) -> dict:
+    """작품명으로 나무위키 문서 주소를 찾는다. 나무위키의 이동 검색(/Go)이 맞는 문서로 보내는 Location만 읽는다.
+
+    정확한 문서가 없으면 나무위키 검색 결과 주소를 found=False로 돌려준다. 본문은 받지 않는다.
+    """
+    query = re.sub(r'\s+', ' ', title or '').strip()
+    if not query:
+        raise ValueError('작품명을 입력하세요.')
+    if len(query) > 200:
+        raise ValueError('작품명은 200자 이내로 입력하세요.')
+    connection = PublicConnection(NAMU_HOST, timeout=10)
+    try:
+        # 나무위키는 기본 클라이언트 표시를 막는 경우가 있어 일반 브라우저와 같은 형식의 User-Agent를 쓴다.
+        connection.request('GET', '/Go?q=' + quote(query, safe=''), headers={
+            'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 14_0) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126 Safari/537.36',
+            'Accept': 'text/html', 'Accept-Encoding': 'identity'})
+        response = connection.getresponse()
+        location = response.getheader('Location', '') if response.status in (301, 302, 303, 307, 308) else ''
+        response.read(1)
+    finally:
+        connection.close()
+    if not location:
+        raise ValueError(f'나무위키 검색 응답 HTTP {response.status}. 직접 검색해 주소를 붙여 넣으세요.')
+    url = urljoin(f'https://{NAMU_HOST}/', location)
+    parsed = urlsplit(url)
+    if parsed.hostname != NAMU_HOST:
+        raise ValueError('나무위키 밖으로 이동하는 응답이라 사용하지 않습니다.')
+    return {'url': public_url(url), 'found': parsed.path.startswith('/w/'), 'query': query}

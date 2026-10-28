@@ -21,6 +21,9 @@ export default function GlossaryPanel({ sessionId, projectName, ocrBusy, analysi
   const [workId, setWorkId] = useState("");
   const [sourceUrl, setSourceUrl] = useState("");
   const [sourceText, setSourceText] = useState("");
+  // 작품명으로 찾은 나무위키 주소. found=false면 정확한 문서가 없어 검색 결과 주소다.
+  const [namu, setNamu] = useState(null);
+  const [namuBusy, setNamuBusy] = useState(false);
   const [busy, setBusy] = useState("");
   const [error, setError] = useState("");
   const [changing, setChanging] = useState(false);
@@ -36,6 +39,19 @@ export default function GlossaryPanel({ sessionId, projectName, ocrBusy, analysi
   const sessionRef = useRef(sessionId);
   const dialogRef = useRef(null);
   sessionRef.current = sessionId;
+
+  // 서버가 나무위키 이동 검색으로 문서 주소만 찾는다(본문 수집·OpenAI 호출 없음).
+  async function findNamu() {
+    const query = (draftRef.current?.title || data?.title || "").trim();
+    if (!query) return;
+    setNamuBusy(true); setError("");
+    try {
+      const result = await api(`/api/namu-lookup?q=${encodeURIComponent(query)}`);
+      setNamu(result);
+      if (result.found) setSourceUrl(result.url);
+    } catch (err) { setError(String(err.message || err)); }
+    finally { setNamuBusy(false); }
+  }
 
   function applyPayload(result) {
     setData(result.glossary || null);
@@ -300,7 +316,10 @@ export default function GlossaryPanel({ sessionId, projectName, ocrBusy, analysi
 
           <label>작품 메모 (배경·호칭 규칙 등, 선택)<textarea rows={3} maxLength={4000} value={draft.notes || ""} onChange={(event) => edit((next) => { next.notes = event.target.value; })} /></label>
 
-          <details className="memo-draft">
+          <details className="memo-draft" onToggle={(event) => {
+            // 처음 펼칠 때 주소가 비어 있으면 작품명으로 나무위키 문서를 찾아 둔다
+            if (event.currentTarget.open && !sourceUrl.trim() && !namu && !namuBusy) findNamu();
+          }}>
             <summary>URL로 초안 채우기 (OpenAI 1회)</summary>
             <form onSubmit={(event) => {
               event.preventDefault();
@@ -308,6 +327,12 @@ export default function GlossaryPanel({ sessionId, projectName, ocrBusy, analysi
               post("/api/glossary/draft", { work_id: data.work_id, url: sourceUrl, text: sourceText }, "draft");
             }}>
               <label>자료 URL (나무위키 등)<input type="url" required maxLength={2000} value={sourceUrl} onChange={(event) => setSourceUrl(event.target.value)} placeholder="https://namu.wiki/w/…" /></label>
+              <div className="memo-namu">
+                <button type="button" onClick={findNamu} disabled={namuBusy || !(draft.title || data.title || "").trim()}>{namuBusy ? "찾는 중…" : "작품명으로 나무위키 찾기"}</button>
+                {namu && (namu.found
+                  ? <span>‘{namu.query}’ 문서를 넣었습니다. <a href={namu.url} target="_blank" rel="noopener noreferrer">열어서 맞는지 확인 ↗</a></span>
+                  : <span>정확히 맞는 문서가 없습니다. <a href={namu.url} target="_blank" rel="noopener noreferrer">나무위키 검색 결과 열기 ↗</a>에서 맞는 문서 주소를 복사해 붙여 넣으세요.</span>)}
+              </div>
               <label>자동 수집이 막히면 본문 붙여 넣기 (선택)<textarea rows={4} maxLength={16000} value={sourceText} onChange={(event) => setSourceText(event.target.value)} /></label>
               <button disabled={Boolean(busy) || ocrBusy || !sourceUrl.trim()}>{busy === "draft" ? "초안 만드는 중…" : "초안 채우기"}</button>
             </form>

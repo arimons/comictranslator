@@ -3595,3 +3595,7 @@ select.memo-key { width: 100%; padding: 2px; font-size: 12px; }
 .page-prep-modes button.active { border-color: #0b57d0; background: #e8f0fe; color: #0b57d0; font-weight: 600; }
 .page-prep-mode-hint { font-size: 12px; color: var(--muted); }
 .page-prep-draggable { cursor: col-resize; touch-action: none; }
+
+/* 작품 메모: 작품명으로 나무위키 찾기 */
+.memo-namu { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 0 0 8px; font-size: 12px; }
+.memo-namu a { color: #0b57d0; }

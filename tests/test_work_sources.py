@@ -45,3 +45,29 @@ def test_private_dns_and_redirect_are_rejected(monkeypatch):
     original = sources.public_addresses
     monkeypatch.setattr(sources, 'public_addresses', lambda host: ['8.8.8.8'] if host == 'publisher.example' else original(host))
     with pytest.raises(ValueError, match='내부'): sources.fetch_source(URL)
+
+
+@pytest.mark.parametrize('location, found', [
+    ('/w/%EC%96%B4%EB%96%A4%20%EA%B3%BC%ED%95%99%EC%9D%98%20%EC%B4%88%EC%A0%84%EC%9E%90%ED%8F%AC', True),
+    ('/Search?q=zz', False),
+    ('https://evil.example/w/a', None),
+])
+def test_namu_lookup_reads_redirect_only(monkeypatch, location, found):
+    requested = []
+    class Response:
+        status = 302
+        def getheader(self, key, default=''): return location if key == 'Location' else default
+        def read(self, maximum): return b''
+    class Connection:
+        def __init__(self, host, timeout): requested.append(host)
+        def request(self, method, path, headers): requested.append(path)
+        def getresponse(self): return Response()
+        def close(self): pass
+    monkeypatch.setattr(sources, 'PublicConnection', Connection)
+    if found is None:
+        with pytest.raises(ValueError): sources.namu_lookup('어떤과학의 초전자포')
+        return
+    result = sources.namu_lookup('  어떤과학의   초전자포 ')
+    assert requested[0] == 'namu.wiki' and requested[1].startswith('/Go?q=%EC%96%B4')
+    assert result['found'] is found and result['url'].startswith('https://namu.wiki/')
+    with pytest.raises(ValueError): sources.namu_lookup('  ')

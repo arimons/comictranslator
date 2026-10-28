@@ -25,7 +25,9 @@
 - 자료는 한국어·일본어 모두 된다. 같은 인물·용어 판정은 한국어 이름 또는 일본어 원문 표기 중 하나라도 겹치면 같은 것으로 보고, 새로 찾은 원문·호칭 표기는 기존 항목에 덧붙인다. 원문 칸이 빈 기존 인물·용어는 프롬프트에 따로 알려 자료에서 일본어 표기를 찾으면 채우게 한다. 일본어 위키백과는 자동 수집되고, pixiv·니코니코 백과는 자동 접근이 막혀 본문을 붙여 넣어야 한다(2026-10-20 확인).
 - 공개 주소 제한(로그인 정보·비표준 포트·내부 IP 거절, 리디렉션 재검증, 2MB·16,000자)은 그대로다.
 
-작품 메모 API: 조회 `GET /api/glossary/{session_id}`, 연결 `POST /api/glossary/bind`, 연결 해제 `POST /api/glossary/unbind`, 저장 `POST /api/glossary/save`, 초안 생성 `POST /api/glossary/draft`.
+작품 메모 API: 조회 `GET /api/glossary/{session_id}`, 연결 `POST /api/glossary/bind`, 연결 해제 `POST /api/glossary/unbind`, 저장 `POST /api/glossary/save`, 초안 생성 `POST /api/glossary/draft`, 나무위키 주소 찾기 `GET /api/namu-lookup?q=작품명`(2026-10-29).
+
+나무위키 주소 찾기는 서버가 `namu.wiki/Go?q=작품명`에 한 번 요청해 응답의 이동 주소(Location)만 읽는다. 나무위키가 띄어쓰기 차이까지 맞춰 문서(`/w/…`)로 보내면 `found: true`로 URL 칸을 채우고, 맞는 문서가 없어 검색 결과(`/Search?q=…`)로 보내면 `found: false`로 링크만 보여 준다. 본문은 받지 않고 OpenAI도 부르지 않는다. 구글 검색 결과 직접 수집은 차단돼 쓰지 않는다. 경로가 `/api/glossary/{session_id}`에 가려지지 않도록 `/api/glossary/` 밖에 둔다.
 
 ## CV 자동 연결
 

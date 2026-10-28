@@ -164,6 +164,7 @@ guidance(수동 보정)가 있는 이미지는 `guidance_digest`(guidance 내용
 | `POST /api/run-final(-stream)` | Step 4(OCR/번역) + Step 5(오버레이) 실행. body의 `ocr_model`로 모델 지정. `image_id`는 페이지 ID·`all`·`failed`·`batch`(`image_ids`로 지정한 페이지만, 이미 번역된 페이지는 건너뜀) |
 | `GET /api/ocr-models` | OCR/번역 모델 목록(`id`, `label`, `note`)과 기본값 |
 | `GET /api/glossary/{session_id}`, `POST /api/glossary/bind`, `/api/glossary/unbind`, `/api/glossary/save`, `/api/glossary/draft` | 작품 메모 연결·저장·URL 초안. 메모 참고문을 Step 4 프롬프트에 붙인다 |
+| `GET /api/namu-lookup` | 작품명으로 나무위키 문서 주소 찾기(`pipeline/work_sources.py`의 `namu_lookup`, 이동 주소만 읽음) |
 | `POST /api/server/restart` | 같은 명령으로 서버 프로세스를 다시 띄운다. 진행 중 작업이 있으면 409, `?force=true`면 중단하고 재시작 |
 | `GET /api/health` | 연결 확인. `stale_code`(서버 시작 뒤 바뀐 Python 파일)와 `bundle`(화면 번들 버전)을 함께 돌려준다 |
 | `POST /api/region-context` | R별 번역 메모 저장(`context_by_region`, 영역 키). 다음 OCR/번역 때 영역별 번역 가이드로 붙는다 |

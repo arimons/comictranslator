@@ -167,6 +167,13 @@ def test_server_folder_listing_returns_subfolders_and_image_count(tmp_path):
     assert missing.status_code == 404
 
 
+def test_namu_lookup_route_is_not_shadowed_by_glossary_session_route(monkeypatch):
+    import pipeline.work_sources as sources
+    monkeypatch.setattr(sources, "namu_lookup", lambda q: {"url": "https://namu.wiki/w/a", "found": True, "query": q})
+    response = TestClient(app.create_app()).get("/api/namu-lookup", params={"q": "작품"})
+    assert response.status_code == 200 and response.json()["query"] == "작품"
+
+
 def test_update_session_meta_persists_project_name(tmp_path, monkeypatch):
     session_id = "project_named"
     monkeypatch.setattr(app, "SESSION_ROOT", tmp_path / "sessions")

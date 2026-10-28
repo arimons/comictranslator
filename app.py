@@ -3155,6 +3155,16 @@ def create_app() -> FastAPI:
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
+    @app.get("/api/namu-lookup")
+    def lookup_namu(q: str = "") -> dict:
+        from pipeline.work_sources import namu_lookup
+        try:
+            return namu_lookup(q)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except OSError:
+            raise HTTPException(status_code=502, detail="나무위키에 연결하지 못했습니다. 직접 검색해 주소를 붙여 넣으세요.") from None
+
     @app.post("/api/glossary/draft")
     def draft_glossary(req: GlossaryDraftRequest) -> dict:
         try:
