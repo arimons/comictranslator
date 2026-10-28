@@ -2410,6 +2410,14 @@ export default function App() {
   const regionContextValue = contextDraft ?? savedRegionContext;
 
   // 입력칸을 벗어나면 저장한다. 번역은 실행하지 않는다.
+  // 화자·번역 메모를 바꾼 뒤 이 페이지만 OCR·번역을 다시 돌린다(OCR 탭의 Force Current와 같음).
+  // 적어 둔 메모가 아직 저장 전이면 먼저 저장해 이번 번역에 들어가게 한다.
+  async function retranslateSelectedPage() {
+    if (!selected) return;
+    if (contextDraft != null) await saveRegionContext();
+    await runFinalStream(selected.id, true);
+  }
+
   async function saveRegionContext() {
     const region = selectedGuidanceRegion;
     if (!region || contextDraft == null || contextDraft.trim() === savedRegionContext) { setContextDraft(null); return; }
@@ -2695,6 +2703,12 @@ export default function App() {
                   <span className={`guidance-change-state ${guidanceDirty ? "dirty" : ""}`} role="status">
                     {selected?.processing_excluded ? "페이지 처리 제외 · 원본 출력" : guidanceDirty ? "미적용 변경 있음" : selected?.has_analysis && selected?.ocr_region_count === 0 ? "처리 대상 없음 · 원본 유지" : "적용할 변경 없음"}
                   </span>
+                  <button
+                    className="guidance-retranslate"
+                    onClick={retranslateSelectedPage}
+                    disabled={anyBusy || ocrBusy || guidanceDirty || !selected?.indexed_sheet_url || selected.processing_excluded}
+                    title={guidanceDirty ? "변경사항 적용을 먼저 하세요" : "이 페이지만 OCR·번역을 다시 실행합니다. 화자·번역 메모가 반영됩니다. LLM 비용이 발생합니다."}
+                  >{selected?.has_integrated_json || selected?.final_url ? "이 페이지 다시 번역" : "이 페이지 번역"}</button>
                   <button className="primary guidance-apply" onClick={applyGuidance} onKeyDown={preventPlainAnalysisEnter} disabled={anyBusy || !selected?.detail_loaded || selected.processing_excluded} title="그어 둔 가이드로 마스크·OCR 영역을 다시 계산합니다. Cloud Vision·번역은 실행하지 않습니다.">변경사항 적용 <kbd>{shortcutById("guidance.apply")}</kbd></button>
                   <button className="icon-button" onClick={undoGuidance} disabled={anyBusy || (!guidanceUndoStack.length && !guidanceHistory.length)} aria-label="편집 실행 취소" title={`실행 취소 (${shortcutById("edit.undo")})`}>↶</button>
                   <button className="icon-button" onClick={redoGuidance} disabled={anyBusy || !guidanceRedoStack.length} aria-label="편집 다시 실행" title={`다시 실행 (${shortcutById("edit.redo")})`}>↷</button>
