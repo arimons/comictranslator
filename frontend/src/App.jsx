@@ -243,16 +243,16 @@ export default function App() {
   const generatedCandidates = generationStatus?.session_id === sessionId && generationStatus?.image_id === selected?.id ? generationStatus.results || [] : [];
   const latestGeneratedCandidate = generatedCandidates.at(-1);
   const generationRecommended = selected?.analysis_route !== "standard" && (selected?.image_generation_recommendation?.priority === "recommended" || selected?.analysis_skip_reason === "cover_image_gen_redraw");
-  // 처리 제외 페이지는 원본 그대로 출력하므로, 예전 분석의 마스크·후보·시트는 보여 주지 않고 최종 출력도 원본으로 보여 준다.
+  // 처리 제외 페이지는 원본 그대로 출력하므로, 마스크·OCR 시트·최종 출력 모두 지우기 전 깨끗한 원본으로 보여 준다(분석 파일은 남겨 둔다).
   const pageExcluded = Boolean(selected?.processing_excluded);
   const guidanceCompareTabs = [
     ["ai_erase", "AI 지움 후보", pageExcluded ? null : aiEraseCandidateUrl],
     ["generated", "생성 결과", pageExcluded ? null : latestGeneratedCandidate?.preview_url],
     // 확정한 배경 복원 패치(AI 지움 포함)가 있으면 그것까지 얹은 현재 지우기 결과를 보여 준다.
-    ["masked", "마스크", pageExcluded ? null : selected?.restore_preview_url || selected?.masked_url],
+    ["masked", "마스크", pageExcluded ? selected?.input_url : selected?.restore_preview_url || selected?.masked_url],
     ["source", "원본", selected?.input_url],
     ["final", "최종 출력", pageExcluded ? selected?.input_url : selected?.final_url],
-    ["sheet", "OCR 시트", pageExcluded ? null : selected?.indexed_sheet_url],
+    ["sheet", "OCR 시트", pageExcluded ? selected?.input_url : selected?.indexed_sheet_url],
   ];
   const preferredCompareMode = guidanceCompareMode === "auto" ? (aiEraseCandidateUrl ? "ai_erase" : latestGeneratedCandidate && generationRecommended ? "generated" : "masked") : guidanceCompareMode;
   const guidanceCompareTab = guidanceCompareTabs.find(([id, _label, url]) => id === preferredCompareMode && url) || guidanceCompareTabs.find(([_id, _label, url]) => url) || guidanceCompareTabs[0];
@@ -2211,6 +2211,16 @@ export default function App() {
     });
   }
 
+  // 편집기에서 이 페이지 하나만 이미지 생성 모델로 통번역한다. 설정(모델·품질 등)은 내보내기 탭의 이미지 생성 설정을 따른다.
+  async function translatePageWithImageModel() {
+    if (!selected || selected.processing_excluded) return;
+    const model = exportImageModel || "gpt-image-2.5-sunburst";
+    const replace = Boolean(selected.final_url);
+    if (!window.confirm(`${selected.name}을(를) ${model}로 통번역합니다.${replace ? " 지금 최종 출력을 새 생성 결과로 바꿉니다." : ""} 이미지 생성 비용이 발생합니다. 진행할까요?`)) return;
+    setGuidanceMenu(null);
+    await generateMissingFinals({ imageIds: [selected.id], force: replace });
+  }
+
   function selectImage(img) {
     if (!img?.id) return;
     setSelectedId(img.id);
@@ -2873,6 +2883,8 @@ export default function App() {
                     <button className={guidanceMenu === "more" ? "active" : ""} onClick={() => setGuidanceMenu(guidanceMenu === "more" ? null : "more")} aria-expanded={guidanceMenu === "more"} aria-label="더 보기" title="페이지 처리 제외 · 표시 설정 · 고급 편집">⋯</button>
                     {guidanceMenu === "more" ? <div className="topbar-popover more-popover" role="dialog" aria-label="더 보기">
                       <button type="button" className={selected?.processing_excluded ? "page-excluded-control" : ""} disabled={!selected || anyBusy} onClick={togglePageProcessing} title={selected?.processing_excluded ? "현재 페이지는 원본 그대로 출력합니다. 클릭하면 처리 대상으로 복원합니다." : "이 페이지를 처리에서 제외하고 원본 그대로 출력합니다."}>{selected?.processing_excluded ? "처리 대상으로 복원" : "페이지 처리 제외"}</button>
+                      <button type="button" disabled={!selected || anyBusy || selected.processing_excluded} onClick={translatePageWithImageModel}
+                        title={selected?.processing_excluded ? "처리 대상으로 복원한 뒤 쓸 수 있습니다" : "이미지 생성 모델로 이 페이지 전체를 한국어로 다시 그려 최종 출력으로 씁니다. 이미지 생성 비용이 발생합니다."}>AI로 통번역</button>
                       <details className="guidance-disclosure">
                         <summary>표시 설정{Object.values(layers).some((visible) => !visible) ? <span>일부 숨김</span> : null}</summary>
           <p className="hint">겹친 표시를 확인할 때만 끕니다. 분석·출력 결과는 바뀌지 않습니다.</p>
