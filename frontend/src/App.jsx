@@ -2772,7 +2772,7 @@ export default function App() {
                 setStatus={setStatus}
                 speakerLabels={speakerLabels}
               />
-              <FloatingPanel id="guidance-inspector" title={selectedGuidanceRegion ? `R${regionId(selectedGuidanceRegion)}` : selectedTg != null ? `TG${selectedTg}` : "선택 정보"} subtitle={selectedGuidanceRegion ? regionDetectionLabel(selectedGuidanceRegion) : ""} className="guidance-inspector">
+              <div className="guidance-ai-dock">
         <AiErasePanel
           sessionId={sessionId}
           page={selected?.detail_loaded ? selected : null}
@@ -2786,8 +2786,9 @@ export default function App() {
           onConfirmClose={() => setAiEraseConfirmOpen(false)}
           onRequestConfirm={() => setAiEraseConfirmOpen(true)}
         />
-
-                {selectedGuidanceRegion || selectedTg != null ? <div className="inspector">
+              </div>
+              {selectedGuidanceRegion || selectedTg != null ? <FloatingPanel id="guidance-inspector" title={selectedGuidanceRegion ? `R${regionId(selectedGuidanceRegion)}` : `TG${selectedTg}`} subtitle={selectedGuidanceRegion ? regionDetectionLabel(selectedGuidanceRegion) : ""} className="guidance-inspector">
+                <div className="inspector">
                   {selectedIsTextBased ? <div className="inspector-row">
                     <span className="inspector-label">지우기</span>
                     <div className="segmented" role="radiogroup" aria-label="지우기 방식">
@@ -2827,8 +2828,8 @@ export default function App() {
                   <div className="inspector-actions">
                     <button onClick={() => editorCanvasRef.current?.excludeSelection()} disabled={anyBusy} title={`선택한 ${selectedGuidanceRegion ? "R" : "TG"}을 처리에서 제외 (${shortcutById("guidance.tg.delete")})`}>{selectedGuidanceRegion ? "이 영역 제외" : "이 TG 제외"} <kbd>{shortcutById("guidance.tg.delete")}</kbd></button>
                   </div>
-                </div> : <p className="hint inspector-empty">말풍선(R)을 클릭하세요 · Tab으로 다음 영역 · 숫자키로 화자 지정</p>}
-              </FloatingPanel>
+                </div>
+              </FloatingPanel> : null}
               {TOOL_HINTS[tool] && !selected?.processing_excluded ? <div className="tool-hint" role="status">
                 <strong>{TOOL_LABELS.find(([id]) => id === tool)?.[1]} <kbd>{shortcutFor("guidance", "tool", tool)}</kbd></strong>
                 <span>{TOOL_HINTS[tool]}</span>

@@ -62,6 +62,8 @@ const EditorCanvas = forwardRef(function EditorCanvas({ image, baseUrl, guidance
       getImage: () => imageObjRef.current,
       getKey: () => imageKey(),
       fitPadding: 0.98,
+      alignLeft: 70, // 왼쪽 도구 모음(12+46px) 바로 옆
+      reserveRight: 324, // 선택 정보 패널(300px)이 이미지를 가리지 않게 비워 둔다
       redraw: () => redraw(),
       onStatus: (text) => setStatusRef.current?.(text),
       isPanTool: () => toolRef.current === "hand",

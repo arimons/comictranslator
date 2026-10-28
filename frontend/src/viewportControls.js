@@ -55,11 +55,15 @@ function wheelDeltaPixels(event, host) {
 //   getImage(): {width, height}를 가진 이미지 (없으면 null)
 //   getKey(): 페이지 key. 바뀌면 보기를 맞춤으로 되돌린다.
 //   fitPadding: 맞춤 배율에 곱하는 여유 (0.98 등)
+//   alignLeft: 숫자(px)면 가운데 대신 왼쪽에서 그만큼 띄워 붙인다. 오른쪽 빈 공간을 패널 자리로 쓴다.
+//   reserveRight: 맞춤 배율을 정할 때 오른쪽에 비워 둘 폭(px). 그만큼 이미지가 많이 작아지면 무시한다.
 //   redraw(): 보기가 바뀌면 호출
 //   onStatus(text): 상태 표시
 //   isPanTool(): Hand 도구 여부
 export function createViewport(options) {
   const fitPadding = options.fitPadding ?? 0.98;
+  const alignLeft = Number.isFinite(options.alignLeft) ? options.alignLeft : null;
+  const reserveRight = Number.isFinite(options.reserveRight) ? options.reserveRight : 0;
   let view = { key: "", mode: "fit", scale: 1, x: 0, y: 0, hostWidth: 0, hostHeight: 0 };
   let pan = null;
   let detach = null;
@@ -69,9 +73,20 @@ export function createViewport(options) {
     return { width: host?.clientWidth || 800, height: host?.clientHeight || 600 };
   }
 
+  // 화면 폭에 다 들어가는 이미지의 가로 위치. 왼쪽 정렬이어도 자리가 모자라면 가운데로 둔다.
+  function restX(width, scaledW) {
+    return alignLeft != null && scaledW + alignLeft <= width ? alignLeft : (width - scaledW) / 2;
+  }
+
   function fitTransform(width, height, img) {
-    const scale = Math.min(width / img.width, height / img.height) * fitPadding;
-    return { scale, x: (width - img.width * scale) / 2, y: (height - img.height * scale) / 2 };
+    const scaleFor = (usableWidth) => Math.min(Math.max(1, usableWidth) / img.width, height / img.height) * fitPadding;
+    let scale = scaleFor(alignLeft != null ? width - alignLeft * 2 : width);
+    // 오른쪽 패널 자리를 비워도 이미지가 15% 넘게 작아지지 않을 때만 비운다
+    if (alignLeft != null && reserveRight) {
+      const reserved = scaleFor(width - alignLeft - reserveRight);
+      if (reserved >= scale * 0.85) scale = reserved;
+    }
+    return { scale, x: restX(width, img.width * scale), y: (height - img.height * scale) / 2 };
   }
 
   function scaleLimits(width, height, img) {
@@ -87,7 +102,7 @@ export function createViewport(options) {
     return {
       ...next,
       scale,
-      x: scaledW <= width ? (width - scaledW) / 2 : Math.min(PAN_MARGIN, Math.max(width - scaledW - PAN_MARGIN, next.x)),
+      x: scaledW <= width ? restX(width, scaledW) : Math.min(PAN_MARGIN, Math.max(width - scaledW - PAN_MARGIN, next.x)),
       y: scaledH <= height ? (height - scaledH) / 2 : Math.min(PAN_MARGIN, Math.max(height - scaledH - PAN_MARGIN, next.y)),
     };
   }

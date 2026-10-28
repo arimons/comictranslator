@@ -1,7 +1,8 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 
 // 캔버스 위에 띄우는 패널. 머리줄을 끌어 옮기고, 접을 수 있고, 위치·접힘을 브라우저에 기억한다.
-// 처음에는 부모(position: relative) 오른쪽 위에 붙는다.
+// 처음에는 부모(position: relative) 오른쪽 위에 붙는다. 가로 위치는 오른쪽 끝에서의 거리로 기억해
+// 창 폭이 바뀌어도 오른쪽 빈 공간에 남는다.
 const MARGIN = 8;
 
 function readSaved(id) {
@@ -22,7 +23,7 @@ export default function FloatingPanel({ id, title, subtitle, top = 56, className
   const ref = useRef(null);
   const dragRef = useRef(null);
   const saved = useRef(readSaved(id));
-  const [pos, setPos] = useState(saved.current?.pos || null);
+  const [pos, setPos] = useState(null);
   const [collapsed, setCollapsed] = useState(Boolean(saved.current?.collapsed));
 
   function clamp(next) {
@@ -34,23 +35,26 @@ export default function FloatingPanel({ id, title, subtitle, top = 56, className
     return { x: Math.min(Math.max(MARGIN, next.x), maxX), y: Math.min(Math.max(MARGIN, next.y), maxY) };
   }
 
-  // 저장된 위치가 없으면 오른쪽 위에 붙인다. 창 크기가 바뀌면 화면 안으로 다시 넣는다.
-  useLayoutEffect(() => {
+  const fromRightRef = useRef(Number.isFinite(saved.current?.fromRight) ? saved.current.fromRight : 12);
+  const yRef = useRef(Number.isFinite(saved.current?.y) ? saved.current.y : top);
+
+  function placeFromRight() {
     const el = ref.current;
     if (!el?.offsetParent) return;
-    if (!pos) setPos(clamp({ x: el.offsetParent.clientWidth - el.offsetWidth - 12, y: top }));
-    else setPos(clamp(pos));
-  }, []);
+    setPos(clamp({ x: el.offsetParent.clientWidth - el.offsetWidth - fromRightRef.current, y: yRef.current }));
+  }
 
-  useEffect(() => {
-    const onResize = () => setPos((current) => (current ? clamp(current) : current));
+  // 창 크기가 바뀌면 오른쪽 거리를 지킨 채 화면 안으로 다시 넣는다.
+  useLayoutEffect(() => {
+    placeFromRight();
+    const onResize = () => placeFromRight();
     window.addEventListener("resize", onResize);
     return () => window.removeEventListener("resize", onResize);
   }, []);
 
   useEffect(() => {
-    if (pos) save(id, { pos, collapsed });
-  }, [id, pos, collapsed]);
+    save(id, { fromRight: fromRightRef.current, y: yRef.current, collapsed });
+  }, [id, collapsed]);
 
   function onPointerDown(event) {
     if (event.button !== 0 || event.target.closest("button")) return;
@@ -69,6 +73,12 @@ export default function FloatingPanel({ id, title, subtitle, top = 56, className
     if (!dragRef.current) return;
     dragRef.current = null;
     event.currentTarget.releasePointerCapture?.(event.pointerId);
+    const el = ref.current;
+    if (el?.offsetParent && pos) {
+      fromRightRef.current = el.offsetParent.clientWidth - el.offsetWidth - pos.x;
+      yRef.current = pos.y;
+      save(id, { fromRight: fromRightRef.current, y: yRef.current, collapsed });
+    }
   }
 
   return (

@@ -3554,3 +3554,6 @@ select.memo-key { width: 100%; padding: 2px; font-size: 12px; }
 .tool-hint strong { font-weight: 700; }
 .tool-hint kbd { font-family: inherit; font-size: 10px; padding: 0 5px; border: 1px solid rgba(255,255,255,.4); border-radius: 4px; margin-left: 2px; }
 .tool-hint em { font-style: normal; opacity: .65; }
+/* 영역 분석: 이미지는 도구 모음 옆으로 붙이고, 선택 정보는 R/TG를 고를 때만 오른쪽 빈 공간에 띄운다 */
+.guidance-ai-dock { position: absolute; right: 12px; bottom: 16px; width: 300px; } /* z-index를 주면 AI 지우기 확인창(fixed)이 이 안에 갇힌다 */
+.guidance-ai-dock > .ai-erase-section { margin: 0; padding: 10px 12px; background: rgba(255, 255, 255, 0.97); border: 1px solid var(--line); border-radius: 10px; box-shadow: var(--shadow); }
