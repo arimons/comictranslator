@@ -7,6 +7,8 @@ import { placeCanvasLabels, promotedTgIds } from "./canvasLabels.js";
 import { regionIsExcluded, tgIsExcluded } from "./regionExclusion.js";
 import { TEXT_BASED, regionProcessingBasis, regionTypeLabel, regionBindingKey } from "./regionTypes.js";
 
+const SELECTED_REGION_COLOR = "#e11d48";
+
 const EditorCanvas = forwardRef(function EditorCanvas({ image, baseUrl, guidance, setGuidance, tool, layers, selectedTg, setSelectedTg, selectedRegionId, setSelectedRegionId, onToolComplete, setStatus, speakerLabels }, ref) {
   const hostRef = useRef(null);
   const stageRef = useRef(null);
@@ -593,8 +595,9 @@ const EditorCanvas = forwardRef(function EditorCanvas({ image, baseUrl, guidance
         if (!rect) return;
         const r = toStageRect(rect);
         const isTextBased = regionProcessingBasis(region) === TEXT_BASED;
-        const color = overlayRegionColor(region);
         const regionSelected = selectedRegionRef.current != null && regionId(region) === Number(selectedRegionRef.current);
+        // 선택한 R은 종류 색 대신 어느 종류에도 쓰지 않는 강조색으로 그려 같은 종류 옆에서도 바로 보이게 한다
+        const color = regionSelected ? SELECTED_REGION_COLOR : overlayRegionColor(region);
         const hasContour = Array.isArray(region.contour) && region.contour.length > 1;
         const tint = `${color}${regionSelected ? "2b" : "17"}`;
         overlay.add(new Konva.Rect({
