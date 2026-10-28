@@ -29,6 +29,7 @@ NEW_COMIC_TRANSLATOR/
 │       ├── main.jsx            # React 엔트리포인트
 │       ├── App.jsx              # 세션/이미지 목록/워크플로우 탭 전체 상태
 │       ├── StartScreen.jsx      # 홈: 파일·폴더 불러오기, 최근 프로젝트, 분석 방법
+│       ├── ServerFolderPicker.jsx # 홈: 서버 폴더(외장 /Volumes 포함) 둘러보기·선택 창
 │       ├── PagePreparation.jsx  # 가로 이미지 나누기: 미리보기 창(시작 화면)과 같은 프로젝트에 적용
 │       ├── ServerStatus.jsx     # 서버 연결·코드 버전 상태등 (재시작·새로고침 필요 표시, 작업 진행률과 별개)
 │       ├── ImagePreview.jsx     # 비교 이미지 확대·전체/너비 맞춤
@@ -156,6 +157,7 @@ guidance(수동 보정)가 있는 이미지는 `guidance_digest`(guidance 내용
 | `GET /api/session/{id}` | 세션 메타 + 페이지 **요약** 목록(URL, 상태 플래그, `detail_rev`)과 `hydration_pending`. 정상 상태에서는 파일을 쓰지 않는다 |
 | `GET /api/session/{id}/page/{image_id}` | 선택한 페이지 하나의 전체 레코드(`regions`, `integrated`, `text_groups`, guidance 등). 읽기 전용 |
 | `POST /api/import-path`, `/api/upload` | 이미지 폴더/파일을 세션에 추가 |
+| `GET /api/fs/list` | 서버 폴더 선택 창용: 하위 폴더 이름, 현재 폴더 이미지 수, 홈·외장 볼륨 바로가기 |
 | `POST /api/analyze(-stream)` | Step 1~3 실행 (pre_ocr까지), 캐시 우선 재사용 |
 | `POST /api/guidance`, `/api/guidance/clear` | 수동 보정(TG 삭제/split, edge barrier, manual region 등) 반영 후 Step 3 재실행 |
 | `POST /api/run-final(-stream)` | Step 4(OCR/번역) + Step 5(오버레이) 실행. body의 `ocr_model`로 모델 지정. `image_id`는 페이지 ID·`all`·`failed`·`batch`(`image_ids`로 지정한 페이지만, 이미 번역된 페이지는 건너뜀) |

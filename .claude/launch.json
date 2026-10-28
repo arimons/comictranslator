@@ -4,14 +4,31 @@
     {
       "name": "app",
       "runtimeExecutable": ".venv/Scripts/python.exe",
-      "runtimeArgs": ["app.py", "--no-browser"],
+      "runtimeArgs": [
+        "app.py",
+        "--no-browser"
+      ],
       "port": 7870
     },
     {
       "name": "app_mac",
       "runtimeExecutable": ".venv/bin/python",
-      "runtimeArgs": ["app.py", "--no-browser"],
+      "runtimeArgs": [
+        "app.py",
+        "--no-browser"
+      ],
       "port": 7870
+    },
+    {
+      "name": "app_mac_fresh",
+      "runtimeExecutable": ".venv/bin/python",
+      "runtimeArgs": [
+        "app.py",
+        "--no-browser",
+        "--port",
+        "7871"
+      ],
+      "port": 7871
     }
   ]
 }

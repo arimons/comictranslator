@@ -3567,3 +3567,18 @@ select.memo-key { width: 100%; padding: 2px; font-size: 12px; }
 .guidance-ai-dock > .ai-erase-section { margin: 0; padding: 10px 12px; background: rgba(255, 255, 255, 0.97); border: 1px solid var(--line); border-radius: 10px; box-shadow: var(--shadow); }
 .ocr-batch-actions { flex-wrap: wrap; }
 .ocr-batch-toast .ocr-batch-auto-off { justify-self: start; min-height: 26px; padding: 2px 10px; font-size: 12px; }
+
+/* 서버 폴더 선택 창 */
+.server-folder-dialog { display: flex; flex-direction: column; gap: 10px; }
+.server-folder-dialog h2 { margin: 0; font-size: 18px; }
+.server-folder-roots { display: flex; flex-wrap: wrap; gap: 6px; }
+.server-folder-roots button.active { border-color: var(--accent, #0b57d0); color: var(--accent, #0b57d0); }
+.server-folder-path { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.server-folder-path code { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
+.server-folder-list { display: flex; flex-direction: column; height: min(46vh, 420px); overflow: auto; border: 1px solid var(--line); border-radius: 8px; padding: 4px; }
+.server-folder-list[aria-busy="true"] { opacity: .6; }
+.server-folder-row { text-align: left; border: 0; background: transparent; padding: 7px 8px; border-radius: 6px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.server-folder-row:hover { background: var(--hover, #eef2f7); }
+.server-folder-error { margin: 0; color: #b42318; font-size: 12px; }
+.server-folder-actions { display: flex; align-items: center; gap: 8px; }
+.server-folder-actions .home-hint { flex: 1; margin: 0; }

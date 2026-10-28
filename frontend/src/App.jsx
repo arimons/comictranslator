@@ -1485,10 +1485,12 @@ export default function App() {
     }
   }
 
-  async function importPath() {
+  // 폴더 선택 창에서 고른 경로는 state 반영 전에 바로 넘겨받는다. 버튼 클릭 이벤트는 경로로 쓰지 않는다.
+  async function importPath(pathOverride) {
     const requestSid = sessionId;
+    const path = typeof pathOverride === "string" ? pathOverride : folderPath;
     await runTask("input", "폴더 import", async () => {
-      const result = await api("/api/import-path", { method: "POST", body: JSON.stringify({ session_id: requestSid, path: folderPath, recursive: true }) });
+      const result = await api("/api/import-path", { method: "POST", body: JSON.stringify({ session_id: requestSid, path, recursive: true }) });
       await adoptCreatedSession(requestSid, result.session_id);
       const imgs = await refresh(result.session_id);
       if (result.imported > 0) {

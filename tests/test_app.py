@@ -150,6 +150,23 @@ def test_import_path_defaults_project_name_to_input_name(tmp_path, monkeypatch, 
     assert saved["project_name"] == ("작품 폴더" if is_folder else "page1")
 
 
+def test_server_folder_listing_returns_subfolders_and_image_count(tmp_path):
+    (tmp_path / "vol10").mkdir()
+    (tmp_path / "vol2").mkdir()
+    (tmp_path / ".hidden").mkdir()
+    (tmp_path / "p1.jpg").write_bytes(b"x")
+    (tmp_path / "note.txt").write_text("x")
+    response = TestClient(app.create_app()).get("/api/fs/list", params={"path": str(tmp_path)})
+    assert response.status_code == 200
+    data = response.json()
+    assert [item["name"] for item in data["dirs"]] == ["vol2", "vol10"]
+    assert data["image_count"] == 1
+    assert data["parent"] == str(tmp_path.resolve().parent)
+    assert data["roots"][0]["name"] == "홈"
+    missing = TestClient(app.create_app()).get("/api/fs/list", params={"path": str(tmp_path / "없음")})
+    assert missing.status_code == 404
+
+
 def test_update_session_meta_persists_project_name(tmp_path, monkeypatch):
     session_id = "project_named"
     monkeypatch.setattr(app, "SESSION_ROOT", tmp_path / "sessions")

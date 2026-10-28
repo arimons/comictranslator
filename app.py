@@ -1717,6 +1717,44 @@ def scan_images(path: Path, recursive: bool) -> list[Path]:
     )
 
 
+def server_folder_listing(path: str = "") -> dict[str, Any]:
+    """서버(이 앱이 도는 컴퓨터)의 폴더를 고르는 창용 목록. 하위 폴더 이름과 이 폴더의 이미지 수만 돌려준다."""
+    home = Path.home()
+    current = Path(path).expanduser() if path.strip() else home
+    try:
+        current = current.resolve()
+    except OSError:
+        current = home
+    if not current.is_dir():
+        raise HTTPException(status_code=404, detail="폴더를 찾을 수 없습니다")
+    dirs: list[dict[str, str]] = []
+    images = 0
+    try:
+        for entry in os.scandir(current):
+            if entry.name.startswith("."):
+                continue
+            try:
+                if entry.is_dir():
+                    dirs.append({"name": entry.name, "path": str(Path(entry.path))})
+                elif entry.is_file() and Path(entry.name).suffix.lower() in IMAGE_EXTS:
+                    images += 1
+            except OSError:
+                continue
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail="이 폴더를 읽을 권한이 없습니다") from exc
+    dirs.sort(key=lambda item: natural_name_key(item["name"]))
+    # 외장 디스크는 macOS에서 /Volumes 아래에 붙는다
+    roots = [{"name": "홈", "path": str(home)}]
+    volumes = Path("/Volumes")
+    if volumes.is_dir():
+        for entry in sorted(volumes.iterdir(), key=lambda item: item.name):
+            # 시동 디스크 바로가기(심볼릭 링크)와 복구 볼륨은 사진 폴더가 아니므로 뺀다
+            if not entry.name.startswith(".") and entry.name != "Recovery" and not entry.is_symlink() and entry.is_dir():
+                roots.append({"name": entry.name, "path": str(entry)})
+    parent = str(current.parent) if current.parent != current else ""
+    return {"path": str(current), "parent": parent, "dirs": dirs, "image_count": images, "roots": roots}
+
+
 def session_images(session_id: str, include_detail: bool = True) -> list[dict[str, Any]]:
     """세션 페이지 목록을 만든다. include_detail=False면 목록용 요약만 돌려준다.
 
@@ -3303,6 +3341,10 @@ def create_app() -> FastAPI:
             return {"matched":result["matched"],"unmatched":result["unmatched"],"status":input_sources(req["session_id"])}
         except (OSError,ValueError,KeyError) as exc:
             raise HTTPException(status_code=400,detail=str(exc)) from exc
+
+    @app.get("/api/fs/list")
+    def list_server_folder(path: str = "") -> dict[str, Any]:
+        return server_folder_listing(path)
 
     @app.post("/api/import-path")
     def import_path(req: ImportPathRequest) -> dict[str, Any]:

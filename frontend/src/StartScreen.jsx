@@ -1,5 +1,6 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import ServerStatus from "./ServerStatus.jsx";
+import ServerFolderPicker from "./ServerFolderPicker.jsx";
 
 function FolderIcon() {
   return <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h5l2 2h7a2 2 0 0 1 2 2v10H3Z" /><path d="M3 10h18" /></svg>;
@@ -23,6 +24,7 @@ export default function StartScreen({
   renameRecentSession, deleteRecentSession, status, setStatus,
 }) {
   const folderRef = useRef(null);
+  const [serverPickerOpen, setServerPickerOpen] = useState(false);
   const nameRef = useRef(null);
   const handledFocusRequest = useRef(importNameFocusRequest);
   const busy = inputBusy || analyzeBusy;
@@ -65,14 +67,17 @@ export default function StartScreen({
                 </div>
                 <input ref={fileRef} type="file" multiple accept="image/*" hidden onChange={(event) => uploadFromInput(event.currentTarget)} />
                 <input ref={folderRef} type="file" multiple webkitdirectory="" directory="" accept="image/*" hidden onChange={(event) => uploadFromInput(event.currentTarget)} />
-                <p className="home-hint">파일·폴더 선택은 프로젝트에 업로드합니다. 복사 없이 사용하려면 아래 원본 폴더 경로를 지정하세요.</p>
+                <p className="home-hint">파일·폴더 선택은 지금 쓰는 기기의 파일을 서버로 업로드합니다. 서버(외장 디스크 포함)에 있는 폴더는 아래 ‘찾아보기’로 복사 없이 불러옵니다.</p>
                 <details className="home-path" open>
-                  <summary>원본 폴더 경로로 불러오기 · 복사 없이 참조</summary>
+                  <summary>서버 폴더에서 불러오기 · 복사 없이 참조</summary>
                   <div className="import-folder">
-                    <input aria-label="로컬 폴더 경로" value={folderPath} onChange={(event) => setFolderPath(event.target.value)} placeholder="예: /Users/이름/만화/작품명" disabled={busy} onKeyDown={(event) => { if (event.key === "Enter" && folderPath.trim() && !busy) importPath(); }} />
+                    <input aria-label="서버 폴더 경로" value={folderPath} onChange={(event) => setFolderPath(event.target.value)} placeholder="예: /Users/이름/만화/작품명" disabled={busy} onKeyDown={(event) => { if (event.key === "Enter" && folderPath.trim() && !busy) importPath(); }} />
+                    <button onClick={() => setServerPickerOpen(true)} disabled={busy} title="앱이 실행 중인 컴퓨터(서버)의 폴더를 둘러봅니다">찾아보기</button>
                     <button onClick={importPath} disabled={busy || !folderPath.trim()}>불러오기</button>
                   </div>
                 </details>
+                {serverPickerOpen && <ServerFolderPicker initialPath={folderPath.trim()} onClose={() => setServerPickerOpen(false)}
+                  onPick={(path) => { setServerPickerOpen(false); setFolderPath(path); importPath(path); }} />}
                 {images.length > 0 && <div className="import-selection">
                   <div className="selection-summary"><strong>작업할 이미지 {images.length}장</strong><span>분석결과 있음 {analyzed}장</span></div>
                   <details className="selected-files">
