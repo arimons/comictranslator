@@ -4,7 +4,7 @@ README에서 분리한 개인 운영 환경 기록이다. 맥 미니 상시 서�
 
 ## 상시 서버
 
-상시 서버는 PM2의 `comictranslator`로 관리하고, Tailscale Serve HTTPS를 통해 접속한다. 설정은 `deploy/pm2/ecosystem.config.cjs`, 절차는 [PM2 운영 가이드](../deploy/pm2/README.md)를 따른다.
+상시 서버는 PM2의 `comictranslator`로 관리하고, Tailscale Serve HTTPS를 통해 접속한다. 2026-10-29부터 앱은 `0.0.0.0:7873`에서 수신해 집 공유기 안에서는 맥 미니 LAN 주소의 7873 포트로도 바로 접속한다(인증 없음, 포트포워딩·Funnel은 쓰지 않음). 설정은 `deploy/pm2/ecosystem.config.cjs`, 절차는 [PM2 운영 가이드](../deploy/pm2/README.md)를 따른다.
 
 ## 코드 동기화
 
