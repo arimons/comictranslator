@@ -727,6 +727,9 @@ const EditorCanvas = forwardRef(function EditorCanvas({ image, baseUrl, guidance
   }
 
   function addTextRegionResizer(overlay, visibleRegions, currentGuidance) {
+    // 상자 위에서 도구를 바꾸면 상자만 사라지고 mouseleave가 오지 않아 이동 커서가 남으므로 다시 그릴 때마다 지운다
+    const container = stageRef.current?.container();
+    if (container?.style.cursor === "move") container.style.cursor = "";
     if (toolRef.current !== "select" || selectedRegionRef.current == null || imageRef.current?.processing_excluded) return;
     const region = visibleRegions.find((item) => regionId(item) === Number(selectedRegionRef.current));
     if (!region || regionProcessingBasis(region) !== TEXT_BASED) return;

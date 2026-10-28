@@ -72,6 +72,7 @@ const TOOL_HINTS = {
 const RESUME_KEY = "comic-translator-resume-after-restart";
 // 새로고침해도 열려 있던 프로젝트로 돌아가도록 탭 단위(sessionStorage)로 기억한다.
 const OPEN_WORKSPACE_KEY = "comic-translator-open-workspace";
+const PREFETCH_AHEAD = 2;
 
 // 브라우저 저장소는 막혀 있을 수 있어 모든 읽기·쓰기를 감싼다. 값이 없거나 올바르지 않으면 기본값을 쓴다.
 function readStored(key, fallback, valid = () => true) {
@@ -210,6 +211,10 @@ export default function App() {
   const selectedRegionIdRef = useRef(null);
   const projectNameDirtyRef = useRef(false);
   const autoAnalysisRequestedRef = useRef(new Set());
+  // 다음 페이지 미리 분석: 한 번에 한 장만, 화면을 잠그지 않고 돈다
+  const prefetchPromiseRef = useRef(null);
+  const prefetchFailedRef = useRef(new Set());
+  const [prefetchingId, setPrefetchingId] = useState("");
   const pageDetailRequestRef = useRef(0);
   const hydrationPendingRef = useRef(false);
 
@@ -1148,11 +1153,57 @@ export default function App() {
       return;
     }
     const requestKey = `${selected.id}:${selected.image_sha256 || ""}`;
+    if (prefetchingId === selected.id) {
+      setStatus(`${selected.name} 미리 분석 중입니다. 끝나면 바로 표시됩니다.`);
+      return;
+    }
     if (autoAnalysisRequestedRef.current.has(requestKey)) return;
     autoAnalysisRequestedRef.current.add(requestKey);
     setStatus(`${selected.name} 분석 산출물이 없어 현재 파일 분석을 시작합니다.`);
     analyze(selected.id);
-  }, [workspaceStarted, generationReviewMode, activeTab, selected?.id, selected?.image_sha256, selected?.regions, selected?.has_analysis, selected?.image_generation_recommendation?.priority, selected?.analysis_route, inputBusy, analyzeBusy, guidanceBusy]);
+  }, [workspaceStarted, generationReviewMode, activeTab, selected?.id, selected?.image_sha256, selected?.regions, selected?.has_analysis, selected?.image_generation_recommendation?.priority, selected?.analysis_route, inputBusy, analyzeBusy, guidanceBusy, prefetchingId]);
+
+  // 보고 있는 페이지 분석이 끝나고 다른 작업이 없을 때, 뒤 페이지를 PREFETCH_AHEAD장까지 한 장씩 미리 분석한다.
+  // 프로젝트 전체를 한꺼번에 돌리지 않고 곧 볼 페이지만 준비한다.
+  useEffect(() => {
+    if (!workspaceStarted || generationReviewMode || !sessionId || !selected || prefetchPromiseRef.current) return;
+    if (anyBusy || ocrBusy || imageNeedsAnalysis(selected)) return;
+    const start = images.findIndex((img) => img.id === selected.id);
+    if (start < 0) return;
+    const target = images.slice(start + 1, start + 1 + PREFETCH_AHEAD).find((img) => {
+      const key = `${img.id}:${img.image_sha256 || ""}`;
+      return imageNeedsAnalysis(img)
+        && !(img.analysis_route !== "standard" && img.image_generation_recommendation?.priority === "recommended")
+        && !autoAnalysisRequestedRef.current.has(key)
+        && !prefetchFailedRef.current.has(key);
+    });
+    if (target) prefetchAnalysis(target);
+  }, [workspaceStarted, generationReviewMode, sessionId, selected?.id, selected?.regions, selected?.has_analysis, images, anyBusy, ocrBusy, prefetchingId]);
+
+  function prefetchAnalysis(target) {
+    const sid = sessionId;
+    const key = `${target.id}:${target.image_sha256 || ""}`;
+    // 같은 페이지를 열어도 자동 분석이 겹쳐 돌지 않게 요청 기록을 먼저 남긴다
+    autoAnalysisRequestedRef.current.add(key);
+    setPrefetchingId(target.id);
+    const run = apiStream(
+      "/api/analyze-stream",
+      { method: "POST", body: JSON.stringify({ session_id: sid, image_id: target.id, force: false, max_workers: 1 }) },
+      (event) => {
+        if (sessionIdRef.current !== sid) return;
+        if (event.type === "image_status" && event.image) applyImageRecord(event.image);
+        if (event.type === "error") throw new Error(event.message);
+      },
+    ).catch(() => {
+      // 실패한 페이지는 미리 분석에서 빼고, 사용자가 열면 평소처럼 그 자리에서 분석한다
+      autoAnalysisRequestedRef.current.delete(key);
+      prefetchFailedRef.current.add(key);
+    }).finally(() => {
+      prefetchPromiseRef.current = null;
+      setPrefetchingId("");
+    });
+    prefetchPromiseRef.current = run;
+  }
 
   useEffect(() => {
     if (autoOverlayTimerRef.current) {
@@ -1626,6 +1677,8 @@ export default function App() {
   async function analyze(target = "all", options = {}) {
     const requestSid = sessionId;
     await runTask("analyze", "OCR 직전 분석", async () => {
+      // 미리 분석 중인 페이지와 겹쳐 처리하지 않도록 끝날 때까지 기다린다
+      if (prefetchPromiseRef.current) await prefetchPromiseRef.current;
       const logLines = [];
       let completedImages = null;
       const initialStatuses = {};
@@ -3453,7 +3506,7 @@ export default function App() {
               ? `System Status: ${anyBusy ? "Active" : "Idle"} | Final: ${finalImages.length}/${images.length} | Session: ${sessionId || "-"}`
             : activeTab === "restore"
               ? `System Status: ${restore.hasActiveJob ? "Restoring" : "Idle"} | File: ${selected?.name || "-"} | Mask: ${restore.maskPixels}px | Status: ${status || "-"}`
-            : `System Status: ${guidanceBusy || analyzeBusy ? "Active" : "Idle"} | Tool: ${TOOL_LABELS.find(([id]) => id === tool)?.[1] || tool} | File: ${selected?.name || "-"}`}
+            : `System Status: ${guidanceBusy || analyzeBusy ? "Active" : "Idle"} | Tool: ${TOOL_LABELS.find(([id]) => id === tool)?.[1] || tool} | File: ${selected?.name || "-"}${prefetchingId ? ` | 미리 분석: ${images.find((img) => img.id === prefetchingId)?.name || prefetchingId}` : ""}`}
       </footer>
       {shortcutToast ? <div className="shortcut-toast" role="status" aria-live="polite">{shortcutToast}</div> : null}
       <SpeakerPicker
