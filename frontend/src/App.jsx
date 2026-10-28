@@ -139,6 +139,9 @@ export default function App() {
   const [reviewedIds, setReviewedIds] = useState(() => new Set());
   const [ocrBatchSize, setOcrBatchSize] = useState(() => readStored("ct.ocrBatchSize", 10, (v) => v === 0 || OCR_BATCH_SIZES.includes(v)));
   const [ocrPromptAnchor, setOcrPromptAnchor] = useState(0);
+  // 프로젝트별 '앞으로 묻지 않고 번역' 표시. LLM 비용이 드는 일이라 다른 프로젝트로 번지지 않게 세션 단위로 둔다.
+  const [ocrAutoStart, setOcrAutoStart] = useState(false);
+  const ocrAutoStartingRef = useRef(false);
   const [bgOcr, setBgOcr] = useState({ running: false, total: 0, done: 0, failed: 0, ids: [] });
   const prevPageRef = useRef({ id: null, ready: false });
   const [autoOverlayPreview, setAutoOverlayPreview] = useState(true);
@@ -339,6 +342,7 @@ export default function App() {
   // 세션별로 브라우저에 기억해 새로고침해도 이어진다. 저장소를 못 쓰면 이번 화면에서만 센다.
   useEffect(() => {
     setReviewedIds(new Set(readStored(`ct.reviewed.${sessionId || ""}`, [], Array.isArray)));
+    setOcrAutoStart(Boolean(sessionId) && readStored(`ct.ocrAutoStart.${sessionId}`, false, (v) => typeof v === "boolean"));
   }, [sessionId]);
   useEffect(() => {
     const prev = prevPageRef.current;
@@ -359,6 +363,11 @@ export default function App() {
   const ocrBatchCandidates = ocrReadyImages.filter((img) => reviewedIds.has(img.id));
   const showOcrPrompt = ocrBatchSize > 0 && !bgOcr.running && !ocrBusy
     && ocrBatchCandidates.length - Math.min(ocrPromptAnchor, ocrBatchCandidates.length) >= ocrBatchSize;
+  useEffect(() => {
+    if (!ocrAutoStart || !showOcrPrompt || ocrAutoStartingRef.current) return;
+    ocrAutoStartingRef.current = true;
+    startBackgroundOcr().finally(() => { ocrAutoStartingRef.current = false; });
+  }, [ocrAutoStart, showOcrPrompt]);
   const ocrInProgressImages = images.filter((img) => {
     const state = ocrStateForImage(img);
     return state === "running" || state === "queued";
@@ -1840,6 +1849,11 @@ export default function App() {
   function dismissOcrPrompt() {
     // 다음 알림은 확인한 페이지가 지금보다 기준 수만큼 더 쌓이면 띄운다
     setOcrPromptAnchor(ocrBatchCandidates.length);
+  }
+
+  function setProjectOcrAutoStart(value) {
+    setOcrAutoStart(value);
+    if (sessionId) writeStored(`ct.ocrAutoStart.${sessionId}`, value);
   }
 
   function changeOcrBatchSize(value) {
@@ -3397,12 +3411,15 @@ export default function App() {
         onPick={(row) => { setSpeakerPickerOpen(false); assignSpeaker(row); }}
       />
       <OcrBatchPrompt
-        show={showOcrPrompt}
+        show={showOcrPrompt && !ocrAutoStart}
         pending={ocrBatchCandidates.length}
         size={ocrBatchSize}
         onSize={changeOcrBatchSize}
         onStart={startBackgroundOcr}
         onLater={dismissOcrPrompt}
+        autoStart={ocrAutoStart}
+        onAutoStart={() => { setProjectOcrAutoStart(true); startBackgroundOcr(); }}
+        onAutoOff={() => { setProjectOcrAutoStart(false); setStatus("자동 번역을 껐습니다. 다음 묶음부터 다시 묻습니다."); }}
         running={bgOcr.running}
         progress={bgOcr}
         selectedLocked={selectedInBackgroundOcr}
