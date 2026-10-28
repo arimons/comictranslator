@@ -10,7 +10,7 @@ module.exports = {
     cwd: repo,
     script: path.join(repo, '.venv/bin/python'),
     interpreter: 'none',
-    args: [path.join(repo, 'app.py'), '--no-browser', '--host', '127.0.0.1', '--port', '7873'],
+    args: [path.join(repo, 'app.py'), '--no-browser', '--host', '0.0.0.0', '--port', '7873'],
     instances: 1,
     watch: false,
     autorestart: true,

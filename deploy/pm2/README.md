@@ -30,7 +30,7 @@ launchctl print gui/$(id -u)/com.PM2
 
 ## Tailscale HTTPS
 
-앱은 `127.0.0.1:7873`에서만 수신한다. Tailscale Serve의 기존 HTTPS 443 서비스는 유지하고 8443을 이 앱에 연결한다. Funnel은 사용하지 않는다.
+앱은 `0.0.0.0:7873`에서 수신한다. LAN에서는 `http://192.168.50.2:7873/`로 직접 접속한다. 모든 IPv4 인터페이스에서 수신하므로 공유기 포트포워딩이나 별도 외부 공개를 추가하지 않는다. Tailscale Serve의 기존 HTTPS 443 서비스는 유지하고, HTTPS 8443은 기존대로 `http://127.0.0.1:7873`에 연결한다. Funnel은 사용하지 않는다.
 
 ```sh
 tailscale serve --bg --https=8443 http://127.0.0.1:7873
