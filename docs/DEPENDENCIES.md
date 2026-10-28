@@ -63,3 +63,5 @@ projects 아래 폴더 ID는 기존 timestamp ID를 유지한다. project.json�
 <!-- 2026-10-28 app.py(분할 조각의 원본 CV 재사용)·dialogue_extractor.py(TG 없는 영역 분할선) 변경 검토: 이 문서 내용 영향 없음 -->
 
 <!-- 2026-10-28 dialogue_extractor.py(Telea 고정 추가) 변경 검토: 의존성 영향 없음 -->
+
+<!-- 변경 검토(2026-10-29): dialogue_extractor 읽기 순서를 pipeline/reading_order.py로 분리(새 외부 의존성 없음, numpy만 사용), 이 문서 내용 영향 없음 -->

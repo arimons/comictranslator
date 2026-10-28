@@ -64,6 +64,7 @@ NEW_COMIC_TRANSLATOR/
     ├── cloud_vision_api.py     # Step 1
     ├── text_group_builder_v2.py  # Step 2
     ├── dialogue_extractor.py   # Step 3 진입점 (경계 기반 검출 + 텍스트 기반 지우기 + OCR sheet)
+    ├── reading_order.py        # R 번호 읽기 순서: 칸 여백 XY-cut → (비스듬한 여백이면 띠 분리) → 칸 안은 오른쪽→왼쪽
     ├── bubble_detector.py      # 말풍선 FloodFill 검출 코어 (구 floodfill_anchor_probe.py)
     ├── flood_split.py          # shared flood region split 후보 평가
     ├── edge_barrier_flood_rescue.py  # 열린 말풍선 edge barrier 구제
@@ -307,7 +308,7 @@ Text Group이 FloodFill의 **Anchor Text Group** seed 후보로 사용된다.
 
 Step 3 진입점이다. `pipeline_runner`가 `python -m pipeline.dialogue_extractor <image> <text_groups> <masked> <regions> <indexed_sheet> --output-vis-path <bubble_vis>`로 호출하고, `app.py`는 guidance 재적용 때 `build_dialogue_sheet()`를 직접 import한다.
 
-- `build_dialogue_sheet()`: ① `bubble_detector.build_ocr_region_sheet()`로 경계 기반 검출·마스킹 → ② 텍스트 기반 영역의 글자를 LaMa(`simple_lama_inpainting`)로 지움 → ③ 두 종류 crop을 읽기 순서로 모아 indexed OCR sheet + `regions.json` 저장
+- `build_dialogue_sheet()`: ① `bubble_detector.build_ocr_region_sheet()`로 경계 기반 검출·마스킹 → ② 텍스트 기반 영역의 글자를 LaMa(`simple_lama_inpainting`)로 지움 → ③ 두 종류 crop을 읽기 순서(`reading_order.reading_sequence`, 칸 여백 기반)로 모아 indexed OCR sheet + `regions.json` 저장
 - 편집기 guidance(`manual_regions`, `manual_seed_points`, `virtual_walls`, `split_guides`, suppressed region)를 인자로 받아 반영한다.
 - region별 `safe_text_rect`(`_compute_safe_text_rect`)와 `mask_centroid`(`_compute_mask_centroid`)를 계산해 `regions.json`에 기록한다. Step 5 배치의 기준값이다.
 - LaMa 실행 장치(`_lama_device`): `LAMA_DEVICE`(cpu|mps|cuda)가 없으면 cuda → mps → cpu 순으로 고른다. M3 Pro에서 MPS는 첫 호출(GPU 준비)이 CPU보다 조금 느리고 이후 호출은 약 3배 빠르며, 결과 차이는 최대 수 단계(0〜255)다. MPS 초기화가 실패하면 CPU로 돈다. 상주 서버에서는 `background_restore`도 이 모델 하나를 같이 쓴다.

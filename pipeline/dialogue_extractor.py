@@ -7,6 +7,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import cv2
 import json
 from pipeline.project_paths import storage_json
+from pipeline.reading_order import reading_sequence
 from pipeline.paths import configure_model_cache
 import os
 import sys
@@ -3201,47 +3202,18 @@ def build_dialogue_sheet(
     crops = _apply_manual_unboxed_overrides(image, crops, img_w, img_h)
     crops = _dedupe_dialogue_crops(crops)
 
-    # 패널 경계 y-값 감지: cy 분포에서 평균 gap의 gap_factor 배 이상인 지점을 경계로 판단
-    def _detect_panel_y_cuts(items: list, gap_factor: float = 2.5) -> list:
-        if len(items) < 2:
-            return []
-        cy_vals = sorted(
-            (r.get("sort_rect") or r["source_rect"])[1]
-            + (r.get("sort_rect") or r["source_rect"])[3] / 2
-            for r in items
-        )
-        gaps = [
-            (cy_vals[i + 1] - cy_vals[i], (cy_vals[i] + cy_vals[i + 1]) / 2)
-            for i in range(len(cy_vals) - 1)
-        ]
-        if not gaps:
-            return []
-        avg_gap = sum(g for g, _ in gaps) / len(gaps)
-        threshold = max(avg_gap * gap_factor, 150.0)
-        return [mid for gap, mid in gaps if gap > threshold]
-
-    _panel_y_cuts = _detect_panel_y_cuts(crops)
-    # 가로로 긴(2p 스프레드) 이미지는 물리적으로 자르지 않는 대신, 오른쪽 절반(1p)
-    # numbering을 모두 끝내고 왼쪽 절반(2p)으로 넘어가도록 읽기 순서만 페이지 단위로 나눈다.
-    _is_wide_spread = img_h > 0 and (img_w / img_h) >= 1.25
-    _page_mid_x = img_w / 2
-
-    def _reading_order_key(item: Dict[str, Any]) -> Tuple[float, float, float, float]:
-        rect = item.get("sort_rect") or item["source_rect"]
-        cx = rect[0] + rect[2] / 2
-        cy = rect[1] + rect[3] / 2
-        # 페이지: 오른쪽 절반(1p, 0) → 왼쪽 절반(2p, 1). 스프레드가 아니면 항상 0.
-        page = 1.0 if (_is_wide_spread and cx < _page_mid_x) else 0.0
-        # 패널 밴드: 위→아래 (0, 1, 2...)
-        band = float(sum(1 for cut in _panel_y_cuts if cy > cut))
+    # 읽기 순서: 칸 사이 흰 여백으로 칸을 나눠 위→아래, 오른쪽→왼쪽 칸 순서로 보고,
+    # 칸 안에서는 세로로 겹치는 말풍선을 한 줄로 묶어 줄은 위→아래, 줄 안은 오른쪽→왼쪽으로 번호를 붙인다.
+    # 가로로 긴(2p 스프레드) 이미지는 오른쪽 절반(1p)을 모두 끝내고 왼쪽 절반(2p)으로 넘어간다.
+    def _order_entry(item: Dict[str, Any]) -> Dict[str, Any]:
         source_order = item.get("source_order")
         split_order = float(item.get("split_order") or 0)
-        # 패널 내 읽기 순서: 오른쪽 → 왼쪽 (cx 내림차순)
         # source_order가 있는 분할 서브리전은 미세 offset으로 같은 부모끼리 인접 보장
         sub = (float(source_order) * 1e-4 + split_order * 1e-5) if source_order is not None else (split_order * 1e-5)
-        return (page, band, 10000.0 - cx, sub)
+        return {"rect": item.get("sort_rect") or item["source_rect"], "sub": sub, "item": item}
 
-    crops.sort(key=_reading_order_key)
+    _is_wide_spread = img_h > 0 and (img_w / img_h) >= 1.25
+    crops = [entry["item"] for entry in reading_sequence([_order_entry(item) for item in crops], gray, _is_wide_spread)]
     for i, item in enumerate(crops):
         item["region_id"] = i + 1
 
