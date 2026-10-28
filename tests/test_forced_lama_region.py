@@ -109,3 +109,31 @@ def test_text_based_region_can_be_forced_to_telea(tmp_path, monkeypatch):
     region = [r for r in regions if r.get("type") == "unboxed"][0]
     assert calls["lama"] == 0
     assert region["inpaint_engine_used"] == "telea" and region["inpaint_engine_source"] == "forced"
+
+
+def test_resized_text_region_disables_unboxed_inpaint_reuse():
+    import app
+
+    base = {"manual_regions": [{"type": "unboxed", "unboxed_rect": [1, 2, 3, 4]}]}
+    added = {"manual_regions": base["manual_regions"] + [{"type": "unboxed", "unboxed_rect": [5, 5, 9, 9]}]}
+    resized = {"manual_regions": base["manual_regions"] + [{"type": "unboxed", "unboxed_rect": [5, 5, 9, 9], "resize_source_key": "k"}]}
+    assert app.guidance_allows_unboxed_mask_reuse(base, added)
+    assert not app.guidance_allows_unboxed_mask_reuse(base, resized)
+
+
+def test_resized_text_region_replaces_auto_region(tmp_path, monkeypatch):
+    paths = _page_with_vertical_text(tmp_path)
+    _, regions = _run(paths, monkeypatch)
+    auto = [r for r in regions if r.get("type") == "unboxed"][0]
+    # 화면에서 크기를 바꾸면 같은 TG를 덮는 수동 텍스트 영역 가이드가 생긴다
+    manual = {"type": "unboxed", "unboxed_rect": [120, 100, 60, 140], "source_method": "manual_ubox_guide", "resize_source_key": region_binding_key(auto)}
+    monkeypatch.setattr("pipeline.dialogue_extractor.build_ocr_region_sheet", lambda *a, **k: {"regions": []})
+    monkeypatch.setattr("pipeline.dialogue_extractor._get_lama", lambda: (lambda roi, mask: roi))
+    build_dialogue_sheet(
+        paths["page.jpg"], paths["groups.json"], paths["masked.jpg"], paths["regions.json"], paths["sheet.jpg"], paths["vis.jpg"],
+        manual_regions=[manual],
+    )
+    regions = json.loads((tmp_path / "regions.json").read_text(encoding="utf-8"))["regions"]
+    text_regions = [r for r in regions if r.get("type") == "unboxed"]
+    assert len(text_regions) == 1, text_regions
+    assert text_regions[0]["unboxed_rect"] == [120, 100, 60, 140]

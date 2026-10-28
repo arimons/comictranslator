@@ -618,7 +618,10 @@ const EditorCanvas = forwardRef(function EditorCanvas({ image, baseUrl, guidance
         }
         if (hasContour) {
           const points = region.contour.flatMap((pt) => toStagePoint(pt));
-          overlay.add(new Konva.Line({ points, closed: true, stroke: color, strokeWidth: regionSelected ? 2 : 1.2, fill: tint, opacity: regionSelected ? 1 : .75 }));
+          // 분할 결과가 바로 보이도록 굵게 긋고, 어두운 그림 위에서도 보이게 흰 테두리를 깐다
+          const width = regionSelected ? 3.5 : 2.5;
+          overlay.add(new Konva.Line({ points, closed: true, stroke: "#ffffff", strokeWidth: width + 2.5, opacity: .7, lineJoin: "round", listening: false }));
+          overlay.add(new Konva.Line({ points, closed: true, stroke: color, strokeWidth: width, fill: tint, opacity: regionSelected ? 1 : .9, lineJoin: "round" }));
         }
       });
     }
@@ -703,7 +706,64 @@ const EditorCanvas = forwardRef(function EditorCanvas({ image, baseUrl, guidance
       });
       overlay.add(node);
     });
+    addTextRegionResizer(overlay, visibleRegions, currentGuidance);
     stage.draw();
+  }
+
+  // 선택한 텍스트 기반 영역(R)에 크기 조절 손잡이를 단다. 크기를 바꾸면 같은 자리의 수동 텍스트 영역 가이드로
+  // 저장하고(이미 있으면 그 가이드를 고친다), 변경사항 적용 때 수동 영역이 같은 TG의 자동 영역을 대신한다.
+  function manualResizeIndex(currentGuidance, region, key) {
+    const rect = region.unboxed_rect || region.erase_rect || [];
+    return (currentGuidance.manual_regions || []).findIndex((item) => {
+      if (regionProcessingBasis(item) !== TEXT_BASED) return false;
+      if (item.resize_source_key && item.resize_source_key === key) return true;
+      const itemRect = item.unboxed_rect || item.rect || [];
+      return region.source_method === "manual_ubox_guide" && itemRect.length >= 4
+        && itemRect.slice(0, 4).every((value, index) => Math.abs(value - (rect[index] ?? NaN)) <= 1);
+    });
+  }
+
+  function addTextRegionResizer(overlay, visibleRegions, currentGuidance) {
+    if (toolRef.current !== "select" || selectedRegionRef.current == null || imageRef.current?.processing_excluded) return;
+    const region = visibleRegions.find((item) => regionId(item) === Number(selectedRegionRef.current));
+    if (!region || regionProcessingBasis(region) !== TEXT_BASED) return;
+    const key = regionBindingKey(region);
+    const index = manualResizeIndex(currentGuidance, region, key);
+    const manual = index >= 0 ? currentGuidance.manual_regions[index] : null;
+    const rect = manual ? manual.unboxed_rect || manual.rect : region.unboxed_rect || region.erase_rect;
+    if (!rect) return;
+    const box = new Konva.Rect({ ...toStageRect(rect), stroke: "#b45309", strokeWidth: 1, draggable: true, name: "text-region-resize" });
+    const transformer = new Konva.Transformer({
+      nodes: [box], rotateEnabled: false, keepRatio: false, ignoreStroke: true, flipEnabled: false,
+      anchorSize: 9, anchorStroke: "#b45309", borderStroke: "#b45309", borderDash: [4, 3],
+      boundBoxFunc: (oldBox, nextBox) => (nextBox.width < 8 || nextBox.height < 8 ? oldBox : nextBox),
+    });
+    box.on("mouseenter", () => { stageRef.current.container().style.cursor = "move"; });
+    box.on("mouseleave", () => { stageRef.current.container().style.cursor = ""; });
+    box.on("dragend transformend", () => commitTextRegionResize(region, key, box));
+    overlay.add(box);
+    overlay.add(transformer);
+  }
+
+  function commitTextRegionResize(region, key, box) {
+    const t = transformRef.current;
+    const x1 = Math.max(0, Math.round((box.x() - t.x) / t.scale));
+    const y1 = Math.max(0, Math.round((box.y() - t.y) / t.scale));
+    const x2 = Math.min(t.w, Math.round((box.x() + box.width() * box.scaleX() - t.x) / t.scale));
+    const y2 = Math.min(t.h, Math.round((box.y() + box.height() * box.scaleY() - t.y) / t.scale));
+    skipClickRef.current = true;
+    setTimeout(() => { skipClickRef.current = false; }, 0);
+    if (x2 - x1 < 8 || y2 - y1 < 8) { redraw(); return; }
+    const rect = [x1, y1, x2 - x1, y2 - y1];
+    const latest = guidanceRef.current || defaultGuidance(null);
+    const list = [...(latest.manual_regions || [])];
+    const index = manualResizeIndex(latest, region, key);
+    if (index >= 0) list[index] = { ...list[index], unboxed_rect: rect };
+    else list.push({ id: `manual_ubox_${Date.now()}`, type: "unboxed", unboxed_rect: rect, source_method: "manual_ubox_guide", resize_source_key: key });
+    const next = { ...latest, manual_regions: list };
+    guidanceRef.current = next;
+    setGuidance(next);
+    setStatus(`R${regionId(region)} 크기 변경 · 변경사항 적용 시 반영`);
   }
 
   function drawGuideLine(layer, rawLine, color, label, options = {}) {

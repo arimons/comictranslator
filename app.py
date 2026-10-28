@@ -1981,6 +1981,9 @@ def guidance_allows_unboxed_mask_reuse(previous: dict[str, Any], current: dict[s
         new_items = _canonical_guidance_items(current.get(key, []))
         if not old_items.issubset(new_items):
             return False
+        # 기존 영역의 크기를 바꾼 가이드는 덧붙임이 아니다. 줄인 경우 이전에 지운 자리가 남지 않게 다시 지운다
+        if any('"resize_source_key"' in item for item in new_items - old_items):
+            return False
     return True
 
 
