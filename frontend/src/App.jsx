@@ -243,19 +243,21 @@ export default function App() {
   const generatedCandidates = generationStatus?.session_id === sessionId && generationStatus?.image_id === selected?.id ? generationStatus.results || [] : [];
   const latestGeneratedCandidate = generatedCandidates.at(-1);
   const generationRecommended = selected?.analysis_route !== "standard" && (selected?.image_generation_recommendation?.priority === "recommended" || selected?.analysis_skip_reason === "cover_image_gen_redraw");
+  // 처리 제외 페이지는 원본 그대로 출력하므로, 예전 분석의 마스크·후보·시트는 보여 주지 않고 최종 출력도 원본으로 보여 준다.
+  const pageExcluded = Boolean(selected?.processing_excluded);
   const guidanceCompareTabs = [
-    ["ai_erase", "AI 지움 후보", aiEraseCandidateUrl],
-    ["generated", "생성 결과", latestGeneratedCandidate?.preview_url],
+    ["ai_erase", "AI 지움 후보", pageExcluded ? null : aiEraseCandidateUrl],
+    ["generated", "생성 결과", pageExcluded ? null : latestGeneratedCandidate?.preview_url],
     // 확정한 배경 복원 패치(AI 지움 포함)가 있으면 그것까지 얹은 현재 지우기 결과를 보여 준다.
-    ["masked", "마스크", selected?.restore_preview_url || selected?.masked_url],
+    ["masked", "마스크", pageExcluded ? null : selected?.restore_preview_url || selected?.masked_url],
     ["source", "원본", selected?.input_url],
-    ["final", "최종 출력", selected?.final_url],
-    ["sheet", "OCR 시트", selected?.indexed_sheet_url],
+    ["final", "최종 출력", pageExcluded ? selected?.input_url : selected?.final_url],
+    ["sheet", "OCR 시트", pageExcluded ? null : selected?.indexed_sheet_url],
   ];
   const preferredCompareMode = guidanceCompareMode === "auto" ? (aiEraseCandidateUrl ? "ai_erase" : latestGeneratedCandidate && generationRecommended ? "generated" : "masked") : guidanceCompareMode;
   const guidanceCompareTab = guidanceCompareTabs.find(([id, _label, url]) => id === preferredCompareMode && url) || guidanceCompareTabs.find(([_id, _label, url]) => url) || guidanceCompareTabs[0];
   const effectiveGuidanceCompareMode = guidanceCompareTab?.[0] || guidanceCompareMode;
-  const guidanceCompareUrl = guidanceCompareTab?.[2] || selected?.masked_url || selected?.input_url || null;
+  const guidanceCompareUrl = guidanceCompareTab?.[2] || (pageExcluded ? null : selected?.masked_url) || selected?.input_url || null;
   useEffect(() => { setGuidanceCompareMode("auto"); setClearOutputsConfirm(false); }, [selectedKey]);
   const selectedToolLabel = TOOL_LABELS.find(([id]) => id === tool)?.[1] || tool;
   const disabledCount = guidance.disabled_tg_ids?.length || 0;
@@ -1437,7 +1439,16 @@ export default function App() {
   keyHandlerRef.current = handleShortcutKeyDown;
 
   useEffect(() => {
-    const onKeyDown = (event) => keyHandlerRef.current?.(event);
+    const onKeyDown = (event) => {
+      // 입력칸 밖의 ⌘A/Ctrl+A는 화면 글자 전체 선택만 일으키고 클릭을 방해하므로 막는다
+      const target = event.target;
+      const typing = ["INPUT", "TEXTAREA", "SELECT"].includes(target?.tagName) || target?.isContentEditable;
+      if ((event.metaKey || event.ctrlKey) && !event.altKey && event.code === "KeyA" && !typing) {
+        event.preventDefault();
+        return;
+      }
+      keyHandlerRef.current?.(event);
+    };
     window.addEventListener("keydown", onKeyDown, true);
     return () => window.removeEventListener("keydown", onKeyDown, true);
   }, []);
