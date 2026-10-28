@@ -72,7 +72,6 @@ const TOOL_HINTS = {
 const RESUME_KEY = "comic-translator-resume-after-restart";
 // 새로고침해도 열려 있던 프로젝트로 돌아가도록 탭 단위(sessionStorage)로 기억한다.
 const OPEN_WORKSPACE_KEY = "comic-translator-open-workspace";
-const PREFETCH_AHEAD = 2;
 
 // 브라우저 저장소는 막혀 있을 수 있어 모든 읽기·쓰기를 감싼다. 값이 없거나 올바르지 않으면 기본값을 쓴다.
 function readStored(key, fallback, valid = () => true) {
@@ -1160,17 +1159,22 @@ export default function App() {
     if (autoAnalysisRequestedRef.current.has(requestKey)) return;
     autoAnalysisRequestedRef.current.add(requestKey);
     setStatus(`${selected.name} 분석 산출물이 없어 현재 파일 분석을 시작합니다.`);
-    analyze(selected.id);
+    // 분석 결과가 없는 페이지라 Vision 결과 캐시가 있으면 그대로 쓴다
+    analyze(selected.id, { force: false });
   }, [workspaceStarted, generationReviewMode, activeTab, selected?.id, selected?.image_sha256, selected?.regions, selected?.has_analysis, selected?.image_generation_recommendation?.priority, selected?.analysis_route, inputBusy, analyzeBusy, guidanceBusy, prefetchingId]);
 
-  // 보고 있는 페이지 분석이 끝나고 다른 작업이 없을 때, 뒤 페이지를 PREFETCH_AHEAD장까지 한 장씩 미리 분석한다.
-  // 프로젝트 전체를 한꺼번에 돌리지 않고 곧 볼 페이지만 준비한다.
+  // 보고 있는 페이지 분석이 끝나고 화면 작업이 없을 때, 남은 미분석 페이지를 한 장씩 미리 분석한다.
+  // 보던 페이지 뒤부터 끝까지, 이어서 앞쪽 순서로 돈다. 번역(OCR)은 네트워크 작업이라 함께 돌아도 막지 않는다.
   useEffect(() => {
     if (!workspaceStarted || generationReviewMode || !sessionId || !selected || prefetchPromiseRef.current) return;
-    if (anyBusy || ocrBusy || imageNeedsAnalysis(selected)) return;
+    if (routeBusy || Object.values(busyTasks).some(Boolean)) return;
+    // 보는 페이지 분석을 아직 시도하지 않았으면 그쪽이 먼저다. 시도했다가 실패했으면 멈추지 않고 이어간다.
+    // 생성 권장 페이지는 자동 분석하지 않으므로 기다리지 않는다.
+    const selectedSkipsAuto = selected.analysis_route !== "standard" && selected.image_generation_recommendation?.priority === "recommended";
+    if (imageNeedsAnalysis(selected) && !selectedSkipsAuto && !autoAnalysisRequestedRef.current.has(`${selected.id}:${selected.image_sha256 || ""}`)) return;
     const start = images.findIndex((img) => img.id === selected.id);
     if (start < 0) return;
-    const target = images.slice(start + 1, start + 1 + PREFETCH_AHEAD).find((img) => {
+    const target = [...images.slice(start + 1), ...images.slice(0, start)].find((img) => {
       const key = `${img.id}:${img.image_sha256 || ""}`;
       return imageNeedsAnalysis(img)
         && !(img.analysis_route !== "standard" && img.image_generation_recommendation?.priority === "recommended")
@@ -1178,7 +1182,7 @@ export default function App() {
         && !prefetchFailedRef.current.has(key);
     });
     if (target) prefetchAnalysis(target);
-  }, [workspaceStarted, generationReviewMode, sessionId, selected?.id, selected?.regions, selected?.has_analysis, images, anyBusy, ocrBusy, prefetchingId]);
+  }, [workspaceStarted, generationReviewMode, sessionId, selected?.id, selected?.regions, selected?.has_analysis, images, routeBusy, busyTasks, prefetchingId]);
 
   function prefetchAnalysis(target) {
     const sid = sessionId;
@@ -1666,7 +1670,9 @@ export default function App() {
     }
     setWorkspaceStarted(true);
     setActiveTab("guidance");
-    await analyze("all", { force });
+    // 처음부터 다시 분석은 전체를 강제로 돈다. 그 외에는 바로 편집기로 들어가 보이는 페이지를 먼저 분석하고,
+    // 나머지는 미리 분석이 화면을 잠그지 않고 한 장씩 이어간다.
+    if (force) await analyze("all", { force });
   }
 
   function changeSplitLandscape(value) {
