@@ -83,7 +83,8 @@
         "scripts/run_editor_mcp.py",
         "pipeline/editor_review_bridge.py",
         "pipeline/ai_text_erase.py",
-        "frontend/src/AiErasePanel.jsx"
+        "frontend/src/AiErasePanel.jsx",
+        "pipeline/region_refs.py"
       ]
     },
     "docs/AGENT_WORKSPACE_RULES.md": {

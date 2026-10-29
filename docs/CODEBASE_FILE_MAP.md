@@ -85,6 +85,7 @@ NEW_COMIC_TRANSLATOR/
     ├── font_style_analyzer.py  # Step 4 직후 render_hint CV 보정
     ├── render_text_overlay.py  # Step 5
     ├── overlay_anchor.py       # 글자 입히기 수동값을 region 번호 대신 영역 위치로 재매칭
+    ├── region_refs.py          # 영역 참조(region_ref) 해석기: 번역·수동값·화자·메모를 R 번호 대신 TG 집합으로 연결 (순수 함수)
     ├── background_restore.py   # 배경 복원 탭 엔진 (문맥 영역·마스크 분리, LaMa, 확정 패치 합성)
     ├── ai_text_erase.py        # 이미지 편집 모델로 페이지 글자 지우기 (16배수 덧대기·잘라내기, gemini-*는 gemini_image로)
     ├── gemini_image.py         # Gemini 이미지 모델(Nano Banana 2.1) 편집. 비율 프리셋 덧대기·축소·잘라내기
@@ -186,6 +187,7 @@ guidance(수동 보정)가 있는 이미지는 `guidance_digest`(guidance 내용
 - `/api/analyze-stream`은 한 장이 실패해도 나머지를 끝까지 처리한다. 실패한 이미지는 `image_id`가 붙은 `error` 이벤트로 알리고, 마지막 `complete` 이벤트를 `ok: false`로 보낸다.
 - subprocess 실행(`run_subprocess`, `run_subprocess_stream`)은 `pipeline_runner.stream_subprocess()`를 공유한다. 아래 `pipeline_runner.py` 항목 참고.
 - 글자 입히기 수동값(`overlay_guidance.json`)은 integrated의 region 번호(`"5"`, `"7:1"`)를 키로 쓴다. 번호는 Step 3가 돌 때마다 읽기 순서로 새로 매겨지고(Ubox 하나로도 크게 섞인다) OCR을 다시 돌리면 integrated도 새 번호를 쓴다. 그래서 수동값을 저장할 때와 OCR 직전에 영역 위치를 `_anchor`로 기록하고(`stamp_overlay_anchors_for_record`, integrated보다 나중에 저장된 수동값만), OCR 직후 겹침(IoU 0.6 이상)이 가장 큰 영역 번호로 옮긴다(`remap_overlay_guidance_for_record`). 짝이 없으면 지우지 않고 `unmatched_regions`에 보관한다. 판정 로직은 `pipeline/overlay_anchor.py`.
+- 영역 참조(`region_ref`, 2026-10-29 도입 중): 번호 대신 영역이 가진 TG 집합(`tg:10,13`)으로 번역·수동값·화자·메모를 영역에 붙이는 해석기가 `pipeline/region_refs.py`다. `region_instance_ref`(`<origin>|<region_ref>`)는 영역 제외·LaMa 고정처럼 특정 처리 인스턴스에만 걸리는 기록용이다. 짝을 못 찾으면 다른 번호로 옮기지 않고 보관한다. 합침·분할·축소 처리 정책은 `POLICY` 표 한 곳에 모았다. 단계 2 시점에는 모듈과 단위 테스트(`tests/test_region_refs.py`)만 있고 어느 소비처에도 연결되지 않았다.
 - JSON 저장은 `manual_guidance.write_json()`을 쓴다. 임시 파일에 다 쓴 뒤 `os.replace`로 교체하므로 쓰는 도중 중단돼도 기존 JSON이 잘린 채 남지 않는다.
 - Step 4 모델은 편집기 OCR 탭의 선택 상자에서 고른다. 서버 기본값과 같으면 프론트가 `ocr_model: null`을 보내 `--model` 인자를 생략한다. 추가 프롬프트는 `--extra-prompt=값` 형식으로 넘겨 `-`로 시작하는 프롬프트도 옵션으로 오인되지 않는다.
 
@@ -539,3 +541,5 @@ OCR·번역 모델로 Gemini를 고른 세션의 이미지 작업(글자 지우�
 <!-- 변경 검토(2026-10-29): 준비 화면에서 열기·작업 흔적 기준(자동 분석 제외) 변경, 이 문서 내용 영향 없음 -->
 
 <!-- 2026-10-29 review: app.py 번역 후 영역 변경 감지(ocr_stale) 추가, 이 문서 내용에는 영향 없음 -->
+
+<!-- 2026-10-29 pipeline/region_refs.py 신설(소비처 연결 전) 반영 -->
