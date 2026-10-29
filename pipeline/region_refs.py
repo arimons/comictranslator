@@ -207,6 +207,63 @@ def _split_key(region: dict) -> tuple[int, ...] | None:
     return tuple(rect) if rect else None
 
 
+def _iou_rect(a: list[int] | None, b: list[int] | None) -> float:
+    return rect_iou(a, b) if a and b else 0.0
+
+
+def _derive_guide_ids(regions: list[dict], guidance: dict | None) -> dict[int, str]:
+    """가이드 id가 없는 구 regions.json의 수동 영역에서 guidance로 가이드 id를 파생한다(설계 §3.5). 인덱스 → id."""
+    if not isinstance(guidance, dict):
+        return {}
+    found: dict[int, str] = {}
+    manual = [m for m in guidance.get("manual_regions") or [] if isinstance(m, dict) and m.get("id")]
+    seeds = [m for m in guidance.get("seed_points") or guidance.get("manual_seed_points") or [] if isinstance(m, dict) and m.get("id")]
+    boxes: dict[str, list[list[int]]] = {}
+    for wall in guidance.get("virtual_walls") or []:
+        line = wall.get("line") or wall.get("polyline") if isinstance(wall, dict) else None
+        if wall.get("box_id") and isinstance(line, list) and len(line) >= 2:
+            try:
+                boxes.setdefault(str(wall["box_id"]), []).extend([[int(line[0][0]), int(line[0][1])], [int(line[-1][0]), int(line[-1][1])]])
+            except (TypeError, ValueError, IndexError):
+                continue
+    for index, region in enumerate(regions):
+        if not isinstance(region, dict) or region.get("region_origin") or region.get("guide_id"):
+            continue
+        method = str(region.get("source_method") or region.get("method") or "")
+        rect = region_rect(region)
+        if not rect or not method.startswith("manual_"):
+            continue
+        cx, cy = rect[0] + rect[2] / 2, rect[1] + rect[3] / 2
+        if method in {"manual_ubox_guide", "manual_bubble_guide"}:
+            wanted = "unboxed" if method == "manual_ubox_guide" else "bubble"
+            best = max(
+                ((_iou_rect(rect, _rect4(m.get("unboxed_rect") or m.get("bubble_rect") or m.get("rect"))), m) for m in manual
+                 if (m.get("type") == wanted or (wanted == "bubble" and m.get("type") in (None, "bubble")))),
+                key=lambda item: item[0], default=(0.0, None))
+            if best[1] is not None and best[0] >= 0.9:
+                found[index] = str(best[1]["id"])
+        elif method == "manual_bubble_seed_rescue":
+            inside = []
+            for m in seeds:
+                raw = m.get("point") or m.get("seed")
+                try:
+                    px, py = int(raw[0]), int(raw[1])
+                except (TypeError, ValueError, IndexError):
+                    continue
+                if rect[0] <= px <= rect[0] + rect[2] and rect[1] <= py <= rect[1] + rect[3]:
+                    inside.append(((px - cx) ** 2 + (py - cy) ** 2, str(m["id"])))
+            if inside:
+                found[index] = min(inside)[1]
+        elif method == "manual_edge_barrier_rescue":
+            for box_id, pts in boxes.items():
+                x1, x2 = min(p[0] for p in pts), max(p[0] for p in pts)
+                y1, y2 = min(p[1] for p in pts), max(p[1] for p in pts)
+                if x1 <= cx <= x2 and y1 <= cy <= y2:
+                    found[index] = box_id
+                    break
+    return found
+
+
 def annotate_regions(regions: list[dict], guidance: dict | None = None) -> list[dict]:
     """region_ref·region_instance_ref 등을 메모리로 붙인 사본을 돌려준다. 원본은 고치지 않는다.
 
@@ -215,6 +272,8 @@ def annotate_regions(regions: list[dict], guidance: dict | None = None) -> list[
     """
     items = [copy.deepcopy(r) if isinstance(r, dict) else r for r in regions or []]
     dict_items = [r for r in items if isinstance(r, dict)]
+    for index, guide_id in _derive_guide_ids(items, guidance).items():
+        items[index]["guide_id"] = guide_id
 
     # 분할 자식의 부모 TG 집합: 같은 split_parent_rect를 가진 형제들의 anchor_ids 합집합
     parent_tgs: dict[tuple[int, ...], set[int]] = {}
@@ -325,7 +384,7 @@ def instance_ref_of(region: dict) -> str:
 def instance_ref_is_weak(instance_ref: str | None) -> bool:
     """사각형 중심(geo)이나 충돌 접미사로 만든 참조는 정확히 비교할 수 없다."""
     text = str(instance_ref or "")
-    return not text or "|geo:" in text or "@" in text
+    return not text or "|geo:" in text or "@" in text or f"|{METHOD_ORIGIN_PREFIX}" in text or text.startswith(METHOD_ORIGIN_PREFIX)
 
 
 def tg_digest(text_groups: Iterable[dict] | None) -> str:

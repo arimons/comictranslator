@@ -104,3 +104,5 @@ CV가 놓친 글자는 B/U/E 등으로 수동 R을 만들고 분석 적용한 �
 <!-- 2026-10-29 review: app.py·App.jsx·lib.js 글자 입히기 수동값을 영역 참조로 저장·편집(이중 기록). 편집기 사용법·화면 라벨 변경 없음 -->
 
 <!-- 2026-10-29 review: App.jsx·EditorCanvas.jsx 제외·엔진 고정 기록에 처리 인스턴스 참조 추가, 화자·메모 영향 없음 -->
+
+<!-- 2026-10-29 review: region_refs.py 구 regions.json 가이드 id 파생과 method: 약한 참조 처리. 이 문서 내용 영향 없음 -->

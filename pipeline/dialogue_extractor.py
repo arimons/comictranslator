@@ -1666,7 +1666,10 @@ def _instance_matches(item: Dict[str, Any], region: Dict[str, Any]) -> bool | No
     recorded = item.get("instance_ref")
     if not recorded or instance_ref_is_weak(recorded):
         return None
-    return recorded == instance_ref_of(region)
+    current = instance_ref_of(region)
+    if instance_ref_is_weak(current):
+        return None  # 이 영역의 가이드 id를 모르면 정확히 비교할 수 없다. 구형 키로 판단한다.
+    return recorded == current
 
 
 def _suppression_matches_region(item: Dict[str, Any], region: Dict[str, Any]) -> bool:

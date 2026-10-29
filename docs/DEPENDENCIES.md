@@ -81,3 +81,5 @@ projects 아래 폴더 ID는 기존 timestamp ID를 유지한다. project.json�
 <!-- 2026-10-29 review: dialogue_extractor.py·gemini_ocr_translate_v5.py가 regions.json/integrated.json에 영역 참조 필드를 덧붙임. 기존 필드·파이프라인 구조·사용법 변경 없음 -->
 
 <!-- 2026-10-29 review: dialogue_extractor.py 영역 제외·엔진 고정을 처리 인스턴스 참조로 판정, font_style_analyzer.py 번호 덮어쓰기 중단, 분석 탭 선택 유지. 사용법 변경 없음 -->
+
+<!-- 2026-10-29 review: region_refs.py 구 regions.json 가이드 id 파생과 method: 약한 참조 처리. 이 문서 내용 영향 없음 -->

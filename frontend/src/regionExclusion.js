@@ -26,7 +26,7 @@ export function tgIsExcluded(group, guidance) {
 // 사각형 중심(geo)이나 충돌 접미사(@)로 만든 처리 인스턴스 참조는 정확히 비교할 수 없다.
 export function instanceRefIsWeak(ref) {
   const text = String(ref || "");
-  return !text || text.includes("|geo:") || text.includes("@");
+  return !text || text.includes("|geo:") || text.includes("@") || text.includes("|method:") || text.startsWith("method:");
 }
 
 // 제외·LaMa 고정 기록이 이 영역을 가리키는지. 처리 인스턴스 참조(region_instance_ref)가 있으면 그것으로 정확히 비교한다.

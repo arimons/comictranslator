@@ -425,3 +425,37 @@ class PolicyTableTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class LegacyOriginDerivationTest(unittest.TestCase):
+    """리뷰 지적 1: 가이드 id가 없는 구 regions.json은 guidance에서 id를 파생하고, 실패하면 약한 참조로 취급한다."""
+
+    def test_ubox_seed_edge_and_bubble_ids_are_derived_from_guidance(self) -> None:
+        guidance = {
+            "manual_regions": [
+                {"id": "manual_ubox_1", "type": "unboxed", "unboxed_rect": [100, 100, 50, 60]},
+                {"id": "manual_bubble_2", "type": "bubble", "bubble_rect": [300, 300, 80, 80]},
+            ],
+            "manual_seed_points": [{"id": "manual_seed_3", "point": [520, 520]}, {"id": "manual_seed_4", "point": [900, 900]}],
+            "virtual_walls": [
+                {"box_id": "edge_box_5", "line": [[700, 700], [780, 700]]},
+                {"box_id": "edge_box_5", "line": [[700, 780], [780, 780]]},
+            ],
+        }
+        regions = [
+            {"region_id": 1, "type": "unboxed", "unboxed_rect": [100, 100, 50, 60], "anchor_ids": [4], "source_method": "manual_ubox_guide"},
+            {"region_id": 2, "type": "bubble", "bubble_rect": [300, 300, 80, 80], "anchor_ids": [], "method": "manual_bubble_guide"},
+            {"region_id": 3, "type": "bubble", "bubble_rect": [480, 480, 100, 100], "anchor_ids": [], "source_method": "manual_bubble_seed_rescue"},
+            {"region_id": 4, "type": "bubble", "bubble_rect": [690, 690, 110, 110], "anchor_ids": [7], "source_method": "manual_edge_barrier_rescue"},
+        ]
+        out = rr.annotate_regions(regions, guidance)
+        self.assertEqual([r["region_origin"] for r in out], ["manual_ubox_1", "manual_bubble_2", "manual_seed_3", "edge_box_5"])
+        self.assertEqual(out[0]["region_instance_ref"], "manual_ubox_1|tg:4")
+        self.assertEqual(out[2]["region_ref"], "guide:manual_seed_3")
+
+    def test_underivable_origin_is_weak_and_never_compared_strictly(self) -> None:
+        region = {"region_id": 1, "type": "unboxed", "unboxed_rect": [1, 1, 5, 5], "anchor_ids": [4], "source_method": "manual_ubox_guide"}
+        out = rr.annotate_regions([region], {})[0]
+        self.assertEqual(out["region_instance_ref"], "method:manual_ubox_guide|tg:4")
+        self.assertTrue(rr.instance_ref_is_weak(out["region_instance_ref"]))
+        self.assertTrue(rr.instance_ref_is_weak(rr.instance_ref_of(region)))

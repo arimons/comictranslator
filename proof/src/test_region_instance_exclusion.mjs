@@ -26,5 +26,7 @@ assert.equal(recordTargetsRegion(legacy,moved),false);
 assert.equal(instanceRefIsWeak('auto|geo:b:60,50'),true);
 assert.equal(instanceRefIsWeak('auto|tg:6@edge_box_1'),true);
 assert.equal(instanceRefIsWeak('auto|tg:6'),false);
+assert.equal(instanceRefIsWeak('method:manual_ubox_guide|tg:4'),true);
+assert.equal(recordTargetsRegion({instance_ref:'method:manual_ubox_guide|tg:4',target_key:regionBindingKey(auto)},{...auto,region_instance_ref:'manual_ubox_1|tg:4'}),true);
 assert.equal(recordTargetsRegion({instance_ref:'auto|geo:b:60,50',target_key:regionBindingKey(auto)},{...auto,region_instance_ref:'auto|geo:b:1,1'}),true);
 console.log('제외·고정: 처리 인스턴스 참조로 자동/수동 같은 TG 구분, 사각형 변경에도 유지, 구형 기록·약한 참조는 구형 키 통과');

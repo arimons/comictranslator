@@ -1345,3 +1345,23 @@ def test_forced_engine_follows_instance_ref_and_falls_back_to_legacy_key():
     assert _forced_engine_for_crop(moved, overrides, by_key) == "telea"
     old = [{"target_key": _crop_binding_key(manual), "engine": "lama"}]
     assert _forced_engine_for_crop(manual, old, _forced_engine_by_key(old)) == "lama"
+
+
+def test_old_regions_json_instance_ref_still_matches_after_step3_gets_guide_id():
+    """지적 1 재현: 구 파일에서 화면이 기록한 instance_ref가 새 Step 3 내부 영역(guide_id 있음)과 맞아야 한다."""
+    from pipeline.dialogue_extractor import _suppression_matches_region, _forced_engine_for_crop, _crop_binding_key
+    from pipeline.region_refs import annotate_regions
+    from pipeline.region_types import region_binding_key
+    guidance = {"manual_regions": [{"id": "manual_ubox_9", "type": "unboxed", "unboxed_rect": [10, 10, 40, 40]}]}
+    old_file_region = {"region_id": 5, "type": "unboxed", "source_method": "manual_ubox_guide", "unboxed_rect": [10, 10, 40, 40], "anchor_ids": [4]}
+    for g in (guidance, {}):  # 파생 성공 / 실패(약한 참조)
+        shown = annotate_regions([old_file_region], g)[0]
+        crop = {"type": "unboxed", "source_method": "manual_ubox_guide", "guide_id": "manual_ubox_9", "anchor_ids": [4], "source_rect": [10, 10, 40, 40]}
+        exclusion = {"instance_ref": shown["region_instance_ref"], "target_key": region_binding_key(old_file_region)}
+        assert _suppression_matches_region(exclusion, crop) is True, g
+        pin = [{"instance_ref": shown["region_instance_ref"], "target_key": _crop_binding_key(crop), "engine": "lama"}]
+        assert _forced_engine_for_crop(crop, pin, {pin[0]["target_key"]: "lama"}) == "lama", g
+    # 가이드 id를 모르는 내부 영역(예전 guidance에 id가 없음)과 강한 기록도 구형 키로 내려간다.
+    crop_no_id = {"type": "unboxed", "source_method": "manual_ubox_guide", "anchor_ids": [4], "source_rect": [10, 10, 40, 40]}
+    strong = {"instance_ref": "manual_ubox_9|tg:4", "target_key": region_binding_key(old_file_region)}
+    assert _suppression_matches_region(strong, crop_no_id) is True
