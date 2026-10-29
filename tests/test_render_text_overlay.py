@@ -1138,6 +1138,24 @@ class RenderTextOverlayTest(unittest.TestCase):
         offsets = [idx * layout.line_height for idx in range(len(layout.lines))]
         self.assertLessEqual(offsets[1] - offsets[0], layout.line_height)
 
+    def test_llm_lines_are_kept_with_smaller_font_when_nothing_fits_min_size(self) -> None:
+        if not Path(FONT_PATH).exists():
+            self.skipTest(f"font not found: {FONT_PATH}")
+
+        image = Image.new("RGB", (960, 1080), "white")
+        draw = ImageDraw.Draw(image)
+        layout = choose_layout(
+            draw,
+            "불과 며칠 만에\n약을 개발하는 건\n불가능해요",
+            [589, 791, 102, 97],
+            image.size,
+            FONT_PATH,
+            src_line_count=3,
+        )
+
+        self.assertEqual(layout.lines, ["불과 며칠 만에", "약을 개발하는 건", "불가능해요"])
+        self.assertLess(layout.font_size, 16)
+
     def test_explicit_translation_lines_are_preferred_over_height_filling_split(self) -> None:
         if not Path(FONT_PATH).exists():
             self.skipTest(f"font not found: {FONT_PATH}")

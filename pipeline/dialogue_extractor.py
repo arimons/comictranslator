@@ -2906,6 +2906,17 @@ def build_dialogue_sheet(
     protected_mask = np.zeros(image.shape[:2], dtype=np.uint8)
     split_parent_masks: Dict[Tuple[int, int, int, int], np.ndarray] = {}
 
+    # 출력 사각형은 마스크 경계로 줄어든다. 화면은 그 출력 사각형으로 제외 키를 저장하므로,
+    # 사각형을 맞춘 뒤 제외를 한 번 더 판정해야 제외한 영역이 마스크·OCR·중복 판정에 남지 않는다.
+    for region in regions:
+        if not region.get("is_valid") or region.get("split_parent_rect"):
+            continue
+        trimmed = _mask_bounding_rect(region.get("mask") if isinstance(region.get("mask"), np.ndarray) else _polygon_to_mask(region.get("polygon"), image.shape))
+        if trimmed is not None:
+            region["bubble_rect"] = trimmed
+    _invalidate_suppressed_regions(regions, [item for item in suppressed_regions or [] if item.get("target_key")])
+    suppressed_tg_ids.update(_suppressed_text_group_ids(groups, regions, suppressed_regions or []))
+
     valid_regions = [r for r in regions if r.get("is_valid")]
     crops: List[Dict[str, Any]] = []
     region_id_counter = 1

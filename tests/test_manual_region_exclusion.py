@@ -52,3 +52,20 @@ def test_auto_bubble_exact_exclusion_keeps_original(tmp_path,monkeypatch):
  first=run('a',[]);assert len(first['regions'])==1
  target=first['regions'][0];second=run('b',[{'target_key':region_binding_key(target),'rect':target['bubble_rect'],'anchor_ids':target['anchor_ids']}]);assert second['regions']==[]
  assert np.array_equal(cv2.imread(str(tmp_path/'maskb.png')),original)
+
+
+def test_auto_bubble_exclusion_matches_rect_trimmed_to_mask(tmp_path,monkeypatch):
+ # 검출 사각형이 마스크보다 커서 출력 사각형이 줄어드는 영역도, 화면이 저장한 출력 사각형 키로 제외돼야 한다
+ original=np.full((220,220,3),255,np.uint8);cv2.ellipse(original,(110,110),(85,95),0,0,360,(0,0,0),2);cv2.putText(original,'HI',(75,125),cv2.FONT_HERSHEY_SIMPLEX,1,(0,0,0),2)
+ path=tmp_path/'page.png';cv2.imwrite(str(path),original);groups=tmp_path/'groups.json';groups.write_text(json.dumps([{'text_group_id':1,'fallback_rect':[70,85,70,50],'text':'HI','lines':[]}]))
+ mask=np.zeros(original.shape[:2],np.uint8);cv2.ellipse(mask,(110,110),(80,90),0,0,360,255,-1)
+ import copy
+ candidate={'region_id':1,'is_valid':True,'method':'flood','region_type_guess':'bubble','bubble_rect':[27,17,167,187],'anchor_ids':[1],'mask':mask}
+ monkeypatch.setattr('pipeline.dialogue_extractor.build_ocr_region_sheet',lambda *a,**k:{'regions':[copy.deepcopy(candidate)]})
+ def run(suffix,excluded):
+  return build_dialogue_sheet(str(path),str(groups),str(tmp_path/f'mask{suffix}.png'),str(tmp_path/f'reg{suffix}.json'),str(tmp_path/f'sheet{suffix}.jpg'),suppressed_regions=excluded)
+ first=run('a',[]);assert len(first['regions'])==1
+ target=first['regions'][0];assert target['bubble_rect']!=candidate['bubble_rect']
+ second=run('b',[{'target_key':region_binding_key(target),'rect':target['bubble_rect'],'anchor_ids':target['anchor_ids']}])
+ assert second['regions']==[]
+ assert np.array_equal(cv2.imread(str(tmp_path/'maskb.png')),original)

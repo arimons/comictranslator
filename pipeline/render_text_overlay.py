@@ -2612,6 +2612,24 @@ def _choose_layout_raw(
     )
     if relaxed_layout is not None and len(relaxed_layout.lines) > 1:
         return relaxed_layout
+    # 최소 글자 크기에서도 들어가는 줄바꿈이 없으면 한 줄로 넘치게 두지 않고,
+    # LLM이 넣은 줄바꿈을 그대로 믿고 글자 크기를 더 줄여 말풍선 안에 맞춘다.
+    if explicit_min_lines > 1:
+        explicit_layout = _manual_explicit_lines_layout(
+            draw,
+            raw_text,
+            bbox,
+            image_size,
+            font_path,
+            max_font_size=max_font_size,
+            is_unboxed=is_unboxed,
+            is_split_rect=is_split_rect,
+            split_order=split_order,
+            mask_centroid=mask_centroid,
+            round_score=round_score,
+        )
+        if explicit_layout is not None:
+            return explicit_layout
     if best_overflow is not None:
         return best_overflow
     if exploded_overflow is not None:

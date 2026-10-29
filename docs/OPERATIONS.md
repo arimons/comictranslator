@@ -8,7 +8,7 @@ README에서 분리한 개인 운영 환경 기록이다. 맥 미니 상시 서�
 
 ## 코드 동기화
 
-맥북의 코드 수정은 Syncthing으로 맥 미니에 동기화된다. Python 변경은 동기화 완료 후 맥 미니에서 `pm2 restart comictranslator`로 반영한다. 실행 중 작업을 보호하기 위해 PM2 watch는 꺼져 있다.
+코드는 Syncthing 대상이 아니다. 클라우드와 맥 미니에서 수정한 뒤 GitHub(`origin/main`)로 push/pull해 맞춘다. Python 변경은 맥 미니에서 pull한 뒤 `pm2 restart comictranslator`로 반영한다. 실행 중 작업을 보호하기 위해 PM2 watch는 꺼져 있다.
 
 프론트엔드를 수정했다면 먼저 빌드한다.
 
@@ -22,7 +22,7 @@ npm --prefix frontend run build
 
 ## 데이터 홈
 
-데이터 홈 `~/ComicTranslator`는 현재 Syncthing 자동 동기화 대상이 아니며, 실제 운영 데이터는 맥 미니를 기준으로 사용한다.
+데이터 홈 `~/ComicTranslator`는 Syncthing·git 어느 쪽으로도 동기화되지 않으며, 실제 운영 데이터는 맥 미니를 기준으로 사용한다.
 
 ```text
 ~/ComicTranslator/

@@ -69,7 +69,7 @@ AI 글자 지우기 작업은 `jobs/` 안에 보낸 이미지(OpenAI는 `ai_eras
 
 이전 검증: 15개 활성 프로젝트와 출력 없는 중복 13개를 legacy에 보존. 최종 439장 해시 동일, 유료 호출 없이 신규 프로젝트 Step 2/3 및 이전 전후 렌더 픽셀 동일 확인. 기존 마스크 참조 누락은 별도 작업 기록에 남긴다. 임시 JSON 복사도 프로젝트 경계에서 상대 경로를 적용하며, 캐시의 동일성은 실행 경로를 해석한 값으로 비교한다.
 
-Syncthing 현황(2026-10-21 MacBook 설정 확인): Developer만 공유하며 기존 temp_output/output/proof/archive/test_image1과 .venv/.git은 제외됩니다. 새 데이터 홈은 공유 범위 밖입니다. 코드 동기화와 별개로 데이터 홈을 직접 복사하거나 별도 공유해야 합니다. 실제 맥 미니 수신 여부는 여기서 확인하지 않았습니다.
+Syncthing 현황(2026-10-21 MacBook 설정 확인, 2026-10-29부터 코드도 Syncthing 대신 GitHub push/pull로 관리): Developer만 공유하며 기존 temp_output/output/proof/archive/test_image1과 .venv/.git은 제외됩니다. 새 데이터 홈은 공유 범위 밖입니다. 코드 동기화와 별개로 데이터 홈을 직접 복사하거나 별도 공유해야 합니다. 실제 맥 미니 수신 여부는 여기서 확인하지 않았습니다.
 
 2026-10-21: 기본·개발·선택 배치 의존성을 분리했습니다. LaMa 모델은 데이터 홈 cache/models에 두며 기존 Timestamp 프로젝트 ID와 가변 표시 이름을 구분합니다. [의존성 안내](DEPENDENCIES.md) 참고.
 
