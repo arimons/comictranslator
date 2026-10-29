@@ -1266,3 +1266,42 @@ def test_manual_split_guide_splits_seed_region_without_any_tg():
     left, right = sorted(item["bubble_rect"][0] for item in split)
     assert left == 10 and right in (100, 101)
     assert all(item["split_parent_rect"] == [10, 10, 180, 100] for item in split)
+
+
+def test_manual_guide_ids_are_carried_to_regions():
+    groups = [{"text_group_id": 1, "fallback_rect": [20, 20, 20, 20]}]
+    bubbles = _manual_bubble_regions([{"id": "manual_bubble_5", "type": "bubble", "bubble_rect": [10, 10, 60, 60]}], groups)
+    assert bubbles[0]["guide_id"] == "manual_bubble_5"
+    assert "guide_id" not in _manual_bubble_regions([{"type": "bubble", "bubble_rect": [10, 10, 60, 60]}], groups)[0]
+    image = np.zeros((120, 120, 3), dtype=np.uint8)
+    crops = _manual_unboxed_crops(image, [{"id": "manual_ubox_7", "type": "unboxed", "unboxed_rect": [20, 20, 50, 40]}], groups, 120, 120)
+    assert crops[0]["guide_id"] == "manual_ubox_7"
+
+
+def test_step3_output_regions_carry_region_ref_fields(tmp_path, monkeypatch):
+    """Step 3 출력에 region_ref·region_instance_ref·region_origin이 덧붙는다(기존 키는 그대로)."""
+    import json
+    import pipeline.dialogue_extractor as de
+    image = np.full((200, 200, 3), 255, dtype=np.uint8)
+    image_path = tmp_path / "page.png"
+    cv2.imwrite(str(image_path), image)
+    groups = [{"text_group_id": 4, "fallback_rect": [40, 40, 30, 60], "text": "こんにちは"}]
+    groups_path = tmp_path / "groups.json"
+    (tmp_path / "json").mkdir()
+    groups_path.write_text(json.dumps(groups))
+    monkeypatch.setattr(de, "build_ocr_region_sheet", lambda **kwargs: {"regions": []})
+    monkeypatch.setattr(de, "_classify_text_group_style", lambda *args: {"include_policy": "include"})
+    monkeypatch.setattr(de, "_cluster_adjacent_tgs", lambda items, **kwargs: [])
+    result = de.build_dialogue_sheet(
+        str(image_path), str(groups_path), str(tmp_path / "masked.png"),
+        str(tmp_path / "json/regions.json"), str(tmp_path / "sheet.png"), str(tmp_path / "vis.png"),
+        manual_regions=[{"id": "manual_bubble_9", "type": "bubble", "bubble_rect": [30, 30, 60, 90]}],
+    )
+    assert len(result["regions"]) == 1
+    region = result["regions"][0]
+    assert region["anchor_ids"] == [4] and region["region_id"] == 1
+    assert region["region_ref"] == "tg:4"
+    assert region["region_origin"] == "manual_bubble_9"
+    assert region["region_instance_ref"] == "manual_bubble_9|tg:4"
+    saved = json.loads((tmp_path / "json/regions.json").read_text(encoding="utf-8"))["regions"][0]
+    assert saved["region_ref"] == "tg:4"

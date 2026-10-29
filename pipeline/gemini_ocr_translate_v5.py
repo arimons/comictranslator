@@ -22,6 +22,7 @@ from dotenv import load_dotenv
 
 try:
     from pipeline.region_types import TEXT_BASED, region_processing_basis
+    from pipeline.region_refs import annotate_regions
     from pipeline.font_style_analyzer import (
         _normalized_render_hint,
         _clip_rect,
@@ -40,6 +41,7 @@ try:
     )
 except ImportError:
     from region_types import TEXT_BASED, region_processing_basis
+    from region_refs import annotate_regions
     from font_style_analyzer import (
         _normalized_render_hint,
         _clip_rect,
@@ -618,8 +620,13 @@ def _build_integrated_from_sheet_regions(
             continue
     used_cv_ids: set[int] = set()
     final_clusters = []
+    # 영역 참조: 번역이 R 번호가 아니라 영역의 TG 집합으로 영역을 가리키게 같이 기록한다(번호·sentence_id는 그대로).
+    sheet_regions = annotate_regions(sheet.get("regions", []))
+    ref_by_region_id = {
+        r.get("region_id"): r.get("region_ref") for r in sheet_regions if isinstance(r, dict) and r.get("region_ref")
+    }
 
-    for region in sheet.get("regions", []):
+    for region in sheet_regions:
         region_id = region.get("region_id")
         gemini_region = gemini_by_id.get(region_id)
         if not gemini_region:
@@ -688,6 +695,7 @@ def _build_integrated_from_sheet_regions(
                 "processing_basis": processing_basis,
                 "match_score": 1.0,
                 "source_region_id": region_id,
+                "source_region_ref": region.get("region_ref"),
                 "source_region_rect": bubble_rect,
                 "source_segment_index": seg_idx if multi_segment else None,
                 "erase_rect": region.get("erase_rect"),
@@ -719,10 +727,14 @@ def _build_integrated_from_sheet_regions(
         "unmatched_clusters": unmatched_clusters,
         "model": MODEL_NAME,
         "ocr_source": "flood_indexed_sheet",
+        "region_ref_scheme": "region_ref_v1",
     }
     if missing_region_ids:
         # 재요청까지 실패해 번역이 없는 region. 렌더는 원본으로 두고, 편집기에서 직접 채울 대상이다.
         integrated_data["missing_region_ids"] = list(missing_region_ids)
+        integrated_data["missing_region_refs"] = [
+            ref_by_region_id[rid] for rid in missing_region_ids if ref_by_region_id.get(rid)
+        ]
     with open(output_integrated_path, "w", encoding="utf-8") as f:
         json.dump(integrated_data, f, ensure_ascii=False, indent=2)
     return integrated_data

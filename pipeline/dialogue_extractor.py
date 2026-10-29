@@ -27,6 +27,7 @@ SimpleLama: Any | None = None
 
 try:
     from pipeline.region_types import TEXT_BASED, BOUNDARY_BASED, region_processing_basis
+    from pipeline.region_refs import annotate_regions
     from pipeline.bubble_detector import build_ocr_region_sheet, _load_json, _is_dark_bg_text, _is_horizontal_text_group, _fill_mask_holes
     from pipeline.geometry import as_rect as _as_rect, union_rect as _union_rect
     from pipeline.unboxed_grouping import (
@@ -48,6 +49,7 @@ try:
     from pipeline.flood_split import collect_inflection_candidates, split_mask_by_erosion_components, split_mask_by_inflection_line
 except ImportError:
     from region_types import TEXT_BASED, BOUNDARY_BASED, region_processing_basis
+    from region_refs import annotate_regions
     from bubble_detector import build_ocr_region_sheet, _load_json, _is_dark_bg_text, _is_horizontal_text_group, _fill_mask_holes
     from geometry import as_rect as _as_rect, union_rect as _union_rect
     from unboxed_grouping import (
@@ -171,6 +173,11 @@ def _manual_seed_anchor_ids_from_result(
     return sorted(set(anchor_ids))
 
 
+def _guide_id_field(guide_id: Any) -> Dict[str, Any]:
+    """수동 가이드의 안정 id를 영역까지 전달한다(region_ref가 TG 없는 수동 영역을 가리키는 데 쓴다)."""
+    return {"guide_id": str(guide_id)} if guide_id not in (None, "") else {}
+
+
 def _manual_bubble_regions(manual_regions: List[Dict[str, Any]], groups: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     regions: List[Dict[str, Any]] = []
     for index, item in enumerate(manual_regions, start=1):
@@ -192,6 +199,7 @@ def _manual_bubble_regions(manual_regions: List[Dict[str, Any]], groups: List[Di
             "region_type_guess": "bubble",
             "quality_flags": ["manual_bubble"],
             "review_tags": ["manual_bubble"],
+            **_guide_id_field(item.get("id")),
         })
     return regions
 
@@ -247,6 +255,7 @@ def _manual_unboxed_crops(
             "inpaint_engine_override": item.get("inpaint_engine"),
             "quality_flags": ["manual_ubox"],
             "review_tags": ["manual_ubox"],
+            **_guide_id_field(item.get("id")),
         })
     return crops
 
@@ -718,6 +727,7 @@ def _manual_edge_barrier_regions(
             "bubble_tg_ratio": float(score.get("rect_anchor_ratio", 0.0)),
             "quality_flags": quality_flags,
             "review_tags": ["manual_edge_barrier"],
+            **_guide_id_field(walls[0].get("box_id") if walls else None),
         })
     return regions
 
@@ -1024,6 +1034,7 @@ def _manual_seed_bubble_regions(
                 f"edge_page={round(float(score.get('mask_page_ratio', 0.0)), 4)}",
             ],
             "review_tags": ["manual_bubble_seed"],
+            **_guide_id_field(item.get("id")),
         })
     return regions
 
@@ -1473,6 +1484,7 @@ def _split_region_variants(
             "split_parent_mask": mask if mask is not None else None,
             "split_line": sub.get("split_line"),
             "split_parent_rect": parent_rect,
+            "split_parent_anchor_ids": sorted(anchor_ids),
             "split_order": index,
             "ocr_rect": child_rect,
             "ocr_text_rects": child_anchor_rects,
@@ -3111,6 +3123,8 @@ def build_dialogue_sheet(
             "source_order": region.get("region_id"),
             "source_method": region.get("method"),
             "source_region_type": region.get("region_type_guess"),
+            "guide_id": region.get("guide_id"),
+            "split_parent_anchor_ids": region.get("split_parent_anchor_ids"),
             "quality_flags": region.get("quality_flags", []),
             "review_tags": region.get("review_tags", []),
             "black_contour_probe": region.get("black_contour_probe"),
@@ -3386,9 +3400,20 @@ def build_dialogue_sheet(
             region_data["split_order"] = item.get("split_order", 0)
         if item.get("split_line"):
             region_data["split_line"] = item["split_line"]
+        if item.get("guide_id"):
+            region_data["region_origin"] = str(item["guide_id"])
+        if item.get("split_parent_anchor_ids"):
+            region_data["split_parent_anchor_ids"] = [int(v) for v in item["split_parent_anchor_ids"]]
 
         output_regions.append(region_data)
         sheet_x += w + (_SHEET_GAP if i < n_crops - 1 else 0)
+
+    # 영역 참조(region_ref): 번호가 아니라 TG 집합·가이드 id로 번역/수동값/화자를 영역에 붙이기 위한 덧붙임 필드.
+    # 기존 키(region_id, type, 좌표 등)는 바꾸지 않는다.
+    for region_data, annotated in zip(output_regions, annotate_regions(output_regions)):
+        for key in ("region_origin", "region_ref", "region_instance_ref", "region_ref_weak", "region_ref_collision"):
+            if key in annotated:
+                region_data[key] = annotated[key]
 
     # Indexed sheet — 각 crop 왼쪽에 라벨 컬럼 배치 (상단 gutter 제거)
     _LABEL_W = max(0, indexed_label_gutter)  # 좌측 라벨 열 너비 (기존 파라미터 재활용)

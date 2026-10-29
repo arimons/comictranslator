@@ -30,7 +30,10 @@ import json
 import re
 from typing import Any, Iterable
 
-from pipeline.overlay_anchor import rect_iou
+try:
+    from pipeline.overlay_anchor import rect_iou
+except ImportError:  # pipeline 폴더에서 스크립트로 실행할 때
+    from overlay_anchor import rect_iou
 
 SCHEME = "region_ref_v1"
 ORIGIN_AUTO = "auto"
@@ -834,7 +837,10 @@ def reconcile_speakers(store: dict | None, current_regions: list[dict], current_
     구형 by_region/context_by_region(처리 기준·검출 방법·사각형 키)은 현재 영역 중 같은 키를 찾아
     참조 키가 없을 때만 채운다. 구형 키와 by_tg는 건드리지 않는다.
     """
-    from pipeline.region_types import region_binding_key
+    try:
+        from pipeline.region_types import region_binding_key
+    except ImportError:
+        from region_types import region_binding_key
 
     store = copy.deepcopy(store) if isinstance(store, dict) else {}
     report: dict[str, Any] = {"moved": {}, "copied": {}, "cleared": {}, "dormant": [], "seeded": []}

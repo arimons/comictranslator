@@ -81,6 +81,9 @@ class GeminiOcrSegmentsTest(unittest.TestCase):
             self.assertEqual(clusters[0]["source_segment_index"], 1)
             self.assertEqual(clusters[1]["source_segment_index"], 2)
             self.assertEqual(result["unmatched_clusters"], [])
+            # 영역 참조: 번호와 별개로 영역의 TG 집합이 같이 기록된다.
+            self.assertEqual([c["source_region_ref"] for c in clusters], ["tg:5,14", "tg:5,14"])
+            self.assertEqual(result["region_ref_scheme"], "region_ref_v1")
 
     def test_anchorless_manual_seed_region_still_creates_cluster(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

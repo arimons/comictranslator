@@ -77,3 +77,5 @@ projects 아래 폴더 ID는 기존 timestamp ID를 유지한다. project.json�
 <!-- 2026-10-29 dialogue_extractor.py(수동 Edge 글자 보강) 변경 검토: 의존성 영향 없음 -->
 
 <!-- 2026-10-29 edge_barrier_flood_rescue.py·dialogue_extractor.py(수동 Edge 한계선, 자동 검출 캐시) 변경 검토: 의존성 영향 없음 -->
+
+<!-- 2026-10-29 review: dialogue_extractor.py·gemini_ocr_translate_v5.py가 regions.json/integrated.json에 영역 참조 필드를 덧붙임. 기존 필드·파이프라인 구조·사용법 변경 없음 -->
