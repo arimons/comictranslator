@@ -70,7 +70,10 @@ const TOOL_HINTS = {
   bubble: "말풍선 안쪽 빈 곳을 클릭하세요",
   "region-split": "나눌 경계를 따라 선을 그으세요",
   ubox: "글자를 감싸도록 상자를 드래그하세요",
+  mask: "덜 지워진 곳을 칠하세요 · 드래그는 붓, 클릭은 다각형(첫 점·Enter로 닫기), Shift+드래그는 사각형",
 };
+// 지우기 보정 붓 굵기(원본 px) 단계. [ ]로 한 단계씩 바꾼다.
+const MASK_BRUSH_STEPS = [2, 4, 6, 8, 12, 16, 24, 32, 48, 64];
 const RESUME_KEY = "comic-translator-resume-after-restart";
 // 새로고침해도 열려 있던 프로젝트로 돌아가도록 탭 단위(sessionStorage)로 기억한다.
 const OPEN_WORKSPACE_KEY = "comic-translator-open-workspace";
@@ -117,6 +120,7 @@ export default function App() {
   }, [workspaceStarted]);
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [tool, setTool] = useState("select");
+  const [maskBrushWidth, setMaskBrushWidth] = useState(12);
   const [selectedTg, setSelectedTg] = useState(null);
   const [selectedGuidanceRegionId, setSelectedGuidanceRegionId] = useState(null);
   const [selectedRegionId, setSelectedRegionId] = useState(null);
@@ -1396,6 +1400,8 @@ export default function App() {
 
   const shortcutConditions = {
     regionSelected: () => Boolean(selectedRegionRefValue()),
+    maskTool: () => activeTab === "guidance" && tool === "mask",
+    maskPolygon: () => activeTab === "guidance" && tool === "mask" && Boolean(editorCanvasRef.current?.hasMaskPolygon()),
     nothingSelected: () => {
       if (activeTab === "overlay") return !selectedRegionRefValue() && !overlayCanvasRef.current?.hasSelectedEraser();
       if (activeTab === "guidance") return selectedTg == null && selectedGuidanceRegionId == null;
@@ -1424,6 +1430,7 @@ export default function App() {
         setStatus(`Tool ${resolved === "eraser" ? "Eraser" : resolved === "hand" ? "Hand" : "Select"}`);
         return;
       }
+      if (nextTool === "mask") { startMaskTool(); return; }
       setTool(nextTool);
       setStatus(`Tool ${TOOL_LABELS.find(([id]) => id === nextTool)?.[1] || nextTool}`);
     },
@@ -1442,6 +1449,8 @@ export default function App() {
         }
         return false;
       }
+      // 찍던 다각형이 있으면 그것만 먼저 취소한다(선택은 유지)
+      if (editorCanvasRef.current?.cancelMaskPolygon()) return true;
       if (selectedTg != null || selectedGuidanceRegionId != null) {
         setSelectedTg(null); setSelectedGuidanceRegionId(null);
         setStatus("선택 해제");
@@ -1471,6 +1480,15 @@ export default function App() {
     },
     "overlay.cycleRegion": (_event, step) => cycleOverlayRegion(step),
     "guidance.cycleRegion": (_event, step) => cycleGuidanceRegion(step),
+    "guidance.maskPolygonClose": () => editorCanvasRef.current?.closeMaskPolygon() ?? false,
+    "guidance.maskBrush": (_event, step) => {
+      const index = MASK_BRUSH_STEPS.findIndex((value) => value >= maskBrushWidth);
+      const current = index < 0 ? MASK_BRUSH_STEPS.length - 1 : index;
+      const next = MASK_BRUSH_STEPS[Math.max(0, Math.min(MASK_BRUSH_STEPS.length - 1, current + step))];
+      setMaskBrushWidth(next);
+      setStatus(`지우기 보정 붓 ${next}px`);
+      return true;
+    },
     "guidance.speaker": (event, slot) => {
       assignSpeaker(slot === "digit" ? Number(event.code.slice(-1)) : slot);
       return true;
@@ -2634,6 +2652,11 @@ export default function App() {
     (guidance.inpaint_engine_overrides || []).forEach((item, index) => {
       items.push({ key: `engine-${index}`, kind: "inpaint_engine_overrides", index, label: `R${item.display_region_id || "?"} ${ENGINE_NAMES[item.engine] || item.engine} 고정`, detail: `지우기 엔진을 ${ENGINE_NAMES[item.engine] || item.engine}로 고정` });
     });
+    (guidance.custom_masks || []).forEach((item, index) => {
+      // 페이지 단위 기록이라 영역 번호가 없다. 줄을 지우면 이 페이지의 보정이 모두 지워진다.
+      const shapes = `붓 ${(item.strokes || []).length} · 다각형 ${(item.polygons || []).length} · 사각형 ${(item.rects || []).length}`;
+      items.push({ key: `custom-mask-${index}`, kind: "custom_masks", index, label: "지우기 보정", detail: shapes });
+    });
     return items;
   }
 
@@ -2682,6 +2705,13 @@ export default function App() {
       return next;
     }, engine ? `${ENGINE_NAMES[engine]}로 고정` : "지우기 자동 판정");
     setStatus(`R${regionId(region)} 지우기: ${engine ? `${ENGINE_NAMES[engine]} 고정` : "자동 판정"} · 변경사항 적용(${shortcutById("guidance.apply")})으로 반영됩니다.`);
+  }
+
+  // 지우기 보정 도구를 켠다. 페이지 어디든 칠할 수 있고, R·TG를 선택해 두었으면 그곳으로 확대한다.
+  function startMaskTool() {
+    setTool("mask");
+    if (selectedGuidanceRegion || selectedTg != null) editorCanvasRef.current?.zoomToSelection();
+    setStatus("지우기 보정 · 드래그는 붓, 클릭은 다각형, Shift+드래그는 사각형 · 변경사항 적용 때 마지막에 지웁니다");
   }
 
   // 선택한 R이 바뀌면 메모 입력칸을 저장된 값으로 되돌린다.
@@ -3102,6 +3132,7 @@ export default function App() {
                 onToolComplete={() => setTool("select")}
                 setStatus={setStatus}
                 speakerLabels={speakerLabels}
+                maskBrushWidth={maskBrushWidth}
               />
               <div className="guidance-ai-dock">
         <AiErasePanel
@@ -3163,7 +3194,7 @@ export default function App() {
               </FloatingPanel> : null}
               {TOOL_HINTS[tool] && !selected?.processing_excluded ? <div className="tool-hint" role="status">
                 <strong>{TOOL_LABELS.find(([id]) => id === tool)?.[1]} <kbd>{shortcutFor("guidance", "tool", tool)}</kbd></strong>
-                <span>{TOOL_HINTS[tool]}</span>
+                <span>{tool === "mask" ? `${TOOL_HINTS.mask} · 굵기 ${maskBrushWidth}px ([ ])` : TOOL_HINTS[tool]}</span>
                 <em>Esc 취소</em>
               </div> : null}
               <div className="floating-toolbox" aria-label="영역 분석 도구">
@@ -3171,7 +3202,7 @@ export default function App() {
                   <button
                     key={id}
                     className={`${tool === id ? "active" : ""} ${["tg-delete","wall"].includes(id) ? "tool-group-start" : ""}`}
-                    onClick={() => id === "tg-delete" ? editorCanvasRef.current?.excludeSelection() : setTool(id)}
+                    onClick={() => id === "tg-delete" ? editorCanvasRef.current?.excludeSelection() : id === "mask" ? startMaskTool() : setTool(id)}
                     disabled={id === "tg-delete" && selectedTg == null && selectedGuidanceRegionId == null}
                     aria-pressed={id === "tg-delete" ? undefined : tool === id}
                     aria-label={label}

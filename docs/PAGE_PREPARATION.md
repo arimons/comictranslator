@@ -121,3 +121,5 @@ OpenAI 전환(2026-10-20): OCR·번역 및 URL 자료의 용어 정리는 OpenAI
 <!-- 2026-10-29 review: render_text_overlay.py·app.py·App.jsx 렌더러 guidance 파생 참조 일치와 저장 요청 표시. 이 문서 내용 영향 없음 -->
 
 <!-- 2026-10-29 review: app.py·region_refs.py TG digest 보호와 메모 보관 저장 경로. 이 문서 내용 영향 없음 -->
+
+<!-- 변경 검토(2026-10-30): 지우기 보정(custom_masks) 가이드 키 추가, 이 문서 내용 영향 없음 -->

@@ -104,5 +104,6 @@ Claude와 다른 에이전트는 `AGENTS.md`, `CLAUDE.md`의 링크를 통해 �
 - 단계 6: Overlay 수동값 저장·편집이 참조 키(`overlay_ref_key`)를 쓴다. 화면 라벨은 현재 R 번호다. 구버전 번호 키 요청은 서버가 변환하고, `regions_by_ref`와 구형 `regions`를 함께 기록한다.
 - 단계 7: 화자(`/api/speakers`)와 영역 번역 메모(`/api/region-context`)가 `by_region_ref`, `context_by_region_ref`에 기록된다. 구형 키는 병행하며 읽을 때 `by_region_ref → by_region → by_tg` 순이다.
 - 단계 8: 처리 제외와 LaMa 고정은 처리 인스턴스 참조(`instance_ref`)를 함께 기록해, 같은 TG의 자동 영역과 수동 영역을 구분한다. 분석 탭 선택은 재분석 뒤 참조를 따라가며 없으면 해제된다. MCP `view_region` 등에 선택 인자 `region_ref`가 추가됐다.
+- 2026-10-30 지우기 보정: `guidance.custom_masks`는 영역 참조를 쓰지 않는 페이지 단위 원본 좌표 기록이다. 영역 종류와 상관없이 Step 3 지우기가 끝난 결과에 마지막으로 합성하므로, 재분석으로 R 번호·영역이 바뀌어도 칠한 자리 그대로 적용된다. `regions.json` 최상위에 `custom_masks_applied`가 덧붙고 영역 항목과 기존 키는 바뀌지 않는다.
 
 저장된 `bubble/unboxed`와 좌표 키는 전역 치환하지 않는다. 구버전 응답은 예전 번호 경로로 계속 읽는다.

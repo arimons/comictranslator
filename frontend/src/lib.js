@@ -10,6 +10,7 @@ export const TOOL_LABELS = [
   ["bubble", "경계 기반 시작점"],
   ["region-split", "영역 분할"],
   ["ubox", "텍스트 기반 영역"],
+  ["mask", "지우기 보정"],
 ];
 
 // 단축키는 keymap.js가 단일 정의다.
@@ -22,6 +23,7 @@ export const TOOL_ICONS = {
   "region-split": "╱",
   ubox: "□",
   bubble: "●",
+  mask: "✎",
 };
 
 export const OVERLAY_HANDLE_NAMES = ["nw", "n", "ne", "e", "se", "s", "sw", "w"];
@@ -155,6 +157,7 @@ export function defaultGuidance(image) {
     manual_seed_points: image?.guidance?.manual_seed_points || [],
     suppressed_regions: image?.guidance?.suppressed_regions || [],
     inpaint_engine_overrides: image?.guidance?.inpaint_engine_overrides || [],
+    custom_masks: image?.guidance?.custom_masks || [],
   };
 }
 

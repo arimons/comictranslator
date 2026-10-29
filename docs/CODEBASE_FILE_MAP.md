@@ -200,7 +200,7 @@ guidance(수동 보정)가 있는 이미지는 `guidance_digest`(guidance 내용
 | `frontend/src/lib.js` | `api()`/`apiStream()` fetch 헬퍼, TG·region·guidance·overlay 관련 순수 함수와 상수, 세션별 OCR 설정(추가 프롬프트·모델) localStorage 저장 |
 | `frontend/src/regionTypes.js` | `regionProcessingBasis()`로 과거 타입을 경계 기반/텍스트 기반으로 해석. `regionTypeLabel()`은 배지 이름, `usesEdgeBarrier()`는 검출 방법에 따른 색상 구분 |
 | `frontend/src/RegionTypeBadge.jsx` | 공통 R 번호 옆에 표시하는 처리 기준 배지. 미확인 값은 미분류로 표시 |
-| `frontend/src/EditorCanvas.jsx` | Step 3 캔버스 — TG on/off, edge barrier, 경계 기반 seed·텍스트 기반 영역 등 guidance 편집 |
+| `frontend/src/EditorCanvas.jsx` | Step 3 캔버스 — TG on/off, edge barrier, 경계 기반 seed·텍스트 기반 영역 등 guidance 편집. 지우기 보정 도구(`mask`)는 붓 획·Shift 사각형·클릭 다각형(`addMaskPolygonPoint`·`closeMaskPolygon`)을 페이지의 `guidance.custom_masks`에 쌓고(`addCustomMaskShape`) 자홍색으로 그린다 |
 | `frontend/src/OverlayCanvas.jsx` | Step 5 캔버스 — 오버레이 안전 영역 이동/리사이즈/회전, eraser rect 편집. 화면 기준 3px 이상 끌었을 때만 수동 위치로 저장 |
 | `frontend/src/keymap.js` | 단축키 단일 정의(키 조합, 탭 범위, 조건, 동작 id, 설명). App 디스패처·툴바 tooltip·도움말이 읽고, `tests/test_docs_sync.py`가 `docs/editor_manual.html` 단축키 표와 대조 |
 | `frontend/src/viewportControls.js` | 두 Konva 캔버스 공용 보기 조작 — 휠=이동, 핀치·Ctrl/Cmd+휠=확대, Space·휠버튼·Hand 도구 드래그 이동, 맞춤/100%/선택 확대 |
@@ -319,6 +319,7 @@ Step 3 진입점이다. `pipeline_runner`가 `python -m pipeline.dialogue_extrac
 - 영역 자동 검출 캐시(`_detect_regions_cached`): `build_ocr_region_sheet`는 이미지와 유효 텍스트 그룹만으로 결정되고 수동 가이드와 무관(수동 벽 없이 호출)하다. 그래서 (이미지 경로·mtime·크기·유효 TG 내용 해시)를 키로 서버 프로세스 메모리에 최근 6페이지까지 보관해, 가이드만 바꿔 다시 분석할 때 이 단계를 건너뛴다. 결과는 캐시 없는 전체 재분석과 같다(regions·마스크·시각화 동일 확인). 22번 페이지 재분석 0.94초가 0.41초가 된다. 이미지나 텍스트 그룹이 바뀌면 키가 달라 다시 검출한다.
 - 제외 영역 판정(`build_dialogue_sheet`): 화면은 마스크로 줄어든 출력 사각형으로 제외 키를 저장하므로, 크롭을 만들기 전에 `bubble_rect`를 마스크 경계로 맞추고 제외를 한 번 더 판정한다. 맞추지 않으면 제외한 넓은 영역이 살아남아 그 안의 수동 텍스트 박스가 `_dedupe_dialogue_crops`에서 중복으로 지워진다.
 - 기본 엔진(`DEFAULT_UNBOXED_INPAINT_ENGINE`): 자동·수동 텍스트 기반 영역은 배경 분류와 상관없이 LaMa로 지운다. Telea는 `inpaint_engine_overrides`로 고정할 때만 쓴다. 배경 분류는 마스크 방식 선택에만 쓴다. Telea는 흑백 원고의 흰 바탕 나레이션용이고, 컬러 무늬·반투명 말풍선에서는 색 덩어리 모자이크가 된다. 사용자가 엔진을 지정한 영역은 그대로 둔다.
+- 지우기 보정(`custom_masks`): 분석이 만든 지우기 결과에 사용자가 칠한 마스크를 마지막에 더해 지우는 페이지 단위 기록이다. 영역 종류(경계 기반·Edge·텍스트 기반)·R 번호·영역 참조와 묶이지 않고 원본 좌표만 저장한다. 항목은 `{id, mode: "add", strokes: [{points, width}], rects: [[x,y,w,h]], polygons: [[[x,y],...]]}`(`subtract`는 자리만 있음). Step 3는 말풍선 흰칠·텍스트 LaMa·보호 범위 복원이 모두 끝난 결과에 `_apply_custom_masks`를 적용한다. `_custom_mask_layer`로 원본 크기 마스크를 그리고, `CUSTOM_MASK_CONTEXT_PAD`(24px)만큼 넓힌 덩어리마다 결과 이미지를 잘라 LaMa로 칠한 자리만 채운다. 기록은 `regions.json` 최상위 `custom_masks_applied`(`mask_ids`, `strokes`, `rects`, `polygons`, `pixels`, `windows`)다. 이전 지우기 결과를 재사용할 때도 다시 적용하며, 보정이 바뀌면 재사용하지 않는다(`guidance_allows_unboxed_mask_reuse`의 `stable_keys`). 테스트는 `tests/test_custom_mask.py`.
 - LaMa 고정(`inpaint_engine_overrides`): 가이드에 영역 키(`region_binding_key`, 출력 영역과 같게 `unboxed_rect` 기준 `_crop_binding_key`)로 저장하면 Step 3가 자동 판정(Telea·`_engine_for_color`)을 건너뛰고 LaMa로 지운다. 수동 텍스트 기반 영역도 같은 키로 고정할 수 있다. 고정이 바뀌면 이전 지우기 결과를 재사용하지 않는다(`guidance_allows_unboxed_mask_reuse`). 화면에서 텍스트 기반 R의 크기를 바꾸면 `resize_source_key`를 단 수동 텍스트 영역 가이드가 생기고(`EditorCanvas.jsx` `commitTextRegionResize`), 이 가이드가 새로 생겨도 이전 지우기 결과를 재사용하지 않는다. 사용한 엔진은 영역에 `inpaint_engine_used`(`telea`·`lama`)와 `inpaint_engine_source`(`auto`·`forced`)로 기록해 화면이 보여 준다.
 - 자동 텍스트 기반 영역(`_select_unboxed_inpaint_mask`): 배경이 선화 섞임·어두움이면 TG 사각형(+8px)을 박스로 보고 수동 텍스트 기반 영역과 같은 글자 마스크로 지운다(`_ubox_style_mask_in_roi`). 글자가 안 잡힐 때만 사각형 전체로 지운다. 사각형 전체를 지우면 머리카락 같은 그림을 LaMa가 통째로 다시 그려 뭉개졌다. 위치마다 글자 색을 따로 정하는 마스크는 흰 글자+검은 외곽선에서 외곽선이 남아 흰 얼룩이 생겨 쓰지 않는다.
 - 수동 텍스트 기반 영역(`_apply_manual_ubox_lama`): 박스 안에서 글자 색 픽셀만 마스크로 잡고, 문맥은 박스 바깥 24px까지 본다. 박스가 어두우면 밝은 글자로 보고 마스크를 6px 넓힌다(흰 테두리가 남으면 LaMa가 글자 모양 얼룩을 되살린다). 엔진은 `_classify_inpaint_background` 배경 분류로 Telea/LaMa를 고르고, guidance의 `inpaint_engine: "lama"`가 있으면 그 값이 우선한다.
@@ -545,3 +546,4 @@ OCR·번역 모델로 Gemini를 고른 세션의 이미지 작업(글자 지우�
 <!-- 2026-10-29 pipeline/region_refs.py 신설(소비처 연결 전) 반영 -->
 
 <!-- 2026-10-29 review: region_refs.py 합침 메모 보관 반영 -->
+<!-- 변경 검토(2026-10-30): 지우기 보정(custom_masks) 추가 -->

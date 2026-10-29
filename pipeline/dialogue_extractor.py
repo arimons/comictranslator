@@ -419,6 +419,110 @@ def _forced_engine_for_crop(
     return None if key in comparable else by_key.get(key)
 
 
+# 지우기 보정(guidance.custom_masks): 분석이 만든 지우기 결과에 사용자가 칠한 마스크를 마지막에 더해 지운다.
+# 영역 종류(경계 기반·Edge·텍스트 기반)와 영역 번호에 묶이지 않는 페이지 단위 원본 좌표다.
+# 칠한 자리는 LaMa로 채운다. LaMa는 주변 그림을 보고 채우므로 덩어리마다 둘레를 조금 더 잘라 넘긴다.
+CUSTOM_MASK_MODES = ("add",)  # "subtract"는 스키마 자리만 두고 아직 처리하지 않는다
+CUSTOM_MASK_CONTEXT_PAD = 24  # LaMa에 함께 넘기는 둘레(px). 기존 수동 텍스트 영역의 문맥 여유와 같다
+CUSTOM_MASK_MAX_WIDTH = 200
+
+
+def _int_points(raw: Any) -> List[Tuple[int, int]]:
+    points = []
+    for pt in raw or []:
+        try:
+            points.append((int(round(float(pt[0]))), int(round(float(pt[1])))))
+        except (TypeError, ValueError, IndexError):
+            return []
+    return points
+
+
+def _custom_mask_layer(
+    custom_masks: List[Dict[str, Any]] | None,
+    image_shape: Tuple[int, ...],
+) -> Tuple[np.ndarray | None, Dict[str, Any] | None]:
+    """페이지의 지우기 보정(붓 획·사각형·다각형)을 원본 크기 마스크 하나로 그린다. 이미지 밖은 잘린다."""
+    records = [item for item in custom_masks or [] if isinstance(item, dict) and str(item.get("mode") or "add") in CUSTOM_MASK_MODES]
+    if not records:
+        return None, None
+    img_h, img_w = image_shape[:2]
+    layer = np.zeros((img_h, img_w), dtype=np.uint8)
+    strokes = rects = polygons = 0
+    for record in records:
+        for stroke in record.get("strokes") or []:
+            if not isinstance(stroke, dict):
+                continue
+            points = _int_points(stroke.get("points"))
+            try:
+                width = int(round(float(stroke.get("width") or 1)))
+            except (TypeError, ValueError):
+                continue
+            if not points:
+                continue
+            width = max(1, min(CUSTOM_MASK_MAX_WIDTH, width))
+            if len(points) == 1:
+                cv2.circle(layer, points[0], max(1, width // 2), 255, -1)
+            else:
+                for a, b in zip(points, points[1:]):
+                    cv2.line(layer, a, b, 255, thickness=width)
+            strokes += 1
+        for raw in record.get("rects") or []:
+            if not isinstance(raw, list) or len(raw) < 4:
+                continue
+            try:
+                x, y, w, h = _as_rect([int(round(float(v))) for v in raw[:4]])
+            except (TypeError, ValueError):
+                continue
+            if w <= 0 or h <= 0:
+                continue
+            cv2.rectangle(layer, (x, y), (x + w - 1, y + h - 1), 255, -1)
+            rects += 1
+        for raw in record.get("polygons") or []:
+            points = _int_points(raw)
+            if len(points) < 3:
+                continue
+            cv2.fillPoly(layer, [np.array(points, dtype=np.int32)], 255)
+            polygons += 1
+    meta = {
+        "mask_ids": [str(item.get("id")) for item in records if item.get("id")],
+        "strokes": strokes,
+        "rects": rects,
+        "polygons": polygons,
+    }
+    return layer, meta
+
+
+def _apply_custom_masks(masked_image: np.ndarray, custom_masks: List[Dict[str, Any]] | None) -> Dict[str, Any] | None:
+    """지우기가 끝난 결과 이미지에서 칠한 자리를 LaMa로 채운다. 가까운 덩어리는 한 번에 처리한다."""
+    layer, meta = _custom_mask_layer(custom_masks, masked_image.shape)
+    if layer is None:
+        return None
+    meta["pixels"] = int(np.count_nonzero(layer))
+    meta["windows"] = []
+    if not meta["pixels"]:
+        return meta
+    pad = CUSTOM_MASK_CONTEXT_PAD
+    kernel = np.ones((pad * 2 + 1, pad * 2 + 1), dtype=np.uint8)
+    num, _labels, stats, _ = cv2.connectedComponentsWithStats(cv2.dilate(layer, kernel), connectivity=8)
+    img_h, img_w = layer.shape
+    lama = _get_lama()
+    for label in range(1, num):
+        x, y, w, h = (int(v) for v in stats[label, :4])
+        x2, y2 = min(img_w, x + w), min(img_h, y + h)
+        window_mask = layer[y:y2, x:x2]
+        if not window_mask.any():
+            continue
+        roi = masked_image[y:y2, x:x2].copy()
+        out = lama(Image.fromarray(cv2.cvtColor(roi, cv2.COLOR_BGR2RGB)), Image.fromarray(window_mask))
+        filled = cv2.cvtColor(np.array(out), cv2.COLOR_RGB2BGR)
+        fh, fw = min(filled.shape[0], window_mask.shape[0]), min(filled.shape[1], window_mask.shape[1])
+        target = masked_image[y:y + fh, x:x + fw]
+        apply = window_mask[:fh, :fw] > 0
+        target[apply] = filled[:fh, :fw][apply]
+        meta["windows"].append([x, y, x2 - x, y2 - y])
+    return meta
+
+
 def _forced_lama_keys(overrides: List[Dict[str, Any]] | None) -> set[str]:
     """LaMa로 고정한 영역 키(이전 호출부 호환)."""
     return {key for key, engine in _forced_engine_by_key(overrides).items() if engine == "lama"}
@@ -3000,6 +3104,7 @@ def build_dialogue_sheet(
     reuse_existing_unboxed_inpaint: bool = False,
     inpaint_engine_overrides: List[Dict[str, Any]] | None = None,
     force_standard: bool = False,
+    custom_masks: List[Dict[str, Any]] | None = None,
 ) -> Dict[str, Any]:
     """
     1. Bubble 영역 검출 → 흰색 마스킹
@@ -3361,6 +3466,9 @@ def build_dialogue_sheet(
     scaled_bubble_mask_erode = _scaled_erode_px(bubble_mask_erode, image.shape)
     bubble_overlay_mask = _erode_mask(bubble_base_mask, scaled_bubble_mask_erode)
     masked_image[bubble_overlay_mask > 0] = (255, 255, 255)
+    # 지우기 보정은 모든 지우기(말풍선 흰칠·텍스트 LaMa·보호 범위 복원)가 끝난 뒤 마지막에 합성한다.
+    # 재사용한 이전 결과 위에도 다시 적용한다(보호 범위 복원이 이전 보정을 되돌렸을 수 있다).
+    custom_mask_report = _apply_custom_masks(masked_image, custom_masks)
 
     cv2.imwrite(output_masked_path, masked_image)
 
@@ -3517,6 +3625,8 @@ def build_dialogue_sheet(
         "reused_unboxed_inpaint": reused_unboxed_inpaint,
         "regions": output_regions,
     }
+    if custom_mask_report is not None:
+        output_data["custom_masks_applied"] = custom_mask_report
     with open(output_json_path, "w", encoding="utf-8") as f:
         json.dump(storage_json(Path(f.name), output_data), f, ensure_ascii=False, indent=2)
 

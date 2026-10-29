@@ -10,6 +10,11 @@ import { TEXT_BASED, regionProcessingBasis, regionTypeLabel, regionBindingKey, u
 const SELECTED_REGION_COLOR = "#e11d48";
 // Edge는 검출 결과(초록)와 같은 계열로 벽선도 초록으로 그린다. 선택 강조색(빨강)과 겹치지 않게 한다.
 const EDGE_WALL_COLOR = "#16a34a";
+// 지우기 보정 획 색. 영역 종류 색·선택 강조색과 겹치지 않는 자홍색이다.
+const CUSTOM_MASK_COLOR = "#d946ef";
+// 다각형 칠하기: 첫 점에서 이 거리(화면 px) 안을 누르면 닫는다. 이보다 덜 움직인 누름은 클릭(꼭짓점)으로 본다.
+const MASK_POLYGON_CLOSE_PX = 10;
+const MASK_CLICK_PX = 3;
 
 // 예전에는 수동 Edge 영역을 삭제해도 제외 기록만 남고 벽 box는 그대로 남았다. 그런 가이드를 열 때
 // 제외한 Edge 영역을 만든 벽 box(제외보다 먼저 그린 것)와 쓸모없어진 제외 기록을 함께 정리한다.
@@ -51,7 +56,7 @@ function pruneDeletedEdgeBoxes(guidance) {
   };
 }
 
-const EditorCanvas = forwardRef(function EditorCanvas({ image, baseUrl, guidance, setGuidance, tool, layers, selectedTg, setSelectedTg, selectedRegionId, setSelectedRegionId, onToolComplete, setStatus, speakerLabels }, ref) {
+const EditorCanvas = forwardRef(function EditorCanvas({ image, baseUrl, guidance, setGuidance, tool, layers, selectedTg, setSelectedTg, selectedRegionId, setSelectedRegionId, onToolComplete, setStatus, speakerLabels, maskBrushWidth = 12 }, ref) {
   const hostRef = useRef(null);
   const stageRef = useRef(null);
   const imageObjRef = useRef(null);
@@ -75,11 +80,17 @@ const EditorCanvas = forwardRef(function EditorCanvas({ image, baseUrl, guidance
   // region_id → 화자 이름. 라벨에 붙여 지정 상태를 캔버스에서 바로 본다.
   const speakerLabelsRef = useRef(speakerLabels);
   speakerLabelsRef.current = speakerLabels;
+  const maskBrushRef = useRef(maskBrushWidth);
+  maskBrushRef.current = maskBrushWidth;
   const dragPreviewRef = useRef(null);
   // stage 핸들러는 mount 시점 클로저라 baseUrl은 ref로 읽어야 현재 페이지 key가 나온다.
   const baseUrlRef = useRef(baseUrl);
   baseUrlRef.current = baseUrl;
   const [dragPreview, setDragPreview] = useState(null);
+  // 지우기 보정 다각형: 클릭으로 찍는 중인 꼭짓점(원본 좌표)과 대상 R. 닫으면 보정 기록에 들어간다.
+  const [maskPolygon, setMaskPolygon] = useState(null);
+  const maskPolygonRef = useRef(null);
+  maskPolygonRef.current = maskPolygon;
   const [contextMenu, setContextMenu] = useState(null);
   const menuRef = useRef(null);
   useEffect(() => { setContextMenu(null); }, [image?.id, image?.input_url, guidance, tool]);
@@ -122,6 +133,18 @@ const EditorCanvas = forwardRef(function EditorCanvas({ image, baseUrl, guidance
     setGuidance(pruned.next);
     setStatus(`삭제한 Edge의 남은 벽 ${pruned.count}개 정리 · 변경사항 적용 시 반영`);
   }, [image?.id, guidance]);
+
+  // 페이지가 바뀌면 찍던 다각형을 버린다.
+  useEffect(() => { maskPolygonRef.current = null; setMaskPolygon(null); }, [image?.id]);
+
+  // 지우기 보정 도구를 끄면 붓 미리보기 원을 지운다.
+  useEffect(() => {
+    if (tool !== "mask") {
+      setDragPreview((value) => (value?.tool === "mask-cursor" ? null : value));
+      maskPolygonRef.current = null;
+      setMaskPolygon(null);
+    }
+  }, [tool]);
 
   useEffect(() => {
     toolRef.current = tool;
@@ -441,6 +464,9 @@ const EditorCanvas = forwardRef(function EditorCanvas({ image, baseUrl, guidance
     },
     deleteSelection,
     excludeSelection,
+    closeMaskPolygon,
+    cancelMaskPolygon,
+    hasMaskPolygon: () => Boolean(maskPolygonRef.current),
     ensureRegionVisible: region => vpRef.current.ensureVisible(regionDisplayRect(region)),
   }));
 
@@ -602,6 +628,94 @@ const EditorCanvas = forwardRef(function EditorCanvas({ image, baseUrl, guidance
     setStatus("경계 기반 seed 추가");
   }
 
+  // 칠한 획·Shift+드래그 사각형·클릭 다각형을 페이지의 보정 기록에 덧붙인다. 영역과 상관없이 원본 좌표로 쌓는다.
+  function addCustomMaskShape(drag, end) {
+    const latest = guidanceRef.current || defaultGuidance(null);
+    const list = [...(latest.custom_masks || [])];
+    const index = list.findIndex((item) => (item.mode || "add") === "add");
+    const entry = index >= 0 ? { ...list[index] } : { id: `custom_mask_${Date.now()}`, mode: "add", strokes: [], rects: [], polygons: [] };
+    if (drag.polygon) {
+      entry.polygons = [...(entry.polygons || []), drag.polygon];
+    } else if (drag.rect) {
+      const x1 = Math.min(drag.start.x, end.x), y1 = Math.min(drag.start.y, end.y);
+      const w = Math.abs(end.x - drag.start.x), h = Math.abs(end.y - drag.start.y);
+      if (w < 2 || h < 2) return false;
+      entry.rects = [...(entry.rects || []), [x1, y1, w, h]];
+    } else {
+      entry.strokes = [...(entry.strokes || []), { points: drag.points, width: drag.width }];
+    }
+    if (index >= 0) list[index] = entry; else list.push(entry);
+    const next = { ...latest, custom_masks: list };
+    guidanceRef.current = next;
+    setGuidance(next, "지우기 보정");
+    const count = (entry.strokes || []).length + (entry.rects || []).length + (entry.polygons || []).length;
+    setStatus(`지우기 보정 ${count}개 · 변경사항 적용 시 반영`);
+    return true;
+  }
+
+  function drawCustomMaskShapes(layer, entry, opacity) {
+    const scale = transformRef.current.scale;
+    const group = new Konva.Group({ opacity, listening: false });
+    (entry.strokes || []).forEach((stroke) => {
+      const points = (stroke.points || []).filter((pt) => Array.isArray(pt) && pt.length >= 2);
+      const width = Math.max(1, Number(stroke.width) || 1) * scale;
+      if (points.length === 1) {
+        const [x, y] = toStagePoint(points[0]);
+        group.add(new Konva.Circle({ x, y, radius: width / 2, fill: CUSTOM_MASK_COLOR }));
+      } else if (points.length > 1) {
+        group.add(new Konva.Line({ points: points.flatMap((pt) => toStagePoint(pt)), stroke: CUSTOM_MASK_COLOR, strokeWidth: width, lineCap: "round", lineJoin: "round" }));
+      }
+    });
+    (entry.rects || []).forEach((rect) => {
+      if (Array.isArray(rect) && rect.length >= 4) group.add(new Konva.Rect({ ...toStageRect(rect), fill: CUSTOM_MASK_COLOR }));
+    });
+    (entry.polygons || []).forEach((polygon) => {
+      if (Array.isArray(polygon) && polygon.length >= 3) group.add(new Konva.Line({ points: polygon.flatMap((pt) => toStagePoint(pt)), closed: true, fill: CUSTOM_MASK_COLOR }));
+    });
+    layer.add(group);
+  }
+
+  function cancelMaskPolygon() {
+    if (!maskPolygonRef.current) return false;
+    maskPolygonRef.current = null;
+    setMaskPolygon(null);
+    setStatus("다각형 칠하기 취소");
+    return true;
+  }
+
+  // 찍은 꼭짓점으로 다각형을 닫아 보정에 더한다. 꼭짓점이 셋 미만이면 닫지 않는다.
+  function closeMaskPolygon() {
+    const polygon = maskPolygonRef.current;
+    if (!polygon) return false;
+    if (polygon.points.length < 3) { setStatus("다각형은 꼭짓점이 3개 이상이어야 합니다"); return true; }
+    maskPolygonRef.current = null;
+    setMaskPolygon(null);
+    addCustomMaskShape({ polygon: polygon.points }, null);
+    return true;
+  }
+
+  // 클릭 한 번: 다각형 꼭짓점을 더한다. 첫 점 가까이를 누르면 닫는다.
+  function addMaskPolygonPoint(point) {
+    const current = maskPolygonRef.current;
+    const scale = transformRef.current.scale || 1;
+    if (current) {
+      const first = current.points[0];
+      if (current.points.length >= 3 && Math.hypot(point.x - first[0], point.y - first[1]) * scale <= MASK_POLYGON_CLOSE_PX) {
+        closeMaskPolygon();
+        return;
+      }
+      const next = { points: [...current.points, [point.x, point.y]] };
+      maskPolygonRef.current = next;
+      setMaskPolygon(next);
+      setStatus(`다각형 꼭짓점 ${next.points.length}개 · 첫 점을 누르거나 Enter로 닫기, Esc 취소`);
+      return;
+    }
+    const next = { points: [[point.x, point.y]] };
+    maskPolygonRef.current = next;
+    setMaskPolygon(next);
+    setStatus("다각형 칠하기 시작 · 경계를 따라 클릭하세요");
+  }
+
   function redraw() {
     const host = hostRef.current;
     const stage = stageRef.current;
@@ -742,9 +856,31 @@ const EditorCanvas = forwardRef(function EditorCanvas({ image, baseUrl, guidance
         overlay.add(new Konva.Circle({ x, y, radius: 5, fill: "#ec4899", stroke: "#111827", strokeWidth: 1.5 }));
         overlay.add(new Konva.Text({ text: "seed", x: x + 7, y: y + 5, fontSize: 12, fill: "#ec4899" }));
       });
+      // 지우기 보정은 영역과 상관없는 페이지 기록이라 늘 그린다.
+      (currentGuidance.custom_masks || []).forEach((entry) => drawCustomMaskShapes(overlay, entry, .45));
     }
 
-    if (currentDragPreview) {
+    if (toolRef.current === "mask" && !currentImage.processing_excluded) {
+      const polygon = maskPolygonRef.current;
+      if (polygon?.points.length) {
+        const cursor = currentDragPreview?.tool === "mask-cursor" ? [[currentDragPreview.end.x, currentDragPreview.end.y]] : [];
+        const points = [...polygon.points, ...cursor].flatMap((pt) => toStagePoint(pt));
+        overlay.add(new Konva.Line({ points, closed: true, fill: CUSTOM_MASK_COLOR, opacity: .25, listening: false }));
+        overlay.add(new Konva.Line({ points, stroke: CUSTOM_MASK_COLOR, strokeWidth: 1.5, listening: false }));
+        polygon.points.forEach((pt, index) => {
+          const [px, py] = toStagePoint(pt);
+          overlay.add(new Konva.Circle({ x: px, y: py, radius: index === 0 ? 5 : 3, fill: index === 0 ? "#ffffff" : CUSTOM_MASK_COLOR, stroke: CUSTOM_MASK_COLOR, strokeWidth: 1.5, listening: false }));
+        });
+      } else if (currentDragPreview?.tool === "mask-cursor" || (currentDragPreview?.tool === "mask" && !currentDragPreview.rect)) {
+        const [cx, cy] = toStagePoint([currentDragPreview.end.x, currentDragPreview.end.y]);
+        overlay.add(new Konva.Circle({ x: cx, y: cy, radius: Math.max(1, maskBrushRef.current * view.scale / 2), stroke: CUSTOM_MASK_COLOR, strokeWidth: 1, listening: false }));
+      }
+    }
+
+    if (currentDragPreview?.tool === "mask") {
+      if (currentDragPreview.rect) drawCustomMaskShapes(overlay, { rects: [[Math.min(currentDragPreview.start.x, currentDragPreview.end.x), Math.min(currentDragPreview.start.y, currentDragPreview.end.y), Math.abs(currentDragPreview.end.x - currentDragPreview.start.x), Math.abs(currentDragPreview.end.y - currentDragPreview.start.y)]] }, .55);
+      else drawCustomMaskShapes(overlay, { strokes: [{ points: currentDragPreview.points, width: currentDragPreview.width }] }, .55);
+    } else if (currentDragPreview && currentDragPreview.tool !== "mask-cursor") {
       const isRectRegion = currentDragPreview.tool === "ubox";
       const isTextBased = currentDragPreview.tool === "ubox";
       const isWall = currentDragPreview.tool === "wall";
@@ -959,7 +1095,10 @@ const EditorCanvas = forwardRef(function EditorCanvas({ image, baseUrl, guidance
     const vp = vpRef.current;
     vp.attach();
     const onEnter = () => { pointerInsideRef.current = true; };
-    const onLeave = () => { pointerInsideRef.current = false; };
+    const onLeave = () => {
+      pointerInsideRef.current = false;
+      if (dragPreviewRef.current?.tool === "mask-cursor") setDragPreview(null);
+    };
     host.addEventListener("mouseenter", onEnter);
     host.addEventListener("mouseleave", onLeave);
     stage.on("contentContextmenu", (evt) => {
@@ -967,6 +1106,7 @@ const EditorCanvas = forwardRef(function EditorCanvas({ image, baseUrl, guidance
     });
     // 빈 곳 더블클릭만 화면 맞춤. TG나 guide 위 더블클릭은 그대로 둔다.
     stage.on("dblclick dbltap", () => {
+      if (toolRef.current === "mask") return;
       if (!imageObjRef.current || !stage.getPointerPosition()) return;
       const point = pointerToImage(stage);
       if (findGuideAt(point) || findTgAt(point) || findRegionAt(point)) return;
@@ -980,6 +1120,13 @@ const EditorCanvas = forwardRef(function EditorCanvas({ image, baseUrl, guidance
       }
       if (button === 1) return;
       const currentTool = toolRef.current;
+      if (currentTool === "mask" && !imageRef.current?.processing_excluded) {
+        const point = pointerToImage(stage);
+        dragRef.current = { mode: "mask", rect: Boolean(evt.evt?.shiftKey) && !maskPolygonRef.current, polygonOnly: Boolean(maskPolygonRef.current),
+          start: point, startStage: stage.getPointerPosition(), points: [[point.x, point.y]], width: maskBrushRef.current };
+        setDragPreview({ tool: "mask", ...dragRef.current, end: point });
+        return;
+      }
       if (imageRef.current?.processing_excluded || !["tg-split", "wall", "region-split", "ubox"].includes(currentTool)) return;
       const point = pointerToImage(stage);
       const group = findTgAt(point);
@@ -987,6 +1134,17 @@ const EditorCanvas = forwardRef(function EditorCanvas({ image, baseUrl, guidance
       setDragPreview({ tool: currentTool, start: point, end: point });
     });
     stage.on("mousemove touchmove", () => {
+      if (toolRef.current === "mask" && imageObjRef.current && stage.getPointerPosition()) {
+        const point = pointerToImage(stage);
+        const drag = dragRef.current;
+        if (drag?.mode !== "mask") { setDragPreview({ tool: "mask-cursor", end: point }); return; }
+        const last = drag.points[drag.points.length - 1];
+        // 획이 너무 촘촘해지지 않게 붓 굵기의 1/4 이상 움직였을 때만 점을 더한다
+        if (drag.polygonOnly) { setDragPreview({ tool: "mask-cursor", end: point }); return; }
+        if (!drag.rect && Math.hypot(point.x - last[0], point.y - last[1]) >= Math.max(1, drag.width / 4)) drag.points = [...drag.points, [point.x, point.y]];
+        setDragPreview({ tool: "mask", ...drag, end: point });
+        return;
+      }
       if (!dragRef.current) return;
       const currentTool = toolRef.current;
       if (imageRef.current?.processing_excluded || !["tg-split", "wall", "region-split", "ubox"].includes(currentTool)) return;
@@ -994,6 +1152,19 @@ const EditorCanvas = forwardRef(function EditorCanvas({ image, baseUrl, guidance
     });
     stage.on("mouseup touchend", () => {
       if (!dragRef.current) return;
+      if (dragRef.current.mode === "mask") {
+        const drag = dragRef.current;
+        const end = pointerToImage(stage);
+        dragRef.current = null;
+        setDragPreview({ tool: "mask-cursor", end });
+        skipClickRef.current = true; setTimeout(() => { skipClickRef.current = false; }, 0);
+        // 거의 움직이지 않은 누름은 다각형 꼭짓점, 끈 것은 붓 획(또는 Shift 사각형)이다. 칠한 뒤에도 도구를 유지한다.
+        const now = stage.getPointerPosition();
+        const moved = now && drag.startStage ? Math.hypot(now.x - drag.startStage.x, now.y - drag.startStage.y) : 0;
+        if (drag.polygonOnly || (!drag.rect && moved < MASK_CLICK_PX)) addMaskPolygonPoint(drag.start);
+        else addCustomMaskShape(drag, end);
+        return;
+      }
       const end = pointerToImage(stage);
       const { start, tg } = dragRef.current;
       dragRef.current = null;
@@ -1071,11 +1242,11 @@ const EditorCanvas = forwardRef(function EditorCanvas({ image, baseUrl, guidance
 
   useEffect(() => {
     redraw();
-  }, [image, guidance, tool, layers, selectedTg, selectedRegionId, dragPreview, speakerLabels]);
+  }, [image, guidance, tool, layers, selectedTg, selectedRegionId, dragPreview, speakerLabels, maskBrushWidth, maskPolygon]);
 
   const menuAction = action => { setContextMenu(null); action(); };
   const automaticRegion = contextMenu?.region;
-  return <><div id="stageHost" tabIndex="0" className={["tg-split", "wall", "region-split", "ubox", "bubble"].includes(tool) ? "drawing" : ""} ref={hostRef} />
+  return <><div id="stageHost" tabIndex="0" className={["tg-split", "wall", "region-split", "ubox", "bubble", "mask"].includes(tool) ? "drawing" : ""} ref={hostRef} />
     {contextMenu && createPortal(<div role="menu" aria-label="영역 편집 메뉴" ref={menuRef} className="canvas-context-menu"
       style={{left:contextMenu.x,top:contextMenu.y}} onContextMenu={event => event.preventDefault()} onKeyDown={event => {
         if (event.key === "Tab") { setContextMenu(null); return; }

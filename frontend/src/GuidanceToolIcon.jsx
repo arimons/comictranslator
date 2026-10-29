@@ -10,6 +10,7 @@ export default function GuidanceToolIcon({ tool }) {
     ubox:<><path d="M8 3H3v5m13-5h5v5M3 16v5h5m13-5v5h-5M8 8h8m-4 0v9m-2 0h4" /></>,
     lama:<><path d="M5 19 19 5" /><path d="m14 5 5 5" /><path d="M4 14h4M6 12v4" /></>,
     'ai-eraser':<><path d="m4 15 9-9 5 5-7 7H7Z" /><path d="m9 10 5 5M13 20h8" /><path d="M19 2v4M17 4h4" /></>,
+    mask:<><path d="M15 4l5 5-8 8-5-5Z" /><path d="M7 12c-3 1-4 3-4 8 3 0 6-1 8-4" /></>,
     bubble:<><path d="M20 9c2 5-2 11-8 11H5l-3 2 1-6C-1 7 5 2 12 3c4 0 7 2 8 6Z" /><circle cx="12" cy="11" r="2" fill="currentColor" /></>,
   };
   return <svg viewBox="0 0 24 24" width="19" height="19" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" focusable="false">{paths[tool]}</svg>;
