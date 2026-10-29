@@ -126,3 +126,5 @@ UI 검증은 별도 headless Chromium에서 실행한다. `proof/src/run_headles
 <!-- 2026-10-29 review: editor_review_bridge.py·run_editor_mcp.py 선택 인자 region_ref 추가, 이 문서 내용 영향 없음 -->
 
 <!-- 2026-10-29 review: region_refs.py·app.py·render_text_overlay.py Overlay 보관·복원·롤백·구 번들 저장 보완. 이 문서 내용 영향 없음 -->
+
+<!-- 2026-10-29 review: region_refs.py·editor_review_bridge.py 합침 메모 보관과 MCP integrated 영역 참조. 이 문서 내용 영향 없음 -->

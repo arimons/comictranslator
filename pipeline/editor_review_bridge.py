@@ -18,7 +18,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from pipeline.source_library import SourceLibrary, digest as source_digest
 from pipeline.paths import for_repo
 from pipeline.project_paths import manifest_path, manifest_files, runtime_json, transform_paths
-from pipeline.region_refs import annotate_regions
+from pipeline.region_refs import annotate_regions, integrated_groups, resolve_cluster_refs
 from pipeline.region_types import regions_with_processing_basis
 
 Artifact = Literal["original", "masked", "final", "analysis", "ocr_sheet", "region_mask"]
@@ -212,6 +212,18 @@ class ReviewStore:
             guidance = payload.get("guidance")
             payload["regions"] = {**payload["regions"], "regions": annotate_regions(
                 payload["regions"]["regions"], guidance if isinstance(guidance, dict) else None)}
+        integrated = payload.get("integrated")
+        current = payload["regions"].get("regions") if isinstance(payload["regions"], dict) else None
+        clusters = integrated.get("clusters") if isinstance(integrated, dict) else integrated
+        if isinstance(clusters, list) and clusters and isinstance(current, list):
+            # source_region_id는 번역 시점 번호다. 현재 R 번호와 섞이지 않게 영역 참조를 함께 준다.
+            groups = {i: g["ref"] for g in integrated_groups({"clusters": clusters}, current) for i in g["indexes"]}
+            refs = resolve_cluster_refs({"clusters": clusters}, current)
+            annotated = [
+                {**c, "source_region_ref": c.get("source_region_ref") or groups.get(i), "resolved_region_ref": refs[i]["ref"]}
+                if isinstance(c, dict) else c for i, c in enumerate(clusters)
+            ]
+            payload["integrated"] = {**integrated, "clusters": annotated} if isinstance(integrated, dict) else annotated
         return base, page, paths, blobs, payload, issues, dimensions, revision, hashes
 
     @staticmethod

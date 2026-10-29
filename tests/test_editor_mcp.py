@@ -272,3 +272,19 @@ def test_region_ref_is_an_optional_selector_and_never_replaced_by_a_number(proje
                          [CandidateAction(action="review_only", region_id=4, region_ref=refs[4], reason="확인")])
     with pytest.raises(ValueError, match="영역 지정"):
         store.propose_review("example", "page", revision, [Observation(region_id=1, region_ref=refs[4], description="관찰")], [])
+
+
+def test_inspect_page_integrated_clusters_carry_region_refs(project):
+    """리뷰 지적 8: 번역 번호(source_region_id)와 현재 R 번호가 어긋나도 integrated에 영역 참조가 붙는다."""
+    root, base, store = project
+    write_json(base / "work/json/page_integrated.json", {"clusters": [
+        {"source_region_id": 4, "matched_cluster": [7], "union_bbox": [1, 2, 3, 4]}]})
+    write_json(base / "work/json/page_regions.json", {"regions": [
+        {"region_id": 1, "type": "unboxed", "unboxed_rect": [100, 150, 30, 60], "anchor_ids": [7], "indexed_sheet_rect": [0, 0, 5, 5]},
+        {"region_id": 4, "type": "unboxed", "unboxed_rect": [10, 10, 30, 60], "anchor_ids": [9], "indexed_sheet_rect": [5, 0, 5, 5]}]})
+    page = store.inspect_page("example", "page")
+    cluster = page["payload"]["integrated"]["clusters"][0]
+    assert cluster["source_region_id"] == 4
+    assert cluster["resolved_region_ref"] == "tg:7"
+    by_ref = {r["region_ref"]: r["region_id"] for r in page["payload"]["regions"]["regions"]}
+    assert by_ref["tg:7"] == 1  # 번역 번호 4가 아니라 현재 R1

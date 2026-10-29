@@ -542,3 +542,22 @@ class LegacyOriginDerivationTest(unittest.TestCase):
         self.assertEqual(out["region_instance_ref"], "method:manual_ubox_guide|tg:4")
         self.assertTrue(rr.instance_ref_is_weak(out["region_instance_ref"]))
         self.assertTrue(rr.instance_ref_is_weak(rr.instance_ref_of(region)))
+
+
+class ReviewMergeMemoTest(unittest.TestCase):
+    def test_merge_with_different_memos_keeps_all_of_them_in_a_stash(self) -> None:
+        """리뷰 지적 5(A2): 합침 때 서로 다른 번역 메모는 비우지 않고 전부 보관한다. 화자는 설계대로 비운다."""
+        regions = [region(1, [10, 13], R_A)]
+        store = {"context_by_region_ref": {"tg:10": "메모A", "tg:13": "메모B"}, "by_region_ref": {"tg:10": "a", "tg:13": "b"}}
+        out, report = rr.reconcile_speakers(store, regions)
+        self.assertEqual(out["context_by_region_ref"], {})
+        self.assertEqual(out["unmatched_context_by_region_ref"], {"tg:10": "메모A", "tg:13": "메모B"})
+        self.assertEqual(out["by_region_ref"], {})
+        self.assertNotIn("unmatched_context_by_region_ref", rr.reconcile_speakers({"context_by_region_ref": {"tg:10": "같음", "tg:13": "같음"}}, regions)[0])
+
+
+class McpIntegratedRefTest(unittest.TestCase):
+    def test_resolve_cluster_refs_gives_current_ref_for_mcp_payload(self) -> None:
+        integrated = {"clusters": [cluster(4, [5], R_A)]}
+        refs = rr.resolve_cluster_refs(integrated, [region(2, [5], R_A)])
+        self.assertEqual(refs[0]["ref"], "tg:5")

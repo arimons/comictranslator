@@ -60,7 +60,7 @@ Step 4 직전에 서버가 현재 `regions.json`과 `by_region_ref`→`by_region
 
 `작품 참고문(인물·용어·메모)` → `화자 지정` → `영역별 번역 가이드` → `Additional Translation Prompt`. 실행한 값은 `json/{id}_glossary_snapshot.json`과 `integrated.json`의 `glossary.speakers`·`glossary.region_contexts`에 남는다.
 
-영역별 번역 가이드는 영역 분석 탭 선택 정보 패널의 **번역 메모**(R마다, 500자 이내)다. `work/speakers/{image_id}.json`의 `context_by_region_ref`에 영역 참조 키로(구버전 호환으로 `context_by_region`에도) 저장하며(`POST /api/region-context`, 빈 글은 삭제) 칸을 벗어날 때 저장한다. 저장만으로 번역을 실행하지 않고, 이후 OCR/번역(분석 뒤 뜨는 OCR·번역 권장 팝업의 실행 포함) 때 `page_region_contexts`·`region_context_prompt`로 "region_id N: 메모" 형태로 붙는다. R 번호나 사각형이 바뀌어도 같은 대사(같은 TG 집합)면 유지된다. 영역이 합쳐지면 지정·메모가 모두 같을 때만 유지하고 다르면 비운다. 영역이 갈라지면 모든 자식 영역에 복사한다. 대사가 현재 영역에서 사라지면 기록은 지우지 않고 어디에도 붙이지 않으며 같은 대사가 돌아오면 다시 붙는다(`reconcile_speakers`, 정책 표는 `pipeline/region_refs.py`의 `POLICY`). 메모나 화자를 바꿔도 기존 번역은 자동으로 다시 실행하지 않는다.
+영역별 번역 가이드는 영역 분석 탭 선택 정보 패널의 **번역 메모**(R마다, 500자 이내)다. `work/speakers/{image_id}.json`의 `context_by_region_ref`에 영역 참조 키로(구버전 호환으로 `context_by_region`에도) 저장하며(`POST /api/region-context`, 빈 글은 삭제) 칸을 벗어날 때 저장한다. 저장만으로 번역을 실행하지 않고, 이후 OCR/번역(분석 뒤 뜨는 OCR·번역 권장 팝업의 실행 포함) 때 `page_region_contexts`·`region_context_prompt`로 "region_id N: 메모" 형태로 붙는다. R 번호나 사각형이 바뀌어도 같은 대사(같은 TG 집합)면 유지된다. 영역이 합쳐지면 지정·메모가 모두 같을 때만 유지한다. 다르면 화자 지정은 비우고, 번역 메모는 비우지 않고 `unmatched_context_by_region_ref`에 전부 보관한다. 영역이 갈라지면 모든 자식 영역에 복사한다. 대사가 현재 영역에서 사라지면 기록은 지우지 않고 어디에도 붙이지 않으며 같은 대사가 돌아오면 다시 붙는다(`reconcile_speakers`, 정책 표는 `pipeline/region_refs.py`의 `POLICY`). 메모나 화자를 바꿔도 기존 번역은 자동으로 다시 실행하지 않는다.
 
 
 2026-10-20 UI 동기화: 페이지를 이미지 생성 권장에서 기존 CV·영역 분석 방식으로 전환해도 연결된 작품 메모와 생성 후보는 유지한다. 경로 전환은 번역을 실행하지 않으며 이후 OCR/번역의 작품 메모 주입 계약은 동일하다.

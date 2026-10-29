@@ -543,3 +543,5 @@ OCR·번역 모델로 Gemini를 고른 세션의 이미지 작업(글자 지우�
 <!-- 2026-10-29 review: app.py 번역 후 영역 변경 감지(ocr_stale) 추가, 이 문서 내용에는 영향 없음 -->
 
 <!-- 2026-10-29 pipeline/region_refs.py 신설(소비처 연결 전) 반영 -->
+
+<!-- 2026-10-29 review: region_refs.py 합침 메모 보관 반영 -->

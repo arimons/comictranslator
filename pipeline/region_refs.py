@@ -1110,6 +1110,9 @@ def reconcile_speakers(store: dict | None, current_regions: list[dict], current_
             else:
                 for old_ref, v in items:
                     report["cleared"][old_ref] = v
+                    if consumer == "context":
+                        # 설계 A2: 서로 다른 메모는 비우지 않고 전부 보관한다.
+                        store.setdefault("unmatched_context_by_region_ref", {})[old_ref] = v
         store[field] = {ref: value for ref, value in out.items() if ref in by_ref_regions or ref in report["dormant"]}
     return store, report
 
