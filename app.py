@@ -39,7 +39,14 @@ from pydantic import BaseModel
 
 from pipeline.project_paths import manifest_files, manifest_path, project_base
 from pipeline.manual_guidance import build_effective_text_groups, load_json, write_json
-from pipeline.region_refs import project_page
+from pipeline.region_refs import (
+    SCHEME as REGION_REF_SCHEME,
+    annotate_regions,
+    dual_write_guidance,
+    normalize_overlay_guidance,
+    project_page,
+    reconcile_overlay_guidance,
+)
 from pipeline.region_types import region_binding_key, regions_with_processing_basis
 from pipeline.source_library import SourceLibrary, atomic_link, digest as source_digest
 from pipeline.page_preparation import build_plan, is_split_page, split_in_place
@@ -2137,6 +2144,7 @@ def run_step3_with_effective_text_groups(session_id: str, image_id: str, guidanc
     if isinstance(sheet_result, dict) and isinstance(sheet_result.get("manual_guidance_report"), dict):
         report["manual_guidance"] = sheet_result["manual_guidance_report"]
         write_json(record["guidance_report_json"], report)
+    sync_overlay_guidance_for_record(record)
     refreshed = image_record(session_id, Path(record["input_path"]))
     refreshed["guidance_report"] = report
     return refreshed
@@ -2208,47 +2216,91 @@ def merge_overlay_guidance(existing: dict[str, Any], incoming: dict[str, Any]) -
     return merged
 
 
-def _integrated_region_rects(record: dict[str, Any]) -> dict[int, list[int]]:
-    from pipeline.overlay_anchor import region_rects_from_integrated
+def _overlay_page_inputs(record: dict[str, Any]) -> tuple[Any, list[dict[str, Any]]]:
+    """overlay 수동값을 영역 참조로 해석하는 데 쓰는 현재 integrated와 영역(region_ref 부착)."""
+    integrated = load_json(Path(record["integrated_json"]), default={})
+    payload = load_json(Path(record["regions_json"]), default={})
+    raw_regions = payload.get("regions") if isinstance(payload, dict) else None
+    manual = load_json(Path(record["guidance_json"]), default={}) if record.get("guidance_json") else {}
+    return integrated, annotate_regions(raw_regions if isinstance(raw_regions, list) else [], manual if isinstance(manual, dict) else None)
 
-    return region_rects_from_integrated(load_json(Path(record["integrated_json"]), default={}))
 
+def store_overlay_guidance(record: dict[str, Any], incoming: dict[str, Any] | None, replace: bool) -> dict[str, Any]:
+    """편집기가 보낸 overlay 수동값을 저장한다. 영역 참조(regions_by_ref)와 구형 번호 키(regions)를 함께 쓴다.
 
-def stamp_overlay_anchors_for_record(record: dict[str, Any]) -> int:
-    """글자 입히기 수동값에 현재 영역 위치를 기록한다. 기록한 개수를 돌려준다.
-
-    수동값은 integrated.json의 region 번호로 저장되므로, 그 integrated 이후에 저장된 수동값만
-    현재 위치로 기록한다(파일 시각 비교). 그보다 오래된 예전 수동값은 어느 번호 기준인지 알 수 없다.
+    구버전 번들이 번호 키만 보내도 현재 integrated 번호 기준으로 영역 참조로 바꿔 받는다(replace여도 참조 값을 지우지 않는다).
+    보관함(unmatched_regions)은 incoming이 따로 주지 않으면 그대로 둔다.
     """
-    from pipeline.overlay_anchor import stamp_overlay_anchors
+    path = Path(record["overlay_guidance_json"])
+    integrated, regions = _overlay_page_inputs(record)
+    stored = load_json(path, default={}) if path.exists() else {}
+    incoming_keys = list(((incoming or {}).get("regions") or {}).keys()) if isinstance(incoming, dict) else []
+    incoming_has_refs = bool(isinstance(incoming, dict) and incoming.get("regions_by_ref")) or any(
+        str(key).startswith(("tg:", "guide:", "geo:")) for key in incoming_keys
+    )
+    if not (isinstance(integrated, dict) and integrated.get("clusters")) and not incoming_has_refs and incoming_keys:
+        # 번역이 아직 없으면 번호 키가 어느 영역을 가리키는지 알 수 없다. 이 경우만 예전처럼 번호 키 그대로 저장한다.
+        legacy = incoming if replace else merge_overlay_guidance(stored if isinstance(stored, dict) else {}, incoming or {})
+        write_json(path, legacy)
+        return legacy
+    stored_newer = True
+    if path.exists() and Path(record["integrated_json"]).exists():
+        stored_newer = path.stat().st_mtime >= Path(record["integrated_json"]).stat().st_mtime
+    existing_v1, _ = normalize_overlay_guidance(stored if isinstance(stored, dict) else {}, integrated, regions, stored_newer)
+    incoming_v1, _ = normalize_overlay_guidance(incoming if isinstance(incoming, dict) else {}, integrated, regions, True)
+    if replace:
+        result = incoming_v1
+        incoming_stash = (incoming or {}).get("unmatched_regions") if isinstance(incoming, dict) else None
+        if not isinstance(incoming_stash, dict) or not incoming_stash:
+            result["unmatched_regions"] = existing_v1.get("unmatched_regions") or {}
+    else:
+        result = {**existing_v1, **{k: v for k, v in incoming_v1.items() if k not in {"regions_by_ref", "unmatched_regions"}}}
+        merged_refs: dict[str, Any] = dict(existing_v1.get("regions_by_ref") or {})
+        for key, value in (incoming_v1.get("regions_by_ref") or {}).items():
+            previous = merged_refs.get(key)
+            merged_refs[key] = {**previous, **value} if isinstance(previous, dict) and isinstance(value, dict) else value
+        result["regions_by_ref"] = merged_refs
+        result["unmatched_regions"] = {**(existing_v1.get("unmatched_regions") or {}), **(incoming_v1.get("unmatched_regions") or {})}
+    result, _report = reconcile_overlay_guidance(result, regions)
+    saved = dual_write_guidance(result, integrated, regions)
+    write_json(path, saved)
+    return saved
 
-    overlay_path, integrated_path = Path(record["overlay_guidance_json"]), Path(record["integrated_json"])
-    if not overlay_path.exists() or not integrated_path.exists():
-        return 0
-    if overlay_path.stat().st_mtime < integrated_path.stat().st_mtime:
-        return 0
-    stamped_guidance, count = stamp_overlay_anchors(load_json(overlay_path, default={}), _integrated_region_rects(record))
-    if count:
-        write_json(overlay_path, stamped_guidance)
-    return count
 
+def sync_overlay_guidance_for_record(record: dict[str, Any], log_callback=None) -> dict[str, Any]:
+    """저장된 overlay 수동값을 현재 영역·integrated 기준으로 맞춰 다시 쓴다.
 
-def remap_overlay_guidance_for_record(record: dict[str, Any], log_callback=None) -> dict[str, Any]:
-    """OCR이 region 번호를 새로 매긴 뒤, 수동값을 기록된 위치와 가장 많이 겹치는 영역 번호로 옮긴다."""
-    from pipeline.overlay_anchor import remap_overlay_guidance
-
-    overlay_path = Path(record["overlay_guidance_json"])
-    if not overlay_path.exists():
-        return {"moved": {}, "unmatched": []}
-    remapped, report = remap_overlay_guidance(load_json(overlay_path, default={}), _integrated_region_rects(record))
-    if report["moved"] or report["unmatched"]:
-        write_json(overlay_path, remapped)
-        message = f"글자 입히기 수동값 재매칭: 이동 {report['moved'] or '-'}"
-        if report["unmatched"]:
-            message += f", 짝 없음(보관) {report['unmatched']}"
+    OCR/번역 직전에 불러 번호가 바뀌기 전에 영역 참조로 고정하고, Step 3·OCR 직후에도 불러
+    합쳐지거나 갈라지거나 사라진 영역의 수동값을 옮기거나 보관한다. 번호는 보지 않는다.
+    번역(integrated)도 없고 영역 참조 기록도 없으면 판단할 근거가 없어 건드리지 않는다.
+    """
+    path = Path(record["overlay_guidance_json"])
+    if not path.exists():
+        return {}
+    stored = load_json(path, default={})
+    if not isinstance(stored, dict):
+        return {}
+    integrated, regions = _overlay_page_inputs(record)
+    has_refs = stored.get("key_scheme") == REGION_REF_SCHEME and isinstance(stored.get("regions_by_ref"), dict)
+    clusters = integrated.get("clusters") if isinstance(integrated, dict) else None
+    if not regions or (not has_refs and not clusters):
+        return {}
+    stored_newer = True
+    if Path(record["integrated_json"]).exists():
+        stored_newer = path.stat().st_mtime >= Path(record["integrated_json"]).stat().st_mtime
+    v1, normalize_report = normalize_overlay_guidance(stored, integrated, regions, stored_newer)
+    v1, report = reconcile_overlay_guidance(v1, regions)
+    saved = dual_write_guidance(v1, integrated, regions)
+    if saved != stored:
+        write_json(path, saved)
+        stashed = {**normalize_report.get("stashed", {}), **report.get("stashed", {})}
+        message = f"글자 입히기 수동값 영역 참조 맞춤: 이동 {report['moved'] or '-'}"
+        if stashed:
+            message += f", 짝 없음(보관) {sorted(stashed)}"
         print(f"[overlay] {record['id']} {message}", flush=True)
         if log_callback is not None:
             log_callback(message)
+    report["stashed"] = {**normalize_report.get("stashed", {}), **report.get("stashed", {})}
     return report
 
 
@@ -2278,13 +2330,10 @@ def run_final_for_item(
     clusters = current_clusters_path(record, record["id"])
     font = font_path or DEFAULT_FONT
     if overlay_guidance is not None:
-        if replace_overlay:
-            write_json(Path(record["overlay_guidance_json"]), overlay_guidance)
-        else:
-            existing_overlay_guidance = load_json(Path(record["overlay_guidance_json"]), default={})
-            write_json(Path(record["overlay_guidance_json"]), merge_overlay_guidance(existing_overlay_guidance, overlay_guidance))
-    # OCR이 region 번호를 새로 매기기 전에, 지금 번호 기준 수동값의 위치를 기록해 둔다(force가 integrated를 지우기 전).
-    stamp_overlay_anchors_for_record(record)
+        store_overlay_guidance(record, overlay_guidance, replace_overlay)
+    else:
+        # OCR이 번역 번호를 새로 매기기 전에, 지금 영역 기준으로 수동값을 영역 참조로 고정해 둔다(force가 integrated를 지우기 전).
+        sync_overlay_guidance_for_record(record)
     if force:
         for key in ("integrated_json", "final_jpg", "overlay_layout_json", "ocr_status_json", "export_recovery_json"):
             path = Path(record[key])
@@ -2327,7 +2376,7 @@ def run_final_for_item(
     if integrated:
         integrated["glossary"] = {"work_id": context.get("work_id"), "version": context.get("version"), "speakers": speakers, "region_contexts": region_contexts}
         write_json(record["integrated_json"], integrated)
-    remap_overlay_guidance_for_record(record, log_callback=log_callback)
+    sync_overlay_guidance_for_record(record, log_callback=log_callback)
     render_overlay_for_record(record, font, tracking_offset, log_callback=log_callback)
     mark_ocr_status(record, "done", "OCR/번역 완료", "integrated.json 생성 완료")
     return image_record(session_id, Path(item["input_path"]))
@@ -3600,13 +3649,7 @@ def create_app() -> FastAPI:
         source = get_image(req.session_id, req.image_id)
         # 렌더에는 경로만 필요하다. 원본 전체를 여는 여백 probe는 하지 않고 manifest 크기 정보를 쓴다.
         record = image_record(req.session_id, Path(source["input_path"]), source.get("image_sha256"), source, probe_image=False, include_detail=False)
-        if req.replace:
-            next_overlay_guidance = req.overlay_guidance
-        else:
-            existing_overlay_guidance = load_json(Path(record["overlay_guidance_json"]), default={})
-            next_overlay_guidance = merge_overlay_guidance(existing_overlay_guidance, req.overlay_guidance)
-        write_json(Path(record["overlay_guidance_json"]), next_overlay_guidance)
-        stamp_overlay_anchors_for_record(record)
+        store_overlay_guidance(record, req.overlay_guidance, req.replace)
         render_overlay_for_record(record, req.font_path, req.tracking_offset)
         return {"ok": True, "image": page_record(req.session_id, req.image_id)}
 

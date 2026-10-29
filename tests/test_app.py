@@ -1941,3 +1941,91 @@ def test_image_record_attaches_region_refs_in_memory_only(tmp_path, monkeypatch)
     assert list(refreshed["overlay_guidance_v1"]["regions_by_ref"]) == ["tg:3"]
     assert refreshed["overlay_guidance"] == {"regions": {"4": {"font_size": 30}}}
     assert {key: Path(record[key]).read_text(encoding="utf-8") for key in files} == before
+
+
+def _overlay_record(tmp_path, monkeypatch, integrated, regions, overlay=None):
+    import json
+
+    session_id = "overlay_store"
+    monkeypatch.setattr(app, "SESSION_ROOT", tmp_path / "sessions")
+    image_path = tmp_path / "sessions" / session_id / "input" / "page1.jpg"
+    image_path.parent.mkdir(parents=True)
+    image_path.write_bytes(b"image")
+    record = app.image_record(session_id, image_path)
+    for key, payload in (("integrated_json", integrated), ("regions_json", {"regions": regions}), ("overlay_guidance_json", overlay)):
+        if payload is None:
+            continue
+        path = Path(record[key])
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(payload), encoding="utf-8")
+    return record
+
+
+def _rect_region(region_id, tgs, rect):
+    return {"region_id": region_id, "type": "bubble", "anchor_ids": tgs, "bubble_rect": rect}
+
+
+def _cluster_row(number, tgs, rect, segment=None):
+    item = {"source_region_id": number, "matched_cluster": tgs, "union_bbox": rect}
+    if segment is not None:
+        item["source_segment_index"] = segment
+    return item
+
+
+def test_store_overlay_guidance_converts_legacy_number_keys_and_keeps_refs_on_replace(tmp_path, monkeypatch):
+    """T11: 구버전 번들이 번호 키 + replace=true로 보내도 영역 참조 값이 지워지지 않고 구형 키도 함께 쓴다."""
+    import json
+
+    rect_a, rect_b = [10, 10, 100, 80], [200, 10, 100, 80]
+    record = _overlay_record(
+        tmp_path, monkeypatch,
+        {"clusters": [_cluster_row(1, [1], rect_a), _cluster_row(2, [3], rect_b)]},
+        [_rect_region(1, [1], rect_a), _rect_region(2, [3], rect_b)],
+    )
+
+    saved = app.store_overlay_guidance(record, {"regions": {"2": {"font_size": 30}}, "eraser_rects": []}, replace=True)
+    assert saved["regions_by_ref"]["tg:3"]["font_size"] == 30
+    assert saved["regions"] == {"2": {"font_size": 30}}
+    assert saved["key_scheme"] == "region_ref_v1"
+
+    # 새 번들: 영역 참조 키로 저장한다.
+    saved = app.store_overlay_guidance(record, {"regions": {"tg:1": {"font_size": 20}, "tg:3": {"font_size": 31}}}, replace=True)
+    assert saved["regions"] == {"1": {"font_size": 20}, "2": {"font_size": 31}}
+    on_disk = json.loads(Path(record["overlay_guidance_json"]).read_text(encoding="utf-8"))
+    assert set(on_disk["regions_by_ref"]) == {"tg:1", "tg:3"}
+
+    # 병합 저장은 같은 키의 필드만 덮어쓴다.
+    saved = app.store_overlay_guidance(record, {"regions": {"tg:3": {"text_align": "left"}}}, replace=False)
+    assert saved["regions_by_ref"]["tg:3"]["font_size"] == 31 and saved["regions_by_ref"]["tg:3"]["text_align"] == "left"
+    assert saved["regions_by_ref"]["tg:1"]["font_size"] == 20
+
+
+def test_sync_overlay_guidance_follows_dialogue_across_retranslation_and_stashes_vanished(tmp_path, monkeypatch):
+    """OCR이 번호를 새로 매기고 TG2가 사라져도 수동값은 대사(TG)를 따라가고, 사라진 대사의 값은 보관된다(00011 구조)."""
+    import json
+
+    rect = {1: [10, 10, 100, 80], 2: [200, 10, 100, 80], 3: [10, 200, 100, 80]}
+    old_integrated = {"clusters": [_cluster_row(n, [n], rect[n]) for n in (1, 2, 3)]}
+    record = _overlay_record(
+        tmp_path, monkeypatch, old_integrated,
+        [_rect_region(1, [1], rect[1]), _rect_region(2, [2], rect[2]), _rect_region(3, [3], rect[3])],
+        {"regions": {"2": {"text_override": ""}, "3": {"font_size": 33}}},
+    )
+    # 이후 TG2가 비활성화되어 현재 R1=TG1, R2=TG3이 되고, OCR을 다시 해서 번역 번호도 1, 2가 되었다.
+    Path(record["regions_json"]).write_text(json.dumps({"regions": [_rect_region(1, [1], rect[1]), _rect_region(2, [3], rect[3])]}), encoding="utf-8")
+    new_integrated = {"clusters": [_cluster_row(1, [1], rect[1]), _cluster_row(2, [3], rect[3])]}
+    app.sync_overlay_guidance_for_record(record)  # OCR 직전: 옛 integrated 기준으로 참조에 고정
+    Path(record["integrated_json"]).write_text(json.dumps(new_integrated), encoding="utf-8")
+    app.sync_overlay_guidance_for_record(record)  # OCR 직후
+
+    saved = json.loads(Path(record["overlay_guidance_json"]).read_text(encoding="utf-8"))
+    assert set(saved["regions_by_ref"]) == {"tg:3"}
+    assert saved["regions_by_ref"]["tg:3"]["font_size"] == 33
+    assert saved["regions"] == {"2": {"font_size": 33}}  # 구 코드는 새 번역 번호 2를 본다
+    assert saved["unmatched_regions"]["tg:2"]["text_override"] == ""
+
+
+def test_store_overlay_guidance_keeps_legacy_keys_when_nothing_is_translated_yet(tmp_path, monkeypatch):
+    record = _overlay_record(tmp_path, monkeypatch, None, [_rect_region(1, [1], [10, 10, 100, 80])])
+    saved = app.store_overlay_guidance(record, {"regions": {"1": {"font_size": 30}}}, replace=True)
+    assert saved == {"regions": {"1": {"font_size": 30}}}

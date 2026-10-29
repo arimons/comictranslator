@@ -118,3 +118,5 @@ UI 검증은 별도 headless Chromium에서 실행한다. `proof/src/run_headles
 <!-- 2026-10-29 review: app.py 번역 후 영역 변경 감지(ocr_stale) 추가, 이 문서 내용에는 영향 없음 -->
 
 <!-- 2026-10-29 review: app.py 페이지 상세 응답에 영역 참조(region_ref) 읽기 projection 추가. 저장 파일·화면 동작 변경 없음, 이 문서 내용 영향 없음 -->
+
+<!-- 2026-10-29 review: app.py·App.jsx·lib.js 글자 입히기 수동값을 영역 참조로 저장·편집(이중 기록). 편집기 사용법·화면 라벨 변경 없음 -->

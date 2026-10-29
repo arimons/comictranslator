@@ -265,6 +265,11 @@ export default function App() {
   const textBasedGuideCount = (guidance.manual_regions || []).filter((item) => regionProcessingBasis(item) === TEXT_BASED).length;
   const suppressedCount = guidance.suppressed_regions?.length || 0;
   const overlayRegions = overlayControlItems(selected, overlayGuidance);
+  // 수동값 키는 영역 참조라 화면에는 현재 R 번호 라벨로 바꿔 보여 준다.
+  const overlayKeyLabel = (key) => {
+    const item = overlayRegions.find((region) => overlayItemKey(region) === String(key));
+    return item ? overlayItemLabel(item) : "R?";
+  };
   // 화자 단축키 1-8 = 작품 메모 인물 표 순서(주인공 1번), 9 = 기타(전체 목록 팝업)
   const allSpeakerCharacters = workMemo?.characters || [];
   const speakerCharacters = allSpeakerCharacters.slice(0, 8);
@@ -620,7 +625,7 @@ export default function App() {
     if (!region || !["merge", "split"].includes(mode)) return;
     const key = overlayRegionBaseKey(region);
     updateOverlayRegion(key, { segment_mode: mode });
-    setStatus(`R${key} segment ${mode}`);
+    setStatus(`R${regionId(region)} segment ${mode}`);
   }
 
   function overlayImageBounds() {
@@ -769,7 +774,7 @@ export default function App() {
     if (next === "horizontal") updateOverlayRegion(rid, { force_horizontal: true, force_vertical: false });
     else if (next === "vertical") updateOverlayRegion(rid, { force_vertical: true, force_horizontal: false });
     else updateOverlayRegion(rid, { force_horizontal: false, force_vertical: false });
-    showShortcutToast(`${region ? overlayItemLabel(region) : `R${rid}`} 쓰기 방향: ${WRITING_MODE_LABELS[next]}`);
+    showShortcutToast(`${region ? overlayItemLabel(region) : overlayKeyLabel(rid)} 쓰기 방향: ${WRITING_MODE_LABELS[next]}`);
   }
 
   // Delete: 위치·크기·회전 수동값만 자동으로 되돌린다. 대사와 스타일은 유지한다.
@@ -777,7 +782,7 @@ export default function App() {
     if (!rid) return false;
     const region = overlayRegions.find((item) => overlayItemKey(item) === String(rid));
     const override = overlayRegionValue(overlayGuidance, rid);
-    const label = region ? overlayItemLabel(region) : `R${rid}`;
+    const label = region ? overlayItemLabel(region) : overlayKeyLabel(rid);
     if (!override.safe_text_rect && !override.rotation_deg) {
       setStatus(`${label} 수동 위치·크기·회전 없음`);
       return true;
@@ -886,7 +891,7 @@ export default function App() {
     const currentIndex = Math.max(0, FONT_STYLE_IDS.indexOf(currentStyle || "normal"));
     const nextStyle = FONT_STYLE_IDS[(currentIndex + 1) % FONT_STYLE_IDS.length];
     updateOverlayRegion(rid, overlayFontStylePatch(nextStyle));
-    setStatus(`R${rid} style ${nextStyle}`);
+    setStatus(`${overlayKeyLabel(rid)} style ${nextStyle}`);
   }
 
   function overlayFontStylePatch(style) {
@@ -909,7 +914,7 @@ export default function App() {
     updateOverlayRegion(rid, (current) => {
       const baseSize = Number(current.font_size || overlayItemFontSize(region) || 24);
       const nextSize = normalizedFontSize(baseSize + delta);
-      setStatus(`${region ? overlayItemLabel(region) : `R${rid}`} font size ${nextSize}`);
+      setStatus(`${region ? overlayItemLabel(region) : overlayKeyLabel(rid)} font size ${nextSize}`);
       return { font_size: nextSize };
     }, `size:${rid}`);
   }
@@ -918,12 +923,12 @@ export default function App() {
     if (!rid) return;
     if (mode === "horizontal") {
       updateOverlayRegion(rid, { force_horizontal: true, force_vertical: false });
-      setStatus(`R${rid} 가로쓰기`);
+      setStatus(`${overlayKeyLabel(rid)} 가로쓰기`);
       return;
     }
     if (mode === "vertical") {
       updateOverlayRegion(rid, { force_vertical: true, force_horizontal: false });
-      setStatus(`R${rid} 세로쓰기`);
+      setStatus(`${overlayKeyLabel(rid)} 세로쓰기`);
     }
   }
 
@@ -1369,7 +1374,7 @@ export default function App() {
     "overlay.style": (_event, style) => {
       const rid = selectedRegionRefValue();
       updateOverlayRegion(rid, overlayFontStylePatch(style));
-      setStatus(`R${rid} style ${style}`);
+      setStatus(`${overlayKeyLabel(rid)} style ${style}`);
     },
     "overlay.fontSize": (event, sign) => {
       // 일반 키보드의 + 는 Shift+= 라 1 step, 숫자패드 +/- 는 3 step

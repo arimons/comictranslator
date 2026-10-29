@@ -793,11 +793,19 @@ def to_legacy_regions(guidance_v1: dict, integrated: Any, current_regions: list[
     for group, ref in zip(groups, resolved):
         if group["number"] is not None and ref and ref not in number_by_ref:
             number_by_ref[ref] = group["number"]
+    region_number_by_ref = {
+        r["region_ref"]: r.get("region_id") for r in _annotated(current_regions or []) if r.get("region_id") is not None
+    }
     for key, value in entries.items():
         base, segment = _split_entry_key(key)
-        number = number_by_ref.get(base)
-        if number is None or not isinstance(value, dict):
+        if not isinstance(value, dict):
             continue
+        number = number_by_ref.get(base)
+        if number is None:
+            # 번역 조각이 없는 영역에 직접 입력한 글자: 구 코드는 현재 영역 번호 키로 읽는다.
+            number = region_number_by_ref.get(base) if segment is None else None
+            if number is None or str(number) in legacy:
+                continue
         legacy_key = f"{number}:{segment}" if segment is not None else str(number)
         legacy[legacy_key] = {k: copy.deepcopy(v) for k, v in value.items() if k != ANCHOR_FIELD}
     return legacy

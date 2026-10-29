@@ -159,11 +159,19 @@ export function defaultGuidance(image) {
   };
 }
 
+// 글자 입히기 수동값은 R 번호가 아니라 영역 참조(region_ref, 예 "tg:3", 세그먼트는 "tg:3#2")로 저장·편집한다.
+// 서버가 현재 영역 기준으로 재조정한 overlay_guidance_v1.regions_by_ref를 받는다. 서버가 구버전이면 번호 키를 그대로 쓴다.
 export function defaultOverlayGuidance(image) {
+  const byRef = image?.overlay_guidance_v1?.regions_by_ref;
   return {
-    regions: image?.overlay_guidance?.regions || {},
+    regions: byRef && typeof byRef === "object" ? cloneJson(byRef) : image?.overlay_guidance?.regions || {},
     eraser_rects: image?.overlay_guidance?.eraser_rects || [],
   };
+}
+
+export function overlayRefKey(ref, segment = null) {
+  if (!ref) return null;
+  return segment != null && Number.isFinite(Number(segment)) ? `${ref}#${Number(segment)}` : String(ref);
 }
 
 export function cloneJson(value) {
@@ -299,41 +307,59 @@ export function segmentRenderRect(cluster, siblings, baseRegion) {
 export function overlayControlItems(image, overlayGuidanceOverride = null) {
   if (image?.processing_excluded) return [];
   const layoutRegions = image?.overlay_layout?.regions;
-  const guidanceRegions = (overlayGuidanceOverride || image?.overlay_guidance || {})?.regions || {};
+  const guidanceRegions = (overlayGuidanceOverride || defaultOverlayGuidance(image))?.regions || {};
   const baseRegions = imageRegions(image);
-  const byRegionId = new Map(baseRegions.map((region) => [regionId(region), region]));
-  const segmentedClusters = integratedClusters(image)
-    .filter((cluster) => cluster?.source_region_id != null && cluster?.source_segment_index != null);
+  // 번호가 아니라 영역 참조로 현재 영역을 찾는다. 번역 번호와 현재 R 번호는 서로 다른 번호 공간이다.
+  const byRef = new Map(baseRegions.filter((region) => region?.region_ref).map((region) => [region.region_ref, region]));
+  const clusters = integratedClusters(image);
+  const clusterRef = (cluster) => cluster?.resolved_region_ref || null;
+  const segmentedClusters = clusters
+    .filter((cluster) => cluster?.source_region_id != null && cluster?.source_segment_index != null && clusterRef(cluster));
+  // 레이아웃 키("5", "5:2")는 같은 integrated의 번역 번호다. 같은 파일 안에서 번역 조각을 찾는 데만 쓴다.
   const bySegmentKey = new Map(segmentedClusters.map((cluster) => [`${Number(cluster.source_region_id)}:${Number(cluster.source_segment_index)}`, cluster]));
-  const siblingsByRegion = new Map();
-  segmentedClusters.forEach((cluster) => {
-    const rid = Number(cluster.source_region_id);
-    siblingsByRegion.set(rid, [...(siblingsByRegion.get(rid) || []), cluster]);
+  const refByNumber = new Map();
+  clusters.forEach((cluster) => {
+    if (cluster?.source_region_id != null && clusterRef(cluster) && !refByNumber.has(Number(cluster.source_region_id))) {
+      refByNumber.set(Number(cluster.source_region_id), clusterRef(cluster));
+    }
   });
-  const segmentedRegionIds = new Set(segmentedClusters.map((cluster) => Number(cluster.source_region_id)));
-  const layoutMergedRegionIds = new Set();
+  const siblingsByRef = new Map();
+  segmentedClusters.forEach((cluster) => {
+    const ref = clusterRef(cluster);
+    siblingsByRef.set(ref, [...(siblingsByRef.get(ref) || []), cluster]);
+  });
+  const segmentedRefs = new Set(segmentedClusters.map(clusterRef));
+  const layoutRef = (key, layout) => (
+    layout?.region_ref
+    || refByNumber.get(Number(String(key).split(":")[0]))
+    || null
+  );
+  const layoutMergedRefs = new Set();
   if (layoutRegions && typeof layoutRegions === "object") {
     Object.entries(layoutRegions).forEach(([key, layout]) => {
       if (String(key).includes(":")) return;
-      const rid = Number(layout?.region_id ?? key);
-      if (Number.isFinite(rid)) layoutMergedRegionIds.add(rid);
+      const ref = layoutRef(key, layout);
+      if (ref) layoutMergedRefs.add(ref);
     });
   }
   const items = [];
   const seen = new Set();
 
-  function segmentModeForRegionId(rid) {
-    const value = guidanceRegions?.[String(rid)]?.segment_mode;
+  function segmentModeForRef(ref) {
+    const value = guidanceRegions?.[String(ref)]?.segment_mode;
     return value === "merge" || value === "split" ? value : "auto";
   }
 
-  function pushItem(key, layout, cluster = null) {
+  function pushItem(key, layout, cluster = null, baseRegion = null) {
     const rawKey = String(key);
-    if (seen.has(rawKey)) return;
     const segmentCluster = cluster || bySegmentKey.get(rawKey) || null;
-    const rid = Number(layout?.region_id ?? segmentCluster?.source_region_id ?? rawKey.split(":")[0]);
-    const base = byRegionId.get(rid) || {};
-    const segmentRect = segmentRenderRect(segmentCluster, siblingsByRegion.get(rid) || [], base);
+    const ref = baseRegion?.region_ref || layoutRef(rawKey, layout) || clusterRef(segmentCluster);
+    if (!ref) return;
+    const segment = layout?.source_segment_index ?? segmentCluster?.source_segment_index ?? null;
+    const overlayKey = overlayRefKey(ref, segment);
+    if (seen.has(overlayKey)) return;
+    const base = baseRegion || byRef.get(ref) || {};
+    const segmentRect = segmentRenderRect(segmentCluster, siblingsByRef.get(ref) || [], base);
     const layoutRect = layout?.bbox;
     const isManualLayoutRect = layout?.bbox_source === "manual_overlay_safe_text_rect";
     const rect = (
@@ -349,13 +375,16 @@ export function overlayControlItems(image, overlayGuidanceOverride = null) {
       || base.source_rect
       || null
     );
-    seen.add(rawKey);
+    seen.add(overlayKey);
     const outlineRect = base.unboxed_rect || base.bubble_rect || base.source_rect || rect;
     items.push({
       ...base,
-      overlay_key: rawKey,
-      region_id: rid,
-      source_segment_index: layout?.source_segment_index ?? segmentCluster?.source_segment_index ?? null,
+      overlay_key: overlayKey,
+      overlay_base_key: ref,
+      overlay_legacy_key: layout || segmentCluster ? rawKey : null,
+      // 화면에 보이는 R 번호는 현재 영역 번호다.
+      region_id: base.region_id ?? layout?.region_id ?? null,
+      source_segment_index: segment,
       sentence_id: layout?.sentence_id ?? segmentCluster?.sentence_id ?? null,
       matched_cluster: layout?.matched_cluster || segmentCluster?.matched_cluster || base.anchor_ids || [],
       safe_text_rect: rect,
@@ -373,23 +402,22 @@ export function overlayControlItems(image, overlayGuidanceOverride = null) {
 
   if (layoutRegions && typeof layoutRegions === "object" && Object.keys(layoutRegions).length) {
     Object.entries(layoutRegions).forEach(([key, layout]) => {
-      const rid = Number(layout?.region_id ?? String(key).split(":")[0]);
-      if (!String(key).includes(":") && segmentedRegionIds.has(rid)) return;
+      const ref = layoutRef(key, layout);
+      if (!String(key).includes(":") && ref && segmentedRefs.has(ref)) return;
       pushItem(key, layout, bySegmentKey.get(String(key)) || null);
     });
   }
 
   segmentedClusters.forEach((cluster) => {
-    const rid = Number(cluster.source_region_id);
-    const mode = segmentModeForRegionId(rid);
+    const ref = clusterRef(cluster);
+    const mode = segmentModeForRef(ref);
     if (mode === "merge") return;
-    if (mode === "auto" && layoutMergedRegionIds.has(rid)) return;
-    pushItem(`${rid}:${Number(cluster.source_segment_index)}`, null, cluster);
+    if (mode === "auto" && layoutMergedRefs.has(ref)) return;
+    pushItem(`${Number(cluster.source_region_id)}:${Number(cluster.source_segment_index)}`, null, cluster);
   });
 
   baseRegions.forEach((region) => {
-    const rid = regionId(region);
-    if (!segmentedRegionIds.has(rid)) pushItem(String(rid), null, null);
+    if (region?.region_ref && !segmentedRefs.has(region.region_ref)) pushItem(String(regionId(region)), null, null, region);
   });
 
   return items.sort((a, b) => {
@@ -462,25 +490,43 @@ export function imageNeedsAnalysis(image) {
 }
 
 export function regionCluster(image, region) {
-  const key = overlayItemKey(region);
-  if (String(key).includes(":")) {
-    const [ridText, segmentText] = String(key).split(":");
-    const rid = Number(ridText);
-    const segment = Number(segmentText);
-    const bySegment = integratedClusters(image).find((cluster) => (
-      Number(cluster.source_region_id) === rid && Number(cluster.source_segment_index) === segment
-    ));
-    if (bySegment) return bySegment;
+  const clusters = integratedClusters(image);
+  const ref = region?.overlay_base_key || region?.region_ref;
+  if (ref) {
+    // 영역 참조로 찾는다. 번역 번호와 현재 R 번호는 다르므로 번호로 찾지 않는다.
+    const segment = region?.source_segment_index;
+    if (segment != null) {
+      const bySegment = clusters.find((cluster) => cluster.resolved_region_ref === ref && Number(cluster.source_segment_index) === Number(segment));
+      if (bySegment) return bySegment;
+    }
+    const byRef = clusters.find((cluster) => cluster.resolved_region_ref === ref);
+    if (byRef) return byRef;
+  } else {
+    // 영역 참조를 주지 않는 구버전 서버 응답: 예전 번호 기준
+    const key = overlayItemKey(region);
+    if (String(key).includes(":")) {
+      const [ridText, segmentText] = String(key).split(":");
+      const bySegment = clusters.find((cluster) => (
+        Number(cluster.source_region_id) === Number(ridText) && Number(cluster.source_segment_index) === Number(segmentText)
+      ));
+      if (bySegment) return bySegment;
+    }
+    const rid = regionId(region);
+    const byRegionId = clusters.find((cluster) => Number(cluster.source_region_id) === rid);
+    if (byRegionId) return byRegionId;
   }
-  const rid = regionId(region);
-  const byRegionId = integratedClusters(image).find((cluster) => Number(cluster.source_region_id) === rid);
-  if (byRegionId) return byRegionId;
   const anchors = new Set((region?.anchor_ids || []).map((id) => Number(id)));
   if (!anchors.size) return null;
-  return integratedClusters(image).find((cluster) => (cluster.matched_cluster || []).some((id) => anchors.has(Number(id)))) || null;
+  return clusters.find((cluster) => (cluster.matched_cluster || []).some((id) => anchors.has(Number(id)))) || null;
 }
 
 export function regionSegmentSiblingCount(image, region) {
+  const ref = region?.overlay_base_key || region?.region_ref;
+  if (ref) {
+    return integratedClusters(image).filter((cluster) => (
+      cluster?.resolved_region_ref === ref && cluster?.source_segment_index != null
+    )).length;
+  }
   const rid = regionId(region);
   if (!Number.isFinite(rid)) return 0;
   return integratedClusters(image).filter((cluster) => (
@@ -489,8 +535,19 @@ export function regionSegmentSiblingCount(image, region) {
   )).length;
 }
 
+// 레이아웃 항목: 새 레이아웃은 overlay_ref_key로, 구형은 번역 번호 키로 찾는다.
+export function overlayLayoutEntry(image, region) {
+  const layouts = image?.overlay_layout?.regions;
+  if (!layouts || typeof layouts !== "object") return null;
+  const key = overlayItemKey(region);
+  const byRefKey = Object.values(layouts).find((layout) => layout?.overlay_ref_key === key);
+  if (byRefKey) return byRefKey;
+  const legacyKey = region?.overlay_legacy_key;
+  return legacyKey != null ? layouts[legacyKey] || null : (region?.overlay_base_key ? null : layouts[key] || null);
+}
+
 export function baseRegionText(image, region) {
-  const layoutText = image?.overlay_layout?.regions?.[overlayItemKey(region)]?.text_layout;
+  const layoutText = overlayLayoutEntry(image, region)?.text_layout;
   if (typeof layoutText === "string" && layoutText.trim()) return layoutText.trim();
   const sourceText = region?.overlay_layout?.text_source;
   if (typeof sourceText === "string" && sourceText.trim()) return sourceText.trim();
@@ -532,6 +589,7 @@ export function overlayRegionValue(overlayGuidance, rid) {
 }
 
 export function overlayRegionBaseKey(region) {
+  if (region?.overlay_base_key) return String(region.overlay_base_key);
   const rid = regionId(region);
   return Number.isFinite(rid) && rid >= 0 ? String(rid) : overlayItemKey(region).split(":")[0];
 }
