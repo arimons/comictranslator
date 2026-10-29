@@ -36,7 +36,7 @@ NEW_COMIC_TRANSLATOR/
 │       ├── GlossaryPanel.jsx    # 프로젝트명 옆 작품 메모: 작품 연결·인물/용어 표 편집·URL 초안
 │       ├── EditorCanvas.jsx      # Step 3 영역 분석 캔버스 (Konva)
 │       ├── OverlayCanvas.jsx     # Step 5 텍스트 오버레이 편집 캔버스 (Konva)
-│       ├── RestorePanel.jsx      # 배경 복원 탭 (마스크 브러시 + LaMa 복원)
+│       ├── DialogueList.jsx      # 글자 입히기 탭 대사 리스트 (원문·번역·검수 상태·필터)
 │       ├── AiErasePanel.jsx      # AI 글자 지우기: 도구 모음 AI 지우개 확인 창 + 진행·후보·적용 카드 (이미지 편집 모델, 페이지 전체 패치)
 │       ├── keymap.js             # 키보드·마우스 단축키 단일 정의
 │       ├── viewportControls.js   # 두 캔버스 공용 확대/이동/맞춤
@@ -86,7 +86,7 @@ NEW_COMIC_TRANSLATOR/
     ├── render_text_overlay.py  # Step 5
     ├── overlay_anchor.py       # 영역 사각형 겹침(IoU) 계산과 구형 위치 재매칭(서버는 단계 6부터 region_refs.py를 쓴다)
     ├── region_refs.py          # 영역 참조(region_ref) 해석기: 번역·수동값·화자·메모를 R 번호 대신 TG 집합으로 연결 (순수 함수)
-    ├── background_restore.py   # 배경 복원 탭 엔진 (문맥 영역·마스크 분리, LaMa, 확정 패치 합성)
+    ├── background_restore.py   # 배경 복원 엔진 (문맥 영역·마스크 분리, LaMa, 확정 패치 합성). 편집기 탭은 제거됐고 AI 글자 지우기가 쓴다
     ├── ai_text_erase.py        # 이미지 편집 모델로 페이지 글자 지우기 (16배수 덧대기·잘라내기, gemini-*는 gemini_image로)
     ├── gemini_image.py         # Gemini 이미지 모델(Nano Banana 2.1) 편집. 비율 프리셋 덧대기·축소·잘라내기
     ├── openai_image_redraw.py  # 렌더 생략 페이지 이미지 재생성 (app export, OpenAI·Gemini 분기)
@@ -174,7 +174,7 @@ guidance(수동 보정)가 있는 이미지는 `guidance_digest`(guidance 내용
 | `POST /api/overlay/apply` | 오버레이 위치/폰트만 다시 렌더링 (OCR 재실행 없음). 수동값을 영역 참조(`regions_by_ref`)와 구형 번호 키(`regions`)로 함께 저장(`store_overlay_guidance`) |
 | `GET /api/session/{id}/export`, `POST /api/export/generate-missing` | 결과 ZIP 내보내기, 실패 이미지 OpenAI 이미지 생성 fallback |
 | `GET /api/file` | 세션·입력 캐시·분석 캐시 폴더 아래 이미지 파일 서빙 |
-| `/api/restore/*` | 배경 복원 탭: 상태·자동 마스크·마스크 저장·LaMa 작업 실행/조회·확정·패치 제거 (`pipeline/background_restore.py`) |
+| `/api/restore/*` | 배경 복원 엔진 API: 상태·자동 마스크·마스크 저장·LaMa 작업 실행/조회·확정·패치 제거. 배경 복원 탭이 제거돼 현재 화면에서는 `ai-erase`·`info`·`job`·`accept`·`patch/remove`만 쓴다 (`pipeline/background_restore.py`) |
 | `POST /api/restore/ai-erase` | 원본 페이지를 이미지 편집 모델로 보내 글자를 지운 후보를 만드는 작업. 조회·확정·제거는 위 `/api/restore/job`·`accept`·`patch/remove`를 그대로 쓴다. 확정하면 페이지 전체 패치(engine `ai-erase`). 요청의 `ocr_model`이 `gemini-*`이면 Gemini 이미지 모델로 지운다. quality를 비우면 gpt-image는 medium, Gemini는 low(1K) (`pipeline/ai_text_erase.py`) |
 | `GET /manual` | 사용자 매뉴얼 `docs/editor_manual.html`을 그대로 제공. 시작 화면과 `?` 도움말에서 링크 |
 
@@ -207,8 +207,8 @@ guidance(수동 보정)가 있는 이미지는 `guidance_digest`(guidance 내용
 | `frontend/src/OcrBatchPrompt.jsx` | 확인한 페이지(영역 분석 탭에서 적용 안 한 변경 없이 넘긴 페이지, `App.jsx`가 브라우저에 세션별로 기억)의 비율이 처리 대상 페이지의 60%, 80%를 넘을 때마다 한 번씩 비차단 알림을 띄우고, 시작하면 `image_id: "batch"`로 백그라운드 OCR·번역을 돌린다. 진행 중에는 그 페이지만 편집을 잠근다 |
 | `frontend/src/ShortcutHelp.jsx` | `?`로 여는 단축키 도움말. 현재 탭의 keymap 항목을 묶어 표시 |
 | `frontend/src/AiErasePanel.jsx` | 영역 분석 탭의 AI 글자 지우기. 시작은 도구 모음의 AI 지우개 버튼(`App.jsx`)이 여는 확인 창(모델·시간·비용 안내, 취소 포커스, Esc 닫기)에서 하고, 오른쪽 패널에는 진행·후보·적용됨 상태일 때만 카드가 뜬다. 후보를 비교 미리보기 "AI 지움 후보" 탭에 띄우고 적용·버리기·해제. 적용하면 이전 AI 지움 패치를 교체한다 |
-| `frontend/src/RestorePanel.jsx` | 배경 복원 탭 — 제거 마스크 브러시·지우개, 문맥 영역 사각형, 자동 마스크, LaMa 작업 실행·확정·패치 제거. 자기 캔버스 키를 직접 처리한다(keymap의 `passive` 항목) |
-| `frontend/src/App.jsx` | 세션 관리, 이미지 목록, 워크플로우 탭(분석/OCR/오버레이/배경 복원/내보내기) 전체 상태. Action History의 텍스트 기반 줄에서 LaMa 강제 토글(`manual_regions[].inpaint_engine = "lama"`). 선택한 텍스트 기반 영역(자동·수동 모두)은 도구 모음 LaMa 버튼·오른쪽 패널로 영역 키에 고정하며(`guidance.inpaint_engine_overrides = [{target_key, engine: "lama"}]`), 분석 적용 때 Step 3가 반영한다 |
+| `frontend/src/DialogueList.jsx` | 글자 입히기 탭 오른쪽 패널의 대사 리스트 — 읽는 순서, 원문·번역, 확인/질문 상태, 빈 번역 경고, 필터. 상태 계산과 J/K/Y/Q 동작은 `App.jsx`가 맡는다 |
+| `frontend/src/App.jsx` | 세션 관리, 이미지 목록, 워크플로우 탭(분석/OCR/오버레이/내보내기) 전체 상태. Action History의 텍스트 기반 줄에서 LaMa 강제 토글(`manual_regions[].inpaint_engine = "lama"`). 선택한 텍스트 기반 영역(자동·수동 모두)은 도구 모음 LaMa 버튼·오른쪽 패널로 영역 키에 고정하며(`guidance.inpaint_engine_overrides = [{target_key, engine: "lama"}]`), 분석 적용 때 Step 3가 반영한다 |
 | `frontend/src/main.jsx` | React 엔트리포인트 |
 
 프론트엔드 코드를 수정하면 `frontend/`에서 `npm install`(최초 1회) 후 `npm run build`로 `web/app.bundle.js`를 다시 생성해야 한다. `web/app.bundle.js`는 결과물이므로 커밋 대상이며, 앱을 실행만 할 때는 Node.js가 필요 없다.
@@ -443,12 +443,12 @@ indexed sheet crop의 획두께·ink density를 재서 OpenAI가 준 `render_hin
 - aspect-ratio 3단계(tall/wide/square) 기반 inner padding(`inner_rect_for`)
 - split 버블 폰트 균일화: 같은 flood region에서 나뉜 버블은 그룹 최솟값의 120%를 상한으로 맞춘다(`prepare_page_layouts` 2nd pass)
 - 표준 경로는 `--regions_json`을 `build_flood_info_from_regions_json`, `build_shared_flood_groups_from_regions_json`으로 읽어 bbox·safe rect를 고른다. `--flood_vis_json`(`build_flood_info_by_anchor`, `build_shared_flood_groups`)은 선택 입력으로 남아 있다.
-- 배경 복원 탭에서 확정한 패치는 `--restore-state`(`state.json`)로 받아 렌더 직전 마스크 안쪽에만 합성한다(`background_restore.apply_restore_patches`).
+- 확정한 배경 복원 패치(AI 글자 지우기 포함)는 `--restore-state`(`state.json`)로 받아 렌더 직전 마스크 안쪽에만 합성한다(`background_restore.apply_restore_patches`).
 - 구버전: `archive/render_text_overlay_legacy.py`
 
 ### `pipeline/background_restore.py`
 
-배경 복원 탭(`RestorePanel.jsx`, `app.py`의 `/api/restore/*`)의 엔진이다. 엔진은 LaMa 하나다. FLUX.1 Fill(MFLUX)을 시험했지만 어두운 배경·투명 말풍선에서도 LaMa보다 결과가 나쁘고 영역당 수 분이 걸려 제거했다.
+배경 복원 엔진이다(`app.py`의 `/api/restore/*`). 편집기의 배경 복원 탭(`RestorePanel.jsx`)은 제거됐고, 지금은 AI 글자 지우기의 패치 저장·합성이 이 엔진을 쓴다. 엔진은 LaMa 하나다. FLUX.1 Fill(MFLUX)을 시험했지만 어두운 배경·투명 말풍선에서도 LaMa보다 결과가 나쁘고 영역당 수 분이 걸려 제거했다.
 
 - 문맥 영역(`context_rect`)과 제거 마스크를 분리한다. 모델에는 문맥 영역을 잘라 넘기고, 바꾸는 것은 마스크 픽셀뿐이다(`composite_inside_mask`). 마스크 바깥 픽셀이 하나라도 바뀌면 결과를 버린다(`changed_pixels_outside_mask`).
 - 처리 해상도는 긴 변 512/768/원본 중 고르며 기본은 원본이다. 16의 배수 패딩과 역변환은 `prepare_model_input`/`restore_from_model_output`이 맡고, 이진 마스크는 최근접 보간만 쓴다.

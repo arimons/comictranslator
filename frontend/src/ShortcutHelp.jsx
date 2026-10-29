@@ -5,7 +5,6 @@ const TAB_TITLES = {
   ocr: "글자인식/번역",
   overlay: "글자 입히기",
   export: "내보내기",
-  restore: "배경 복원",
 };
 
 // ? 키로 여는 단축키 도움말. keymap.js에서 현재 탭에 해당하는 항목만 묶어 보여 준다.

@@ -4,7 +4,7 @@
 //
 // 항목 형식 (테스트가 정규식으로 읽으므로 id와 keys 사이에 중괄호를 두지 않는다)
 //   id       고유 id. 매뉴얼 표의 <tr data-shortcut="id">와 짝을 이룬다.
-//   context  "global"(모든 탭) | "guidance" | "overlay" | "floatingEditor" | "restore" 또는 그 배열
+//   context  "global"(모든 탭) | "guidance" | "overlay" | "floatingEditor" 또는 그 배열
 //   group    도움말 묶음 이름
 //   label    도움말·매뉴얼에 보이는 설명
 //   kind     "key" | "pointer" (pointer는 마우스·트랙패드 조작 설명용이라 디스패처가 무시한다)
@@ -14,12 +14,12 @@
 //            mod(Ctrl/Cmd), shift(true/false/"any"), alt(true/false)
 //   action   App 디스패처의 동작 id, arg는 동작 인자
 //   allowInInput  입력칸에 포커스가 있어도 동작
-//   passive  다른 컴포넌트(RestorePanel 등)가 직접 처리한다. 디스패처는 건너뛰고 도움말에만 보인다.
+//   passive  다른 컴포넌트가 직접 처리한다. 디스패처는 건너뛰고 도움말에만 보인다.
 
 export const IS_MAC = typeof navigator !== "undefined"
   && /Mac|iPhone|iPad|iPod/i.test(navigator.platform || navigator.userAgent || "");
 
-export const KEYMAP_GROUPS = ["보기/탐색", "탭·페이지", "도구", "편집", "화자", "스타일", "적용", "대사 편집", "도움말", "배경 복원"];
+export const KEYMAP_GROUPS = ["보기/탐색", "탭·페이지", "도구", "편집", "화자", "스타일", "적용", "대사 편집", "도움말"];
 
 const DIGIT_CODES = (n) => [`Digit${n}`, `Numpad${n}`];
 
@@ -44,7 +44,6 @@ export const KEYMAP = [
   { id: "tab.ocr", context: "global", group: "탭·페이지", label: "글자인식/번역 탭", kind: "key", keys: [["Alt", "2"]], match: { code: DIGIT_CODES(2), alt: true }, action: "tab", arg: "ocr" },
   { id: "tab.overlay", context: "global", group: "탭·페이지", label: "글자 입히기 탭", kind: "key", keys: [["Alt", "3"]], match: { code: DIGIT_CODES(3), alt: true }, action: "tab", arg: "overlay" },
   { id: "tab.export", context: "global", group: "탭·페이지", label: "내보내기 탭", kind: "key", keys: [["Alt", "4"]], match: { code: DIGIT_CODES(4), alt: true }, action: "tab", arg: "export" },
-  { id: "tab.restore", context: "global", group: "탭·페이지", label: "배경 복원 탭", kind: "key", keys: [["Alt", "5"]], match: { code: DIGIT_CODES(5), alt: true }, action: "tab", arg: "restore" },
   { id: "page.prev", context: "global", group: "탭·페이지", label: "이전 페이지", kind: "key", keys: [["PgUp"], ["Alt", "←"]], match: [{ code: "PageUp" }, { code: "ArrowLeft", alt: true }], action: "page.prev" },
   { id: "page.prev.arrow", context: "global", group: "탭·페이지", label: "이전 페이지 (선택한 region·TG가 없을 때)", kind: "key", when: ["nothingSelected"], keys: [["←"]], match: { code: "ArrowLeft" }, action: "page.prev" },
   { id: "page.next.arrow", context: "global", group: "탭·페이지", label: "다음 페이지 (선택한 region·TG가 없을 때)", kind: "key", when: ["nothingSelected"], keys: [["→"]], match: { code: "ArrowRight" }, action: "page.next" },
@@ -115,17 +114,6 @@ export const KEYMAP = [
   // 도움말
   { id: "help.toggle", context: "global", group: "도움말", label: "단축키 도움말 열기/닫기", kind: "key", keys: [["?"]], match: [{ code: "Slash", shift: true }, { key: "?", shift: "any" }], action: "help.toggle" },
 
-  // 배경 복원 탭: RestorePanel.jsx가 직접 처리한다. 전역 디스패처는 이 탭에서 탭·페이지·도움말 키만 처리한다.
-  { id: "restore.brush", context: "restore", group: "배경 복원", label: "칠하기", kind: "key", passive: true, keys: [["B"]] },
-  { id: "restore.eraser", context: "restore", group: "배경 복원", label: "지우기", kind: "key", passive: true, keys: [["E"]] },
-  { id: "restore.context", context: "restore", group: "배경 복원", label: "문맥 영역", kind: "key", passive: true, keys: [["C"]] },
-  { id: "restore.seed", context: "restore", group: "배경 복원", label: "글자 영역 추가", kind: "key", passive: true, keys: [["T"]] },
-  { id: "restore.pan", context: "restore", group: "배경 복원", label: "이동 도구", kind: "key", passive: true, keys: [["H"]] },
-  { id: "restore.mask", context: "restore", group: "배경 복원", label: "마스크 표시 켜기/끄기", kind: "key", passive: true, keys: [["M"]] },
-  { id: "restore.brushSize", context: "restore", group: "배경 복원", label: "브러시 크기 줄이기/키우기", kind: "key", passive: true, keys: [["["], ["]"]] },
-  { id: "restore.undo", context: "restore", group: "배경 복원", label: "마스크 되돌리기", kind: "key", passive: true, keys: [["Ctrl", "Z"]] },
-  { id: "restore.panDrag", context: "restore", group: "배경 복원", label: "화면 이동 (휠 버튼·우클릭 드래그도 가능)", kind: "pointer", passive: true, keys: [["Space", "드래그"]] },
-  { id: "restore.zoom", context: "restore", group: "배경 복원", label: "확대/축소", kind: "pointer", passive: true, keys: [["휠"]] },
 ];
 
 function contextsOf(entry) {

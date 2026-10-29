@@ -1154,7 +1154,7 @@ python3 run_pipeline.py \
     <li>dark flood 검증에 실패한 뒤 edge rescue로 잡힌 경계 기반 컬러 라벨 영역</li>
   </ul>
   <p>텍스트 기반 영역 보존 판정(<code>_should_preserve_original_unboxed_cluster()</code>)은 현재 항상 False라서, 짧은 텍스트 기반 라벨이나 단독 텍스트 기반 효과음 영역도 번역 렌더 대상입니다. 이전의 단독 텍스트 기반 효과음 영역 판정 함수는 호출되지 않아 제거됐습니다.</p>
-  <p><strong>배경 복원 패치</strong>: 편집기 배경 복원 탭에서 확정한 패치가 있으면 <code>pipeline_runner</code>가 <code>--restore-state work_dir/restore/{name}/state.json</code>을 넘깁니다. 렌더 직전 <code>background_restore.apply_restore_patches()</code>가 각 패치를 마스크 안쪽에만 합성합니다. 패치는 PNG라 masked JPEG를 다시 저장하지 않습니다.</p>
+  <p><strong>배경 복원 패치</strong>: AI 글자 지우기 등으로 확정한 배경 복원 패치가 있으면 <code>pipeline_runner</code>가 <code>--restore-state work_dir/restore/{name}/state.json</code>을 넘깁니다. 렌더 직전 <code>background_restore.apply_restore_patches()</code>가 각 패치를 마스크 안쪽에만 합성합니다. 패치는 PNG라 masked JPEG를 다시 저장하지 않습니다.</p>
   <p><strong>미번역 region 복원</strong>: <code>restore_untranslated_regions()</code>으로 integrated.json에서 누락된 region을 원본 이미지로 복원해 마스킹 흰 박스가 남지 않도록 합니다.</p>
 
   <h4>기타 주요 헬퍼 함수 (render_text_overlay.py)</h4>

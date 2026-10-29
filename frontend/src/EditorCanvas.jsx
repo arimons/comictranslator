@@ -674,8 +674,9 @@ const EditorCanvas = forwardRef(function EditorCanvas({ image, baseUrl, guidance
         overlay.add(new Konva.Rect({
           ...r,
           stroke: color,
-          strokeWidth: regionSelected ? 3 : 1.8,
-          opacity: regionSelected ? 1 : .9,
+          // 윤곽(폴리곤)이 있으면 실제 모양을 실선으로 그리고, 사각형은 클릭 영역용으로 옅게만 남긴다
+          strokeWidth: hasContour ? 1 : regionSelected ? 3 : 1.8,
+          opacity: hasContour ? (regionSelected ? .6 : .22) : regionSelected ? 1 : .9,
           fill: hasContour ? "transparent" : tint,
           dash: isTextBased ? [6, 4] : undefined,
         }));
@@ -684,8 +685,10 @@ const EditorCanvas = forwardRef(function EditorCanvas({ image, baseUrl, guidance
         const speaker = speakerLabelsRef.current?.[regionId(region)];
         const text = speaker ? `${id} ${speaker}` : id;
         const gutterText = anchors.length ? `${text} · ${anchors.slice(0,3).join(",")}${anchors.length > 3 ? "…" : ""}` : text;
+        // 번호 글자는 그림 위에서 잘 보이게 종류별 진한 색(파랑/초록/주황)으로 따로 칠한다
+        const labelColor = regionSelected ? color : usesEdgeBarrier(region) ? "#15803d" : isTextBased ? "#c2410c" : "#1d4ed8";
         labels.push({id, text, gutterText, selected:regionSelected,
-          kind:"region", rect:r, color, inlineWidth:labelWidth(text, true), width:Math.min(170, labelWidth(gutterText, true)), height:18});
+          kind:"region", rect:r, color:labelColor, inlineWidth:labelWidth(text, true), width:Math.min(170, labelWidth(gutterText, true)), height:18});
         obstacles.push(r);
         if (region.safe_text_rect) {
           overlay.add(new Konva.Rect({ ...toStageRect(region.safe_text_rect), stroke: "#111827", strokeWidth: 1, opacity:.3, dash: [4, 3] }));
@@ -769,13 +772,13 @@ const EditorCanvas = forwardRef(function EditorCanvas({ image, baseUrl, guidance
           stroke:label.color, strokeWidth:.8, opacity:.24, listening:false}));
         if (label.kind === "region") overlay.add(new Konva.Text({text:label.text,
           x:label.rect.x, y:Math.max(2,label.rect.y-16), fontSize:11, fontStyle:"bold",
-          fill:label.color, opacity:.25, listening:false}));
+          fill:label.color, opacity:.7, listening:false}));
       }
       const text = label.outside ? label.gutterText || label.text : label.text;
       const node = new Konva.Label({x:label.x, y:label.y, listening:true, name:"annotation-label",
-        opacity:label.outside || label.selected ? .95 : .46});
-      node.add(new Konva.Tag({fill:label.outside ? "#f8fafc" : "#ffffff", opacity:label.outside ? .95 : .35, cornerRadius:3}));
-      node.add(new Konva.Text({text, fontSize:11, fontStyle:label.kind === "region" ? "bold" : "normal",
+        opacity:label.outside || label.selected || label.kind === "region" ? .95 : .46});
+      node.add(new Konva.Tag({fill:label.outside ? "#f8fafc" : "#ffffff", opacity:label.outside ? .95 : label.kind === "region" ? .6 : .35, cornerRadius:3}));
+      node.add(new Konva.Text({text, fontSize:label.kind === "region" ? 12 : 11, fontStyle:label.kind === "region" ? "bold" : "normal",
         fill:label.color, padding:3, width:label.width, height:label.height, ellipsis:true, wrap:"none"}));
       node.on("click tap", evt => {
         if (toolRef.current !== "select") return;

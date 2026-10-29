@@ -46,7 +46,7 @@
         "frontend/src/EditorCanvas.jsx",
         "frontend/src/OverlayCanvas.jsx",
         "frontend/src/keymap.js",
-        "frontend/src/RestorePanel.jsx",
+        "frontend/src/DialogueList.jsx",
         "pipeline/region_types.py",
         "frontend/src/regionTypes.js",
         "frontend/src/RegionTypeBadge.jsx",
@@ -64,8 +64,7 @@
         "app.py",
         "pipeline/manual_guidance.py",
         "pipeline/background_restore.py",
-        "frontend/src/EditorCanvas.jsx",
-        "frontend/src/RestorePanel.jsx"
+        "frontend/src/EditorCanvas.jsx"
       ]
     },
     "docs/CODEBASE_FILE_MAP.md": {
@@ -76,7 +75,7 @@
         "app.py",
         "pipeline/pipeline_runner.py",
         "pipeline/background_restore.py",
-        "frontend/src/RestorePanel.jsx",
+        "frontend/src/DialogueList.jsx",
         "pipeline/region_types.py",
         "frontend/src/regionTypes.js",
         "frontend/src/RegionTypeBadge.jsx",

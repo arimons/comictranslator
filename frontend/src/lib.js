@@ -36,7 +36,6 @@ export const WORKFLOW_TABS = [
   ["guidance", "영역 분석", "1"],
   ["ocr", "글자인식/번역", "2"],
   ["overlay", "글자 입히기", "3"],
-  ["restore", "배경 복원", "5"],
   ["export", "내보내기", "4"],
 ];
 

@@ -93,3 +93,16 @@ Claude와 다른 에이전트는 `AGENTS.md`, `CLAUDE.md`의 링크를 통해 �
 페이지 제외 검증은 `tests/test_page_processing.py`와 `proof/src/check_page_processing.js`로 수행한다. 원본 PNG의 ZIP 바이트 일치, 기존 final이 있어도 원본 우선, 복원 시 기존 final·TG 편집 보존, 제외 시 유료 호출 차단, MCP 생성 차단을 검사했다. 실제 7권 2페이지에서 버튼을 왕복하고 이전 상태로 복원했으며 분석·번역 요청은 없었다.
 
 2026-10-20 도구 정리: R 제외를 상시 X 도구에서 우클릭 메뉴 ‘이 처리 영역 제외’로 옮겼다. TG/R 삭제와 미적용 Undo를 캔버스에 즉시 반영하며, 실제 재분석은 Cmd/Ctrl+Enter로 현재 페이지에 모아 적용한다. [도구 사용성 검토](TOOLBAR_UX_REVIEW.md).
+
+## 2026-10-29 〜 10-30 영역 참조(region_ref) 전환
+
+번역 번호(`source_region_id`)와 현재 R 번호는 서로 다른 번호 공간인데, 영역을 다시 계산하면 번역·수동값·화자가 엉뚱한 R에 붙는 사고가 있었다. 번호 대신 TG 집합 기반의 영역 참조로 찾도록 단계별로 바꿨다. `pipeline/region_refs.py`가 해석기다.
+
+- 단계 1-2: 회귀 fixture와 해석기. `region_ref`/`region_instance_ref`를 TG 집합에서 만들고 exact·shrink·merge·split·geo·unmatched로 판정한다.
+- 단계 3-4: 페이지 상세 응답에 읽기용 projection을 붙이고, Step 3·4 출력(`regions.json`, `integrated.json`)에 `region_ref`, `source_region_ref`, `region_ref_scheme`을 덧붙인다. `region_id`, `source_region_id`, `sentence_id`, 프롬프트 번호는 그대로다.
+- 단계 5: 렌더러가 번역 조각, Overlay 수동값, 복원 억제를 참조로 찾는다. `regions.json`이 없으면 예전 번호 경로를 유지한다.
+- 단계 6: Overlay 수동값 저장·편집이 참조 키(`overlay_ref_key`)를 쓴다. 화면 라벨은 현재 R 번호다. 구버전 번호 키 요청은 서버가 변환하고, `regions_by_ref`와 구형 `regions`를 함께 기록한다.
+- 단계 7: 화자(`/api/speakers`)와 영역 번역 메모(`/api/region-context`)가 `by_region_ref`, `context_by_region_ref`에 기록된다. 구형 키는 병행하며 읽을 때 `by_region_ref → by_region → by_tg` 순이다.
+- 단계 8: 처리 제외와 LaMa 고정은 처리 인스턴스 참조(`instance_ref`)를 함께 기록해, 같은 TG의 자동 영역과 수동 영역을 구분한다. 분석 탭 선택은 재분석 뒤 참조를 따라가며 없으면 해제된다. MCP `view_region` 등에 선택 인자 `region_ref`가 추가됐다.
+
+저장된 `bubble/unboxed`와 좌표 키는 전역 치환하지 않는다. 구버전 응답은 예전 번호 경로로 계속 읽는다.
