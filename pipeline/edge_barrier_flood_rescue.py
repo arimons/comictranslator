@@ -118,12 +118,34 @@ def _draw_virtual_walls(
 ) -> bool:
     drew = False
     ox, oy = offset
+    thick = max(3, int(thickness))
+    half = thick // 2 + 1  # 안티에일리어싱으로 번지는 1px까지 박스 안쪽을 비워 둔다
+    # 박스를 이루는 가로·세로 벽은 박스 바깥쪽으로 칠한다. 가운데로 칠하면 두께의 절반이 박스 안쪽을 덮어
+    # 글자에 바짝 붙인 박스에서는 흰 여백과 채우기 시작점이 벽에 묻혀 검은 영역으로 새어 나간다.
+    endpoints = [point for item in virtual_walls or [] for line in [_line_points(item)] if line for point in line]
+    if endpoints:
+        left, right = min(p[0] for p in endpoints), max(p[0] for p in endpoints)
+        top, bottom = min(p[1] for p in endpoints), max(p[1] for p in endpoints)
+    else:
+        left = right = top = bottom = 0
+    has_box = right > left and bottom > top
     for item in virtual_walls or []:
         line = _line_points(item)
         if line is None:
             continue
         (x1, y1), (x2, y2) = line
-        cv2.line(edges, (x1 - ox, y1 - oy), (x2 - ox, y2 - oy), 255, max(3, int(thickness)), cv2.LINE_AA)
+        if item.get("box_id") and has_box:
+            if y1 == y2 and y1 in (top, bottom):
+                shift = -half if y1 == top else half
+                y1 += shift
+                y2 += shift
+                x1, x2 = (x1 - half, x2 + half) if x1 <= x2 else (x1 + half, x2 - half)
+            elif x1 == x2 and x1 in (left, right):
+                shift = -half if x1 == left else half
+                x1 += shift
+                x2 += shift
+                y1, y2 = (y1 - half, y2 + half) if y1 <= y2 else (y1 + half, y2 - half)
+        cv2.line(edges, (x1 - ox, y1 - oy), (x2 - ox, y2 - oy), 255, thick, cv2.LINE_AA)
         drew = True
     return drew
 

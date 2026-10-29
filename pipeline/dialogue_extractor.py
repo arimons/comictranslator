@@ -489,6 +489,48 @@ def _wall_group_rect(walls: List[Dict[str, Any]]) -> List[int]:
     return [x1, y1, max(0, x2 - x1), max(0, y2 - y1)]
 
 
+def _include_text_pixels_in_edge_mask(
+    mask: np.ndarray,
+    mask_rect: List[int],
+    image: np.ndarray,
+    target_groups: List[Dict[str, Any]],
+    wall_rect: List[int],
+    pad: int = 2,
+    dark_threshold: int = 140,
+) -> Tuple[np.ndarray, List[int]]:
+    """채우기가 닿지 못한 글자 픽셀을 마스크에 더한다.
+
+    방사형처럼 가시가 파고드는 자리는 흰 바탕이 글자를 온전히 둘러싸지 못해 일부 글자가 남는다.
+    글자 사각형 전체가 아니라 그 안의 어두운 픽셀만 더하므로, 사각형 밖의 검은 방사선은 지우지 않는다.
+    """
+    img_h, img_w = image.shape[:2]
+    wx, wy, ww, wh = _as_rect(wall_rect)
+    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    text = np.zeros((img_h, img_w), dtype=np.uint8)
+    for group in target_groups:
+        raw = group.get("fallback_rect") or group.get("tight_rect") or group.get("bounding_rect")
+        if not raw:
+            continue
+        gx, gy, gw, gh = _as_rect(raw)
+        x1 = max(0, wx, gx - pad)
+        y1 = max(0, wy, gy - pad)
+        x2 = min(img_w, wx + ww, gx + gw + pad)
+        y2 = min(img_h, wy + wh, gy + gh + pad)
+        if x2 > x1 and y2 > y1:
+            text[y1:y2, x1:x2] = np.where(gray[y1:y2, x1:x2] < dark_threshold, 255, 0).astype(np.uint8)
+    if not text.any():
+        return mask, mask_rect
+    # 글자 가장자리의 흐린 픽셀까지 지우도록 살짝 넓히되, 박스 밖으로는 나가지 않는다
+    text = cv2.dilate(text, np.ones((3, 3), dtype=np.uint8), iterations=1)
+    clip = np.zeros_like(text)
+    clip[max(0, wy):min(img_h, wy + wh), max(0, wx):min(img_w, wx + ww)] = 255
+    result = np.where(((mask > 0) | (text > 0)) & (clip > 0), 255, 0).astype(np.uint8)
+    ys, xs = np.where(result > 0)
+    if xs.size == 0:
+        return mask, mask_rect
+    return result, [int(xs.min()), int(ys.min()), int(xs.max()) + 1 - int(xs.min()), int(ys.max()) + 1 - int(ys.min())]
+
+
 def _clip_manual_edge_rescue_to_wall_rect(
     mask: np.ndarray,
     wall_rect: List[int],
@@ -594,6 +636,7 @@ def _manual_edge_barrier_regions(
                     rect,
                     image.shape[:2],
                 )
+                rescue_mask, rescue_rect = _include_text_pixels_in_edge_mask(rescue_mask, rescue_rect, image, target_groups, rect)
                 used_box_fallback = rescue_rect[2] <= 0 or rescue_rect[3] <= 0
             else:
                 rescue_mask, rescue_rect = _manual_edge_box_mask(rect, image.shape[:2])
