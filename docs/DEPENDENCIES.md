@@ -83,3 +83,5 @@ projects 아래 폴더 ID는 기존 timestamp ID를 유지한다. project.json�
 <!-- 2026-10-29 review: dialogue_extractor.py 영역 제외·엔진 고정을 처리 인스턴스 참조로 판정, font_style_analyzer.py 번호 덮어쓰기 중단, 분석 탭 선택 유지. 사용법 변경 없음 -->
 
 <!-- 2026-10-29 review: region_refs.py 구 regions.json 가이드 id 파생과 method: 약한 참조 처리. 이 문서 내용 영향 없음 -->
+
+<!-- 2026-10-30 review: dialogue_extractor.py 수동 Edge 영역 마스크에서 윤곽(polygon) 저장, 편집기 R 번호 색·굵기 조정. 이 문서 내용 영향 없음 -->

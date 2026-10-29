@@ -81,3 +81,15 @@ def test_seed_is_moved_off_the_wall_and_stays_inside_the_box():
     assert edges[10, 50] == 255                            # 박스 밖은 장벽
     seed = _free_seed_inside_rect((50, 32), edges, gray, [20, 30, 60, 50])
     assert seed is not None and edges[seed[1], seed[0]] == 0 and 20 <= seed[0] < 80 and 30 <= seed[1] < 80
+
+
+def test_mask_polygon_follows_mask_shape_not_rect():
+    import numpy as np
+    from pipeline.dialogue_extractor import _mask_polygon
+
+    mask = np.zeros((100, 100), np.uint8)
+    mask[10:60, 10:60] = 255
+    mask[10:30, 40:60] = 0  # 오른쪽 위 모서리를 깎아 사각형이 아닌 모양
+    polygon = _mask_polygon(mask)
+    assert polygon is not None and len(polygon) >= 5
+    assert _mask_polygon(np.zeros((10, 10), np.uint8)) is None

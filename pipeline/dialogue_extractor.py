@@ -126,6 +126,18 @@ def _rect_polygon(rect: List[int]) -> List[List[int]]:
     return [[x, y], [x + w, y], [x + w, y + h], [x, y + h]]
 
 
+def _mask_polygon(mask: Any, epsilon: float = 1.5) -> List[List[int]] | None:
+    """mask의 가장 큰 바깥 윤곽을 단순화한 폴리곤으로 돌려준다(편집기 실선 표시용)."""
+    if not isinstance(mask, np.ndarray) or mask.ndim != 2:
+        return None
+    contours, _ = cv2.findContours((mask > 0).astype(np.uint8), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    if not contours:
+        return None
+    approx = cv2.approxPolyDP(max(contours, key=cv2.contourArea), epsilon, True)
+    points = [[int(pt[0][0]), int(pt[0][1])] for pt in approx]
+    return points if len(points) >= 3 else None
+
+
 def _manual_region_anchor_ids(rect: List[int], groups: List[Dict[str, Any]]) -> List[int]:
     anchor_ids: List[int] = []
     for idx, group in enumerate(groups, start=1):
@@ -3161,7 +3173,7 @@ def build_dialogue_sheet(
             "quality_flags": region.get("quality_flags", []),
             "review_tags": region.get("review_tags", []),
             "black_contour_probe": region.get("black_contour_probe"),
-            "polygon": region.get("polygon"),
+            "polygon": region.get("polygon") or _mask_polygon(m),
             "mask": m,
             "mask_centroid": _compute_mask_centroid(m),
             "safe_text_rect": safe_text_rect,
