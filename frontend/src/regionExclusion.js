@@ -23,8 +23,24 @@ export function tgIsExcluded(group, guidance) {
   });
 }
 
+// 사각형 중심(geo)이나 충돌 접미사(@)로 만든 처리 인스턴스 참조는 정확히 비교할 수 없다.
+export function instanceRefIsWeak(ref) {
+  const text = String(ref || "");
+  return !text || text.includes("|geo:") || text.includes("@");
+}
+
+// 제외·LaMa 고정 기록이 이 영역을 가리키는지. 처리 인스턴스 참조(region_instance_ref)가 있으면 그것으로 정확히 비교한다.
+// 같은 TG의 자동 영역을 제외해도 그 자리에 새로 만든 수동 영역에는 걸리지 않고, 사각형이 조금 달라져도 같은 인스턴스면 유지된다.
+// 참조가 없거나 약한 기록은 구형 영역 키(target_key)로 비교한다.
+export function recordTargetsRegion(item, region) {
+  if (item?.instance_ref && region?.region_instance_ref && !instanceRefIsWeak(item.instance_ref)) {
+    return item.instance_ref === region.region_instance_ref;
+  }
+  return Boolean(item?.target_key) && item.target_key === regionBindingKey(region);
+}
+
 export function regionIsExcluded(region, guidance) {
-  if ((guidance?.suppressed_regions || []).some(item => item.target_key === regionBindingKey(region))) return true;
+  if ((guidance?.suppressed_regions || []).some(item => recordTargetsRegion(item, region))) return true;
   if (String(region.source_method || region.method || "").startsWith("manual_")) return false;
   const disabled = new Set((guidance?.disabled_tg_ids || []).map(Number));
   if (region.anchor_ids?.length && region.anchor_ids.every(id => disabled.has(Number(id)))) return true;

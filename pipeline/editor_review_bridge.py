@@ -18,6 +18,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from pipeline.source_library import SourceLibrary, digest as source_digest
 from pipeline.paths import for_repo
 from pipeline.project_paths import manifest_path, manifest_files, runtime_json, transform_paths
+from pipeline.region_refs import annotate_regions
 from pipeline.region_types import regions_with_processing_basis
 
 Artifact = Literal["original", "masked", "final", "analysis", "ocr_sheet", "region_mask"]
@@ -32,6 +33,8 @@ MAX_FILE_BYTES = 64 * 1024 * 1024
 class Observation(BaseModel):
     model_config = ConfigDict(extra="forbid")
     region_id: int | None = Field(default=None, ge=1)
+    # 선택 인자. 재분석으로 R 번호가 바뀌어도 같은 대사를 가리킨다. region_id와 함께 주면 같은 영역이어야 한다.
+    region_ref: str | None = Field(default=None, max_length=200)
     artifact: Artifact = "original"
     description: str = Field(min_length=1, max_length=4000)
     interpretation: str = Field(default="", max_length=4000)
@@ -42,6 +45,7 @@ class CandidateAction(BaseModel):
     action: Literal["tg_off", "tg_split", "region_split", "boundary_seed", "edge", "text_box",
                     "region_off", "edit_text", "adjust_layout", "restore_background", "review_only"]
     region_id: int | None = Field(default=None, ge=1)
+    region_ref: str | None = Field(default=None, max_length=200)
     reason: str = Field(min_length=1, max_length=4000)
     # 아직 실행하지 않는 초안이다. 원본 픽셀 좌표 등 향후 편집에 필요한 값만 담는다.
     parameters: dict[str, Any] = Field(default_factory=dict)
@@ -204,6 +208,10 @@ class ReviewStore:
                 payload[key] = None
                 issues.append({"kind": "invalid_json", "artifact": key})
         payload["regions"] = regions_with_processing_basis(payload["regions"])
+        if isinstance(payload["regions"], dict) and isinstance(payload["regions"].get("regions"), list):
+            guidance = payload.get("guidance")
+            payload["regions"] = {**payload["regions"], "regions": annotate_regions(
+                payload["regions"]["regions"], guidance if isinstance(guidance, dict) else None)}
         return base, page, paths, blobs, payload, issues, dimensions, revision, hashes
 
     @staticmethod
@@ -237,18 +245,30 @@ class ReviewStore:
                 "processing_excluded": (payload["page_policy"] or {}).get("excluded") is True,
                 "review_proposals": proposals, "quality_verdict": "unreviewed"}
 
+    @staticmethod
+    def _find_region(regions: list[dict], region_id: int | None, region_ref: str | None) -> dict | None:
+        """region_ref가 있으면 그것으로, 없으면 region_id로 찾는다. 둘 다 주면 같은 영역이어야 한다. 번호로 참조를 대신 찾지 않는다."""
+        by_ref = next((r for r in regions if r.get("region_ref") == region_ref), None) if region_ref else None
+        by_id = next((r for r in regions if r.get("region_id") == region_id), None) if region_id is not None else None
+        if region_ref and by_ref is None:
+            raise ValueError("존재하지 않는 region_ref입니다")
+        if region_id is not None and by_id is None:
+            raise ValueError("존재하지 않는 region_id입니다")
+        if by_ref is not None and by_id is not None and by_ref is not by_id:
+            raise ValueError("region_id와 region_ref가 서로 다른 영역을 가리킵니다")
+        return by_ref or by_id
+
     def view_region(self, session_id: str, image_id: str, region_id: int | None = None,
                     artifact: Artifact = "original", margin=24, max_edge=1600,
-                    expected_revision: str | None = None) -> tuple[dict, bytes]:
+                    expected_revision: str | None = None, region_ref: str | None = None) -> tuple[dict, bytes]:
         if not 0 <= margin <= 512 or not 128 <= max_edge <= 4096:
             raise ValueError("margin은 0~512, max_edge는 128~4096이어야 합니다")
         _, _, paths, blobs, payload, _, original_size, revision, _ = self._snapshot(session_id, image_id)
         if expected_revision is not None and expected_revision != revision:
             raise ValueError("페이지 revision이 바뀌었습니다. inspect_page로 다시 확인하세요")
         regions = self._regions(payload["regions"])
-        region = next((r for r in regions if r.get("region_id") == region_id), None) if region_id is not None else None
-        if region_id is not None and region is None:
-            raise ValueError("존재하지 않는 region_id입니다")
+        region = self._find_region(regions, region_id, region_ref)
+        region_id = region.get("region_id") if region is not None else None
         if artifact == "region_mask":
             if region is None or not region.get("mask_ref"):
                 raise ValueError("이 영역에는 저장된 경계 마스크가 없습니다")
@@ -303,10 +323,12 @@ class ReviewStore:
         base, _, _, _, payload, _, _, revision, _ = self._snapshot(session_id, image_id)
         if base_revision != revision:
             raise ValueError("페이지 revision이 바뀌었습니다. inspect_page로 다시 확인하세요")
-        ids = {r["region_id"] for r in self._regions(payload["regions"])}
+        regions = self._regions(payload["regions"])
         for item in [*observations, *candidate_actions]:
-            if item.region_id is not None and item.region_id not in ids:
-                raise ValueError("제안에 존재하지 않는 region_id가 있습니다")
+            try:
+                self._find_region(regions, item.region_id, item.region_ref)
+            except ValueError as exc:
+                raise ValueError(f"제안의 영역 지정이 올바르지 않습니다: {exc}") from exc
         content = {"schema_version": 1, "session_id": session_id, "image_id": image_id,
                    "base_revision": base_revision, "coordinate_space": "original_pixels",
                    "observations": [o.model_dump() for o in observations],

@@ -42,9 +42,10 @@ def create_server(root: Path = ROOT) -> FastMCP:
 
     @server.tool(annotations=read)
     def view_region(session_id: str, image_id: str, region_id: int | None = None, artifact: Artifact = "original",
-                    margin: int = 24, max_edge: int = 1600, expected_revision: str | None = None) -> CallToolResult:
-        """실제 이미지와 crop 좌표를 반환. region_id 생략 시 전체 페이지. OCR sheet는 시트 좌표이며 다른 이미지는 원본 좌표입니다. expected_revision으로 같은 관찰 시점을 확인하세요."""
-        meta, png = store.view_region(session_id, image_id, region_id, artifact, margin, max_edge, expected_revision)
+                    margin: int = 24, max_edge: int = 1600, expected_revision: str | None = None,
+                    region_ref: str | None = None) -> CallToolResult:
+        """실제 이미지와 crop 좌표를 반환. region_id·region_ref 생략 시 전체 페이지. region_ref(예 tg:3)는 재분석으로 번호가 바뀌어도 같은 대사를 가리키는 선택 인자입니다. OCR sheet는 시트 좌표이며 다른 이미지는 원본 좌표입니다. expected_revision으로 같은 관찰 시점을 확인하세요."""
+        meta, png = store.view_region(session_id, image_id, region_id, artifact, margin, max_edge, expected_revision, region_ref)
         return CallToolResult(content=[TextContent(type="text", text=json.dumps(meta, ensure_ascii=False)),
                                       ImageContent(type="image", data=base64.b64encode(png).decode(), mimeType="image/png")],
                               structuredContent=meta)

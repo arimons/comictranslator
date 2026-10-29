@@ -250,3 +250,25 @@ def test_local_client_config_does_not_overwrite_existing_manual_server(tmp_path)
         configure(tmp_path)
     assert path.read_text() == original
     assert not (tmp_path / ".mcp.json").exists()
+
+
+def test_region_ref_is_an_optional_selector_and_never_replaced_by_a_number(project):
+    """A12: region_id는 그대로이고 region_ref는 선택 인자다. 둘이 서로 다른 영역을 가리키면 거부한다."""
+    root, base, store = project
+    page = store.inspect_page("example", "page")
+    refs = {r["region_id"]: r["region_ref"] for r in page["payload"]["regions"]["regions"]}
+    assert set(refs) == {1, 4} and refs[1] != refs[4]
+    by_ref, _ = store.view_region("example", "page", region_ref=refs[4], margin=0)
+    by_id, _ = store.view_region("example", "page", 4, margin=0)
+    assert by_ref["region_id"] == 4 and by_ref["crop_rect"] == by_id["crop_rect"]
+    both, _ = store.view_region("example", "page", 4, region_ref=refs[4], margin=0)
+    assert both["region_id"] == 4
+    with pytest.raises(ValueError, match="서로 다른 영역"):
+        store.view_region("example", "page", 1, region_ref=refs[4])
+    with pytest.raises(ValueError, match="region_ref"):
+        store.view_region("example", "page", region_ref="tg:999")
+    revision = page["page_revision"]
+    store.propose_review("example", "page", revision, [Observation(region_ref=refs[4], description="관찰")],
+                         [CandidateAction(action="review_only", region_id=4, region_ref=refs[4], reason="확인")])
+    with pytest.raises(ValueError, match="영역 지정"):
+        store.propose_review("example", "page", revision, [Observation(region_id=1, region_ref=refs[4], description="관찰")], [])

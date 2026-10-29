@@ -569,8 +569,9 @@ def update_integrated_render_hints(
 ) -> int:
     """integrated.json의 render_hint_final / style_features / render_hint_score를 CV 재계산으로 갱신.
 
-    dialogue_extractor 재실행으로 region_id가 바뀐 경우에도
-    matched_cluster(anchor TG id) → regions.json anchor_ids 역탐색으로 source_region_id를 재매핑한다.
+    스타일·사각형은 matched_cluster(anchor TG id) → 현재 regions.json anchor_ids 역탐색으로 현재 영역을 찾아 계산한다.
+    source_region_id(번역 번호)와 source_region_ref(번역 시점 영역 참조)는 다시 쓰지 않는다. 번호를 현재 regions 번호로
+    덮어쓰면 번역 번호 공간과 현재 번호 공간이 섞여 수동값이 다른 영역에 붙는다. 번호로는 영역을 찾지도 않는다.
 
     Returns:
         변경된 cluster 수
@@ -619,19 +620,13 @@ def update_integrated_render_hints(
         if anchor_ids and anchor_to_region_id:
             rids_found = {anchor_to_region_id[a] for a in anchor_ids if a in anchor_to_region_id}
 
-        # source_region_id 갱신 — 단일 region으로 1:1 매핑된 경우만
-        remapped_rid: int | None = None
-        old_rid = cluster.get("source_region_id")
-        if len(rids_found) == 1:
-            remapped_rid = next(iter(rids_found))
-            if remapped_rid != old_rid:
-                cluster["source_region_id"] = remapped_rid
-                changed += 1
+        # 단일 region으로 1:1 매핑된 경우의 현재 영역 번호(스타일 계산용). source_region_id는 건드리지 않는다.
+        remapped_rid: int | None = next(iter(rids_found)) if len(rids_found) == 1 else None
 
         # rect 갱신 — 복수 region일 때는 union rect 계산
         # (TG7+8+9 같이 하나의 OCR 클러스터가 여러 per-TG region에 걸친 경우)
         sub_rects = []
-        for rid in (rids_found if rids_found else ({int(old_rid)} if old_rid is not None else set())):
+        for rid in rids_found:
             r = region_by_id.get(int(rid))
             if r:
                 rect = r.get("unboxed_rect") or r.get("bubble_rect") or r.get("source_rect")
@@ -645,11 +640,7 @@ def update_integrated_render_hints(
                     changed += 1
 
         # style features 계산용 대표 region_id
-        rid_int = remapped_rid if remapped_rid is not None else (
-            min(rids_found) if rids_found else (
-                int(old_rid) if old_rid is not None else None
-            )
-        )
+        rid_int = remapped_rid if remapped_rid is not None else (min(rids_found) if rids_found else None)
         if rid_int is None:
             continue
 

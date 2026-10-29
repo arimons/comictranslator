@@ -1305,3 +1305,43 @@ def test_step3_output_regions_carry_region_ref_fields(tmp_path, monkeypatch):
     assert region["region_instance_ref"] == "manual_bubble_9|tg:4"
     saved = json.loads((tmp_path / "json/regions.json").read_text(encoding="utf-8"))["regions"][0]
     assert saved["region_ref"] == "tg:4"
+
+
+def test_suppression_by_instance_ref_separates_auto_and_manual_region_with_same_tg():
+    """00021 패턴: 자동 영역을 제외한 뒤 같은 TG로 다시 그린 수동 Edge 영역에는 그 제외가 걸리지 않는다."""
+    from pipeline.dialogue_extractor import _suppression_matches_region
+    from pipeline.region_refs import instance_ref_of
+    auto = {"region_id": 3, "is_valid": True, "method": "bbox_fallback", "anchor_ids": [6], "bubble_rect": [10, 10, 80, 80]}
+    edge = {"region_id": 11001, "is_valid": True, "method": "manual_edge_barrier_rescue", "guide_id": "edge_box_9",
+            "anchor_ids": [6], "bubble_rect": [12, 12, 70, 70]}
+    exclude_auto = {"instance_ref": instance_ref_of(auto), "target_key": "legacy-key", "rect": [10, 10, 80, 80], "anchor_ids": [6]}
+    exclude_edge = {"instance_ref": instance_ref_of(edge), "rect": [12, 12, 70, 70], "anchor_ids": [6]}
+    assert instance_ref_of(auto) == "auto|tg:6" and instance_ref_of(edge) == "edge_box_9|tg:6"
+    assert _suppression_matches_region(exclude_auto, auto) is True
+    assert _suppression_matches_region(exclude_auto, edge) is False
+    assert _suppression_matches_region(exclude_edge, edge) is True
+    assert _suppression_matches_region(exclude_edge, auto) is False
+    # 같은 인스턴스는 사각형·검출 방법이 달라져도 계속 제외된다.
+    shifted = {**auto, "method": "flood", "bubble_rect": [14, 14, 60, 60]}
+    assert _suppression_matches_region(exclude_auto, shifted) is True
+    # 인스턴스 참조가 없는 예전 기록은 구형 키 판정을 그대로 쓴다.
+    from pipeline.region_types import region_binding_key
+    legacy = {"target_key": region_binding_key(auto)}
+    assert _suppression_matches_region(legacy, auto) is True
+    assert _suppression_matches_region(legacy, shifted) is False
+
+
+def test_forced_engine_follows_instance_ref_and_falls_back_to_legacy_key():
+    from pipeline.dialogue_extractor import _forced_engine_by_key, _forced_engine_for_crop, _crop_binding_key
+    from pipeline.region_refs import instance_ref_of
+    manual = {"type": "unboxed", "source_method": "manual_ubox_guide", "guide_id": "manual_ubox_7", "anchor_ids": [3], "source_rect": [10, 10, 40, 40]}
+    auto = {"type": "unboxed", "source_method": "bbox_fallback", "anchor_ids": [3], "source_rect": [10, 10, 40, 40]}
+    overrides = [{"target_key": _crop_binding_key(manual), "instance_ref": instance_ref_of(manual), "engine": "telea"}]
+    by_key = _forced_engine_by_key(overrides)
+    assert _forced_engine_for_crop(manual, overrides, by_key) == "telea"
+    assert _forced_engine_for_crop(auto, overrides, by_key) is None
+    # 사각형이 조금 달라져 구형 키가 어긋나도 같은 인스턴스면 유지된다.
+    moved = {**manual, "source_rect": [12, 12, 40, 40]}
+    assert _forced_engine_for_crop(moved, overrides, by_key) == "telea"
+    old = [{"target_key": _crop_binding_key(manual), "engine": "lama"}]
+    assert _forced_engine_for_crop(manual, old, _forced_engine_by_key(old)) == "lama"

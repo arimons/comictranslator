@@ -54,7 +54,7 @@ import {
   removeSessionSettings,
   imageRegions,
 } from "./lib.js";
-import { regionIsExcluded } from "./regionExclusion.js";
+import { recordTargetsRegion, regionIsExcluded } from "./regionExclusion.js";
 
 // 글자 입히기 편집 기록 상한과, 같은 종류의 연속 변경을 한 칸으로 묶는 시간
 const OVERLAY_HISTORY_LIMIT = 100;
@@ -296,11 +296,25 @@ export default function App() {
   const selectedGuidanceRegion = selectedGuidanceRegionId != null
     ? guidanceRegions.find(region => regionId(region) === Number(selectedGuidanceRegionId)) || null
     : null;
+  // 재분석으로 R 번호가 바뀌어도 선택은 같은 대사(region_ref)를 따라간다. 따라갈 영역이 없으면 다른 번호에 붙이지 않고 선택을 푼다.
+  const selectedGuidanceRefRef = useRef(null);
+  useEffect(() => {
+    const wanted = selectedGuidanceRefRef.current;
+    if (!wanted || selectedGuidanceRegionId == null) return;
+    const current = guidanceRegions.find((region) => regionId(region) === Number(selectedGuidanceRegionId));
+    if (current?.region_ref === wanted) return;
+    const moved = guidanceRegions.find((region) => region.region_ref === wanted);
+    if (moved) setSelectedGuidanceRegionId(regionId(moved));
+    else if (guidanceRegions.some((region) => region.region_ref)) { selectedGuidanceRefRef.current = null; setSelectedGuidanceRegionId(null); }
+  }, [guidanceRegions]);
+  useEffect(() => {
+    selectedGuidanceRefRef.current = selectedGuidanceRegion?.region_ref || null;
+  }, [selectedGuidanceRegionId, selectedGuidanceRegion?.region_ref]);
   // 텍스트 기반 영역의 지우기 엔진: 자동 판정(Telea/LaMa) 또는 사용자가 LaMa·Telea로 고정.
   // 고정은 변경사항 적용 때 Step 3에서 반영되므로, 화면의 가이드와 저장된 가이드를 따로 본다.
   const selectedIsTextBased = Boolean(selectedGuidanceRegion && regionProcessingBasis(selectedGuidanceRegion) === TEXT_BASED);
   const selectedRegionKey = selectedGuidanceRegion ? regionBindingKey(selectedGuidanceRegion) : "";
-  const engineOverrideOf = (source) => (source?.inpaint_engine_overrides || []).find((item) => item.target_key === selectedRegionKey)?.engine || null;
+  const engineOverrideOf = (source) => (source?.inpaint_engine_overrides || []).find((item) => selectedGuidanceRegion && recordTargetsRegion(item, selectedGuidanceRegion))?.engine || null;
   const enginePending = selectedIsTextBased ? engineOverrideOf(guidance) : null;
   const engineSaved = selectedIsTextBased ? engineOverrideOf(selected?.guidance) : null;
   const lamaForcedPending = enginePending === "lama";
@@ -2552,12 +2566,12 @@ export default function App() {
     const region = selectedGuidanceRegion;
     if (!region || regionProcessingBasis(region) !== TEXT_BASED) return;
     const key = regionBindingKey(region);
-    const current = (guidance.inpaint_engine_overrides || []).find((item) => item.target_key === key)?.engine || null;
+    const current = (guidance.inpaint_engine_overrides || []).find((item) => recordTargetsRegion(item, region))?.engine || null;
     if (current === engine) return;
     setGuidanceTracked((value) => {
       const next = cloneJson(value || defaultGuidance(null));
-      const list = (next.inpaint_engine_overrides || []).filter((item) => item.target_key !== key);
-      if (engine) list.push({ target_key: key, engine, display_region_id: regionId(region) });
+      const list = (next.inpaint_engine_overrides || []).filter((item) => !recordTargetsRegion(item, region));
+      if (engine) list.push({ target_key: key, ...(region.region_instance_ref ? { instance_ref: region.region_instance_ref } : {}), engine, display_region_id: regionId(region) });
       next.inpaint_engine_overrides = list;
       return next;
     }, engine ? `${ENGINE_NAMES[engine]}로 고정` : "지우기 자동 판정");

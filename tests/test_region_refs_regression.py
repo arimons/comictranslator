@@ -257,3 +257,24 @@ class RefRendererTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class RenderHintRefreshTest(unittest.TestCase):
+    def test_refresh_does_not_rewrite_translation_numbers_or_refs(self) -> None:
+        """update_integrated_render_hints가 source_region_id를 현재 R 번호로 덮어쓰지 않는다(번호 공간 혼용 방지)."""
+        from pipeline import font_style_analyzer as fsa
+
+        with tempfile.TemporaryDirectory() as raw:
+            tmp = Path(raw)
+            (tmp / "regions.json").write_text(json.dumps({"regions": [_region(1, 9, "D"), _region(2, 3, "C")]}), encoding="utf-8")
+            integrated = {"clusters": [{**_cluster(3, 3, "C"), "source_region_ref": "tg:3"}]}
+            (tmp / "integrated.json").write_text(json.dumps(integrated), encoding="utf-8")
+            original = fsa._measure_region_style_features
+            fsa._measure_region_style_features = lambda *a, **k: {2: {"anchor_style_features": {}}}
+            try:
+                fsa.update_integrated_render_hints(str(tmp / "integrated.json"), "sheet.jpg", str(tmp / "regions.json"))
+            finally:
+                fsa._measure_region_style_features = original
+            cluster = json.loads((tmp / "integrated.json").read_text(encoding="utf-8"))["clusters"][0]
+            self.assertEqual(cluster["source_region_id"], 3)
+            self.assertEqual(cluster["source_region_ref"], "tg:3")

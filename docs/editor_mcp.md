@@ -54,7 +54,7 @@ MCP 도구명은 프로토콜 계약이다. UI 문구가 바뀌어도 도구명�
 
 ## 이미지와 좌표
 
-`view_region`의 `artifact`는 `original`, `masked`, `final`, `analysis`, `ocr_sheet`, `region_mask` 중 하나다. `region_id`를 생략하면 전체 이미지를 본다. `region_mask`는 실제 `mask_ref`가 있는 영역에서만 가능하며, 아직 만들지 않은 산출물은 오류로 알려 준다.
+`view_region`의 `artifact`는 `original`, `masked`, `final`, `analysis`, `ocr_sheet`, `region_mask` 중 하나다. `region_id`를 생략하면 전체 이미지를 본다. 선택 인자 `region_ref`(예 `tg:3`, `inspect_page` 영역에 메모리로 붙는 값)는 재분석으로 R 번호가 바뀌어도 같은 대사를 가리킨다. `region_id`와 함께 주면 같은 영역이어야 하며 다르면 거부한다. 번호로 참조를 대신 찾지 않는다. 관찰·후보 동작(`Observation`, `CandidateAction`)에도 같은 선택 인자 `region_ref`가 있다. `region_mask`는 실제 `mask_ref`가 있는 영역에서만 가능하며, 아직 만들지 않은 산출물은 오류로 알려 준다.
 
 - 원본·마스킹·최종·분석·경계 마스크는 **원본 픽셀 좌표**다. 이미지 크기가 원본과 다르면 안전하게 대응할 수 없다는 오류를 반환한다.
 - OCR sheet는 **indexed sheet 픽셀 좌표**다. 영역의 `indexed_sheet_rect`로 자르며 원본 좌표로 오해하지 않도록 별도로 표시한다.

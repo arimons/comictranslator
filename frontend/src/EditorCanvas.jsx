@@ -4,7 +4,7 @@ import { createPortal } from "react-dom";
 import { rectOf, tgId, imageGroups, defaultGuidance, regionId, imageRegions, regionDisplayRect, overlayRegionColor } from "./lib.js";
 import { createViewport } from "./viewportControls.js";
 import { placeCanvasLabels, promotedTgIds } from "./canvasLabels.js";
-import { regionIsExcluded, tgIsExcluded } from "./regionExclusion.js";
+import { instanceRefIsWeak, recordTargetsRegion, regionIsExcluded, tgIsExcluded } from "./regionExclusion.js";
 import { TEXT_BASED, regionProcessingBasis, regionTypeLabel, regionBindingKey, usesEdgeBarrier } from "./regionTypes.js";
 
 const SELECTED_REGION_COLOR = "#e11d48";
@@ -309,6 +309,7 @@ const EditorCanvas = forwardRef(function EditorCanvas({ image, baseUrl, guidance
     const targetKey = regionBindingKey(region);
     const sourceRegionId = region.source_order ?? region.source_region_id ?? region.region_id;
     const duplicate = (latest.suppressed_regions || []).some((item) => {
+      if (item.instance_ref && region.region_instance_ref && !instanceRefIsWeak(item.instance_ref)) return recordTargetsRegion(item, region);
       if (targetKey) return item.target_key === targetKey;
       if (item.target_key) return false;
       const itemSourceId = item.source_region_id ?? item.source_order;
@@ -321,6 +322,8 @@ const EditorCanvas = forwardRef(function EditorCanvas({ image, baseUrl, guidance
     const nextItem = {
       id: `suppress_${Date.now()}`,
       ...(targetKey ? {target_key: targetKey} : {}),
+      // 같은 TG라도 자동 영역과 수동 영역은 서로 다른 처리 인스턴스다. 제외는 이 인스턴스에만 건다.
+      ...(region.region_instance_ref ? {instance_ref: region.region_instance_ref} : {}),
       type: "region_suppress",
       source_region_id: sourceRegionId,
       display_region_id: region.region_id,

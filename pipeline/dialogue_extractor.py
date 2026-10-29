@@ -27,7 +27,7 @@ SimpleLama: Any | None = None
 
 try:
     from pipeline.region_types import TEXT_BASED, BOUNDARY_BASED, region_processing_basis
-    from pipeline.region_refs import annotate_regions
+    from pipeline.region_refs import annotate_regions, instance_ref_of, instance_ref_is_weak
     from pipeline.bubble_detector import build_ocr_region_sheet, _load_json, _is_dark_bg_text, _is_horizontal_text_group, _fill_mask_holes
     from pipeline.geometry import as_rect as _as_rect, union_rect as _union_rect
     from pipeline.unboxed_grouping import (
@@ -49,7 +49,7 @@ try:
     from pipeline.flood_split import collect_inflection_candidates, split_mask_by_erosion_components, split_mask_by_inflection_line
 except ImportError:
     from region_types import TEXT_BASED, BOUNDARY_BASED, region_processing_basis
-    from region_refs import annotate_regions
+    from region_refs import annotate_regions, instance_ref_of, instance_ref_is_weak
     from bubble_detector import build_ocr_region_sheet, _load_json, _is_dark_bg_text, _is_horizontal_text_group, _fill_mask_holes
     from geometry import as_rect as _as_rect, union_rect as _union_rect
     from unboxed_grouping import (
@@ -387,6 +387,24 @@ def _forced_engine_by_key(overrides: List[Dict[str, Any]] | None) -> Dict[str, s
         for item in overrides or []
         if isinstance(item, dict) and item.get("engine") in FORCEABLE_INPAINT_ENGINES and item.get("target_key")
     }
+
+
+def _forced_engine_for_crop(
+    crop: Dict[str, Any],
+    overrides: List[Dict[str, Any]] | None,
+    by_key: Dict[str, str],
+) -> str | None:
+    """영역에 고정된 지우기 엔진. 기록에 처리 인스턴스 참조가 있으면 그것으로, 없거나 약하면 구형 영역 키로 찾는다."""
+    for item in overrides or []:
+        if isinstance(item, dict) and item.get("engine") in FORCEABLE_INPAINT_ENGINES and _instance_matches(item, crop):
+            return str(item["engine"])
+    # 처리 인스턴스 참조가 정확히 비교되는 기록은 구형 키로 다시 맞추지 않는다.
+    comparable = {
+        str(item["target_key"]) for item in overrides or []
+        if isinstance(item, dict) and item.get("target_key") and _instance_matches(item, crop) is False
+    }
+    key = _crop_binding_key(crop)
+    return None if key in comparable else by_key.get(key)
 
 
 def _forced_lama_keys(overrides: List[Dict[str, Any]] | None) -> set[str]:
@@ -1643,7 +1661,19 @@ def _suppression_rect(item: Dict[str, Any]) -> List[int] | None:
     return rect if rect[2] > 0 and rect[3] > 0 else None
 
 
+def _instance_matches(item: Dict[str, Any], region: Dict[str, Any]) -> bool | None:
+    """기록에 region_instance_ref가 있으면 처리 인스턴스(자동/가이드 id + TG 집합)로 정확히 비교한다. 비교할 수 없으면 None."""
+    recorded = item.get("instance_ref")
+    if not recorded or instance_ref_is_weak(recorded):
+        return None
+    return recorded == instance_ref_of(region)
+
+
 def _suppression_matches_region(item: Dict[str, Any], region: Dict[str, Any]) -> bool:
+    by_instance = _instance_matches(item, region)
+    if by_instance is not None:
+        # 같은 TG의 자동 영역을 제외했어도 그 자리에 새로 그린 수동 영역은 제외하지 않는다(그 반대도 마찬가지).
+        return by_instance
     if item.get("target_key"):
         from pipeline.region_types import region_binding_key
         return item["target_key"] == region_binding_key(region)
@@ -3042,7 +3072,7 @@ def build_dialogue_sheet(
         trimmed = _mask_bounding_rect(region.get("mask") if isinstance(region.get("mask"), np.ndarray) else _polygon_to_mask(region.get("polygon"), image.shape))
         if trimmed is not None:
             region["bubble_rect"] = trimmed
-    _invalidate_suppressed_regions(regions, [item for item in suppressed_regions or [] if item.get("target_key")])
+    _invalidate_suppressed_regions(regions, [item for item in suppressed_regions or [] if item.get("target_key") or item.get("instance_ref")])
     suppressed_tg_ids.update(_suppressed_text_group_ids(groups, regions, suppressed_regions or []))
 
     valid_regions = [r for r in regions if r.get("is_valid")]
@@ -3140,12 +3170,13 @@ def build_dialogue_sheet(
     manual_unboxed_tg_ids: set[int] = set()
     group_by_id = {_tg_id(group, idx): group for idx, group in enumerate(groups, start=1)}
     for item in manual_unboxed_crops:
-        if any(_suppression_matches_region(excluded, item) for excluded in suppressed_regions or [] if excluded.get("target_key")):
+        if any(_suppression_matches_region(excluded, item) for excluded in suppressed_regions or [] if excluded.get("target_key") or excluded.get("instance_ref")):
             continue
         crops.append(item)
         manual_unboxed_tg_ids.update(int(tid) for tid in item.get("anchor_ids", []))
-        if _crop_binding_key(item) in forced_engines:
-            item["inpaint_engine_override"] = forced_engines[_crop_binding_key(item)]
+        forced_engine = _forced_engine_for_crop(item, inpaint_engine_overrides, forced_engines)
+        if forced_engine:
+            item["inpaint_engine_override"] = forced_engine
         if not _apply_manual_ubox_lama(image, masked_image, item, group_by_id):
             item["inpaint_skipped"] = True
             item["quality_flags"] = list(dict.fromkeys(
@@ -3255,7 +3286,7 @@ def build_dialogue_sheet(
         )
         engine = None
         if safe_text_mask.max() > 0:
-            forced_engine = forced_engines.get(_crop_binding_key(unboxed_crop))
+            forced_engine = _forced_engine_for_crop(unboxed_crop, inpaint_engine_overrides, forced_engines)
             if forced_engine:
                 engine = forced_engine
             else:

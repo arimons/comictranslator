@@ -306,6 +306,28 @@ def region_instance_ref(region: dict, page_regions: list[dict] | None = None, gu
     return f"{_origin_of(region)}|{ref}"
 
 
+_INSTANCE_FIELDS = (
+    "anchor_ids", "guide_id", "region_origin", "source_method", "method", "type", "processing_basis",
+    "split_parent_rect", "split_order", "split_parent_anchor_ids",
+    "bubble_rect", "unboxed_rect", "erase_rect", "source_rect",
+)
+
+
+def instance_ref_of(region: dict) -> str:
+    """파이프라인 내부 영역(마스크 등 큰 값을 가진 dict)에서 region_instance_ref를 계산한다. 필요한 키만 복사한다.
+
+    충돌 접미사(@)는 페이지 전체를 봐야 알 수 있어 여기서는 붙이지 않는다. 약한 참조는 소비처가 구형 키로 대신 판단한다.
+    """
+    slim = {key: region[key] for key in _INSTANCE_FIELDS if key in region}
+    return annotate_regions([slim])[0]["region_instance_ref"]
+
+
+def instance_ref_is_weak(instance_ref: str | None) -> bool:
+    """사각형 중심(geo)이나 충돌 접미사로 만든 참조는 정확히 비교할 수 없다."""
+    text = str(instance_ref or "")
+    return not text or "|geo:" in text or "@" in text
+
+
 def tg_digest(text_groups: Iterable[dict] | None) -> str:
     """TG id와 사각형 목록의 해시. 달라졌다면 CV/Step 2를 다시 돌려 TG가 새로 매겨진 것이다."""
     rows = []
