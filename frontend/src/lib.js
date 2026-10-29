@@ -168,6 +168,11 @@ export function defaultOverlayGuidance(image) {
   };
 }
 
+// 서버에 보내는 수동값에는 영역 참조 키 방식 표시를 단다. 빈 regions로 replace해도 구 번들 요청과 구별하기 위함이다.
+export function overlayGuidancePayload(guidance) {
+  return guidance ? { ...guidance, key_scheme: "region_ref_v1" } : guidance;
+}
+
 export function overlayRefKey(ref, segment = null) {
   if (!ref) return null;
   return segment != null && Number.isFinite(Number(segment)) ? `${ref}#${Number(segment)}` : String(ref);

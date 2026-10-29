@@ -73,6 +73,7 @@ def _render(
     regions: list[dict],
     overlay: dict | None = None,
     overlay_older: bool = False,
+    manual_guidance: dict | None = None,
 ) -> tuple[np.ndarray, dict]:
     """합성 입력으로 apply_text_overlay를 돌려 (결과 이미지, overlay_layout)을 돌려준다."""
     with tempfile.TemporaryDirectory() as raw:
@@ -94,6 +95,10 @@ def _render(
             if overlay_older:  # regions.json·integrated보다 오래된 수동값(저장 시각 증거 없음)
                 import os
                 os.utime(guidance_path, (1_000_000, 1_000_000))
+        guidance_kwargs = {}
+        if manual_guidance is not None:
+            (tmp / "manual_guidance.json").write_text(json.dumps(manual_guidance), encoding="utf-8")
+            guidance_kwargs["manual_guidance_path"] = tmp / "manual_guidance.json"
         rto.apply_text_overlay(
             tmp / "masked.png",
             tmp / "integrated.json",
@@ -102,6 +107,7 @@ def _render(
             original_image_path=tmp / "original.png",
             overlay_guidance_path=guidance_path,
             overlay_layout_output=tmp / "layout.json",
+            **guidance_kwargs,
         )
         final = cv2.imread(str(tmp / "final.png"))
         layout = json.loads((tmp / "layout.json").read_text(encoding="utf-8"))
@@ -265,6 +271,30 @@ class RefRendererTest(unittest.TestCase):
         cluster = _cluster(2, 2, "B")
         self.assertEqual(rto.overlay_override_for_cluster(cluster, {}, {"2": {"font_size": 30}}), {"font_size": 30})
         self.assertIsNone(rto.build_ref_context([cluster], None, {}))
+
+
+class OldFileSeedRegionTest(unittest.TestCase):
+    """재검토 N1: 구 regions.json의 TG 없는 수동 영역은 앱 projection과 렌더러가 같은 참조를 써야 한다."""
+
+    GUIDANCE = {"manual_seed_points": [{"id": "manual_seed_1", "point": [60, 170]}]}
+    SEED = {"region_id": 12001, "type": "bubble", "bubble_rect": list(RECTS["D"]), "anchor_ids": [],
+            "source_method": "manual_bubble_seed_rescue"}
+
+    def test_projection_and_renderer_agree_and_direct_input_is_drawn(self) -> None:
+        app_ref = rr.annotate_regions([self.SEED], self.GUIDANCE)[0]["region_ref"]
+        self.assertEqual(app_ref, "guide:manual_seed_1")
+        overlay = {"key_scheme": "region_ref_v1", "regions_by_ref": {app_ref: {"text_override": "직접"}}, "regions": {}}
+        overlay["legacy_digest"] = rr.legacy_digest({})
+        clusters = [_cluster(1, 1, "A")]
+        _final, layout = _render(clusters, [_region(1, 1, "A"), self.SEED], overlay, manual_guidance=self.GUIDANCE)
+        self.assertEqual(_layout_entry_for_rect(layout, "D")["text_source"], "직접")
+
+    def test_empty_text_override_hides_the_seed_region_and_blocks_restore(self) -> None:
+        overlay = {"key_scheme": "region_ref_v1", "regions_by_ref": {"guide:manual_seed_1": {"text_override": ""}}, "regions": {},
+                   "legacy_digest": rr.legacy_digest({})}
+        final, layout = _render([_cluster(1, 1, "A")], [_region(1, 1, "A"), self.SEED], overlay, manual_guidance=self.GUIDANCE)
+        self.assertIsNone(_layout_entry_for_rect(layout, "D"))
+        self.assertEqual(_corner_pixel(final, "D"), MASKED_GRAY)
 
 
 if __name__ == "__main__":

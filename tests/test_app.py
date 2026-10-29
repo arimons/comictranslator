@@ -2043,3 +2043,19 @@ def test_old_bundle_replace_keeps_reference_only_values(tmp_path, monkeypatch):
     saved = app.store_overlay_guidance(record, {"regions": {"3": {"font_size": 41}}}, replace=True)  # 구 번들: 번역 번호 3(=tg:4)만 안다
     assert saved["regions_by_ref"]["tg:4"]["font_size"] == 41
     assert saved["regions_by_ref"]["tg:3"]["text_override"] == "직접"
+
+
+def test_new_bundle_empty_replace_clears_reference_only_values_but_old_bundle_does_not(tmp_path, monkeypatch):
+    """재검토 N2: 새 번들(key_scheme 표시)의 빈 replace는 다 지운다. 표시 없는 빈 요청은 예전 동작(참조 전용 값 보존)."""
+    rect_a, rect_b, rect_c = [10, 10, 100, 80], [200, 10, 100, 80], [10, 200, 100, 80]
+    record = _overlay_record(
+        tmp_path, monkeypatch,
+        {"clusters": [_cluster_row(3, [4], rect_b)]},
+        [_rect_region(1, [9], rect_a), _rect_region(2, [8], rect_c), _rect_region(3, [3], rect_c), _rect_region(4, [4], rect_b)],
+    )
+    seed = {"regions": {"tg:3": {"text_override": "직접"}, "tg:4": {"font_size": 40}}, "key_scheme": "region_ref_v1"}
+    app.store_overlay_guidance(record, seed, replace=True)
+    kept = app.store_overlay_guidance(record, {"regions": {}}, replace=True)
+    assert "tg:3" in kept["regions_by_ref"]
+    cleared = app.store_overlay_guidance(record, {"regions": {}, "key_scheme": "region_ref_v1"}, replace=True)
+    assert cleared["regions_by_ref"] == {}

@@ -2266,7 +2266,8 @@ def store_overlay_guidance(record: dict[str, Any], incoming: dict[str, Any] | No
     integrated, regions = _overlay_page_inputs(record)
     stored = load_json(path, default={}) if path.exists() else {}
     incoming_keys = list(((incoming or {}).get("regions") or {}).keys()) if isinstance(incoming, dict) else []
-    incoming_has_refs = bool(isinstance(incoming, dict) and incoming.get("regions_by_ref")) or any(
+    # 새 번들은 key_scheme을 달아 보낸다. 빈 regions로 replace해도 구 번들과 구별된다.
+    incoming_has_refs = bool(isinstance(incoming, dict) and (incoming.get("regions_by_ref") or incoming.get("key_scheme") == REGION_REF_SCHEME)) or any(
         str(key).startswith(("tg:", "guide:", "geo:")) for key in incoming_keys
     )
     if not (isinstance(integrated, dict) and integrated.get("clusters")) and not incoming_has_refs and incoming_keys:

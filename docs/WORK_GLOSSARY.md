@@ -108,3 +108,5 @@ CV가 놓친 글자는 B/U/E 등으로 수동 R을 만들고 분석 적용한 �
 <!-- 2026-10-29 review: region_refs.py 구 regions.json 가이드 id 파생과 method: 약한 참조 처리. 이 문서 내용 영향 없음 -->
 
 <!-- 2026-10-29 review: region_refs.py·app.py·render_text_overlay.py Overlay 보관·복원·롤백·구 번들 저장 보완. 이 문서 내용 영향 없음 -->
+
+<!-- 2026-10-29 review: render_text_overlay.py·app.py·App.jsx 렌더러 guidance 파생 참조 일치와 저장 요청 표시. 이 문서 내용 영향 없음 -->

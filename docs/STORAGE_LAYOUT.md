@@ -98,3 +98,5 @@ Syncthing 현황(2026-10-21 MacBook 설정 확인, 2026-10-29부터 코드도 Sy
 <!-- 2026-10-29 review: app.py·App.jsx 화자·번역 메모를 영역 참조 키로 저장(구형 키 병행). 편집기 사용법 변경 없음 -->
 
 <!-- 2026-10-29 review: region_refs.py·app.py·render_text_overlay.py Overlay 보관·복원·롤백·구 번들 저장 보완. 이 문서 내용 영향 없음 -->
+
+<!-- 2026-10-29 review: render_text_overlay.py·app.py·App.jsx 렌더러 guidance 파생 참조 일치와 저장 요청 표시. 이 문서 내용 영향 없음 -->

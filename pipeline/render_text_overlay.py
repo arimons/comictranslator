@@ -151,6 +151,7 @@ def build_ref_context(
     overlay_guidance: dict | None,
     overlay_newer_than_integrated: bool = True,
     overlay_newer_than_regions: bool = False,
+    manual_guidance: dict | None = None,
 ) -> dict | None:
     """번역 조각·수동값을 R 번호가 아니라 현재 영역의 region_ref에 붙인다. regions.json을 못 읽으면 None(구형 번호 경로).
 
@@ -166,7 +167,8 @@ def build_ref_context(
     raw_regions = data.get("regions") if isinstance(data, dict) else None
     if not isinstance(raw_regions, list) or not raw_regions:
         return None
-    regions = annotate_regions([r for r in raw_regions if isinstance(r, dict)])
+    # 앱 projection과 같은 참조를 쓰도록 guidance(가이드 id 파생)를 함께 넘긴다.
+    regions = annotate_regions([r for r in raw_regions if isinstance(r, dict)], manual_guidance)
     integrated = {"clusters": clusters}
     refs = resolve_cluster_refs(integrated, regions)
     region_by_ref = {r["region_ref"]: r for r in regions}
@@ -4498,6 +4500,7 @@ def restore_untranslated_regions(
     clusters: list[dict],
     suppressed_region_ids: set[int] | None = None,
     suppressed_refs: set[str] | None = None,
+    manual_guidance: dict | None = None,
 ) -> int:
     """OCR/integrated에서 빠진 masked region은 빈칸 방지용으로 원본을 복원한다.
 
@@ -4517,7 +4520,7 @@ def restore_untranslated_regions(
     ref_mode = any(cluster.get("overlay_ref_mode") for cluster in clusters)
     if ref_mode:
         covered_refs = {str(c["overlay_ref"]) for c in clusters if c.get("overlay_ref")}
-        data = {**data, "regions": annotate_regions([r for r in data.get("regions", []) if isinstance(r, dict)])}
+        data = {**data, "regions": annotate_regions([r for r in data.get("regions", []) if isinstance(r, dict)], manual_guidance)}
     for cluster in clusters:
         try:
             if cluster.get("source_region_id") is not None and not cluster.get("overlay_ref_mode"):
@@ -4775,6 +4778,15 @@ def restore_rect_for_preserved_cluster(cluster: dict, fallback_bbox: list[int]) 
     return [int(v) for v in rect[:4]]
 
 
+def _manual_guidance_path_for(regions_json: Path | None, explicit: Path | None) -> Path | None:
+    """가이드 id 파생에 쓸 편집기 guidance. 지정이 없으면 `<이름>_regions.json` 옆의 `<이름>_manual_guidance.json`."""
+    if explicit is not None:
+        return explicit
+    if regions_json is not None and regions_json.name.endswith("_regions.json"):
+        return regions_json.with_name(regions_json.name[: -len("_regions.json")] + "_manual_guidance.json")
+    return None
+
+
 def _overlay_is_newer_than_integrated(overlay_path: Path | None, integrated_path: Path | None) -> bool:
     """수동값이 현재 integrated 번호 기준으로 저장됐는지(그 integrated보다 나중에 저장됐는지)."""
     try:
@@ -4798,6 +4810,7 @@ def apply_text_overlay(
     debug_vis_image: Path | None = None,
     debug_merge_output: Path | None = None,
     restore_state_path: Path | None = None,
+    manual_guidance_path: Path | None = None,
 ) -> int:
     global _GLOBAL_TRACKING_OFFSET
     _GLOBAL_TRACKING_OFFSET = tracking_offset if tracking_offset is not None else 0
@@ -4813,12 +4826,14 @@ def apply_text_overlay(
     clusters = load_clusters(integrated_json)
     overlay_guidance = load_overlay_guidance(overlay_guidance_path)
     # 영역 참조: regions.json이 있으면 번역 조각·수동값을 현재 영역의 region_ref에 붙인다(번호 fallback 없음).
+    manual_guidance = load_overlay_guidance(_manual_guidance_path_for(regions_json, manual_guidance_path))
     ref_context = build_ref_context(
         clusters,
         regions_json,
         overlay_guidance,
         _overlay_is_newer_than_integrated(overlay_guidance_path, integrated_json),
         _overlay_is_newer_than_integrated(overlay_guidance_path, regions_json),
+        manual_guidance,
     )
     if ref_context is not None:
         clusters = ref_context["clusters"]
@@ -4854,6 +4869,7 @@ def apply_text_overlay(
         clusters,
         overlay_suppressed_region_ids(overlay_guidance),
         suppressed_refs=ref_context["suppressed_refs"] if ref_context is not None else None,
+        manual_guidance=manual_guidance,
     )
     # 배경 복원 탭에서 확정한 패치(PNG)를 마스크 내부에만 합성한다. masked.jpg를 다시 저장하지 않는다.
     apply_restore_patches(image, restore_state_path)

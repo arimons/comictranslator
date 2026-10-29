@@ -4,7 +4,7 @@ import {readFileSync} from 'node:fs';
 const b64=(text)=>`data:text/javascript;base64,${Buffer.from(text).toString('base64')}`;
 const regionTypes=b64(readFileSync('frontend/src/regionTypes.js','utf8'));
 const lib=await import(b64(readFileSync('frontend/src/lib.js','utf8').replaceAll('./regionTypes.js',regionTypes)));
-const {overlayControlItems,overlayItemKey,overlayItemLabel,defaultOverlayGuidance,regionCluster,regionSegmentSiblingCount,baseRegionText,overlayRegionBaseKey}=lib;
+const {overlayGuidancePayload,overlayControlItems,overlayItemKey,overlayItemLabel,defaultOverlayGuidance,regionCluster,regionSegmentSiblingCount,baseRegionText,overlayRegionBaseKey}=lib;
 
 const rectA=[10,10,100,80], rectC=[10,200,100,80], rectD=[200,200,100,80];
 // 번역 시점: 묶음 1=TG1, 2=TG2, 3=TG3. 지금: TG2가 비활성화되어 R1=TG1, R2=TG3 (번호가 어긋난다).
@@ -95,3 +95,8 @@ assert.deepEqual(emptyItems.map(overlayItemKey),['tg:9']);
 assert.equal(regionCluster(untranslated,emptyItems[0]),null);
 assert.equal(baseRegionText(untranslated,emptyItems[0]),'');
 console.log('F4: 번역 없는 영역은 같은 번호의 다른 번역을 가져오지 않음');
+
+// F5: 서버로 보내는 수동값에는 영역 참조 키 방식 표시가 붙는다(빈 regions replace도 새 번들로 식별).
+assert.equal(overlayGuidancePayload({regions:{}}).key_scheme,'region_ref_v1');
+assert.deepEqual(overlayGuidancePayload({regions:{'tg:1':{font_size:1}}}).regions,{'tg:1':{font_size:1}});
+console.log('F5: 저장 요청에 key_scheme 표시');
