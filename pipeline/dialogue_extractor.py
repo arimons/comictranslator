@@ -497,35 +497,49 @@ def _include_text_pixels_in_edge_mask(
     wall_rect: List[int],
     pad: int = 2,
     ruby_pad: int = 9,
-    dark_threshold: int = 140,
+    dark_threshold: int = 190,
 ) -> Tuple[np.ndarray, List[int]]:
     """채우기가 닿지 못한 글자 픽셀을 마스크에 더한다.
 
     방사형처럼 가시가 파고드는 자리는 흰 바탕이 글자를 온전히 둘러싸지 못해 일부 글자가 남는다.
-    글자 사각형 전체가 아니라 그 안의 어두운 픽셀만 더하므로, 사각형 밖의 검은 방사선은 지우지 않는다.
+    글자 줄(열) 영역 안의 어두운 픽셀 중 글자·후리가나로 보이는 것만 더한다.
+    - 줄 영역(후리가나 여유 포함) 안에 통째로 들어가는 어두운 덩어리: 글자·후리가나로 보고 더한다.
+    - 영역 밖으로 이어지는 덩어리(방사선 가시와 닿은 것): 가시를 지우지 않도록 글자 줄 바로 안쪽 픽셀만 더한다.
     """
     img_h, img_w = image.shape[:2]
     wx, wy, ww, wh = _as_rect(wall_rect)
     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-    text = np.zeros((img_h, img_w), dtype=np.uint8)
+    dark = (gray < dark_threshold).astype(np.uint8)
+    wide = np.zeros((img_h, img_w), dtype=np.uint8)    # 후리가나 여유를 포함한 줄 영역
+    tight = np.zeros((img_h, img_w), dtype=np.uint8)   # 글자 줄 바로 안쪽
     for group in target_groups:
-        # 글자 줄(열)별 영역만 쓴다. TG 전체 사각형은 글자 없는 모서리까지 포함해, 방사선 가시 픽셀을 글자로 오인한다.
         line_rects = [line.get("bbox") for line in group.get("lines") or [] if isinstance(line, dict) and line.get("bbox")]
         if not line_rects:
             line_rects = [group.get("fallback_rect") or group.get("tight_rect") or group.get("bounding_rect")]
         vertical = str(group.get("orientation") or "").lower().startswith("v")
-        # 후리가나는 글자열 옆에 붙으므로 글자 진행의 직각 방향을 넉넉히 잡는다
         pad_x, pad_y = (ruby_pad, pad) if vertical else (pad, ruby_pad)
         for raw in line_rects:
             if not raw:
                 continue
             gx, gy, gw, gh = _as_rect(raw)
-            x1 = max(0, wx, gx - pad_x)
-            y1 = max(0, wy, gy - pad_y)
-            x2 = min(img_w, wx + ww, gx + gw + pad_x)
-            y2 = min(img_h, wy + wh, gy + gh + pad_y)
-            if x2 > x1 and y2 > y1:
-                text[y1:y2, x1:x2] = np.where(gray[y1:y2, x1:x2] < dark_threshold, 255, 0).astype(np.uint8)
+            wide[max(0, gy - pad_y):min(img_h, gy + gh + pad_y), max(0, gx - pad_x):min(img_w, gx + gw + pad_x)] = 1
+            tight[max(0, gy - 1):min(img_h, gy + gh + 1), max(0, gx - 1):min(img_w, gx + gw + 1)] = 1
+    if not wide.any():
+        return mask, mask_rect
+
+    count, labels, stats, _ = cv2.connectedComponentsWithStats(dark, connectivity=8)
+    text = np.zeros((img_h, img_w), dtype=np.uint8)
+    inside_wide = (dark > 0) & (wide > 0)
+    touched = np.unique(labels[inside_wide])
+    for label in touched:
+        if label == 0:
+            continue
+        comp = labels == label
+        outside = comp & (wide == 0)
+        if not outside.any():
+            text[comp] = 255                       # 글자·후리가나: 줄 영역 안에 통째로 들어간다
+        else:
+            text[comp & (tight > 0)] = 255         # 가시와 이어진 덩어리: 글자 줄 안쪽만
     if not text.any():
         return mask, mask_rect
     # 글자 가장자리의 흐린 픽셀까지 지우도록 살짝 넓히되, 박스 밖으로는 나가지 않는다

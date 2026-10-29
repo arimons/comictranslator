@@ -44,3 +44,14 @@ def test_dark_pixels_in_text_rect_corners_outside_any_text_line_are_not_added():
     result, _rect = _include_text_pixels_in_edge_mask(mask, [0, 0, 0, 0], image, [group], [20, 20, 70, 78])
     assert result[35, 40] == 255
     assert result[90, 30] == 0
+
+
+def test_blob_connected_to_outside_spike_is_only_added_inside_the_text_line():
+    image = np.full((100, 100, 3), 255, dtype=np.uint8)
+    image[30:40, 40:42] = 0      # 글자 줄 안에 통째로 들어가는 글자(후리가나 포함)
+    image[50:52, 60:90] = 0      # 줄 영역 밖으로 길게 이어지는 가시
+    mask = np.zeros((100, 100), dtype=np.uint8)
+    group = {"orientation": "vertical", "lines": [{"bbox": [38, 28, 8, 30]}, {"bbox": [58, 48, 4, 6]}]}
+    result, _rect = _include_text_pixels_in_edge_mask(mask, [0, 0, 0, 0], image, [group], [20, 20, 75, 70], ruby_pad=2)
+    assert result[35, 40] == 255
+    assert result[51, 85] == 0   # 줄 영역 밖 가시는 지우지 않는다

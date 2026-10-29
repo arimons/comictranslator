@@ -709,7 +709,8 @@ const EditorCanvas = forwardRef(function EditorCanvas({ image, baseUrl, guidance
         // 박스는 벽 4개라 벽마다 라벨을 달면 사방에 "edge"가 찍힌다. 박스당 한 번만 단다.
         const labeled = Boolean(item.box_id) && labeledEdgeBoxes.has(item.box_id);
         if (item.box_id) labeledEdgeBoxes.add(item.box_id);
-        drawGuideLine(overlay, item.line || item.polyline, EDGE_WALL_COLOR, labeled ? "" : "edge");
+        // 벽 box는 점선으로 그려, 그 안쪽의 실제 지워진 영역(실선) 테두리와 겹쳐 보여도 구분되게 한다.
+        drawGuideLine(overlay, item.line || item.polyline, EDGE_WALL_COLOR, labeled ? "" : "edge", { dash: [9, 6] });
       });
       (currentGuidance.split_guides || []).forEach((item) => splitGuidesToDraw.push({
         line: item.line,
@@ -926,6 +927,7 @@ const EditorCanvas = forwardRef(function EditorCanvas({ image, baseUrl, guidance
       strokeWidth: options.prominent ? 4.5 : 3,
       opacity: options.prominent ? 1 : 0.86,
       lineCap: "round",
+      dash: options.dash,
     }));
     if (!label) return;
     layer.add(new Konva.Text({
