@@ -49,6 +49,7 @@ from pipeline.region_refs import (
     project_page,
     reconcile_overlay_guidance,
     reconcile_speakers,
+    tg_digest,
 )
 from pipeline.region_types import region_binding_key, regions_with_processing_basis
 from pipeline.source_library import SourceLibrary, atomic_link, digest as source_digest
@@ -136,6 +137,12 @@ def reconciled_speaker_store(record: dict[str, Any], stored: dict[str, Any] | No
         stored = load_json(speakers_path(record["session_id"], record["id"]), default={}) if record.get("session_id") else {}
     store, report = reconcile_speakers(stored, regions)
     return store, report, regions
+
+
+def _speaker_stash(stored: dict[str, Any], store: dict[str, Any]) -> dict[str, Any]:
+    """합침 때 보관된 서로 다른 번역 메모. 저장 경로가 `{**stored}`로 쓰므로 reconcile 결과의 보관분을 함께 실어 준다."""
+    merged = {**(stored.get("unmatched_context_by_region_ref") or {}), **(store.get("unmatched_context_by_region_ref") or {})}
+    return {"unmatched_context_by_region_ref": merged} if merged else {}
 
 
 def session_glossary(session_id: str) -> dict | None:
@@ -2248,6 +2255,13 @@ def _overlay_page_inputs(record: dict[str, Any]) -> tuple[Any, list[dict[str, An
     return integrated, annotate_regions(raw_regions if isinstance(raw_regions, list) else [], manual if isinstance(manual, dict) else None)
 
 
+def _current_tg_digest(record: dict[str, Any]) -> str | None:
+    """현재 유효 TG(id·사각형 목록)의 해시. 값이 달라졌다면 CV/Step 2를 다시 돌려 TG가 새로 매겨진 것이다(설계 A7)."""
+    path = record.get("effective_text_groups_json")
+    groups = load_json(Path(path), default=None) if path and Path(path).exists() else None
+    return tg_digest(groups) if isinstance(groups, list) and groups else None
+
+
 def _file_is_newer(path: Path, other: Path) -> bool:
     """path가 other보다 나중에 저장됐는지. 비교할 수 없으면 False(증거 없음)."""
     try:
@@ -2300,7 +2314,8 @@ def store_overlay_guidance(record: dict[str, Any], incoming: dict[str, Any] | No
             merged_refs[key] = {**previous, **value} if isinstance(previous, dict) and isinstance(value, dict) else value
         result["regions_by_ref"] = merged_refs
         result["unmatched_regions"] = {**(existing_v1.get("unmatched_regions") or {}), **(incoming_v1.get("unmatched_regions") or {})}
-    result, _report = reconcile_overlay_guidance(result, regions, segments=segment_index_by_ref(integrated, regions))
+    digest = _current_tg_digest(record)
+    result, _report = reconcile_overlay_guidance(result, regions, digest, segments=segment_index_by_ref(integrated, regions, digest))
     saved = dual_write_guidance(result, integrated, regions)
     write_json(path, saved)
     return saved
@@ -2328,7 +2343,8 @@ def sync_overlay_guidance_for_record(record: dict[str, Any], log_callback=None) 
     if Path(record["integrated_json"]).exists():
         stored_newer = path.stat().st_mtime >= Path(record["integrated_json"]).stat().st_mtime
     v1, normalize_report = normalize_overlay_guidance(stored, integrated, regions, stored_newer, _file_is_newer(path, Path(record["regions_json"])))
-    v1, report = reconcile_overlay_guidance(v1, regions, segments=segment_index_by_ref(integrated, regions))
+    digest = _current_tg_digest(record)
+    v1, report = reconcile_overlay_guidance(v1, regions, digest, segments=segment_index_by_ref(integrated, regions, digest))
     saved = dual_write_guidance(v1, integrated, regions)
     if saved != stored:
         write_json(path, saved)
@@ -3376,7 +3392,8 @@ def create_app() -> FastAPI:
                     by_tg.pop(str(int(tg)), None)
             context_ref = store.get("context_by_region_ref", {})
             write_json(speakers_path(req.session_id, req.image_id), {**stored, "by_tg": by_tg, "by_region": by_region,
-                                                                    "by_region_ref": by_region_ref, "context_by_region_ref": context_ref})
+                                                                    "by_region_ref": by_region_ref, "context_by_region_ref": context_ref,
+                                                                    **_speaker_stash(stored, store)})
             return {"by_tg": by_tg, "by_region": by_region, "by_region_ref": by_region_ref,
                     "context_by_region": stored.get("context_by_region", {}), "context_by_region_ref": context_ref}
         except ValueError as exc:
@@ -3418,7 +3435,8 @@ def create_app() -> FastAPI:
                 contexts.pop(key, None)
                 contexts_ref.pop(region["region_ref"], None)
             write_json(speakers_path(req.session_id, req.image_id), {**stored, "context_by_region": contexts,
-                                                                    "by_region_ref": store.get("by_region_ref", {}), "context_by_region_ref": contexts_ref})
+                                                                    "by_region_ref": store.get("by_region_ref", {}), "context_by_region_ref": contexts_ref,
+                                                                    **_speaker_stash(stored, store)})
             return {"context_by_region": contexts, "context_by_region_ref": contexts_ref}
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc

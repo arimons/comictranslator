@@ -100,3 +100,5 @@ Syncthing 현황(2026-10-21 MacBook 설정 확인, 2026-10-29부터 코드도 Sy
 <!-- 2026-10-29 review: region_refs.py·app.py·render_text_overlay.py Overlay 보관·복원·롤백·구 번들 저장 보완. 이 문서 내용 영향 없음 -->
 
 <!-- 2026-10-29 review: render_text_overlay.py·app.py·App.jsx 렌더러 guidance 파생 참조 일치와 저장 요청 표시. 이 문서 내용 영향 없음 -->
+
+<!-- 2026-10-29 review: app.py·region_refs.py TG digest 보호와 메모 보관 저장 경로. 이 문서 내용 영향 없음 -->

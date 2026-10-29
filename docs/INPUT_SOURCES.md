@@ -117,3 +117,5 @@ MCP는 UI 서버 없이 등록된 원본 또는 해시가 맞는 대체 사본�
 <!-- 2026-10-29 review: region_refs.py·editor_review_bridge.py 합침 메모 보관과 MCP integrated 영역 참조. 이 문서 내용 영향 없음 -->
 
 <!-- 2026-10-29 review: render_text_overlay.py·app.py·App.jsx 렌더러 guidance 파생 참조 일치와 저장 요청 표시. 이 문서 내용 영향 없음 -->
+
+<!-- 2026-10-29 review: app.py·region_refs.py TG digest 보호와 메모 보관 저장 경로. 이 문서 내용 영향 없음 -->

@@ -2059,3 +2059,23 @@ def test_new_bundle_empty_replace_clears_reference_only_values_but_old_bundle_do
     assert "tg:3" in kept["regions_by_ref"]
     cleared = app.store_overlay_guidance(record, {"regions": {}, "key_scheme": "region_ref_v1"}, replace=True)
     assert cleared["regions_by_ref"] == {}
+
+
+def test_sync_overlay_stashes_value_when_tg_numbers_were_reissued(tmp_path, monkeypatch):
+    """재검토 R1: 앱 경로가 TG digest를 snapshot에 남기고, CV 재실행으로 TG가 새로 매겨지면 같은 참조라도 다른 말풍선에 붙이지 않는다."""
+    import json
+
+    rect_a, rect_b = [10, 10, 100, 80], [200, 10, 100, 80]
+    record = _overlay_record(tmp_path, monkeypatch, {"clusters": [_cluster_row(1, [2], rect_a)]}, [_rect_region(1, [2], rect_a)])
+    effective = Path(record["effective_text_groups_json"])
+    effective.parent.mkdir(parents=True, exist_ok=True)
+    effective.write_text(json.dumps([{"text_group_id": 2, "bounding_rect": rect_a}]), encoding="utf-8")
+    saved = app.store_overlay_guidance(record, {"regions": {"tg:2": {"font_size": 30}}, "key_scheme": "region_ref_v1"}, replace=True)
+    assert saved["regions_by_ref"]["tg:2"]["_anchor"]["tg_digest"]
+    # CV를 다시 돌려 TG2가 다른 말풍선(rect_b)이 됐다.
+    effective.write_text(json.dumps([{"text_group_id": 2, "bounding_rect": rect_b}]), encoding="utf-8")
+    Path(record["regions_json"]).write_text(json.dumps({"regions": [_rect_region(1, [2], rect_b)]}), encoding="utf-8")
+    app.sync_overlay_guidance_for_record(record)
+    after = json.loads(Path(record["overlay_guidance_json"]).read_text(encoding="utf-8"))
+    assert after["regions_by_ref"] == {}
+    assert after["unmatched_regions"]["tg:2"]["font_size"] == 30

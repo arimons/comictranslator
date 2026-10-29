@@ -512,6 +512,18 @@ def resolve(
     snapshot = snapshot or {}
     regions = _annotated(current_regions)
     by_ref = {r["region_ref"]: r for r in regions if isinstance(r, dict)}
+    stored_digest = snapshot.get("tg_digest")
+    if stored_digest and current_tg_digest and stored_digest != current_tg_digest:
+        # CV/Step 2를 다시 돌려 TG 번호가 새로 매겨졌다. 같은 참조 문자열도 다른 말풍선일 수 있으니 위치(IoU)로만 찾는다(A7).
+        rect = _rect4(snapshot.get("rect"))
+        if rect:
+            scored = sorted(
+                ((rect_iou(rect, region_rect(r) or [0, 0, 0, 0]), r) for r in regions),
+                key=lambda item: -item[0],
+            )
+            if scored and scored[0][0] >= TG_CHANGED_MIN_IOU and (len(scored) < 2 or scored[1][0] < scored[0][0]):
+                return _resolution(GEO, [scored[0][1]["region_ref"]], "iou_after_tg_change", old_ref)
+        return _resolution(UNMATCHED, [], "tg_digest_changed", old_ref)
     if old_ref in by_ref:
         return _resolution(EXACT, [old_ref], "same_ref", old_ref)
 
@@ -911,12 +923,27 @@ def reconcile_overlay_guidance(
             continue
         original_key = str(item.get("_unmatched_key") or stash_key.split("~", 1)[0])
         base, segment = _split_entry_key(original_key)
-        if base != item["_unmatched_ref"] or base not in by_ref_regions or segment_gone(base, segment):
+        if base != item["_unmatched_ref"]:
             continue
+        snapshot = item.get(ANCHOR_FIELD) if isinstance(item.get(ANCHOR_FIELD), dict) else {}
+        res = resolve(base, snapshot, regions, current_tg_digest)
+        usable = res["kind"] == EXACT or (res["kind"] == GEO and res["reason"] == "iou_after_tg_change")
+        if not usable:
+            continue
+        target = res["target_refs"][0]
+        if res["kind"] == EXACT and current_tg_digest and not snapshot.get("tg_digest"):
+            # 예전 보관분은 TG digest가 없다. 지금 digest를 알면 위치가 맞을 때만 되돌린다(보수적).
+            old_rect, new_rect = _rect4(snapshot.get("rect")), region_rect(by_ref_regions[target])
+            if old_rect and new_rect and rect_iou(old_rect, new_rect) < GEO_MIN_IOU:
+                continue
+        if segment_gone(target, segment):
+            continue
+        original_key = format_overlay_key(target, segment)
+        base = target
         if original_key in new_entries:
             continue
         restored = {k: copy.deepcopy(v) for k, v in item.items() if not k.startswith("_unmatched")}
-        restored[ANCHOR_FIELD] = snapshot_for_region(by_ref_regions[base], current_tg_digest)
+        restored[ANCHOR_FIELD] = snapshot_for_region(by_ref_regions[target], current_tg_digest)
         restored["_migrated"] = "restored"
         new_entries[original_key] = restored
         del stash[stash_key]

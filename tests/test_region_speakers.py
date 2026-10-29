@@ -116,3 +116,18 @@ def test_split_region_copies_speaker_to_children_on_read(tmp_path, monkeypatch):
     app.write_json(Path(app.image_record('book', original)['regions_json']), {'regions': children})
     got = client.get('/api/speakers/book/page').json()
     assert got['by_region_ref'] == {'tg:10': 'narration', 'tg:13': 'narration'}
+
+
+def test_api_save_keeps_merged_memo_stash(tmp_path, monkeypatch):
+    """재검토 지적 5(API 경로): 합침으로 보관된 서로 다른 메모가 /api/speakers·/api/region-context 저장 뒤에도 파일에 남는다."""
+    merged = {'region_id': 1, 'type': 'bubble', 'source_method': 'flood', 'bubble_rect': [0, 0, 100, 100], 'anchor_ids': [10, 13]}
+    original, client = _book(tmp_path, monkeypatch, [merged])
+    app.write_json(app.speakers_path('book', 'page'), {'context_by_region_ref': {'tg:10': '메모A', 'tg:13': '메모B'}})
+    stash = {'tg:10': '메모A', 'tg:13': '메모B'}
+    r = client.post('/api/speakers', json={'session_id': 'book', 'image_id': 'page', 'region_ref': 'tg:10,13', 'character_id': 'narration'})
+    assert r.status_code == 200, r.text
+    assert app.load_json(app.speakers_path('book', 'page'))['unmatched_context_by_region_ref'] == stash
+    r = client.post('/api/region-context', json={'session_id': 'book', 'image_id': 'page', 'region_ref': 'tg:10,13', 'text': '새 메모'})
+    assert r.status_code == 200, r.text
+    saved = app.load_json(app.speakers_path('book', 'page'))
+    assert saved['unmatched_context_by_region_ref'] == stash and saved['context_by_region_ref'] == {'tg:10,13': '새 메모'}
