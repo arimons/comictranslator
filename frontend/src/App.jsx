@@ -3331,6 +3331,9 @@ export default function App() {
           <div className="row">
             <button className="primary" onClick={applyOverlay} disabled={overlayBusy || !canRenderOverlayImage(selected)} title={`Overlay 적용 (${shortcutById("overlay.apply")})`}>Apply Overlay</button>
             <button onClick={() => runFinal(true)} disabled={ocrBusy || !selected || selected.processing_excluded} title="현재 Additional Translation Prompt를 사용해 OCR/번역부터 다시 실행합니다.">Re-run OCR</button>
+            {/* 기록은 ref라 편집·Undo마다 올라가는 overlayEditVersion 리렌더 때 개수를 다시 읽는다 */}
+            <button className="icon-button" onClick={() => stepOverlayHistory(-1)} disabled={!overlayHistoryRef.current.undo.length} aria-label="Overlay 편집 실행 취소" title={`실행 취소 (${shortcutById("edit.undo")})`}>↶</button>
+            <button className="icon-button" onClick={() => stepOverlayHistory(1)} disabled={!overlayHistoryRef.current.redo.length} aria-label="Overlay 편집 다시 실행" title={`다시 실행 (${shortcutById("edit.redo")})`}>↷</button>
           </div>
           <label className="auto-preview-toggle">
             <input
