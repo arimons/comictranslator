@@ -217,9 +217,9 @@ def overlay_override_for_cluster(
     try:
         source_region_id = cluster.get("source_region_id")
         if source_region_id is not None:
-            override = overlay_overrides.get(str(int(source_region_id)))
-            if override:
-                return override
+            # 번역 뒤 영역이 바뀌어 번호가 다시 매겨졌으면 앵커로 찾은 현재 번호가 다른 말풍선의 수동값을 가리킨다.
+            # 번역 조각이 자기 번호를 갖고 있으면 그 번호의 수동값만 쓴다.
+            return overlay_overrides.get(str(int(source_region_id))) or {}
     except (TypeError, ValueError):
         pass
     for raw_anchor_id in cluster.get("matched_cluster", []):
