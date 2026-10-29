@@ -4,8 +4,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 # 만화 대사 추출기 — 경계 기반 영역 검출 + 텍스트 기반 지우기 + OCR Sheet 생성
 #!/usr/bin/env python3
 
+import copy
+import hashlib
 import cv2
 import json
+from collections import OrderedDict
 from pipeline.project_paths import storage_json
 from pipeline.reading_order import reading_sequence
 from pipeline.paths import configure_model_cache
@@ -2858,6 +2861,65 @@ def _overlay_final_unboxed_regions(
     cv2.imwrite(str(vis_path), vis)
 
 
+# ── 영역 자동 검출 캐시 ──
+# build_ocr_region_sheet()는 이미지와 유효 텍스트 그룹(clusters_json)만으로 결정되고 수동 가이드(Edge·텍스트 박스·seed·
+# 분리선·제외)와 무관하다(수동 벽 없이 호출). 그래서 입력이 같으면 결과도 같다. 편집기에서 가이드만 바꿔 다시
+# 분석할 때 가장 비싼 이 단계를 건너뛰어도 전체 재분석과 같은 결과가 나온다.
+_DETECTION_CACHE: "OrderedDict[tuple, Dict[str, Any]]" = OrderedDict()
+_DETECTION_CACHE_LIMIT = 6
+_DETECTION_CACHE_LOCK = threading.Lock()
+
+
+def clear_detection_cache() -> None:
+    with _DETECTION_CACHE_LOCK:
+        _DETECTION_CACHE.clear()
+
+
+def _detection_cache_key(image_path: str, clusters_json: str) -> tuple | None:
+    try:
+        stat = os.stat(image_path)
+        digest = hashlib.sha1(Path(clusters_json).read_bytes()).hexdigest()
+    except OSError:
+        return None
+    return (os.path.abspath(image_path), stat.st_mtime_ns, stat.st_size, digest)
+
+
+def _detect_regions_cached(image_path: str, clusters_json: str, image: np.ndarray, gray: np.ndarray, output_vis_path: str | None) -> Dict[str, Any]:
+    key = _detection_cache_key(image_path, clusters_json)
+    if key is not None:
+        with _DETECTION_CACHE_LOCK:
+            hit = _DETECTION_CACHE.get(key)
+            if hit is not None:
+                _DETECTION_CACHE.move_to_end(key)
+        if hit is not None and (not output_vis_path or hit["vis"] is not None):
+            if output_vis_path:
+                Path(output_vis_path).parent.mkdir(parents=True, exist_ok=True)
+                Path(output_vis_path).write_bytes(hit["vis"])
+            return copy.deepcopy(hit["sheet"])
+    sheet = build_ocr_region_sheet(
+        image_path=image_path,
+        clusters_json=clusters_json,
+        output_masked_path=None,
+        output_sheet_path=None,
+        output_json_path=None,
+        enable_edge_barrier_rescue=True,
+        output_vis_path=output_vis_path,
+        image=image,
+        gray=gray,
+        manual_virtual_walls=[],
+    )
+    if key is not None:
+        vis_bytes = None
+        if output_vis_path and Path(output_vis_path).exists():
+            vis_bytes = Path(output_vis_path).read_bytes()
+        if not output_vis_path or vis_bytes is not None:
+            with _DETECTION_CACHE_LOCK:
+                _DETECTION_CACHE[key] = {"sheet": copy.deepcopy(sheet), "vis": vis_bytes}
+                while len(_DETECTION_CACHE) > _DETECTION_CACHE_LIMIT:
+                    _DETECTION_CACHE.popitem(last=False)
+    return sheet
+
+
 def build_dialogue_sheet(
     image_path: str,
     clusters_json: str,
@@ -2918,18 +2980,7 @@ def build_dialogue_sheet(
 
     # ── 1. Bubble Detection ──
     # image/gray를 미리 읽었으므로 build_ocr_region_sheet에 넘겨 재독 방지
-    sheet = build_ocr_region_sheet(
-        image_path=image_path,
-        clusters_json=clusters_json,
-        output_masked_path=None,
-        output_sheet_path=None,
-        output_json_path=None,
-        enable_edge_barrier_rescue=True,
-        output_vis_path=output_vis_path,
-        image=image,
-        gray=gray,
-        manual_virtual_walls=[],
-    )
+    sheet = _detect_regions_cached(image_path, clusters_json, image, gray, output_vis_path)
     regions = sheet["regions"]
     regions.extend(_manual_bubble_regions(manual_regions or [], groups))
     regions.extend(_manual_seed_bubble_regions(image, groups, manual_seed_points or [], manual_virtual_walls or []))

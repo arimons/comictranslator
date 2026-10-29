@@ -423,6 +423,50 @@ def _seed_for_rect(image: np.ndarray, gray: np.ndarray, rect: List[int]) -> Opti
     return best
 
 
+CONFINED_ROI_PAD = 16
+
+
+def _block_outside_rect(edges: np.ndarray, rect: List[int]) -> np.ndarray:
+    """rect 바깥을 전부 장벽으로 만든다. 채우기가 한계선을 넘을 수 없게 한다."""
+    x, y, w, h = _as_rect(rect)
+    blocked = np.full_like(edges, 255)
+    blocked[max(0, y):max(0, y + h), max(0, x):max(0, x + w)] = edges[max(0, y):max(0, y + h), max(0, x):max(0, x + w)]
+    return blocked
+
+
+def _free_seed_inside_rect(
+    seed: Point,
+    edges: np.ndarray,
+    gray: np.ndarray,
+    rect: List[int],
+    max_radius: int = 60,
+) -> Optional[Point]:
+    """시작점이 박스 안의 밝은 비장벽 픽셀이 되게 한다. 없으면 None(박스로 대체한다)."""
+    x, y, w, h = _as_rect(rect)
+    ih, iw = edges.shape[:2]
+
+    def usable(px: int, py: int, min_gray: int) -> bool:
+        return x <= px < x + w and y <= py < y + h and 0 <= px < iw and 0 <= py < ih and edges[py, px] == 0 and gray[py, px] >= min_gray
+
+    sx, sy = seed
+    for min_gray in (230, 200, 170):
+        if usable(sx, sy, min_gray):
+            return (sx, sy)
+        for radius in range(1, max_radius + 1):
+            best: Optional[Point] = None
+            best_dist = float("inf")
+            for dy in range(-radius, radius + 1):
+                for dx in range(-radius, radius + 1):
+                    if max(abs(dx), abs(dy)) != radius or not usable(sx + dx, sy + dy, min_gray):
+                        continue
+                    dist = dx * dx + dy * dy
+                    if dist < best_dist:
+                        best, best_dist = (sx + dx, sy + dy), dist
+            if best is not None:
+                return best
+    return None
+
+
 def _connected_component_at_seed(mask: np.ndarray, seed: Point, fallback_center: Point) -> np.ndarray:
     n_labels, labels, stats, _ = cv2.connectedComponentsWithStats(np.where(mask > 0, 255, 0).astype(np.uint8))
     if n_labels <= 1:
@@ -510,8 +554,13 @@ def run_edge_barrier_rescue(
     virtual_walls: Optional[List[Dict[str, Any]]] = None,
     seed_points: Optional[List[Point]] = None,
     manual_guided: bool = False,
+    confine_to_walls: bool = False,
 ) -> Dict[str, Any]:
-    """bbox fallback region을 edge barrier flood로 다시 시도합니다."""
+    """bbox fallback region을 edge barrier flood로 다시 시도합니다.
+
+    confine_to_walls: 수동 Edge box는 사용자가 그은 한계선이다. 박스 바깥을 전부 장벽으로 막아 채우기가 박스를
+    넘지 못하게 하고, 안쪽으로 줄이는 침식도 하지 않는다(설계: 새는 길에 벽을 세워 거기까지만 채운다).
+    """
     img_h, img_w = image.shape[:2]
     image_area = img_h * img_w
     anchor_rect = _anchor_rect(groups)
@@ -521,8 +570,10 @@ def run_edge_barrier_rescue(
         clip_base_rect = _union_rect([source_region_rect, anchor_rect, wall_rect, seed_rect])
     else:
         clip_base_rect = _union_rect([anchor_rect, wall_rect, seed_rect])
-    clip_rect = _pad_rect(clip_base_rect, roi_pad, img_w, img_h)
     has_virtual_walls = _rect_area(wall_rect) > 0
+    confine_to_walls = bool(confine_to_walls and has_virtual_walls)
+    # 박스에 가둘 때는 바깥쪽으로 칠하는 벽이 들어갈 만큼만 ROI를 잡는다
+    clip_rect = _pad_rect(wall_rect if confine_to_walls else clip_base_rect, CONFINED_ROI_PAD if confine_to_walls else roi_pad, img_w, img_h)
     manual_guided = bool(manual_guided or has_virtual_walls or seed_points)
 
     # ROI 크롭 후 모든 연산을 ROI 공간에서 수행한다.
@@ -601,13 +652,22 @@ def run_edge_barrier_rescue(
         )
         if has_virtual_walls:
             _draw_virtual_walls(edges, virtual_walls, (cx, cy), max(guard_thickness, 9))
+        flood_seed = seed_local_pt
+        if confine_to_walls:
+            box_local = to_local(wall_rect)
+            edges = _block_outside_rect(edges, box_local)
+            flood_seed = _free_seed_inside_rect(seed_local_pt, edges, roi_gray, box_local)
         barrier = roi_img.copy()
         barrier[edges > 0] = (0, 0, 0)
-        mask, _, _ = _flood_fill_mask(barrier, seed_local_pt)
-        mask = _connected_component_at_seed(mask, seed_local_pt, center_local)
+        if flood_seed is None:
+            mask = np.zeros(roi_gray.shape, dtype=np.uint8)
+            flood_seed = seed_local_pt
+        else:
+            mask, _, _ = _flood_fill_mask(barrier, flood_seed)
+            mask = _connected_component_at_seed(mask, flood_seed, center_local)
         filled = _fill_mask_holes(mask)
-        inner = _erode_mask(filled, pixels=3)
-        inner = _connected_component_at_seed(inner, seed_local_pt, center_local)
+        inner = _erode_mask(filled, pixels=0 if confine_to_walls else 3)
+        inner = _connected_component_at_seed(inner, flood_seed, center_local)
 
         touches_clip = _touches_rect_border(inner, clip_local)
         local_rescue_rect = _mask_rect(inner)
@@ -708,7 +768,10 @@ def _run_edge_barrier_rescue_auto_strict(
 ) -> Dict[str, Any]:
     """관찰 케이스 기준의 파라미터 후보군을 돌려 가장 안정적인 rescue를 고릅니다."""
     candidates: List[Dict[str, Any]] = []
-    for params in (param_grid or DEFAULT_RESCUE_PARAM_GRID):
+    confine = _virtual_wall_rect(virtual_walls)[2] > 0 and _virtual_wall_rect(virtual_walls)[3] > 0
+    # 수동 Edge box는 박스가 한계선이다. 앵커 주변에 가상 가드를 더하거나 ROI를 바꿔 보는 후보는 쓰지 않는다
+    grid = [{"guard_mode": "none"}] if confine else (param_grid or DEFAULT_RESCUE_PARAM_GRID)
+    for params in grid:
         result = run_edge_barrier_rescue(
             image,
             groups,
@@ -721,6 +784,7 @@ def _run_edge_barrier_rescue_auto_strict(
             virtual_walls=virtual_walls,
             seed_points=seed_points,
             manual_guided=bool(virtual_walls or seed_points),
+            confine_to_walls=confine,
             max_page_ratio=0.24 if (virtual_walls or seed_points) else 0.12,
             max_source_ratio=12.0 if (virtual_walls or seed_points) else 3.6,
         )

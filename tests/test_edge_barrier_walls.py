@@ -55,3 +55,29 @@ def test_blob_connected_to_outside_spike_is_only_added_inside_the_text_line():
     result, _rect = _include_text_pixels_in_edge_mask(mask, [0, 0, 0, 0], image, [group], [20, 20, 75, 70], ruby_pad=2)
     assert result[35, 40] == 255
     assert result[51, 85] == 0   # 줄 영역 밖 가시는 지우지 않는다
+
+
+def test_confined_edge_box_never_floods_outside_the_box_even_on_an_open_page():
+    from pipeline.edge_barrier_flood_rescue import run_edge_barrier_rescue_auto
+
+    image = np.full((260, 260, 3), 255, dtype=np.uint8)   # 윤곽선 없는 열린 흰 페이지(채우기가 끝없이 새는 상황)
+    image[110:150, 120:126] = 0                            # 글자
+    walls = box_walls(90, 80, 80, 100)
+    group = {"text_group_id": 1, "fallback_rect": [118, 108, 12, 44], "tight_rect": [118, 108, 12, 44]}
+    result = run_edge_barrier_rescue_auto(image, [group], [90, 80, 80, 100], virtual_walls=walls)
+    mask = result["mask"] > 0
+    assert result["success"]
+    assert not mask[:80].any() and not mask[181:].any() and not mask[:, :90].any() and not mask[:, 171:].any()
+    assert mask[130, 123]                                   # 박스 안 글자는 지운다
+
+
+def test_seed_is_moved_off_the_wall_and_stays_inside_the_box():
+    from pipeline.edge_barrier_flood_rescue import _block_outside_rect, _free_seed_inside_rect
+
+    edges = np.zeros((100, 100), dtype=np.uint8)
+    edges[30:36, 20:80] = 255                              # 시작점이 놓인 벽
+    gray = np.full((100, 100), 255, dtype=np.uint8)
+    edges = _block_outside_rect(edges, [20, 30, 60, 50])
+    assert edges[10, 50] == 255                            # 박스 밖은 장벽
+    seed = _free_seed_inside_rect((50, 32), edges, gray, [20, 30, 60, 50])
+    assert seed is not None and edges[seed[1], seed[0]] == 0 and 20 <= seed[0] < 80 and 30 <= seed[1] < 80
