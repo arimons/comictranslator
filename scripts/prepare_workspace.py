@@ -32,7 +32,7 @@ def prepare():
 맥 미니에는 projects + glossaries를 옮기고 앱의 원본 연결에서 이미 보유한 원본 폴더를 지정하세요.
 cache/input은 재연결 전 대체 입력이며 이전 보관 프로젝트도 사용하므로 아직 삭제하지 마세요.
 cache/models의 big-lama.pt도 가져가면 다시 다운로드할 필요가 없습니다.
-기존 Syncthing Developer 공유에 이 데이터 홈은 포함되지 않습니다.
+이 데이터 홈은 git에 포함되지 않으니 필요한 파일만 직접 복사하세요.
 ''',encoding='utf-8')
     return DATA_HOME
 

@@ -80,4 +80,12 @@ python3 scripts/run_debug_pipeline.py
 
 파이프라인 단계 상세, 파일 구조, proof 스크립트는 `AGENTS.md` 참고.
 
+## 코드 동기화 (2026-10-29)
+
+이 저장소는 더 이상 Syncthing 동기화 대상이 아니다. 코드 작업은 클라우드(Claude Code on the web)와 맥미니에서 하고, GitHub(`origin/main`)로 push/pull해 맞춘다.
+
+- 작업 전 `git pull`, 작업 뒤 커밋·push로 다른 환경과 맞춘다. 파일이 자동으로 따라오지 않는다.
+- 맥미니 서버는 pull한 뒤 `pm2 restart comictranslator`로 반영한다(Python 코드 변경 시). 프런트 변경은 `cd frontend && npm run build`로 `web/app.bundle.js`를 다시 만들어 커밋한다.
+- 데이터 홈(`~/ComicTranslator`)은 코드와 별개이며 git으로 옮기지 않는다. 필요한 파일만 `rsync`로 복사한다(`project.json`을 통째로 덮어쓰지 않는다).
+
 저장 경로(2026-10-20): 기본 데이터 홈은 `~/ComicTranslator`입니다. 프로젝트 JSON은 상대 경로를 저장하고, 읽을 때 기존 절대 경로와 `session.json`도 지원합니다.
