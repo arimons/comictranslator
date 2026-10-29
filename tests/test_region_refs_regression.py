@@ -6,8 +6,8 @@ Step 3 재분석마다 영역 R 번호가 읽기 순서로 다시 매겨져, 번
 
 이 파일은 합성 JSON만 쓴다(실제 만화 번역문 없음).
 - 특성 테스트: 지금도 통과해야 하는 동작(번호가 일치하는 정상 경로, 구형 숫자 키 호환)
-- xfail(strict): 영역 참조 전환(설계안 단계 5)이 끝나면 통과해야 하는 사고 재현.
-  통과로 바뀌면 strict가 실패를 내므로 그때 xfail 표시를 지운다.
+- 사고 재현: 번역 번호와 현재 번호가 어긋난 경우. 단계 1에서는 expectedFailure였고
+  단계 5(렌더러가 영역 참조로 전환)에서 통과로 바꿨다.
 """
 from __future__ import annotations
 
@@ -19,6 +19,7 @@ from pathlib import Path
 import cv2
 import numpy as np
 
+from pipeline import region_refs as rr
 from pipeline import render_text_overlay as rto
 
 PAGE_W, PAGE_H = 360, 240
@@ -56,6 +57,15 @@ def _cluster(source_region_id: int, tg: int, rect_key: str, text: str = "테스�
         "bounding_rect": list(rect),
         "union_bbox": list(rect),
     }
+
+
+def _cluster_multi(number: int, tgs: list[int], rect_key: str, segment: int | None = None, text: str = "테스트") -> dict:
+    item = _cluster(number, tgs[0], rect_key, text)
+    item["matched_cluster"] = list(tgs)
+    if segment is not None:
+        item["source_segment_index"] = segment
+        item["sentence_id"] = number * 100 + segment
+    return item
 
 
 def _render(
@@ -150,7 +160,6 @@ class CurrentBehaviorTest(unittest.TestCase):
 class NumberSpaceCollisionTest(unittest.TestCase):
     """번역 번호와 현재 regions 번호가 어긋난 사고. 설계안 단계 5 뒤에 통과해야 한다."""
 
-    @unittest.expectedFailure
     def test_new_region_sharing_a_translation_number_is_still_restored(self) -> None:
         """번역은 {1:TG1}뿐인데 현재 R1이 다른 영역(TG9)이면, TG9 영역은 번역이 없으니 원본을 복원해야 한다.
 
@@ -162,7 +171,6 @@ class NumberSpaceCollisionTest(unittest.TestCase):
 
         self.assertEqual(_corner_pixel(final, "D"), ORIGINAL_GRAY)
 
-    @unittest.expectedFailure
     def test_suppression_of_a_vanished_group_does_not_hide_another_region(self) -> None:
         """00011 사고 구조: 번역 묶음 2(TG2)의 빈 text_override가, TG2가 사라진 뒤 현재 R2(TG9)의 복원을 막는다."""
         clusters = [_cluster(1, 1, "A"), _cluster(2, 2, "B")]
@@ -174,6 +182,77 @@ class NumberSpaceCollisionTest(unittest.TestCase):
 
         # 억제는 번역 묶음 2(B 자리)에만 적용되어야 한다. 현재 R2(D)는 번역이 없으니 원본이 복원되어야 한다.
         self.assertEqual(_corner_pixel(final, "D"), ORIGINAL_GRAY)
+
+
+class RefRendererTest(unittest.TestCase):
+    """영역 참조 전환 뒤 렌더러 동작(설계안 T1, T5, T5b, T12)."""
+
+    def test_t1_vanished_group_is_not_drawn_and_other_group_keeps_its_value(self) -> None:
+        """00011 구조: TG2가 비활성화되고 TG3이 현재 R2가 되어도 폰트는 TG3 대사에 붙고, TG2의 묵은 번역은 그려지지 않는다."""
+        clusters = [_cluster(1, 1, "A"), _cluster(2, 2, "B"), _cluster(3, 3, "C")]
+        regions = [_region(1, 1, "A"), _region(2, 3, "C")]
+        overlay = {"regions": {"2": {"text_override": ""}, "3": {"font_size": 30}}}
+        _final, layout = _render(clusters, regions, overlay)
+
+        self.assertEqual(_layout_entry_for_rect(layout, "C")["font_size"], 30)
+        self.assertEqual(_layout_entry_for_rect(layout, "C")["region_id"], 2)  # 표시 번호는 현재 R 번호
+        self.assertEqual(_layout_entry_for_rect(layout, "C")["region_ref"], "tg:3")
+        self.assertIsNotNone(_layout_entry_for_rect(layout, "A"))
+        self.assertIsNone(_layout_entry_for_rect(layout, "B"))
+
+    def test_t2_renumbered_regions_keep_overrides_on_the_same_dialogue(self) -> None:
+        clusters = [_cluster(1, 1, "A"), _cluster(2, 2, "B")]
+        regions = [_region(1, 9, "D"), _region(2, 1, "A"), _region(3, 2, "B")]
+        final, layout = _render(clusters, regions, {"regions": {"2": {"font_size": 30}}})
+
+        self.assertEqual(_layout_entry_for_rect(layout, "B")["font_size"], 30)
+        self.assertEqual(_layout_entry_for_rect(layout, "B")["region_id"], 3)
+        self.assertEqual(_corner_pixel(final, "D"), ORIGINAL_GRAY)
+
+    def test_legacy_number_without_translation_is_not_drawn_into_a_different_region(self) -> None:
+        """번역에 없는 번호 키의 text_override가 번호만 같은 다른 현재 영역에 그려지던 문제."""
+        clusters = [_cluster(2, 2, "B")]
+        regions = [_region(1, 9, "D"), _region(2, 2, "B")]
+        final, layout = _render(clusters, regions, {"regions": {"1": {"text_override": "수동"}}})
+
+        self.assertIsNone(_layout_entry_for_rect(layout, "D"))
+        self.assertEqual(_corner_pixel(final, "D"), ORIGINAL_GRAY)
+
+    def test_ref_keyed_text_override_draws_into_untranslated_region(self) -> None:
+        clusters = [_cluster(1, 1, "A")]
+        regions = [_region(1, 1, "A"), _region(2, 9, "D")]
+        guidance = rr.dual_write_guidance({"regions_by_ref": {"tg:9": {"text_override": "수동"}}}, {"clusters": clusters}, regions)
+        _final, layout = _render(clusters, regions, guidance)
+
+        entry = _layout_entry_for_rect(layout, "D")
+        self.assertIsNotNone(entry)
+        self.assertEqual(entry["text_source"], "수동")
+        self.assertEqual(entry["region_ref"], "tg:9")
+
+    def test_t5_split_region_attaches_segments_to_children_and_stashes_group_value(self) -> None:
+        clusters = [_cluster_multi(1, [10], "A", segment=1, text="앞"), _cluster_multi(1, [13], "B", segment=2, text="뒤")]
+        regions = [_region(1, 10, "A"), _region(2, 13, "B")]
+        _final, layout = _render(clusters, regions, {"regions": {"1": {"font_size": 31}}})
+
+        self.assertEqual(_layout_entry_for_rect(layout, "A")["text_source"], "앞")
+        self.assertEqual(_layout_entry_for_rect(layout, "B")["text_source"], "뒤")
+        # 갈라지기 전 영역 전체에 걸린 수동값은 어느 자식에도 자동으로 붙지 않는다(A1).
+        self.assertNotEqual(_layout_entry_for_rect(layout, "A")["font_size"], 31)
+        self.assertNotEqual(_layout_entry_for_rect(layout, "B")["font_size"], 31)
+
+    def test_t5b_shrunk_region_moves_override_to_remaining_tg(self) -> None:
+        """TG2,3이 한 영역이었다가 TG2가 빠져 TG3만 남아도 수동값은 남은 영역에 붙는다."""
+        clusters = [_cluster_multi(1, [2, 3], "C")]
+        regions = [_region(1, 3, "C")]
+        _final, layout = _render(clusters, regions, {"regions": {"1": {"font_size": 30}}})
+
+        self.assertEqual(_layout_entry_for_rect(layout, "C")["font_size"], 30)
+
+    def test_without_regions_json_falls_back_to_number_keys(self) -> None:
+        """regions.json이 없으면(구형 실행) 예전처럼 번역 번호 키로 찾는다."""
+        cluster = _cluster(2, 2, "B")
+        self.assertEqual(rto.overlay_override_for_cluster(cluster, {}, {"2": {"font_size": 30}}), {"font_size": 30})
+        self.assertIsNone(rto.build_ref_context([cluster], None, {}))
 
 
 if __name__ == "__main__":

@@ -819,6 +819,48 @@ def resolve_group_refs(groups: list[dict], current_regions: list[dict], current_
     return result
 
 
+def resolve_cluster_refs(
+    integrated: Any,
+    current_regions: list[dict],
+    current_tg_digest: str | None = None,
+) -> list[dict]:
+    """번역 조각(cluster)마다 현재 영역 기준 참조를 구한다. integrated cluster 순서와 같은 길이의 목록.
+
+    조각 자신의 TG(matched_cluster)로 먼저 해석하므로, 영역이 갈라졌을 때 조각이 TG가 있는 자식에 붙는다.
+    한 조각의 TG가 여러 새 영역에 걸치면 TG가 가장 많이 겹치는 영역에, 동률이면 읽기 순서가 앞인 영역에 붙인다(A14).
+    반환 항목: {ref, kind, source_ref, vanished}. 영역을 못 찾으면 ref가 None이다.
+    vanished는 조각의 TG가 어느 현재 영역에도 없을 때 True(TG 비활성화·영역 제외로 대사가 사라진 경우).
+    """
+    clusters = integrated.get("clusters", []) if isinstance(integrated, dict) else []
+    regions = _annotated(current_regions) if current_regions else []
+    groups = integrated_groups(integrated, regions)
+    group_ref_of = {i: g["ref"] for g in groups for i in g["indexes"]}
+    group_rect_of = {i: g["rect"] for g in groups for i in g["indexes"]}
+    region_tgs = [(r, set(_int_list(r.get("anchor_ids")))) for r in regions]
+    all_current_tgs = set().union(*[t for _r, t in region_tgs]) if region_tgs else set()
+    results: list[dict] = []
+    for index, cluster in enumerate(clusters if isinstance(clusters, list) else []):
+        if not isinstance(cluster, dict):
+            results.append({"ref": None, "kind": UNMATCHED, "source_ref": None, "vanished": False})
+            continue
+        tgs = set(_int_list(cluster.get("matched_cluster")))
+        source_ref = tg_ref(tgs) if tgs else group_ref_of.get(index)
+        if not regions or source_ref is None:
+            results.append({"ref": source_ref, "kind": EXACT if source_ref else UNMATCHED, "source_ref": source_ref, "vanished": False})
+            continue
+        res = resolve(source_ref, {"rect": group_rect_of.get(index)}, regions, current_tg_digest)
+        ref = res["target_refs"][0] if res["kind"] in {EXACT, SHRINK, MERGE, GEO} else None
+        if res["kind"] == SPLIT:
+            best = max(
+                res["target_refs"],
+                key=lambda r: (len(tgs & set(_int_list(next(x for x in regions if x["region_ref"] == r).get("anchor_ids")))), -res["target_refs"].index(r)),
+            )
+            ref = best
+        vanished = bool(ref is None and tgs and not (tgs & all_current_tgs) and all_current_tgs)
+        results.append({"ref": ref, "kind": res["kind"], "source_ref": source_ref, "vanished": vanished})
+    return results
+
+
 def dual_write_guidance(guidance_v1: dict, integrated: Any, current_regions: list[dict] | None = None) -> dict:
     """저장용 사본: regions_by_ref(신형)와 regions(구형)를 함께 담는다."""
     result = copy.deepcopy(guidance_v1)
@@ -920,15 +962,17 @@ def project_page(
     groups_source = integrated if isinstance(integrated, dict) else {"clusters": integrated if isinstance(integrated, list) else []}
     digest = tg_digest(effective_text_groups) if isinstance(effective_text_groups, list) and effective_text_groups else None
     groups = integrated_groups(groups_source, annotated)
-    resolved = resolve_group_refs(groups, annotated, digest) if annotated else [g["ref"] for g in groups]
+    cluster_refs = resolve_cluster_refs(groups_source, annotated, digest)
     clusters = copy.deepcopy(groups_source.get("clusters", [])) if groups_source.get("clusters") else []
-    for group, resolved_ref in zip(groups, resolved):
+    for group in groups:
         for index in group["indexes"]:
             cluster = clusters[index]
             if not cluster.get("source_region_ref"):
                 cluster["source_region_ref"] = group["ref"]
                 cluster["source_region_ref_derived"] = True
-            cluster["resolved_region_ref"] = resolved_ref
+            cluster["resolved_region_ref"] = cluster_refs[index]["ref"]
+            if cluster_refs[index]["vanished"]:
+                cluster["region_vanished"] = True
     if isinstance(integrated, dict):
         out_integrated: Any = {**integrated, "clusters": clusters} if "clusters" in integrated else integrated
     else:

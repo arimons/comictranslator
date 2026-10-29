@@ -16,8 +16,28 @@ from PIL import Image, ImageDraw, ImageFont
 
 try:
     from pipeline.background_restore import apply_restore_patches
+    from pipeline.region_refs import (
+        SCHEME as REGION_REF_SCHEME,
+        annotate_regions,
+        format_overlay_key,
+        normalize_overlay_guidance,
+        reconcile_overlay_guidance,
+        resolve_cluster_refs,
+    )
 except ImportError:
     from background_restore import apply_restore_patches
+    from region_refs import (
+        SCHEME as REGION_REF_SCHEME,
+        annotate_regions,
+        format_overlay_key,
+        normalize_overlay_guidance,
+        reconcile_overlay_guidance,
+        resolve_cluster_refs,
+    )
+
+# 번역 시점에 있던 대사가 현재 영역에서 완전히 사라졌을 때(TG 비활성화·영역 제외) 그 번역 조각을 그릴지.
+# False면 그리지 않는다. 예전에는 사용자가 번호 키에 빈 text_override를 걸어 숨겨야 했다.
+RENDER_VANISHED_GROUP_CLUSTERS = False
 
 
 # 기본 폰트 (normal dialogue)
@@ -106,6 +126,13 @@ def load_overlay_guidance(path: Path | None) -> dict:
 
 def overlay_region_overrides(overlay_guidance: dict) -> dict[str, dict]:
     regions = overlay_guidance.get("regions") if isinstance(overlay_guidance, dict) else {}
+    if (
+        isinstance(overlay_guidance, dict)
+        and overlay_guidance.get("key_scheme") == REGION_REF_SCHEME
+        and "regions" not in overlay_guidance
+    ):
+        # 메모리 형식(build_ref_context가 만든 것): 영역 참조 키만 담고 있다.
+        regions = overlay_guidance.get("regions_by_ref")
     if not isinstance(regions, dict):
         return {}
     result: dict[str, dict] = {}
@@ -114,6 +141,79 @@ def overlay_region_overrides(overlay_guidance: dict) -> dict[str, dict]:
             continue
         result[str(key)] = value
     return result
+
+
+def build_ref_context(
+    clusters: list[dict],
+    regions_json_path: Path | None,
+    overlay_guidance: dict | None,
+    overlay_newer_than_integrated: bool = True,
+) -> dict | None:
+    """번역 조각·수동값을 R 번호가 아니라 현재 영역의 region_ref에 붙인다. regions.json을 못 읽으면 None(구형 번호 경로).
+
+    반환: clusters(overlay_ref 등을 붙인 사본, 사라진 대사는 제외), overlay_guidance(regions_by_ref만 가진 메모리 형식),
+    region_info_by_ref, suppressed_refs.
+    """
+    if regions_json_path is None or not Path(regions_json_path).exists():
+        return None
+    try:
+        data = json.loads(Path(regions_json_path).read_text(encoding="utf-8"))
+    except Exception:
+        return None
+    raw_regions = data.get("regions") if isinstance(data, dict) else None
+    if not isinstance(raw_regions, list) or not raw_regions:
+        return None
+    regions = annotate_regions([r for r in raw_regions if isinstance(r, dict)])
+    integrated = {"clusters": clusters}
+    refs = resolve_cluster_refs(integrated, regions)
+    region_by_ref = {r["region_ref"]: r for r in regions}
+    annotated: list[dict] = []
+    for cluster, info in zip(clusters, refs):
+        item = dict(cluster)
+        item["overlay_ref_mode"] = True
+        item["overlay_ref"] = info["ref"]
+        item["region_vanished"] = info["vanished"]
+        region = region_by_ref.get(info["ref"]) if info["ref"] else None
+        item["current_region_id"] = region.get("region_id") if region else None
+        if not RENDER_VANISHED_GROUP_CLUSTERS and info["vanished"]:
+            continue
+        annotated.append(item)
+    v1, _report = normalize_overlay_guidance(
+        overlay_guidance if isinstance(overlay_guidance, dict) else {},
+        integrated,
+        regions,
+        overlay_newer_than_integrated,
+    )
+    v1, _report = reconcile_overlay_guidance(v1, regions)
+    return {
+        "clusters": annotated,
+        "overlay_guidance": v1,
+        "region_info_by_ref": region_by_ref,
+        "suppressed_refs": overlay_suppressed_refs(v1),
+    }
+
+
+def overlay_ref_key_for_cluster(cluster: dict) -> str | None:
+    """영역 참조 방식의 수동값 키(`tg:3`, `tg:3#2`). 참조 방식 cluster가 아니거나 영역을 못 찾았으면 None."""
+    if not cluster.get("overlay_ref_mode"):
+        return None
+    ref = cluster.get("overlay_ref")
+    if not ref:
+        return None
+    try:
+        segment = int(cluster["source_segment_index"]) if cluster.get("source_segment_index") is not None else None
+    except (TypeError, ValueError):
+        segment = None
+    return format_overlay_key(ref, segment)
+
+
+def overlay_suppressed_refs(overlay_guidance: dict | None) -> set[str]:
+    """빈 text_override가 걸린 영역 참조. 해당 영역의 렌더와 원본 복원을 끈다."""
+    suppressed: set[str] = set()
+    for key, value in overlay_region_overrides(overlay_guidance or {}).items():
+        if isinstance(value.get("text_override"), str) and not value["text_override"].strip():
+            suppressed.add(str(key).split("#", 1)[0])
+    return suppressed
 
 
 def build_region_info_by_id_from_regions_json(regions_json_path: Path | None) -> dict[int, dict]:
@@ -196,6 +296,10 @@ def overlay_override_for_cluster(
     flood_info_by_anchor: dict[int, dict],
     overlay_overrides: dict[str, dict],
 ) -> dict:
+    if cluster.get("overlay_ref_mode"):
+        # 영역 참조 방식: 번호·sentence_id·anchor로 찾지 않는다. 짝이 없으면 수동값 없음.
+        ref_key = overlay_ref_key_for_cluster(cluster)
+        return (overlay_overrides.get(ref_key) or {}) if ref_key else {}
     cluster_key = overlay_key_for_cluster(cluster, flood_info_by_anchor)
     if cluster_key:
         for key in (cluster_key, cluster_key.replace(":", "-") if ":" in cluster_key else None):
@@ -237,6 +341,16 @@ def overlay_override_for_cluster(
         if override:
             return override
     return {}
+
+
+def overlay_segment_mode_for_cluster(cluster: dict, region_id: int | None, overlay_overrides: dict[str, dict]) -> str | None:
+    """참조 방식 cluster는 자기 영역 참조의 수동값에서, 아니면 번호로 segment_mode를 찾는다."""
+    if cluster.get("overlay_ref_mode"):
+        ref = cluster.get("overlay_ref")
+        override = overlay_overrides.get(str(ref)) if ref else None
+        mode = override.get("segment_mode") if isinstance(override, dict) else None
+        return mode if mode in {"merge", "split"} else None
+    return overlay_segment_mode_for_region(region_id, overlay_overrides)
 
 
 def overlay_segment_mode_for_region(region_id: int | None, overlay_overrides: dict[str, dict]) -> str | None:
@@ -397,8 +511,13 @@ def overlay_layout_summary(prepared: list, flood_info_by_anchor: dict[int, dict]
         if region_id is None or layout is None:
             continue
         key = overlay_key_for_cluster(cluster, flood_info_by_anchor) or str(region_id)
+        ref_mode = bool(cluster.get("overlay_ref_mode"))
+        current_region_id = cluster.get("current_region_id") if ref_mode else None
         regions[key] = {
-            "region_id": region_id,
+            # 참조 방식 cluster의 region_id는 현재 regions.json 번호(표시용)다. dict 키는 이중 기록 기간 동안 번역 번호 키를 유지한다.
+            "region_id": current_region_id if current_region_id is not None else region_id,
+            "region_ref": cluster.get("overlay_ref") if ref_mode else None,
+            "overlay_ref_key": overlay_ref_key_for_cluster(cluster),
             "overlay_key": key,
             "sentence_id": cluster.get("sentence_id"),
             "source_segment_index": cluster.get("source_segment_index"),
@@ -3758,6 +3877,8 @@ def merge_unseparated_shared_segments(
     }
 
     def _has_segment_override(cluster: dict) -> bool:
+        if cluster.get("overlay_ref_mode"):
+            return overlay_ref_key_for_cluster(cluster) in overlay_overrides
         key = overlay_key_for_cluster(cluster, flood_info_by_anchor)
         if key and (key in overlay_overrides or key.replace(":", "-") in overlay_overrides):
             return True
@@ -3785,7 +3906,7 @@ def merge_unseparated_shared_segments(
         if not group or len(group) < 2 or region_id is None:
             passthrough.append(cluster)
             continue
-        segment_mode = overlay_segment_mode_for_region(int(region_id), overlay_overrides)
+        segment_mode = overlay_segment_mode_for_cluster(cluster, int(region_id), overlay_overrides)
         if segment_mode == "split":
             passthrough.append(cluster)
             continue
@@ -4024,6 +4145,7 @@ def prepare_page_layouts(
     region_info_by_id: dict[int, dict] | None = None,
     font_path: Path = FONT_PATH,
     overlay_guidance: dict | None = None,
+    region_info_by_ref: dict[str, dict] | None = None,
 ) -> list[tuple[dict, str, list[int], str, Layout, int, Path]]:
     pil = Image.fromarray(cv2.cvtColor(image, cv2.COLOR_BGR2RGB))
     draw = ImageDraw.Draw(pil)
@@ -4037,11 +4159,46 @@ def prepare_page_layouts(
     represented_region_ids = {
         int(region_id)
         for cluster in clusters
+        if not cluster.get("overlay_ref_mode")
         for region_id in [region_id_for_cluster(cluster, flood_info_by_anchor)]
         if region_id is not None
     }
+    represented_refs = {str(c["overlay_ref"]) for c in clusters if c.get("overlay_ref_mode") and c.get("overlay_ref")}
     synthetic_clusters: list[dict] = []
-    for key, override in overlay_overrides.items():
+    for key, override in overlay_overrides.items() if region_info_by_ref is not None else []:
+        # 영역 참조 방식: 번역 조각이 없는 현재 영역에 사용자가 직접 입력한 글자를 그린다.
+        if "#" in key or key in represented_refs:
+            continue
+        region_info = region_info_by_ref.get(key)
+        text_override = override.get("text_override")
+        if not region_info or not isinstance(text_override, str) or not text_override.strip():
+            continue
+        rect = (
+            override.get("safe_text_rect")
+            or region_info.get("safe_text_rect")
+            or region_info.get("bubble_rect")
+            or region_info.get("unboxed_rect")
+            or region_info.get("source_rect")
+        )
+        if not isinstance(rect, list) or len(rect) < 4:
+            continue
+        rect = [int(v) for v in rect[:4]]
+        region_type = str(region_info.get("type") or region_info.get("region_type_guess") or "")
+        synthetic_clusters.append({
+            "matched_cluster": [int(v) for v in region_info.get("anchor_ids", []) if str(v).lstrip("-").isdigit()],
+            "source_region_id": region_info.get("region_id"),
+            "overlay_ref_mode": True,
+            "overlay_ref": key,
+            "current_region_id": region_info.get("region_id"),
+            "location": "unboxed" if region_type == "unboxed" else "bubble",
+            "source_method": "manual_overlay_text_override",
+            "text_translated": text_override.strip(),
+            "overlay_rect": rect,
+            "bounding_rect": rect,
+            "matched_cluster_details": [{"bounding_rect": rect, "lines": [{"bbox": rect}]}],
+        })
+        represented_refs.add(key)
+    for key, override in overlay_overrides.items() if region_info_by_ref is None else []:
         if ":" in key or key.startswith("s:"):
             continue
         try:
@@ -4336,8 +4493,12 @@ def restore_untranslated_regions(
     regions_json: Path | None,
     clusters: list[dict],
     suppressed_region_ids: set[int] | None = None,
+    suppressed_refs: set[str] | None = None,
 ) -> int:
-    """OCR/integrated에서 빠진 masked region은 빈칸 방지용으로 원본을 복원한다."""
+    """OCR/integrated에서 빠진 masked region은 빈칸 방지용으로 원본을 복원한다.
+
+    clusters가 영역 참조 방식(overlay_ref_mode)이면 번호가 아니라 영역 참조로 번역 여부·억제를 판단한다.
+    """
     if original is None or regions_json is None or not regions_json.exists():
         return 0
 
@@ -4348,9 +4509,14 @@ def restore_untranslated_regions(
 
     covered_region_ids: set[int] = set()
     covered_anchor_ids: set[int] = set()
+    covered_refs: set[str] = set()
+    ref_mode = any(cluster.get("overlay_ref_mode") for cluster in clusters)
+    if ref_mode:
+        covered_refs = {str(c["overlay_ref"]) for c in clusters if c.get("overlay_ref")}
+        data = {**data, "regions": annotate_regions([r for r in data.get("regions", []) if isinstance(r, dict)])}
     for cluster in clusters:
         try:
-            if cluster.get("source_region_id") is not None:
+            if cluster.get("source_region_id") is not None and not cluster.get("overlay_ref_mode"):
                 covered_region_ids.add(int(cluster.get("source_region_id")))
         except (TypeError, ValueError):
             pass
@@ -4367,7 +4533,10 @@ def restore_untranslated_regions(
             region_id = int(region.get("region_id"))
         except (TypeError, ValueError):
             region_id = -1
-        if region_id in suppressed_region_ids:
+        if ref_mode:
+            if region.get("region_ref") in (suppressed_refs or set()):
+                continue
+        elif region_id in suppressed_region_ids:
             continue
         anchor_ids = set()
         for anchor_id in region.get("anchor_ids") or []:
@@ -4376,6 +4545,8 @@ def restore_untranslated_regions(
             except (TypeError, ValueError):
                 continue
 
+        if ref_mode and region.get("region_ref") in covered_refs:
+            continue
         if region_id in covered_region_ids or (anchor_ids and bool(anchor_ids & covered_anchor_ids)):
             continue
 
@@ -4600,6 +4771,14 @@ def restore_rect_for_preserved_cluster(cluster: dict, fallback_bbox: list[int]) 
     return [int(v) for v in rect[:4]]
 
 
+def _overlay_is_newer_than_integrated(overlay_path: Path | None, integrated_path: Path | None) -> bool:
+    """수동값이 현재 integrated 번호 기준으로 저장됐는지(그 integrated보다 나중에 저장됐는지)."""
+    try:
+        return Path(overlay_path).stat().st_mtime >= Path(integrated_path).stat().st_mtime
+    except (OSError, TypeError):
+        return True
+
+
 def apply_text_overlay(
     masked_jpg: Path,
     integrated_json: Path,
@@ -4629,6 +4808,16 @@ def apply_text_overlay(
 
     clusters = load_clusters(integrated_json)
     overlay_guidance = load_overlay_guidance(overlay_guidance_path)
+    # 영역 참조: regions.json이 있으면 번역 조각·수동값을 현재 영역의 region_ref에 붙인다(번호 fallback 없음).
+    ref_context = build_ref_context(
+        clusters,
+        regions_json,
+        overlay_guidance,
+        _overlay_is_newer_than_integrated(overlay_guidance_path, integrated_json),
+    )
+    if ref_context is not None:
+        clusters = ref_context["clusters"]
+        overlay_guidance = ref_context["overlay_guidance"]
     flood_info = build_flood_info_by_anchor(flood_vis_json) if flood_vis_json else {}
     shared_groups = build_shared_flood_groups(flood_vis_json) if flood_vis_json else {}
     split_region_by_anchor = (
@@ -4659,6 +4848,7 @@ def apply_text_overlay(
         regions_json,
         clusters,
         overlay_suppressed_region_ids(overlay_guidance),
+        suppressed_refs=ref_context["suppressed_refs"] if ref_context is not None else None,
     )
     # 배경 복원 탭에서 확정한 패치(PNG)를 마스크 내부에만 합성한다. masked.jpg를 다시 저장하지 않는다.
     apply_restore_patches(image, restore_state_path)
@@ -4673,6 +4863,7 @@ def apply_text_overlay(
         region_info_by_id=region_info_by_id,
         font_path=font_path,
         overlay_guidance=overlay_guidance,
+        region_info_by_ref=ref_context["region_info_by_ref"] if ref_context is not None else None,
     )
     if overlay_layout_output is not None:
         overlay_layout_output.parent.mkdir(parents=True, exist_ok=True)

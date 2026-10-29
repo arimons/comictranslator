@@ -364,6 +364,32 @@ class SpeakerReconcileTest(unittest.TestCase):
         self.assertEqual(back["by_region_ref"], {"tg:2": "hero"})
 
 
+class ResolveClusterRefsTest(unittest.TestCase):
+    def test_segments_attach_to_split_children_and_vanished_is_flagged(self) -> None:
+        integrated = {"clusters": [
+            cluster(1, [10], R_A, segment=1),
+            cluster(1, [13], R_B, segment=2),
+            cluster(1, [20], R_C, segment=3),
+        ]}
+        # 영역 {10,13,20}이 {10}, {13}으로 갈라지고 TG20은 사라졌다.
+        current = [region(1, [10], R_A), region(2, [13], R_B)]
+        refs = rr.resolve_cluster_refs(integrated, current)
+        self.assertEqual([(r["ref"], r["kind"]) for r in refs], [("tg:10", rr.EXACT), ("tg:13", rr.EXACT), (None, rr.UNMATCHED)])
+        self.assertEqual([r["vanished"] for r in refs], [False, False, True])
+
+    def test_cluster_spanning_two_children_goes_to_the_one_with_most_tgs_then_reading_order(self) -> None:
+        current = [region(1, [10, 11], R_A), region(2, [12], R_B)]
+        spanning = {"clusters": [cluster(1, [10, 11, 12], R_A)]}
+        self.assertEqual(rr.resolve_cluster_refs(spanning, current)[0]["ref"], "tg:10,11")
+        tie = {"clusters": [cluster(1, [10, 12], R_A)]}
+        tie_current = [region(1, [10], R_A), region(2, [12], R_B)]
+        self.assertEqual(rr.resolve_cluster_refs(tie, tie_current)[0]["ref"], "tg:10")
+
+    def test_no_current_regions_keeps_source_refs_and_never_flags_vanished(self) -> None:
+        refs = rr.resolve_cluster_refs({"clusters": [cluster(1, [10], R_A)]}, [])
+        self.assertEqual((refs[0]["ref"], refs[0]["vanished"]), ("tg:10", False))
+
+
 class ProjectPageTest(unittest.TestCase):
     def test_projection_attaches_refs_without_touching_inputs(self) -> None:
         payload = {"regions": [region(1, [1], R_A), region(2, [3], R_B)]}
