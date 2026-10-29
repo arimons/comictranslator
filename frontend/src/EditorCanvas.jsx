@@ -247,6 +247,16 @@ const EditorCanvas = forwardRef(function EditorCanvas({ image, baseUrl, guidance
       return false;
     }
     const latest = guidanceRef.current || defaultGuidance(null);
+    // 수동 Edge 영역은 벽 박스가 만든 것이다. 제외 기록만 남기면 벽이 그대로 남으므로 박스를 지운다.
+    if (usesEdgeBarrier(region) && String(region.source_method || region.method || "").startsWith("manual_edge")) {
+      const box = edgeBoxForRegion(latest, region);
+      if (box) {
+        const next = { ...latest, virtual_walls: (latest.virtual_walls || []).filter((item) => item.box_id !== box.boxId) };
+        setGuidanceWithRightClickUndo(next, `R${regionId(region)} Edge 삭제`);
+        chooseRegion(null);
+        return true;
+      }
+    }
     const targetKey = regionBindingKey(region);
     const sourceRegionId = region.source_order ?? region.source_region_id ?? region.region_id;
     const duplicate = (latest.suppressed_regions || []).some((item) => {
@@ -645,7 +655,13 @@ const EditorCanvas = forwardRef(function EditorCanvas({ image, baseUrl, guidance
         color: "#7c2d12",
         label: `TG${item.text_group_id}`,
       }));
-      (currentGuidance.virtual_walls || []).forEach((item) => drawGuideLine(overlay, item.line || item.polyline, EDGE_WALL_COLOR, "edge"));
+      const labeledEdgeBoxes = new Set();
+      (currentGuidance.virtual_walls || []).forEach((item) => {
+        // 박스는 벽 4개라 벽마다 라벨을 달면 사방에 "edge"가 찍힌다. 박스당 한 번만 단다.
+        const labeled = Boolean(item.box_id) && labeledEdgeBoxes.has(item.box_id);
+        if (item.box_id) labeledEdgeBoxes.add(item.box_id);
+        drawGuideLine(overlay, item.line || item.polyline, EDGE_WALL_COLOR, labeled ? "" : "edge");
+      });
       (currentGuidance.split_guides || []).forEach((item) => splitGuidesToDraw.push({
         line: item.line,
         color: "#f59e0b",
@@ -761,8 +777,8 @@ const EditorCanvas = forwardRef(function EditorCanvas({ image, baseUrl, guidance
     return best;
   }
 
-  // Edge 영역의 크기 조절 기준 상자. 수동 Edge 박스가 영역과 겹치면 그 박스를, 자동 검출이면 영역 사각형을 쓴다.
-  function edgeBoxRectForRegion(currentGuidance, region) {
+  // 영역과 가장 많이 겹치는 수동 Edge 박스(벽 4개)와 그 사각형.
+  function edgeBoxForRegion(currentGuidance, region) {
     const regionRect = (region.bubble_rect || region.erase_rect || region.source_rect || []).slice(0, 4);
     if (regionRect.length < 4) return null;
     const byBox = new Map();
@@ -773,14 +789,21 @@ const EditorCanvas = forwardRef(function EditorCanvas({ image, baseUrl, guidance
     });
     let best = null;
     let bestArea = 0;
-    byBox.forEach((items) => {
+    byBox.forEach((items, boxId) => {
       const boxRect = edgeWallRect(items);
       if (!boxRect || !rectsOverlap(boxRect, regionRect)) return;
       const w = Math.min(boxRect[0] + boxRect[2], regionRect[0] + regionRect[2]) - Math.max(boxRect[0], regionRect[0]);
       const h = Math.min(boxRect[1] + boxRect[3], regionRect[1] + regionRect[3]) - Math.max(boxRect[1], regionRect[1]);
-      if (w * h > bestArea) { best = boxRect; bestArea = w * h; }
+      if (w * h > bestArea) { best = { boxId, rect: boxRect }; bestArea = w * h; }
     });
-    return best || regionRect;
+    return best;
+  }
+
+  // Edge 영역의 크기 조절 기준 상자. 수동 Edge 박스가 영역과 겹치면 그 박스를, 자동 검출이면 영역 사각형을 쓴다.
+  function edgeBoxRectForRegion(currentGuidance, region) {
+    const regionRect = (region.bubble_rect || region.erase_rect || region.source_rect || []).slice(0, 4);
+    if (regionRect.length < 4) return null;
+    return edgeBoxForRegion(currentGuidance, region)?.rect || regionRect;
   }
 
   function addTextRegionResizer(overlay, visibleRegions, currentGuidance) {
@@ -855,6 +878,7 @@ const EditorCanvas = forwardRef(function EditorCanvas({ image, baseUrl, guidance
       opacity: options.prominent ? 1 : 0.86,
       lineCap: "round",
     }));
+    if (!label) return;
     layer.add(new Konva.Text({
       text: label,
       x: x2 + 6,
