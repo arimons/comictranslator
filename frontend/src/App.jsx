@@ -1453,6 +1453,19 @@ export default function App() {
     return () => window.removeEventListener("keydown", onKeyDown, true);
   }, []);
 
+  // 미리보기 캔버스를 누르면 사이드 패널의 입력창에 남은 포커스를 풀어 방향키가 페이지 이동에 쓰이게 한다.
+  useEffect(() => {
+    const onPointerDown = (event) => {
+      if (!event.target?.closest?.("#stageHost, #overlayStageHost")) return;
+      const active = document.activeElement;
+      if (!active || active === document.body || active.closest?.(".floating-text-editor")) return;
+      const tag = active.tagName?.toLowerCase();
+      if (tag === "input" || tag === "textarea" || tag === "select" || active.isContentEditable) active.blur();
+    };
+    window.addEventListener("pointerdown", onPointerDown, true);
+    return () => window.removeEventListener("pointerdown", onPointerDown, true);
+  }, []);
+
   useEffect(() => () => {
     if (shortcutToastTimerRef.current) window.clearTimeout(shortcutToastTimerRef.current);
   }, []);
