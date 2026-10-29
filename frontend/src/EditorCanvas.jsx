@@ -11,6 +11,46 @@ const SELECTED_REGION_COLOR = "#e11d48";
 // Edge는 검출 결과(초록)와 같은 계열로 벽선도 초록으로 그린다. 선택 강조색(빨강)과 겹치지 않게 한다.
 const EDGE_WALL_COLOR = "#16a34a";
 
+// 예전에는 수동 Edge 영역을 삭제해도 제외 기록만 남고 벽 box는 그대로 남았다. 그런 가이드를 열 때
+// 제외한 Edge 영역을 만든 벽 box(제외보다 먼저 그린 것)와 쓸모없어진 제외 기록을 함께 정리한다.
+function pruneDeletedEdgeBoxes(guidance) {
+  const suppressed = guidance?.suppressed_regions || [];
+  const walls = guidance?.virtual_walls || [];
+  const stamp = (id, prefix) => Number(String(id || "").startsWith(prefix) ? String(id).slice(prefix.length).split("_")[0] : NaN);
+  const dead = suppressed.filter((item) => String(item.source_method || "").startsWith("manual_edge") && Array.isArray(item.rect));
+  if (!dead.length || !walls.length) return null;
+  const byBox = new Map();
+  walls.forEach((item) => { if (item.box_id) byBox.set(item.box_id, [...(byBox.get(item.box_id) || []), item]); });
+  const removeBoxes = new Set();
+  const usedSuppress = new Set();
+  byBox.forEach((items, boxId) => {
+    const xs = items.flatMap((w) => (w.line || w.polyline || []).map((pt) => Number(pt[0])));
+    const ys = items.flatMap((w) => (w.line || w.polyline || []).map((pt) => Number(pt[1])));
+    if (!xs.length || !ys.length) return;
+    const box = [Math.min(...xs), Math.min(...ys), Math.max(...xs) - Math.min(...xs), Math.max(...ys) - Math.min(...ys)];
+    dead.forEach((item) => {
+      const [rx, ry, rw, rh] = item.rect;
+      const w = Math.min(box[0] + box[2], rx + rw) - Math.max(box[0], rx);
+      const h = Math.min(box[1] + box[3], ry + rh) - Math.max(box[1], ry);
+      const boxTime = stamp(boxId, "edge_box_");
+      const suppressTime = stamp(item.id, "suppress_");
+      if (w > 0 && h > 0 && (w * h) / Math.max(1, rw * rh) >= 0.5 && boxTime < suppressTime) {
+        removeBoxes.add(boxId);
+        usedSuppress.add(item.id);
+      }
+    });
+  });
+  if (!removeBoxes.size) return null;
+  return {
+    next: {
+      ...guidance,
+      virtual_walls: walls.filter((item) => !removeBoxes.has(item.box_id)),
+      suppressed_regions: suppressed.filter((item) => !usedSuppress.has(item.id)),
+    },
+    count: removeBoxes.size,
+  };
+}
+
 const EditorCanvas = forwardRef(function EditorCanvas({ image, baseUrl, guidance, setGuidance, tool, layers, selectedTg, setSelectedTg, selectedRegionId, setSelectedRegionId, onToolComplete, setStatus, speakerLabels }, ref) {
   const hostRef = useRef(null);
   const stageRef = useRef(null);
@@ -73,6 +113,15 @@ const EditorCanvas = forwardRef(function EditorCanvas({ image, baseUrl, guidance
       isPanTool: () => toolRef.current === "hand",
     });
   }
+
+  useEffect(() => {
+    if (!image || image.processing_excluded || !guidance) return;
+    const pruned = pruneDeletedEdgeBoxes(guidance);
+    if (!pruned) return;
+    guidanceRef.current = pruned.next;
+    setGuidance(pruned.next);
+    setStatus(`삭제한 Edge의 남은 벽 ${pruned.count}개 정리 · 변경사항 적용 시 반영`);
+  }, [image?.id, guidance]);
 
   useEffect(() => {
     toolRef.current = tool;
@@ -622,8 +671,8 @@ const EditorCanvas = forwardRef(function EditorCanvas({ image, baseUrl, guidance
         overlay.add(new Konva.Rect({
           ...r,
           stroke: color,
-          strokeWidth: regionSelected ? 3 : 1.2,
-          opacity: regionSelected ? 1 : .65,
+          strokeWidth: regionSelected ? 3 : 1.8,
+          opacity: regionSelected ? 1 : .9,
           fill: hasContour ? "transparent" : tint,
           dash: isTextBased ? [6, 4] : undefined,
         }));

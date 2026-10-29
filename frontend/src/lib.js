@@ -27,7 +27,7 @@ export const TOOL_ICONS = {
 export const OVERLAY_HANDLE_NAMES = ["nw", "n", "ne", "e", "se", "s", "sw", "w"];
 export const OVERLAY_MIN_RECT_SIZE = 12;
 export const OVERLAY_REGION_COLORS = {
-  [BOUNDARY_BASED]: "#38bdf8",
+  [BOUNDARY_BASED]: "#1d4ed8",
   edge_barrier: "#22c55e",
   [TEXT_BASED]: "#eab308",
 };

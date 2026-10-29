@@ -2919,7 +2919,7 @@ export default function App() {
                       <details className="guidance-disclosure">
                         <summary>표시 설정{Object.values(layers).some((visible) => !visible) ? <span>일부 숨김</span> : null}</summary>
           <p className="hint">겹친 표시를 확인할 때만 끕니다. 분석·출력 결과는 바뀌지 않습니다.</p>
-          <div className="region-color-legend"><span><i style={{color:"#22c55e"}}>●</i> Edge</span><span><i style={{color:"#38bdf8"}}>●</i> Bubble</span><span><i style={{color:"#eab308"}}>●</i> Unboxed</span></div>
+          <div className="region-color-legend"><span><i style={{color:"#22c55e"}}>●</i> Edge</span><span><i style={{color:"#1d4ed8"}}>●</i> Bubble</span><span><i style={{color:"#eab308"}}>●</i> Unboxed</span></div>
           <div className="toggles">
             {Object.entries({ tg: "텍스트 묶음 (TG)", regions: "처리 영역 (R)", guidance: "가이드" }).map(([key, label]) => (
               <label className="check" key={key}>
