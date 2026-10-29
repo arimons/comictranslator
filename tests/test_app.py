@@ -691,7 +691,7 @@ def test_import_hydrates_previous_version_analysis_cache_before_guidance(tmp_pat
     new_record = app.image_record("new_version_guided", Path(records[0]["input_path"]), image_hash)
 
     assert new_record["guidance"]["disabled_tg_ids"] == [1]
-    assert new_record["regions"]["regions"] == [{"region_id": 1}]
+    assert [r["region_id"] for r in new_record["regions"]["regions"]] == [1]  # region_ref 등 메모리 부착 필드는 비교하지 않는다
     assert Path(new_record["indexed_sheet_jpg"]).exists()
     assert Path(new_record["masked_jpg"]).exists()
     assert reapplied == ["page1"]
@@ -833,7 +833,7 @@ def test_session_images_prefers_guidance_outputs_over_existing_baseline(tmp_path
     assert Path(refreshed["indexed_sheet_jpg"]).read_bytes() == b"manual sheet"
     assert Path(refreshed["masked_jpg"]).read_bytes() == b"manual masked"
     assert Path(refreshed["bubble_vis_jpg"]).read_bytes() == b"manual vis"
-    assert refreshed["regions"]["regions"] == [{"region_id": 1}]
+    assert [r["region_id"] for r in refreshed["regions"]["regions"]] == [1]
 
 
 def test_import_defers_session_backfill_after_initial_sync_limit(tmp_path, monkeypatch):
@@ -1908,3 +1908,36 @@ def test_old_region_suppression_cache_is_not_reused(tmp_path, monkeypatch):
         "guidance_digest": app.guidance_digest(guidance)})
     # 옛 캐시는 같은 guidance라도 텍스트 기반 복구로 R이 되살아난 결과일 수 있다.
     assert app.hydrate_guidance_output_cache({}, "imagehash", guidance, lambda text: None) is False
+
+
+def test_image_record_attaches_region_refs_in_memory_only(tmp_path, monkeypatch):
+    """읽기 projection: region_ref·source_region_ref·overlay_guidance_v1을 메모리로만 붙이고 저장 파일은 그대로 둔다."""
+    import json
+
+    session_id = "region_ref_projection"
+    monkeypatch.setattr(app, "SESSION_ROOT", tmp_path / "sessions")
+    image_path = tmp_path / "sessions" / session_id / "input" / "page1.jpg"
+    image_path.parent.mkdir(parents=True)
+    image_path.write_bytes(b"image")
+    record = app.image_record(session_id, image_path)
+    rect = [10, 10, 100, 80]
+    files = {
+        "regions_json": {"regions": [{"region_id": 1, "type": "bubble", "anchor_ids": [3], "bubble_rect": rect}]},
+        "integrated_json": {"clusters": [{"source_region_id": 4, "matched_cluster": [2, 3], "union_bbox": rect}]},
+        "overlay_guidance_json": {"regions": {"4": {"font_size": 30}}},
+    }
+    for key, payload in files.items():
+        path = Path(record[key])
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(payload), encoding="utf-8")
+    before = {key: Path(record[key]).read_text(encoding="utf-8") for key in files}
+
+    refreshed = app.image_record(session_id, image_path)
+
+    assert refreshed["regions"]["regions"][0]["region_ref"] == "tg:3"
+    assert refreshed["regions"]["regions"][0]["region_instance_ref"] == "auto|tg:3"
+    cluster = refreshed["integrated"]["clusters"][0]
+    assert (cluster["source_region_ref"], cluster["resolved_region_ref"]) == ("tg:2,3", "tg:3")
+    assert list(refreshed["overlay_guidance_v1"]["regions_by_ref"]) == ["tg:3"]
+    assert refreshed["overlay_guidance"] == {"regions": {"4": {"font_size": 30}}}
+    assert {key: Path(record[key]).read_text(encoding="utf-8") for key in files} == before

@@ -39,6 +39,7 @@ from pydantic import BaseModel
 
 from pipeline.project_paths import manifest_files, manifest_path, project_base
 from pipeline.manual_guidance import build_effective_text_groups, load_json, write_json
+from pipeline.region_refs import project_page
 from pipeline.region_types import region_binding_key, regions_with_processing_basis
 from pipeline.source_library import SourceLibrary, atomic_link, digest as source_digest
 from pipeline.page_preparation import build_plan, is_split_page, split_in_place
@@ -1393,13 +1394,24 @@ def image_record(
     if include_detail:
         regions = regions_with_processing_basis(load_json(json_dir / f"{stem}_regions.json", default={}))
         integrated = load_json(json_dir / f"{stem}_integrated.json", default=[])
+        effective_text_groups = load_json(json_dir / f"{stem}_text_groups_effective.json", default=[])
+        manual_guidance = load_json(json_dir / f"{stem}_manual_guidance.json", default={})
+        overlay_guidance = load_json(json_dir / f"{stem}_overlay_guidance.json", default={})
+        # 영역 참조: 저장 파일은 그대로 두고 읽을 때 메모리로만 region_ref 등을 붙인다.
+        projection = project_page(
+            regions, integrated, overlay_guidance, manual_guidance, effective_text_groups,
+            _overlay_is_newer_than_integrated(json_dir / f"{stem}_overlay_guidance.json", json_dir / f"{stem}_integrated.json"),
+        )
+        regions, integrated = projection["regions"], projection["integrated"]
         record.update({
             "text_groups": load_json(json_dir / f"{stem}_text_groups.json", default=[]),
-            "effective_text_groups": load_json(json_dir / f"{stem}_text_groups_effective.json", default=[]),
+            "effective_text_groups": effective_text_groups,
             "regions": regions,
-            "guidance": load_json(json_dir / f"{stem}_manual_guidance.json", default={}),
+            "guidance": manual_guidance,
             "guidance_report": load_json(json_dir / f"{stem}_manual_guidance_report.json", default={}),
-            "overlay_guidance": load_json(json_dir / f"{stem}_overlay_guidance.json", default={}),
+            "overlay_guidance": overlay_guidance,
+            "overlay_guidance_v1": projection["overlay_guidance_v1"],
+            "region_ref_report": projection["report"],
             "overlay_layout": load_json(json_dir / f"{stem}_overlay_layout.json", default={}),
             "integrated": integrated,
         })
@@ -1860,6 +1872,14 @@ def _claim_guidance_reapply(session_id: str, record: dict[str, Any]) -> bool:
 def load_hydration_pending(session_id: str) -> bool:
     with _LOAD_HYDRATE_LOCK:
         return any(key[0] == session_id for key in _LOAD_HYDRATE_RUNNING)
+
+
+def _overlay_is_newer_than_integrated(overlay_path: Path, integrated_path: Path) -> bool:
+    """수동값이 현재 integrated 번호 기준으로 저장됐는지(그 integrated보다 나중에 저장됐는지)."""
+    try:
+        return overlay_path.stat().st_mtime >= integrated_path.stat().st_mtime
+    except OSError:
+        return True
 
 
 def page_record(session_id: str, image_id: str) -> dict[str, Any]:

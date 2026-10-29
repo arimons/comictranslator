@@ -364,6 +364,32 @@ class SpeakerReconcileTest(unittest.TestCase):
         self.assertEqual(back["by_region_ref"], {"tg:2": "hero"})
 
 
+class ProjectPageTest(unittest.TestCase):
+    def test_projection_attaches_refs_without_touching_inputs(self) -> None:
+        payload = {"regions": [region(1, [1], R_A), region(2, [3], R_B)]}
+        integrated = {"clusters": [cluster(1, [1], R_A), cluster(5, [2, 3], R_B)], "glossary": {"x": 1}}
+        overlay = {"regions": {"5": {"font_size": 30}}, "eraser_rects": [[1, 2, 3, 4]]}
+        out = rr.project_page(payload, integrated, overlay, None, [{"text_group_id": 1, "bounding_rect": R_A}])
+
+        self.assertEqual([r["region_ref"] for r in out["regions"]["regions"]], ["tg:1", "tg:3"])
+        refs = [(c["source_region_ref"], c["resolved_region_ref"]) for c in out["integrated"]["clusters"]]
+        self.assertEqual(refs, [("tg:1", "tg:1"), ("tg:2,3", "tg:3")])
+        self.assertEqual(out["integrated"]["glossary"], {"x": 1})
+        # 번역 묶음 5(TG2,3)의 수동값은 TG2가 사라진 뒤 현재 영역 tg:3으로 따라간다.
+        self.assertEqual(list(out["overlay_guidance_v1"]["regions_by_ref"]), ["tg:3"])
+        self.assertEqual(out["overlay_guidance_v1"]["eraser_rects"], [[1, 2, 3, 4]])
+        self.assertNotIn("region_ref", payload["regions"][0])
+        self.assertNotIn("resolved_region_ref", integrated["clusters"][0])
+        self.assertEqual(overlay, {"regions": {"5": {"font_size": 30}}, "eraser_rects": [[1, 2, 3, 4]]})
+
+    def test_projection_tolerates_missing_files(self) -> None:
+        out = rr.project_page({}, [], {}, {}, [])
+        self.assertEqual(out["overlay_guidance_v1"]["regions_by_ref"], {})
+        self.assertEqual(out["integrated"], [])
+        out = rr.project_page({"regions": []}, {"skipped": True}, None)
+        self.assertEqual(out["integrated"], {"skipped": True})
+
+
 class PolicyTableTest(unittest.TestCase):
     def test_every_kind_has_a_policy_for_every_consumer(self) -> None:
         for kind in (rr.EXACT, rr.SHRINK, rr.MERGE, rr.SPLIT, rr.GEO, rr.UNMATCHED):

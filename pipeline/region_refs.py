@@ -890,3 +890,54 @@ def reconcile_speakers(store: dict | None, current_regions: list[dict], current_
                     report["cleared"][old_ref] = v
         store[field] = {ref: value for ref, value in out.items() if ref in by_ref_regions or ref in report["dormant"]}
     return store, report
+
+
+# --------------------------------------------------------------- 페이지 ---
+
+def project_page(
+    regions_payload: Any,
+    integrated: Any,
+    overlay_guidance: Any,
+    manual_guidance: Any = None,
+    effective_text_groups: Any = None,
+    overlay_newer_than_integrated: bool = True,
+) -> dict:
+    """페이지 하나의 읽기 projection. 저장 파일은 건드리지 않고 메모리 사본만 만든다.
+
+    반환: regions_payload(영역에 region_ref 등 부착), integrated(cluster에 source_region_ref·resolved_region_ref),
+    overlay_guidance_v1(현재 영역 기준으로 재조정된 regions_by_ref), report.
+    """
+    regions_list = regions_payload.get("regions") if isinstance(regions_payload, dict) else None
+    annotated = annotate_regions(regions_list, manual_guidance if isinstance(manual_guidance, dict) else None) if isinstance(regions_list, list) else []
+    out_regions = {**regions_payload, "regions": annotated} if isinstance(regions_payload, dict) and isinstance(regions_list, list) else regions_payload
+
+    groups_source = integrated if isinstance(integrated, dict) else {"clusters": integrated if isinstance(integrated, list) else []}
+    digest = tg_digest(effective_text_groups) if isinstance(effective_text_groups, list) and effective_text_groups else None
+    groups = integrated_groups(groups_source, annotated)
+    resolved = resolve_group_refs(groups, annotated, digest) if annotated else [g["ref"] for g in groups]
+    clusters = copy.deepcopy(groups_source.get("clusters", [])) if groups_source.get("clusters") else []
+    for group, resolved_ref in zip(groups, resolved):
+        for index in group["indexes"]:
+            cluster = clusters[index]
+            if not cluster.get("source_region_ref"):
+                cluster["source_region_ref"] = group["ref"]
+                cluster["source_region_ref_derived"] = True
+            cluster["resolved_region_ref"] = resolved_ref
+    if isinstance(integrated, dict):
+        out_integrated: Any = {**integrated, "clusters": clusters} if "clusters" in integrated else integrated
+    else:
+        out_integrated = clusters if isinstance(integrated, list) else integrated
+
+    v1, normalize_report = normalize_overlay_guidance(
+        overlay_guidance if isinstance(overlay_guidance, dict) else {},
+        groups_source,
+        annotated,
+        overlay_newer_than_integrated,
+    )
+    v1, reconcile_report = reconcile_overlay_guidance(v1, annotated, digest)
+    return {
+        "regions": out_regions,
+        "integrated": out_integrated,
+        "overlay_guidance_v1": v1,
+        "report": {"overlay": {**normalize_report, "reconcile": reconcile_report}, "tg_digest": digest},
+    }
