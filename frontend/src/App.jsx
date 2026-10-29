@@ -87,6 +87,9 @@ function writeStored(key, value) {
   try { window.localStorage.setItem(key, JSON.stringify(value)); } catch { /* 저장소를 쓸 수 없어도 기능은 동작한다 */ }
 }
 
+// 화자·번역 메모는 영역 참조(region_ref)로 저장한다. 참조를 주지 않는 구버전 응답만 구형 영역 키를 쓴다.
+const regionStoreKey = (region) => region?.region_ref || regionBindingKey(region);
+
 export default function App() {
   const [sessionId, setSessionId] = useState("");
   const [projectName, setProjectName] = useState("");
@@ -282,7 +285,7 @@ export default function App() {
     const lead = (workMemo?.characters || []).find((row) => row.protagonist);
     const labels = {};
     guidanceRegions.forEach((region) => {
-      const key = regionBindingKey(region);
+      const key = regionStoreKey(region);
       const assigned = Object.hasOwn(speakerByRegion,key) ? speakerByRegion[key] : (region.anchor_ids || []).map((id) => speakerByTg[String(id)]).find((id) => names[id]);
       // 텍스트 기반 영역의 자동 기본값은 괄호로 구분한다.
       if (assigned) labels[regionId(region)] = names[assigned];
@@ -316,7 +319,7 @@ export default function App() {
     if (!sessionId || !selectedPageId) return undefined;
     let alive = true;
     api(`/api/speakers/${encodeURIComponent(sessionId)}/${encodeURIComponent(selectedPageId)}`)
-      .then((result) => { if (alive) { setSpeakerByTg(result.by_tg || {}); setSpeakerByRegion(result.by_region || {}); setContextByRegion(result.context_by_region || {}); } })
+      .then((result) => { if (alive) { setSpeakerByTg(result.by_tg || {}); setSpeakerByRegion(result.by_region_ref || result.by_region || {}); setContextByRegion(result.context_by_region_ref || result.context_by_region || {}); } })
       .catch(() => {});
     return () => { alive = false; };
   }, [sessionId, selectedPageId]);
@@ -849,18 +852,18 @@ export default function App() {
     }
     const pageId = selectedPageId;
     // 화면을 먼저 갱신하고 저장은 뒤에서 한다. 실패하면 서버 값으로 되돌린다.
-    setSpeakerByRegion((current) => ({...current,[regionBindingKey(region)]:characterId || null}));
+    setSpeakerByRegion((current) => ({...current,[regionStoreKey(region)]:characterId || null}));
     setStatus(`R${regionId(region)} 화자: ${name}`);
     if (slot !== 0) cycleGuidanceRegion(1, true);
     try {
       const result = await api("/api/speakers", { method: "POST", body: JSON.stringify({
-        session_id: sessionId, image_id: pageId, region_id: regionId(region), region_key: regionBindingKey(region), character_id: characterId,
+        session_id: sessionId, image_id: pageId, region_id: regionId(region), region_key: regionBindingKey(region), region_ref: region.region_ref || null, character_id: characterId,
       }) });
-      if (selectedIdRef.current === pageId || !selectedIdRef.current) { setSpeakerByTg(result.by_tg || {}); setSpeakerByRegion(result.by_region || {}); }
+      if (selectedIdRef.current === pageId || !selectedIdRef.current) { setSpeakerByTg(result.by_tg || {}); setSpeakerByRegion(result.by_region_ref || result.by_region || {}); }
     } catch (err) {
       setStatus(`화자 저장 실패: ${err.message}`);
       api(`/api/speakers/${encodeURIComponent(sessionId)}/${encodeURIComponent(pageId)}`)
-        .then((result) => { setSpeakerByTg(result.by_tg || {}); setSpeakerByRegion(result.by_region || {}); }).catch(() => {});
+        .then((result) => { setSpeakerByTg(result.by_tg || {}); setSpeakerByRegion(result.by_region_ref || result.by_region || {}); }).catch(() => {});
     }
     return true;
   }
@@ -2563,7 +2566,7 @@ export default function App() {
 
   // 선택한 R이 바뀌면 메모 입력칸을 저장된 값으로 되돌린다.
   useEffect(() => { setContextDraft(null); }, [selectedRegionKey, selectedPageId]);
-  const savedRegionContext = selectedRegionKey ? contextByRegion[selectedRegionKey] || "" : "";
+  const savedRegionContext = selectedGuidanceRegion ? contextByRegion[regionStoreKey(selectedGuidanceRegion)] || "" : "";
   const regionContextValue = contextDraft ?? savedRegionContext;
 
   // 입력칸을 벗어나면 저장한다. 번역은 실행하지 않는다.
@@ -2593,9 +2596,9 @@ export default function App() {
     const pageId = selectedPageId;
     try {
       const result = await api("/api/region-context", { method: "POST", body: JSON.stringify({
-        session_id: sessionId, image_id: pageId, region_id: regionId(region), region_key: regionBindingKey(region), text: contextDraft,
+        session_id: sessionId, image_id: pageId, region_id: regionId(region), region_key: regionBindingKey(region), region_ref: region.region_ref || null, text: contextDraft,
       }) });
-      if (selectedPageId === pageId) setContextByRegion(result.context_by_region || {});
+      if (selectedPageId === pageId) setContextByRegion(result.context_by_region_ref || result.context_by_region || {});
       setContextDraft(null);
       setStatus(`R${regionId(region)} 번역 메모 ${contextDraft.trim() ? "저장" : "삭제"} · 다음 OCR/번역 때 반영됩니다.`);
     } catch (err) {

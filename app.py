@@ -46,6 +46,7 @@ from pipeline.region_refs import (
     normalize_overlay_guidance,
     project_page,
     reconcile_overlay_guidance,
+    reconcile_speakers,
 )
 from pipeline.region_types import region_binding_key, regions_with_processing_basis
 from pipeline.source_library import SourceLibrary, atomic_link, digest as source_digest
@@ -116,6 +117,23 @@ def speakers_path(session_id: str, image_id: str) -> Path:
 
 def page_speaker_map(session_id: str, image_id: str) -> dict[str, str]:
     return load_json(speakers_path(session_id, image_id), default={}).get("by_tg", {})
+
+
+def _annotated_page_regions(record_or_regions_json: Any, guidance: dict | None = None) -> list[dict[str, Any]]:
+    """regions.json의 영역에 region_ref 등을 붙여 돌려준다(읽기 전용)."""
+    payload = load_json(Path(record_or_regions_json), default={})
+    raw = payload.get("regions") if isinstance(payload, dict) else None
+    return annotate_regions(raw if isinstance(raw, list) else [], guidance)
+
+
+def reconciled_speaker_store(record: dict[str, Any], stored: dict[str, Any] | None = None) -> tuple[dict[str, Any], dict[str, Any], list[dict[str, Any]]]:
+    """화자·번역 메모 저장소를 현재 영역 기준으로 맞춘 사본과 보고, 영역 참조가 붙은 현재 영역을 돌려준다. 파일은 쓰지 않는다."""
+    guidance = load_json(Path(record["guidance_json"]), default={}) if record.get("guidance_json") else {}
+    regions = _annotated_page_regions(record["regions_json"], guidance if isinstance(guidance, dict) else None)
+    if stored is None:
+        stored = load_json(speakers_path(record["session_id"], record["id"]), default={}) if record.get("session_id") else {}
+    store, report = reconcile_speakers(stored, regions)
+    return store, report, regions
 
 
 def session_glossary(session_id: str) -> dict | None:
@@ -283,14 +301,16 @@ class SpeakerRequest(BaseModel):
     tg_ids: list[int] = []
     region_id: int | None = None
     region_key: str | None = None
+    region_ref: str | None = None
     character_id: str | None = None
 
 
 class RegionContextRequest(BaseModel):
     session_id: str
     image_id: str
-    region_id: int
+    region_id: int | None = None
     region_key: str | None = None
+    region_ref: str | None = None
     text: str = ""
 
 
@@ -2321,11 +2341,13 @@ def run_final_for_item(
         return page_record(session_id, item["id"])
     context = glossary_context if glossary_context is not None else session_glossary_snapshot(session_id)
     record = image_record(session_id, Path(item["input_path"]), item.get("image_sha256"))
-    page_regions = load_json(record["regions_json"], default={}).get("regions", [])
-    speaker_store = load_json(speakers_path(session_id, record["id"]), default={})
-    speakers = page_speakers(page_regions, page_speaker_map(session_id, record["id"]), context, speaker_store.get("by_region", {}))
+    stored_speakers = load_json(speakers_path(session_id, record["id"]), default={})
+    speaker_store, _speaker_report, page_regions = reconciled_speaker_store({**record, "session_id": session_id}, stored_speakers)
+    if speaker_store != stored_speakers and (speaker_store.get("by_region_ref") or speaker_store.get("context_by_region_ref")):
+        write_json(speakers_path(session_id, record["id"]), speaker_store)
+    speakers = page_speakers(page_regions, page_speaker_map(session_id, record["id"]), context, speaker_store.get("by_region", {}), speaker_store.get("by_region_ref", {}))
     # 작품 메모 → 화자 → 영역별 번역 가이드 → 추가 프롬프트 순서로 붙인다.
-    region_contexts = page_region_contexts(page_regions, speaker_store.get("context_by_region", {}))
+    region_contexts = page_region_contexts(page_regions, speaker_store.get("context_by_region", {}), speaker_store.get("context_by_region_ref", {}))
     translation_prompt = "\n\n".join(part for part in (context.get("prompt", ""), speaker_prompt(speakers), region_context_prompt(region_contexts), extra_prompt) if part)
     clusters = current_clusters_path(record, record["id"])
     font = font_path or DEFAULT_FONT
@@ -3275,12 +3297,35 @@ def create_app() -> FastAPI:
     @app.get("/api/speakers/{session_id}/{image_id}")
     def read_speakers(session_id: str, image_id: str) -> dict:
         try:
-            get_image(session_id, image_id)
+            item = get_image(session_id, image_id)
+            record = {**image_record(session_id, Path(item["input_path"]), item.get("image_sha256"), item, probe_image=False, include_detail=False), "session_id": session_id}
             stored = load_json(speakers_path(session_id, image_id), default={})
+            store, _report, _regions = reconciled_speaker_store(record, stored)
             return {"by_tg": page_speaker_map(session_id, image_id), "by_region": stored.get("by_region", {}),
-                    "context_by_region": stored.get("context_by_region", {})}
+                    "context_by_region": stored.get("context_by_region", {}),
+                    "by_region_ref": store.get("by_region_ref", {}),
+                    "context_by_region_ref": store.get("context_by_region_ref", {})}
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    def _speaker_target_region(req_session: str, req_image: str, region_ref: str | None, region_id: int | None, region_key: str | None):
+        """요청이 가리키는 현재 영역. region_ref가 있으면 그것으로, 없으면 구형 region_id + region_key로 찾는다."""
+        from pipeline.region_types import region_binding_key
+        item = get_image(req_session, req_image)
+        record = {**image_record(req_session, Path(item["input_path"]), item.get("image_sha256"), item, probe_image=False, include_detail=False), "session_id": req_session}
+        stored = load_json(speakers_path(req_session, req_image), default={})
+        store, _report, regions = reconciled_speaker_store(record, stored)
+        if region_ref:
+            region = next((r for r in regions if r.get("region_ref") == region_ref), None)
+        elif region_id is not None:
+            region = next((r for r in regions if r.get("region_id") == region_id), None)
+        else:
+            return stored, store, regions, None
+        if region is None:
+            raise ValueError("현재 페이지에 없는 처리 영역입니다.")
+        if not region_ref and region_key is not None and region_key != region_binding_key(region):
+            raise ValueError("처리 영역이 변경됐습니다. 다시 선택하세요.")
+        return stored, store, regions, region
 
     @app.post("/api/speakers")
     def assign_speaker(req: SpeakerRequest) -> dict:
@@ -3290,32 +3335,31 @@ def create_app() -> FastAPI:
             if cid and cid != NARRATION and cid not in character_map(session_glossary(req.session_id)):
                 raise ValueError("작품 메모에 없는 인물입니다.")
             from pipeline.region_types import region_binding_key
-            stored = load_json(speakers_path(req.session_id, req.image_id), default={})
-            by_tg, by_region = stored.get("by_tg", {}), stored.get("by_region", {})
-            regions = page_record(req.session_id, req.image_id).get("regions", {}).get("regions", [])
+            stored, store, regions, region = _speaker_target_region(req.session_id, req.image_id, req.region_ref, req.region_id, req.region_key)
+            by_tg, by_region = stored.get("by_tg", {}), dict(stored.get("by_region", {}))
+            by_region_ref = dict(store.get("by_region_ref", {}))
             tg_ids = req.tg_ids
-            if req.region_id is not None:
-                region = next((r for r in regions if r.get("region_id") == req.region_id), None)
-                if region is None:
-                    raise ValueError("현재 페이지에 없는 처리 영역입니다.")
-                key = region_binding_key(region)
-                if req.region_key is not None and req.region_key != key:
-                    raise ValueError("처리 영역이 변경됐습니다. 다시 선택하세요.")
+            if region is not None:
                 # null은 기존 TG 지정으로 되돌아가지 않는 명시적인 R 지정 해제다.
-                by_region[key] = cid
+                by_region[region_binding_key(region)] = cid
+                by_region_ref[region["region_ref"]] = cid
                 tg_ids = []
             else:
                 # 기존 TG 전용 클라이언트의 새 지정이 이전 R 직접 지정보다 우선한다.
-                for region in regions:
-                    if set(region.get("anchor_ids") or []) & set(tg_ids):
-                        by_region.pop(region_binding_key(region), None)
+                for current in regions:
+                    if set(current.get("anchor_ids") or []) & set(tg_ids):
+                        by_region.pop(region_binding_key(current), None)
+                        by_region_ref.pop(current["region_ref"], None)
             for tg in tg_ids:
                 if cid:
                     by_tg[str(int(tg))] = cid
                 else:
                     by_tg.pop(str(int(tg)), None)
-            write_json(speakers_path(req.session_id, req.image_id), {**stored, "by_tg": by_tg, "by_region": by_region})
-            return {"by_tg": by_tg, "by_region": by_region, "context_by_region": stored.get("context_by_region", {})}
+            context_ref = store.get("context_by_region_ref", {})
+            write_json(speakers_path(req.session_id, req.image_id), {**stored, "by_tg": by_tg, "by_region": by_region,
+                                                                    "by_region_ref": by_region_ref, "context_by_region_ref": context_ref})
+            return {"by_tg": by_tg, "by_region": by_region, "by_region_ref": by_region_ref,
+                    "context_by_region": stored.get("context_by_region", {}), "context_by_region_ref": context_ref}
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -3339,24 +3383,24 @@ def create_app() -> FastAPI:
         try:
             get_image(req.session_id, req.image_id)
             from pipeline.region_types import region_binding_key
-            regions = page_record(req.session_id, req.image_id).get("regions", {}).get("regions", [])
-            region = next((r for r in regions if r.get("region_id") == req.region_id), None)
-            if region is None:
-                raise ValueError("현재 페이지에 없는 처리 영역입니다.")
+            if not req.region_ref and req.region_id is None:
+                raise ValueError("메모를 붙일 영역이 없습니다.")
+            stored, store, _regions, region = _speaker_target_region(req.session_id, req.image_id, req.region_ref, req.region_id, req.region_key)
             key = region_binding_key(region)
-            if req.region_key is not None and req.region_key != key:
-                raise ValueError("처리 영역이 변경됐습니다. 다시 선택하세요.")
             text = req.text.strip()
             if len(text) > REGION_CONTEXT_LIMIT:
                 raise ValueError(f"번역 메모는 {REGION_CONTEXT_LIMIT}자 이내로 적어 주세요.")
-            stored = load_json(speakers_path(req.session_id, req.image_id), default={})
             contexts = dict(stored.get("context_by_region", {}))
+            contexts_ref = dict(store.get("context_by_region_ref", {}))
             if text:
                 contexts[key] = text
+                contexts_ref[region["region_ref"]] = text
             else:
                 contexts.pop(key, None)
-            write_json(speakers_path(req.session_id, req.image_id), {**stored, "context_by_region": contexts})
-            return {"context_by_region": contexts}
+                contexts_ref.pop(region["region_ref"], None)
+            write_json(speakers_path(req.session_id, req.image_id), {**stored, "context_by_region": contexts,
+                                                                    "by_region_ref": store.get("by_region_ref", {}), "context_by_region_ref": contexts_ref})
+            return {"context_by_region": contexts, "context_by_region_ref": contexts_ref}
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 

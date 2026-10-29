@@ -190,8 +190,22 @@ def ordered_characters(characters: list[dict]) -> list[dict]:
     return sorted(characters, key=lambda row: not row.get("protagonist"))
 
 
-def page_speakers(regions: list[dict], by_tg: dict, snapshot: dict, by_region: dict | None = None) -> list[dict]:
-    """R 직접 지정을 우선하고 기존 TG 지정을 호환용으로 읽는다. 텍스트 기반 미지정은 주인공 기본값."""
+def _region_assignment(region: dict, by_region: dict | None, by_region_ref: dict | None, by_tg: dict):
+    """영역 참조(region_ref) 지정 → 처리 기준·사각형 키 지정(구형) → TG 지정 순서로 찾는다. 없으면 None."""
+    from pipeline.region_types import region_binding_key
+    ref = region.get("region_ref")
+    if ref and ref in (by_region_ref or {}):
+        return by_region_ref[ref]
+    key = region_binding_key(region)
+    if key in (by_region or {}):
+        return by_region[key]
+    return next((by_tg.get(str(tg)) for tg in region.get("anchor_ids") or [] if by_tg.get(str(tg))), None)
+
+
+def page_speakers(regions: list[dict], by_tg: dict, snapshot: dict, by_region: dict | None = None, by_region_ref: dict | None = None) -> list[dict]:
+    """R 직접 지정(영역 참조 우선)을 우선하고 기존 TG 지정을 호환용으로 읽는다. 텍스트 기반 미지정은 주인공 기본값.
+
+    region_ref가 붙은 영역(annotate_regions 결과)을 넘기면 재분석으로 사각형이 바뀌어도 지정이 대사를 따라간다."""
     from pipeline.region_types import TEXT_BASED, region_processing_basis, region_binding_key
     names = {row["id"]: row["name"] for row in snapshot.get("characters", [])}
     names[NARRATION] = "내레이션"
@@ -201,7 +215,7 @@ def page_speakers(regions: list[dict], by_tg: dict, snapshot: dict, by_region: d
         rid = region.get("region_id")
         if rid is None:
             continue
-        assigned = (by_region or {})[region_binding_key(region)] if region_binding_key(region) in (by_region or {}) else next((by_tg.get(str(tg)) for tg in region.get("anchor_ids") or [] if by_tg.get(str(tg))), None)
+        assigned = _region_assignment(region, by_region, by_region_ref, by_tg)
         if assigned == NARRATION:
             result.append({"region_id": int(rid), "speaker": names[NARRATION], "source": "narration"})
         elif assigned in names:
@@ -229,13 +243,20 @@ def speaker_prompt(speakers: list[dict]) -> str:
 REGION_CONTEXT_LIMIT = 500
 
 
-def page_region_contexts(regions: list[dict], context_by_region: dict | None) -> list[dict]:
-    """사용자가 R마다 적은 번역 메모. 영역 키로 저장해 R 번호가 바뀌어도 같은 범위면 유지된다."""
+def page_region_contexts(regions: list[dict], context_by_region: dict | None, context_by_region_ref: dict | None = None) -> list[dict]:
+    """사용자가 R마다 적은 번역 메모. 영역 참조(region_ref)로 저장해 R 번호·사각형이 바뀌어도 같은 대사면 유지된다.
+
+    영역 참조 기록이 없을 때만 구형 영역 키(처리 기준·검출 방법·사각형)를 읽는다."""
     from pipeline.region_types import region_binding_key
     result = []
     for region in regions:
         rid = region.get("region_id")
-        text = str((context_by_region or {}).get(region_binding_key(region)) or "").strip()
+        ref = region.get("region_ref")
+        if ref and ref in (context_by_region_ref or {}):
+            raw = (context_by_region_ref or {}).get(ref)
+        else:
+            raw = (context_by_region or {}).get(region_binding_key(region))
+        text = str(raw or "").strip()
         if rid is not None and text:
             result.append({"region_id": int(rid), "context": text[:REGION_CONTEXT_LIMIT]})
     return result
