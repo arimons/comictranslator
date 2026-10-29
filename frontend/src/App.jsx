@@ -368,7 +368,7 @@ export default function App() {
       ready: Boolean(activeTab === "guidance" && selected?.detail_loaded && selected?.indexed_sheet_url && !selected?.processing_excluded && !guidanceDirty),
     };
   });
-  const ocrBatchCandidates = ocrReadyImages.filter((img) => reviewedIds.has(img.id));
+  const ocrBatchCandidates = ocrReadyImages.filter((img) => reviewedIds.has(img.id) && img.id !== selected?.id);
   const showOcrPrompt = ocrBatchSize > 0 && !bgOcr.running && !ocrBusy
     && ocrBatchCandidates.length - Math.min(ocrPromptAnchor, ocrBatchCandidates.length) >= ocrBatchSize;
   useEffect(() => {
@@ -2008,6 +2008,7 @@ export default function App() {
 
   // 확인한 페이지만 모아 OCR·번역을 백그라운드로 돌린다. 작업 잠금(busyTasks)을 쓰지 않아 다른 페이지는 계속 편집할 수 있다.
   async function startBackgroundOcr() {
+    // 지금 보고 있는 페이지는 아직 편집 중이므로 번역 대상에서 뺀다.
     const ids = ocrBatchCandidates.map((img) => img.id);
     if (!ids.length || bgOcr.running || ocrBusy) return;
     const requestSid = sessionId;
@@ -2569,6 +2570,18 @@ export default function App() {
     await runFinalStream(selected.id, true);
   }
 
+  // 영역이 바뀐 뒤에도 기존 번역을 그대로 쓴다. 알림만 끈다.
+  async function keepStaleTranslation() {
+    if (!selected) return;
+    try {
+      const result = await api("/api/ocr-stale/keep", { method: "POST", body: JSON.stringify({ session_id: sessionId, image_id: selected.id }) });
+      if (result.image) applyImageRecord(result.image);
+      setStatus("기존 번역을 유지합니다.");
+    } catch (err) {
+      setStatus(`기존 번역 유지 실패: ${err.message}`);
+    }
+  }
+
   async function saveRegionContext() {
     const region = selectedGuidanceRegion;
     if (!region || contextDraft == null || contextDraft.trim() === savedRegionContext) { setContextDraft(null); return; }
@@ -2828,6 +2841,11 @@ export default function App() {
                   ))}
                 </div>
               </div>
+              {!selected?.processing_excluded && selected?.ocr_stale ? <div className="generation-preview-notice" role="status">
+                <span>번역한 뒤 영역이 바뀌어 기존 번역이 지금 영역과 맞지 않을 수 있습니다.</span>
+                <button type="button" onClick={retranslateSelectedPage} disabled={anyBusy}>현재 영역으로 다시 번역</button>
+                <button type="button" onClick={keepStaleTranslation} disabled={anyBusy}>기존 번역 유지</button>
+              </div> : null}
               {!selected?.processing_excluded && latestGeneratedCandidate ? <div className="generation-result-strip">
                 <span title={latestGeneratedCandidate.stale ? "입력·번역·작품 메모 변경으로 재검토가 필요합니다. 등록 결과는 보존됩니다." : "등록된 생성 결과입니다."}><strong>생성 결과 {generatedCandidates.length}개</strong> · 출력 미반영{latestGeneratedCandidate.stale ? " · 재검토 필요" : ""}</span>
                 {generationRecommended ? <details><summary>기존 방식으로 전환</summary><div>

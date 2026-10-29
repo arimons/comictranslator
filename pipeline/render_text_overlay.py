@@ -48,10 +48,10 @@ VERTICAL_DOT_CHARS = frozenset({".", "･", "・"})
 VERTICAL_ROTATED_GLYPHS = frozenset({"~", "～", "〜"})
 
 _FONT_TRACKING: dict[str, int] = {
-    "Freesentation-5Medium": -2,
-    "Freesentation-6SemiBold": -2,
-    "Freesentation-7Bold": -2,
-    "Freesentation-4Regular": -1,
+    "Freesentation-5Medium": 0,
+    "Freesentation-6SemiBold": 0,
+    "Freesentation-7Bold": 0,
+    "Freesentation-4Regular": 0,
     "Pretendard-Black":        0,
     "RIDIBatang":              0,
     "SourceHanSerifK-Medium":  0,

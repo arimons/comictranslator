@@ -39,7 +39,7 @@ from pydantic import BaseModel
 
 from pipeline.project_paths import manifest_files, manifest_path, project_base
 from pipeline.manual_guidance import build_effective_text_groups, load_json, write_json
-from pipeline.region_types import regions_with_processing_basis
+from pipeline.region_types import region_binding_key, regions_with_processing_basis
 from pipeline.source_library import SourceLibrary, atomic_link, digest as source_digest
 from pipeline.page_preparation import build_plan, is_split_page, split_in_place
 from pipeline.image_generation_bridge import ImageGenerationStore
@@ -284,6 +284,11 @@ class RegionContextRequest(BaseModel):
     region_id: int
     region_key: str | None = None
     text: str = ""
+
+
+class PageRefRequest(BaseModel):
+    session_id: str
+    image_id: str
 
 
 class SessionDeleteRequest(BaseModel):
@@ -1403,6 +1408,12 @@ def image_record(
     else:
         record.update(_cached_json_flags(json_dir / f"{stem}_regions.json", _regions_flags, default={}))
         record.update(_cached_json_flags(json_dir / f"{stem}_integrated.json", _integrated_flags, default=[]))
+    # 번역 뒤 영역이 바뀌었는지. 번역 시점 서명이 없는 예전 결과는 판정하지 않는다.
+    translated_sig = (record.get("ocr_status") or {}).get("regions_signature")
+    record["ocr_stale"] = bool(
+        record["has_integrated_json"] and translated_sig and record.get("regions_signature")
+        and translated_sig != record["regions_signature"]
+    )
     return record
 
 
@@ -1449,6 +1460,8 @@ IMAGE_SUMMARY_KEYS = (
     "has_integrated_json",
     "has_analysis",
     "ocr_region_count",
+    "regions_signature",
+    "ocr_stale",
     "integrated_skipped",
     "integrated_message",
     "ocr_status",
@@ -1483,10 +1496,20 @@ def page_detail_rev(json_dir: Path, stem: str) -> str:
     return hashlib.sha1("|".join(parts).encode("ascii")).hexdigest()[:16]
 
 
+def regions_signature(data: Any) -> str | None:
+    """번역이 만들어진 시점의 영역 구성을 식별한다. 영역이 바뀌면 기존 번역이 현재 영역과 어긋난다."""
+    regions = data.get("regions") if isinstance(data, dict) else None
+    if not isinstance(regions, list):
+        return None
+    keys = sorted(region_binding_key(r) for r in regions if isinstance(r, dict))
+    return hashlib.sha1("\n".join(keys).encode("utf-8")).hexdigest()[:16]
+
+
 def _regions_flags(data: Any) -> dict[str, Any]:
     regions = data.get("regions") if isinstance(data, dict) else None
     has_analysis = isinstance(regions, list)
     return {"has_analysis": has_analysis, "ocr_region_count": len(regions) if has_analysis else None,
+            "regions_signature": regions_signature(data),
             "analysis_skip_reason": data.get("skip_reason") if isinstance(data, dict) else None}
 
 
@@ -1664,6 +1687,7 @@ def mark_ocr_status(record: dict[str, Any], status: str, detail: str = "", messa
             "message": message or detail,
             "has_integrated_json": Path(record["integrated_json"]).exists(),
             "has_final": Path(record["final_jpg"]).exists(),
+            "regions_signature": regions_signature(load_json(Path(record["regions_json"]), default={})) if status == "done" else None,
             "updated_at": dt.datetime.now().isoformat(timespec="seconds"),
         },
     )
@@ -3223,6 +3247,20 @@ def create_app() -> FastAPI:
                     by_tg.pop(str(int(tg)), None)
             write_json(speakers_path(req.session_id, req.image_id), {**stored, "by_tg": by_tg, "by_region": by_region})
             return {"by_tg": by_tg, "by_region": by_region, "context_by_region": stored.get("context_by_region", {})}
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @app.post("/api/ocr-stale/keep")
+    def keep_stale_translation(req: PageRefRequest) -> dict:
+        # 영역이 바뀐 뒤에도 기존 번역을 그대로 쓰기로 한 페이지. 번역 시점 서명을 현재 영역으로 갱신해 알림을 끈다.
+        try:
+            item = get_image(req.session_id, req.image_id)
+            record = image_record(req.session_id, Path(item["input_path"]), item.get("image_sha256"))
+            status = load_json(Path(record["ocr_status_json"]), default={})
+            if status.get("status") == "done":
+                status["regions_signature"] = regions_signature(load_json(Path(record["regions_json"]), default={}))
+                write_json(Path(record["ocr_status_json"]), status)
+            return {"ok": True, "image": page_record(req.session_id, req.image_id)}
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
