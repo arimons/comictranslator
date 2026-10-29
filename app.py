@@ -43,6 +43,8 @@ from pipeline.region_refs import (
     SCHEME as REGION_REF_SCHEME,
     annotate_regions,
     dual_write_guidance,
+    legacy_key_map,
+    segment_index_by_ref,
     normalize_overlay_guidance,
     project_page,
     reconcile_overlay_guidance,
@@ -1428,6 +1430,7 @@ def image_record(
         projection = project_page(
             regions, integrated, overlay_guidance, manual_guidance, effective_text_groups,
             _overlay_is_newer_than_integrated(json_dir / f"{stem}_overlay_guidance.json", json_dir / f"{stem}_integrated.json"),
+            _overlay_is_newer_than_integrated(json_dir / f"{stem}_overlay_guidance.json", json_dir / f"{stem}_regions.json") and (json_dir / f"{stem}_regions.json").exists(),
         )
         regions, integrated = projection["regions"], projection["integrated"]
         record.update({
@@ -2245,6 +2248,14 @@ def _overlay_page_inputs(record: dict[str, Any]) -> tuple[Any, list[dict[str, An
     return integrated, annotate_regions(raw_regions if isinstance(raw_regions, list) else [], manual if isinstance(manual, dict) else None)
 
 
+def _file_is_newer(path: Path, other: Path) -> bool:
+    """path가 other보다 나중에 저장됐는지. 비교할 수 없으면 False(증거 없음)."""
+    try:
+        return path.stat().st_mtime >= other.stat().st_mtime
+    except OSError:
+        return False
+
+
 def store_overlay_guidance(record: dict[str, Any], incoming: dict[str, Any] | None, replace: bool) -> dict[str, Any]:
     """편집기가 보낸 overlay 수동값을 저장한다. 영역 참조(regions_by_ref)와 구형 번호 키(regions)를 함께 쓴다.
 
@@ -2266,10 +2277,17 @@ def store_overlay_guidance(record: dict[str, Any], incoming: dict[str, Any] | No
     stored_newer = True
     if path.exists() and Path(record["integrated_json"]).exists():
         stored_newer = path.stat().st_mtime >= Path(record["integrated_json"]).stat().st_mtime
-    existing_v1, _ = normalize_overlay_guidance(stored if isinstance(stored, dict) else {}, integrated, regions, stored_newer)
-    incoming_v1, _ = normalize_overlay_guidance(incoming if isinstance(incoming, dict) else {}, integrated, regions, True)
+    stored_newer_regions = _file_is_newer(path, Path(record["regions_json"]))
+    existing_v1, _ = normalize_overlay_guidance(stored if isinstance(stored, dict) else {}, integrated, regions, stored_newer, stored_newer_regions)
+    incoming_v1, _ = normalize_overlay_guidance(incoming if isinstance(incoming, dict) else {}, integrated, regions, True, True)
     if replace:
         result = incoming_v1
+        if not incoming_has_refs:
+            # 구 번들은 번호 키만 안다. 구형으로 표현되지 않던 참조 전용 값(번역 없는 영역의 직접 입력 등)은 지우지 않는다.
+            expressible = legacy_key_map(existing_v1, integrated, regions)
+            for key, value in (existing_v1.get("regions_by_ref") or {}).items():
+                if key not in expressible and key not in result["regions_by_ref"]:
+                    result["regions_by_ref"][key] = value
         incoming_stash = (incoming or {}).get("unmatched_regions") if isinstance(incoming, dict) else None
         if not isinstance(incoming_stash, dict) or not incoming_stash:
             result["unmatched_regions"] = existing_v1.get("unmatched_regions") or {}
@@ -2281,7 +2299,7 @@ def store_overlay_guidance(record: dict[str, Any], incoming: dict[str, Any] | No
             merged_refs[key] = {**previous, **value} if isinstance(previous, dict) and isinstance(value, dict) else value
         result["regions_by_ref"] = merged_refs
         result["unmatched_regions"] = {**(existing_v1.get("unmatched_regions") or {}), **(incoming_v1.get("unmatched_regions") or {})}
-    result, _report = reconcile_overlay_guidance(result, regions)
+    result, _report = reconcile_overlay_guidance(result, regions, segments=segment_index_by_ref(integrated, regions))
     saved = dual_write_guidance(result, integrated, regions)
     write_json(path, saved)
     return saved
@@ -2308,8 +2326,8 @@ def sync_overlay_guidance_for_record(record: dict[str, Any], log_callback=None) 
     stored_newer = True
     if Path(record["integrated_json"]).exists():
         stored_newer = path.stat().st_mtime >= Path(record["integrated_json"]).stat().st_mtime
-    v1, normalize_report = normalize_overlay_guidance(stored, integrated, regions, stored_newer)
-    v1, report = reconcile_overlay_guidance(v1, regions)
+    v1, normalize_report = normalize_overlay_guidance(stored, integrated, regions, stored_newer, _file_is_newer(path, Path(record["regions_json"])))
+    v1, report = reconcile_overlay_guidance(v1, regions, segments=segment_index_by_ref(integrated, regions))
     saved = dual_write_guidance(v1, integrated, regions)
     if saved != stored:
         write_json(path, saved)

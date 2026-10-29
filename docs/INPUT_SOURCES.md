@@ -111,3 +111,5 @@ MCP는 UI 서버 없이 등록된 원본 또는 해시가 맞는 대체 사본�
 <!-- 2026-10-29 review: app.py·App.jsx 화자·번역 메모를 영역 참조 키로 저장(구형 키 병행). 편집기 사용법 변경 없음 -->
 
 <!-- 2026-10-29 review: editor_review_bridge.py·run_editor_mcp.py 선택 인자 region_ref 추가, 이 문서 내용 영향 없음 -->
+
+<!-- 2026-10-29 review: region_refs.py·app.py·render_text_overlay.py Overlay 보관·복원·롤백·구 번들 저장 보완. 이 문서 내용 영향 없음 -->

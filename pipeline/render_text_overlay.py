@@ -23,6 +23,7 @@ try:
         normalize_overlay_guidance,
         reconcile_overlay_guidance,
         resolve_cluster_refs,
+        segment_index_by_ref,
     )
 except ImportError:
     from background_restore import apply_restore_patches
@@ -33,6 +34,7 @@ except ImportError:
         normalize_overlay_guidance,
         reconcile_overlay_guidance,
         resolve_cluster_refs,
+        segment_index_by_ref,
     )
 
 # 번역 시점에 있던 대사가 현재 영역에서 완전히 사라졌을 때(TG 비활성화·영역 제외) 그 번역 조각을 그릴지.
@@ -148,6 +150,7 @@ def build_ref_context(
     regions_json_path: Path | None,
     overlay_guidance: dict | None,
     overlay_newer_than_integrated: bool = True,
+    overlay_newer_than_regions: bool = False,
 ) -> dict | None:
     """번역 조각·수동값을 R 번호가 아니라 현재 영역의 region_ref에 붙인다. regions.json을 못 읽으면 None(구형 번호 경로).
 
@@ -183,8 +186,9 @@ def build_ref_context(
         integrated,
         regions,
         overlay_newer_than_integrated,
+        overlay_newer_than_regions,
     )
-    v1, _report = reconcile_overlay_guidance(v1, regions)
+    v1, _report = reconcile_overlay_guidance(v1, regions, segments=segment_index_by_ref(integrated, regions))
     return {
         "clusters": annotated,
         "overlay_guidance": v1,
@@ -4814,6 +4818,7 @@ def apply_text_overlay(
         regions_json,
         overlay_guidance,
         _overlay_is_newer_than_integrated(overlay_guidance_path, integrated_json),
+        _overlay_is_newer_than_integrated(overlay_guidance_path, regions_json),
     )
     if ref_context is not None:
         clusters = ref_context["clusters"]

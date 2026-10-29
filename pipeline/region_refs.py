@@ -623,6 +623,7 @@ def _stash(target: dict, key: str, value: Any, reason: str, ref: str | None = No
         item["_unmatched_reason"] = reason
         if ref:
             item["_unmatched_ref"] = ref
+            item["_unmatched_key"] = key
     name = key
     counter = 2
     while name in target:
@@ -636,6 +637,7 @@ def normalize_overlay_guidance(
     integrated: Any,
     regions: list[dict] | None = None,
     overlay_newer_than_integrated: bool = True,
+    overlay_newer_than_regions: bool = False,
 ) -> tuple[dict, dict]:
     """구형·신형 overlay_guidance를 `regions_by_ref` 형식으로 맞춘다. (guidance_v1, 보고)
 
@@ -643,7 +645,9 @@ def normalize_overlay_guidance(
       맞지 않으면 롤백 중 구 코드가 고친 것이므로 구형 `regions`를 우선해 다시 만든다.
     - 구형 키 "N"/"N:k"/"N-k"는 integrated의 번역 묶음 N의 참조로, "s:ID"는 그 sentence_id의 참조로 옮긴다.
       overlay가 integrated보다 오래됐고 `_anchor`가 있으면 번호 대신 `_anchor.rect`로 묶음을 찾는다.
-    - 번호만으로는 어느 영역인지 알 수 없는 키는 보관(`unmatched_regions`)으로 보낸다.
+    - 번호만으로는 어느 영역인지 알 수 없는 키는 보관(`unmatched_regions`)으로 보낸다. 다만 overlay가 regions.json보다
+      나중에 저장됐고(overlay_newer_than_regions) 그 번호가 번역 없는 현재 영역이면 현재 R 번호로 해석한다.
+    - 롤백 중 구 코드가 고쳐 구형이 이길 때, 구형으로 표현할 수 없던 참조 전용 값은 보관함으로 옮긴다.
     """
     guidance = guidance if isinstance(guidance, dict) else {}
     report: dict[str, Any] = {"converted": {}, "stashed": {}, "source": "empty"}
@@ -718,6 +722,17 @@ def normalize_overlay_guidance(
                 group = by_number.get(number)
                 if group is not None and not overlay_newer_than_integrated and not anchor:
                     migrated = "legacy_unanchored"
+            if group is None and not anchor and overlay_newer_than_regions and regions and segment is None:
+                # 번역이 없는 영역에 직접 입력한 값: overlay가 regions.json보다 나중에 저장됐으면 그 번호는 현재 R 번호다.
+                # 번역 묶음이 쓰는 영역이면 번호가 번역 번호이므로 여기서는 해석하지 않는다.
+                current = _annotated(regions)
+                translated_tgs = set().union(*[set(g["tg_ids"]) for g in groups]) if groups else set()
+                translated_refs = {g["ref"] for g in groups}
+                target = next((r for r in current if r.get("region_id") == number), None)
+                if target and target["region_ref"] not in translated_refs and not (set(_int_list(target.get("anchor_ids"))) & translated_tgs):
+                    group = {"ref": target["region_ref"], "rect": region_rect(target),
+                             "tg_ids": _int_list(target.get("anchor_ids")), "number": number}
+                    migrated = "legacy_region_number"
             if group is None and rect and regions:
                 # integrated에 묶음이 없는 번호(번역이 비어 있던 영역 등): 저장 때 남긴 위치가 현재 영역과 맞을 때만 쓴다.
                 current = _annotated(regions)
@@ -763,6 +778,14 @@ def normalize_overlay_guidance(
             value["_migrated"] = payload["migrated"]
         by_ref[new_key] = value
         report["converted"][old_key] = new_key
+    if report["source"] == "legacy_wins_after_rollback":
+        representable = legacy_key_map({"regions_by_ref": stored_by_ref}, integrated, regions)
+        for key, value in stored_by_ref.items():
+            if str(key) in representable or str(key) in by_ref or not isinstance(value, dict):
+                continue
+            base, _segment = _split_entry_key(str(key))
+            _stash(stash, str(key), value, "rollback_not_representable", base)
+            report["stashed"][str(key)] = "rollback_not_representable"
     result["regions_by_ref"] = by_ref
     result[UNMATCHED_FIELD] = stash
     return result, report
@@ -777,19 +800,40 @@ def _split_entry_key(key: str) -> tuple[str, int | None]:
     return (region, segment) if kind == "ref" else (key, None)
 
 
+def segment_index_by_ref(integrated: Any, current_regions: list[dict], current_tg_digest: str | None = None) -> dict[str, set[int]]:
+    """번역 조각이 있는 현재 영역 참조 → 그 영역에 실제로 있는 세그먼트 번호 집합(세그먼트가 없으면 빈 집합)."""
+    clusters = integrated.get("clusters", []) if isinstance(integrated, dict) else []
+    result: dict[str, set[int]] = {}
+    for cluster, info in zip(clusters if isinstance(clusters, list) else [], resolve_cluster_refs(integrated, current_regions, current_tg_digest)):
+        if not info["ref"] or not isinstance(cluster, dict):
+            continue
+        bucket = result.setdefault(info["ref"], set())
+        try:
+            if cluster.get("source_segment_index") is not None:
+                bucket.add(int(cluster["source_segment_index"]))
+        except (TypeError, ValueError):
+            continue
+    return result
+
+
 def reconcile_overlay_guidance(
     guidance_v1: dict,
     current_regions: list[dict],
     current_tg_digest: str | None = None,
+    segments: dict[str, set[int]] | None = None,
 ) -> tuple[dict, dict]:
     """regions_by_ref의 참조를 현재 영역에 맞춘다. (guidance_v1, 보고)
 
     옮길 수 없는 값은 지우지 않고 unmatched_regions로 보낸다. 번호는 보지 않는다.
+    segments(segment_index_by_ref)를 주면 번역 조각이 있는 영역에서 사라진 세그먼트(`#k`)의 값만 보관한다.
+    보관함 값 중 원래 참조가 현재 영역과 정확히 일치하게 돌아왔고 자리가 비어 있으면 다시 붙인다.
     """
     report: dict[str, Any] = {"moved": {}, "stashed": {}, "kept": 0}
     entries = guidance_v1.get("regions_by_ref") if isinstance(guidance_v1, dict) else None
-    if not isinstance(entries, dict) or not entries:
+    stash_in = guidance_v1.get(UNMATCHED_FIELD) if isinstance(guidance_v1, dict) else None
+    if (not isinstance(entries, dict) or not entries) and not (isinstance(stash_in, dict) and stash_in):
         return guidance_v1, report
+    entries = entries if isinstance(entries, dict) else {}
     regions = _annotated(current_regions or [])
     if not regions:
         # 영역이 없으면(분석 전·실패) 판단할 근거가 없으니 건드리지 않는다.
@@ -829,6 +873,9 @@ def reconcile_overlay_guidance(
             report["moved"][old_key] = new_key
         report["kept"] += 1
 
+    def segment_gone(ref: str, segment: int | None) -> bool:
+        return bool(segments) and segment is not None and ref in segments and segment not in segments[ref]
+
     # 정확히 일치하는 항목이 자리를 먼저 갖는다.
     ordered = sorted(entries.items(), key=lambda kv: base_info[_split_entry_key(kv[0])[0]]["kind"] != EXACT)
     for key, value in ordered:
@@ -837,7 +884,10 @@ def reconcile_overlay_guidance(
         action = POLICY[(res["kind"], "overlay")]
         if not isinstance(value, dict):
             continue
-        if action == "keep":
+        if action in {"keep", "move"} and segment_gone(res["target_refs"][0], segment):
+            _stash(stash, key, value, "segment_missing", res["target_refs"][0])
+            report["stashed"][key] = "segment_missing"
+        elif action == "keep":
             place(key, key, value, res["target_refs"][0], None)
         elif action == "move":
             target = res["target_refs"][0]
@@ -854,20 +904,34 @@ def reconcile_overlay_guidance(
             _stash(stash, key, value, reason, base)
             report["stashed"][key] = reason
 
+    # 보관함 값 되돌리기: 원래 참조가 지금 현재 영역과 정확히 일치하고 자리가 비어 있을 때만 다시 붙인다.
+    for stash_key in list(stash):
+        item = stash[stash_key]
+        if not isinstance(item, dict) or not item.get("_unmatched_ref"):
+            continue
+        original_key = str(item.get("_unmatched_key") or stash_key.split("~", 1)[0])
+        base, segment = _split_entry_key(original_key)
+        if base != item["_unmatched_ref"] or base not in by_ref_regions or segment_gone(base, segment):
+            continue
+        if original_key in new_entries:
+            continue
+        restored = {k: copy.deepcopy(v) for k, v in item.items() if not k.startswith("_unmatched")}
+        restored[ANCHOR_FIELD] = snapshot_for_region(by_ref_regions[base], current_tg_digest)
+        restored["_migrated"] = "restored"
+        new_entries[original_key] = restored
+        del stash[stash_key]
+        report.setdefault("restored", []).append(original_key)
     result["regions_by_ref"] = new_entries
     result[UNMATCHED_FIELD] = stash
     return result, report
 
 
-def to_legacy_regions(guidance_v1: dict, integrated: Any, current_regions: list[dict] | None = None) -> dict[str, dict]:
-    """구 코드가 읽을 수 있게 regions_by_ref를 현재 integrated 번호 키로 다시 만든다.
-
-    옛 참조가 현재 integrated 묶음과 정확히 같거나 현재 영역을 거쳐 닿는 경우만 쓰고, 못 찾는 값은 뺀다.
-    """
-    legacy: dict[str, dict] = {}
+def legacy_key_map(guidance_v1: dict, integrated: Any, current_regions: list[dict] | None = None) -> dict[str, str]:
+    """regions_by_ref 키 → 구형 regions 키. 구형으로 표현할 수 없는 값(번호 충돌 등)은 들어 있지 않다."""
+    mapping: dict[str, str] = {}
     entries = guidance_v1.get("regions_by_ref") if isinstance(guidance_v1, dict) else None
     if not isinstance(entries, dict):
-        return legacy
+        return mapping
     groups = integrated_groups(integrated, current_regions)
     resolved = resolve_group_refs(groups, current_regions or [])
     number_by_ref: dict[str, int] = {}
@@ -877,19 +941,40 @@ def to_legacy_regions(guidance_v1: dict, integrated: Any, current_regions: list[
     region_number_by_ref = {
         r["region_ref"]: r.get("region_id") for r in _annotated(current_regions or []) if r.get("region_id") is not None
     }
+    used: set[str] = set()
+    pending_direct: list[tuple[str, str]] = []
     for key, value in entries.items():
-        base, segment = _split_entry_key(key)
         if not isinstance(value, dict):
             continue
+        base, segment = _split_entry_key(key)
         number = number_by_ref.get(base)
-        if number is None:
-            # 번역 조각이 없는 영역에 직접 입력한 글자: 구 코드는 현재 영역 번호 키로 읽는다.
-            number = region_number_by_ref.get(base) if segment is None else None
-            if number is None or str(number) in legacy:
-                continue
-        legacy_key = f"{number}:{segment}" if segment is not None else str(number)
-        legacy[legacy_key] = {k: copy.deepcopy(v) for k, v in value.items() if k != ANCHOR_FIELD}
-    return legacy
+        if number is not None:
+            legacy_key = f"{number}:{segment}" if segment is not None else str(number)
+            if legacy_key not in used:
+                used.add(legacy_key)
+                mapping[str(key)] = legacy_key
+        elif segment is None and region_number_by_ref.get(base) is not None:
+            pending_direct.append((str(key), str(region_number_by_ref[base])))
+    # 번역 번호 키가 먼저 자리를 갖고, 번역 없는 영역의 직접 입력(현재 R 번호 키)은 비어 있을 때만 쓴다.
+    for key, legacy_key in pending_direct:
+        if legacy_key not in used and not any(m == legacy_key or m.startswith(f"{legacy_key}:") for m in used):
+            used.add(legacy_key)
+            mapping[key] = legacy_key
+    return mapping
+
+
+def to_legacy_regions(guidance_v1: dict, integrated: Any, current_regions: list[dict] | None = None) -> dict[str, dict]:
+    """구 코드가 읽을 수 있게 regions_by_ref를 현재 integrated 번호 키로 다시 만든다.
+
+    옛 참조가 현재 integrated 묶음과 정확히 같거나 현재 영역을 거쳐 닿는 경우만 쓰고, 못 찾는 값은 뺀다.
+    """
+    entries = guidance_v1.get("regions_by_ref") if isinstance(guidance_v1, dict) else None
+    if not isinstance(entries, dict):
+        return {}
+    return {
+        legacy_key: {k: copy.deepcopy(v) for k, v in entries[key].items() if k != ANCHOR_FIELD}
+        for key, legacy_key in legacy_key_map(guidance_v1, integrated, current_regions).items()
+    }
 
 
 def resolve_group_refs(groups: list[dict], current_regions: list[dict], current_tg_digest: str | None = None) -> list[str | None]:
@@ -1038,6 +1123,7 @@ def project_page(
     manual_guidance: Any = None,
     effective_text_groups: Any = None,
     overlay_newer_than_integrated: bool = True,
+    overlay_newer_than_regions: bool = False,
 ) -> dict:
     """페이지 하나의 읽기 projection. 저장 파일은 건드리지 않고 메모리 사본만 만든다.
 
@@ -1072,8 +1158,9 @@ def project_page(
         groups_source,
         annotated,
         overlay_newer_than_integrated,
+        overlay_newer_than_regions,
     )
-    v1, reconcile_report = reconcile_overlay_guidance(v1, annotated, digest)
+    v1, reconcile_report = reconcile_overlay_guidance(v1, annotated, digest, segment_index_by_ref(groups_source, annotated, digest))
     return {
         "regions": out_regions,
         "integrated": out_integrated,

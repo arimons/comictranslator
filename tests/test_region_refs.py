@@ -214,11 +214,25 @@ class NormalizeOverlayTest(unittest.TestCase):
         v1, _ = rr.normalize_overlay_guidance(guidance, self.integrated, None, overlay_newer_than_integrated=False)
         self.assertEqual(v1["regions_by_ref"]["tg:2"]["_migrated"], "legacy_unanchored")
 
-    def test_number_missing_from_integrated_is_stashed_without_number_fallback(self) -> None:
+    def test_number_missing_from_integrated_is_stashed_without_evidence(self) -> None:
+        """번역에 없는 번호 키는 위치 기록(_anchor)도 저장 시각 증거도 없으면 번호로 찾지 않고 보관한다."""
         regions = [region(9, [], R_C)]
         v1, report = rr.normalize_overlay_guidance({"regions": {"9": {"text_override": "x"}}}, self.integrated, regions)
         self.assertEqual(v1["regions_by_ref"], {})
         self.assertEqual(report["stashed"]["9"], "legacy_number_unresolved")
+
+    def test_number_missing_from_integrated_follows_current_number_when_saved_after_regions(self) -> None:
+        """리뷰 지적 6: overlay가 regions.json보다 나중에 저장됐으면 번역 없는 영역의 직접 입력은 현재 R 번호로 해석한다."""
+        regions = [region(9, [], R_C, source_method="manual_bubble_seed_rescue", region_origin="manual_seed_1")]
+        v1, report = rr.normalize_overlay_guidance(
+            {"regions": {"9": {"text_override": "x"}}}, self.integrated, regions, True, overlay_newer_than_regions=True)
+        self.assertEqual(list(v1["regions_by_ref"]), ["guide:manual_seed_1"])
+        self.assertEqual(v1["regions_by_ref"]["guide:manual_seed_1"]["_migrated"], "legacy_region_number")
+        # 번역 묶음이 이미 그 영역을 쓰고 있으면(번호가 번역 번호) 현재 번호로 보지 않는다.
+        regions2 = [region(2, [2], R_B)]
+        v1, _ = rr.normalize_overlay_guidance({"regions": {"7": {"text_override": "x"}}}, self.integrated, [region(7, [2], R_B)], True,
+                                              overlay_newer_than_regions=True)
+        self.assertEqual(v1["regions_by_ref"], {})
 
     def test_unrelated_fields_survive(self) -> None:
         guidance = {"regions": {}, "eraser_rects": [[1, 2, 3, 4]], "unmatched_regions": {"7": {"x": 1}}}
@@ -414,6 +428,75 @@ class ProjectPageTest(unittest.TestCase):
         self.assertEqual(out["integrated"], [])
         out = rr.project_page({"regions": []}, {"skipped": True}, None)
         self.assertEqual(out["integrated"], {"skipped": True})
+
+
+class ReviewFixesTest(unittest.TestCase):
+    """적대적 리뷰 지적 2·3·4·7."""
+
+    def test_rollback_keeps_values_legacy_cannot_express_in_the_stash(self) -> None:
+        """지적 3: 롤백 중 구 코드가 regions를 고치면 구형이 이기되, 구형에 없던 참조 전용 값은 보관함으로 간다."""
+        integrated = {"clusters": [cluster(1, [1], R_A), cluster(2, [2], R_B, segment=1), cluster(2, [3], R_C, segment=2)]}
+        v1 = {"regions_by_ref": {"tg:1": {"font_size": 10}, "tg:2,3#1": {"font_size": 20}, "tg:9": {"text_override": "직접"}}}
+        saved = rr.dual_write_guidance(v1, integrated, [region(1, [1], R_A), region(3, [2, 3], R_B), region(2, [9], R_C)])
+        self.assertIn("1", saved["regions"])
+        self.assertNotIn("tg:9", {rr.format_overlay_key(k) for k in saved["regions"]})
+        saved["regions"]["1"] = {"font_size": 99}  # 구 코드가 고침
+        out, report = rr.normalize_overlay_guidance(saved, integrated, [region(1, [1], R_A), region(3, [2, 3], R_B), region(2, [9], R_C)])
+        self.assertEqual(report["source"], "legacy_wins_after_rollback")
+        self.assertEqual(out["regions_by_ref"]["tg:1"]["font_size"], 99)
+        stashed_refs = {v.get("_unmatched_ref") for v in out["unmatched_regions"].values()}
+        self.assertIn("tg:9", stashed_refs)
+
+    def test_stashed_value_returns_when_the_region_comes_back(self) -> None:
+        """지적 4: 분할로 보관된 값은 원상복구 재분석 때 다시 붙는다."""
+        guidance = {"regions_by_ref": {"tg:2,3": {"font_size": 30}}}
+        split = [region(1, [2], R_A), region(2, [3], R_B)]
+        out, _ = rr.reconcile_overlay_guidance(guidance, split)
+        self.assertEqual(out["regions_by_ref"], {})
+        back, report = rr.reconcile_overlay_guidance(out, [region(1, [2, 3], R_A)])
+        self.assertEqual(back["regions_by_ref"]["tg:2,3"]["font_size"], 30)
+        self.assertEqual(back["regions_by_ref"]["tg:2,3"]["_migrated"], "restored")
+        self.assertEqual(back["unmatched_regions"], {})
+        # 아직 안 돌아온 값은 그대로 보관된다.
+        still, _ = rr.reconcile_overlay_guidance(out, [region(1, [2], R_A)])
+        self.assertEqual(still["regions_by_ref"], {})
+        self.assertEqual(len(still["unmatched_regions"]), 1)
+
+    def test_restore_never_overwrites_a_newer_value(self) -> None:
+        guidance = {"regions_by_ref": {"tg:2,3": {"font_size": 30}}}
+        out, _ = rr.reconcile_overlay_guidance(guidance, [region(1, [2], R_A), region(2, [3], R_B)])
+        out["regions_by_ref"]["tg:2,3"] = {"font_size": 44}
+        back, _ = rr.reconcile_overlay_guidance(out, [region(1, [2, 3], R_A)])
+        self.assertEqual(back["regions_by_ref"]["tg:2,3"]["font_size"], 44)
+        self.assertEqual(len(back["unmatched_regions"]), 1)
+
+    def test_t8_segment_that_no_longer_exists_is_stashed_and_returns(self) -> None:
+        """지적 7(T8): 재번역으로 세그먼트가 줄면 그 #k 값만 보관한다."""
+        regions = [region(1, [3], R_A)]
+        guidance = {"regions_by_ref": {"tg:3#1": {"font_size": 1}, "tg:3#2": {"font_size": 2}}}
+        two = {"clusters": [cluster(1, [3], R_A, segment=1), cluster(1, [3], R_A, segment=2)]}
+        one = {"clusters": [cluster(1, [3], R_A, segment=1)]}
+        out, report = rr.reconcile_overlay_guidance(guidance, regions, segments=rr.segment_index_by_ref(one, regions))
+        self.assertEqual(list(out["regions_by_ref"]), ["tg:3#1"])
+        self.assertEqual(report["stashed"], {"tg:3#2": "segment_missing"})
+        self.assertNotIn("2", rr.to_legacy_regions(out, one, regions))
+        none = {"clusters": [cluster(1, [3], R_A)]}
+        out2, _ = rr.reconcile_overlay_guidance(guidance, regions, segments=rr.segment_index_by_ref(none, regions))
+        self.assertEqual(out2["regions_by_ref"], {})
+        back, _ = rr.reconcile_overlay_guidance(out, regions, segments=rr.segment_index_by_ref(two, regions))
+        self.assertEqual(set(back["regions_by_ref"]), {"tg:3#1", "tg:3#2"})
+        # 번역이 없는 영역(세그먼트 정보 없음)은 #k도 건드리지 않는다.
+        free, _ = rr.reconcile_overlay_guidance(guidance, regions, segments={})
+        self.assertEqual(len(free["regions_by_ref"]), 2)
+
+    def test_legacy_mirror_never_lets_direct_input_clobber_or_be_clobbered(self) -> None:
+        """지적 2: 번역 번호와 현재 R 번호가 같은 숫자여도 구형 regions에서 서로 덮지 않는다."""
+        integrated = {"clusters": [cluster(3, [4], R_B)]}
+        regions = [region(1, [9], R_A), region(2, [8], R_C), region(3, [3], R_C), region(4, [4], R_B)]
+        v1 = {"regions_by_ref": {"tg:3": {"text_override": "직접"}, "tg:4": {"font_size": 40}}}
+        legacy = rr.to_legacy_regions(v1, integrated, regions)
+        self.assertEqual(legacy, {"3": {"font_size": 40}})
+        self.assertEqual(rr.legacy_key_map(v1, integrated, regions), {"tg:4": "3"})
 
 
 class PolicyTableTest(unittest.TestCase):

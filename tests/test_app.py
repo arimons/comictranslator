@@ -2029,3 +2029,17 @@ def test_store_overlay_guidance_keeps_legacy_keys_when_nothing_is_translated_yet
     record = _overlay_record(tmp_path, monkeypatch, None, [_rect_region(1, [1], [10, 10, 100, 80])])
     saved = app.store_overlay_guidance(record, {"regions": {"1": {"font_size": 30}}}, replace=True)
     assert saved == {"regions": {"1": {"font_size": 30}}}
+
+
+def test_old_bundle_replace_keeps_reference_only_values(tmp_path, monkeypatch):
+    """지적 2(T11): 구 번들이 번호 키만 담아 replace=true로 저장해도 구형으로 표현 못 한 참조 전용 값은 지워지지 않는다."""
+    rect_a, rect_b, rect_c = [10, 10, 100, 80], [200, 10, 100, 80], [10, 200, 100, 80]
+    record = _overlay_record(
+        tmp_path, monkeypatch,
+        {"clusters": [_cluster_row(3, [4], rect_b)]},
+        [_rect_region(1, [9], rect_a), _rect_region(2, [8], rect_c), _rect_region(3, [3], rect_c), _rect_region(4, [4], rect_b)],
+    )
+    app.store_overlay_guidance(record, {"regions": {"tg:3": {"text_override": "직접"}, "tg:4": {"font_size": 40}}}, replace=True)
+    saved = app.store_overlay_guidance(record, {"regions": {"3": {"font_size": 41}}}, replace=True)  # 구 번들: 번역 번호 3(=tg:4)만 안다
+    assert saved["regions_by_ref"]["tg:4"]["font_size"] == 41
+    assert saved["regions_by_ref"]["tg:3"]["text_override"] == "직접"

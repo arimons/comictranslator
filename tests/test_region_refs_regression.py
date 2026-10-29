@@ -72,6 +72,7 @@ def _render(
     clusters: list[dict],
     regions: list[dict],
     overlay: dict | None = None,
+    overlay_older: bool = False,
 ) -> tuple[np.ndarray, dict]:
     """합성 입력으로 apply_text_overlay를 돌려 (결과 이미지, overlay_layout)을 돌려준다."""
     with tempfile.TemporaryDirectory() as raw:
@@ -90,6 +91,9 @@ def _render(
         if overlay is not None:
             guidance_path = tmp / "overlay_guidance.json"
             guidance_path.write_text(json.dumps(overlay, ensure_ascii=False), encoding="utf-8")
+            if overlay_older:  # regions.json·integrated보다 오래된 수동값(저장 시각 증거 없음)
+                import os
+                os.utime(guidance_path, (1_000_000, 1_000_000))
         rto.apply_text_overlay(
             tmp / "masked.png",
             tmp / "integrated.json",
@@ -213,10 +217,18 @@ class RefRendererTest(unittest.TestCase):
         """번역에 없는 번호 키의 text_override가 번호만 같은 다른 현재 영역에 그려지던 문제."""
         clusters = [_cluster(2, 2, "B")]
         regions = [_region(1, 9, "D"), _region(2, 2, "B")]
-        final, layout = _render(clusters, regions, {"regions": {"1": {"text_override": "수동"}}})
+        final, layout = _render(clusters, regions, {"regions": {"1": {"text_override": "수동"}}}, overlay_older=True)
 
         self.assertIsNone(_layout_entry_for_rect(layout, "D"))
         self.assertEqual(_corner_pixel(final, "D"), ORIGINAL_GRAY)
+
+    def test_legacy_direct_input_saved_after_regions_follows_current_number(self) -> None:
+        """리뷰 지적 6: regions.json보다 나중에 저장된 번호 키는 번역 없는 영역의 현재 R 번호로 해석한다."""
+        clusters = [_cluster(2, 2, "B")]
+        regions = [_region(1, 9, "D"), _region(2, 2, "B")]
+        _final, layout = _render(clusters, regions, {"regions": {"1": {"text_override": "수동"}}})
+
+        self.assertEqual(_layout_entry_for_rect(layout, "D")["text_source"], "수동")
 
     def test_ref_keyed_text_override_draws_into_untranslated_region(self) -> None:
         clusters = [_cluster(1, 1, "A")]
