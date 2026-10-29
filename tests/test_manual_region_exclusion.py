@@ -14,7 +14,8 @@ def test_manual_bubble_exclusion_is_exact_and_keeps_other_region():
  assert not original['is_valid'] and other['is_valid']
 
 
-def test_anchorless_manual_ubox_exclusion_restores_original(tmp_path):
+def test_anchorless_manual_ubox_exclusion_restores_original(tmp_path,monkeypatch):
+ monkeypatch.setattr('pipeline.dialogue_extractor._get_lama',lambda:(lambda roi,mask:roi))  # 기본 엔진이 LaMa라 실제 모델 대신 가짜를 쓴다
  original=np.full((180,220,3),255,np.uint8);cv2.putText(original,'TEXT',(40,95),cv2.FONT_HERSHEY_SIMPLEX,1,(0,0,0),2)
  path=tmp_path/'page.png';cv2.imwrite(str(path),original);groups=tmp_path/'groups.json';groups.write_text('[]')
  guide={'id':'manual-u','type':'unboxed','unboxed_rect':[30,60,130,50],'source_method':'manual_ubox_guide'}

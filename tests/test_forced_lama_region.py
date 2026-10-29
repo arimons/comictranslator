@@ -48,22 +48,15 @@ def tmp_path_of(paths):
     return Path(paths["regions.json"]).parent
 
 
-def test_auto_unboxed_region_uses_telea_then_forced_lama_by_region_key(tmp_path, monkeypatch):
+def test_auto_unboxed_region_uses_lama_by_default(tmp_path, monkeypatch):
     paths = _page_with_vertical_text(tmp_path)
 
     calls, regions = _run(paths, monkeypatch)
     text_regions = [r for r in regions if r.get("type") == "unboxed"]
     assert len(text_regions) == 1, regions
     region = text_regions[0]
-    assert calls["lama"] == 0
-    assert region["inpaint_engine_used"] == "telea" and region["inpaint_engine_source"] == "auto"
-
-    # 화면이 쓰는 영역 키(출력 영역에서 계산)로 고정하면 같은 키가 Step 3 안에서도 맞아야 한다
-    key = region_binding_key(region)
-    calls, regions = _run(paths, monkeypatch, overrides=[{"target_key": key, "engine": "lama"}])
-    region = [r for r in regions if r.get("type") == "unboxed"][0]
     assert calls["lama"] == 1
-    assert region["inpaint_engine_used"] == "lama" and region["inpaint_engine_source"] == "forced"
+    assert region["inpaint_engine_used"] == "lama" and region["inpaint_engine_source"] == "auto"
 
 
 def test_override_for_other_region_or_other_engine_is_ignored(tmp_path, monkeypatch):
@@ -75,7 +68,8 @@ def test_override_for_other_region_or_other_engine_is_ignored(tmp_path, monkeypa
         {"engine": "lama"},
         "bad",
     ])
-    assert calls["lama"] == 0
+    # 맞지 않는 고정값은 무시되고 기본(LaMa)으로 지운다
+    assert calls["lama"] == 1
 
 
 def test_forced_keys_and_crop_key_helpers():

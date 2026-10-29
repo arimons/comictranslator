@@ -352,26 +352,6 @@ def _padded_context_rect(base_rect: List[int], image_shape: Tuple[int, ...], pad
     return [x1, y1, x2 - x1, y2 - y1]
 
 
-def _is_color_roi(roi: np.ndarray, spread: int = 20, ratio: float = 0.05) -> bool:
-    """채널 차이가 큰 픽셀이 일정 비율 이상이면 컬러 영역으로 본다."""
-    if roi.ndim != 3 or roi.size == 0:
-        return False
-    b, g, r = (roi[..., i].astype(np.int16) for i in range(3))
-    diff = np.maximum(np.maximum(np.abs(b - g), np.abs(g - r)), np.abs(b - r))
-    return float(np.count_nonzero(diff > spread)) / diff.size >= ratio
-
-
-def _engine_for_color(engine: str, roi: np.ndarray, background_class: str | None) -> str:
-    """컬러 영역은 완전히 흰 평면(white_flat)이 아니면 Telea 대신 LaMa로 지운다.
-
-    Telea는 주변 색을 안쪽으로 번지게 칠한다. 흑백 원고의 흰 바탕(나레이션·독백)에는 깔끔하지만,
-    컬러 무늬나 반투명 말풍선 위에서는 색 덩어리 모자이크가 된다(사망플래그 3권 2쪽 실측).
-    """
-    if engine == "telea" and background_class != "white_flat" and _is_color_roi(roi):
-        return "lama"
-    return engine
-
-
 def _crop_binding_key(item: Dict[str, Any]) -> str:
     """출력 영역(region_data)과 같은 영역 키. 텍스트 기반 영역은 unboxed_rect(=source_rect)가 erase_rect보다 우선한다."""
     from pipeline.region_types import region_binding_key
@@ -385,6 +365,7 @@ def _crop_binding_key(item: Dict[str, Any]) -> str:
 
 
 FORCEABLE_INPAINT_ENGINES = ("lama", "telea")
+DEFAULT_UNBOXED_INPAINT_ENGINE = "lama"
 
 
 def _forced_engine_by_key(overrides: List[Dict[str, Any]] | None) -> Dict[str, str]:
@@ -450,9 +431,7 @@ def _apply_manual_ubox_lama(
         return False
 
     roi = image[cy:cy + ch, cx:cx + cw].copy()
-    engine = str(item.get("inpaint_engine_override") or background_meta.get("recommended_inpaint_engine") or "lama")
-    if not item.get("inpaint_engine_override"):
-        engine = _engine_for_color(engine, roi, background_meta.get("background_class"))
+    engine = str(item.get("inpaint_engine_override") or DEFAULT_UNBOXED_INPAINT_ENGINE)
     if engine == "telea":
         inpaint_roi = cv2.inpaint(roi, context_mask, 5, cv2.INPAINT_TELEA)
     else:
@@ -3139,8 +3118,8 @@ def build_dialogue_sheet(
             if forced_engine:
                 engine = forced_engine
             else:
-                engine = str(mask_strategy_meta.get("recommended_inpaint_engine_override") or cand.get("recommended_inpaint_engine") or "lama")
-                engine = _engine_for_color(engine, cand["roi"], cand.get("background_class"))
+                # 텍스트 기반 영역의 기본 지우기 엔진은 LaMa다. Telea는 영역별로 고정했을 때만 쓴다.
+                engine = DEFAULT_UNBOXED_INPAINT_ENGINE
             # 이전 지우기 결과를 재사용해도 어떤 엔진이었는지는 화면에 보여 줄 수 있게 기록한다
             unboxed_crop["inpaint_engine_used"] = engine
             unboxed_crop["inpaint_engine_source"] = "forced" if forced_engine else "auto"

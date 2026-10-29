@@ -847,8 +847,8 @@ python3 run_pipeline.py \
   </div>
 
   <div class="info-box">
-    <strong>컬러 페이지의 엔진 선택</strong>
-    Telea는 흰 바탕 나레이션을 빠르고 깔끔하게 지우려고 쓰지만, 컬러 무늬나 반투명 말풍선 위에서는 색 덩어리로 뭉개집니다. 그래서 지울 영역이 컬러이면 완전히 흰 평면일 때만 Telea를 쓰고 나머지는 LaMa로 지웁니다(<code>_engine_for_color</code>).
+    <strong>텍스트 기반 영역의 기본 엔진</strong>
+    기본 엔진은 LaMa입니다(<code>DEFAULT_UNBOXED_INPAINT_ENGINE</code>). Telea는 흰 바탕에서는 깔끔하지만 컬러 무늬나 반투명 말풍선 위에서는 색 덩어리로 뭉개지고, 분류가 어긋나는 경우가 있어 기본에서 뺐습니다. Apple Silicon(MPS)에서 영역 한 곳은 약 0.1〜0.5초입니다. Telea는 영역별로 고정했을 때만 씁니다.
   </div>
 
   <div class="info-box">
@@ -860,7 +860,7 @@ python3 run_pipeline.py \
     <strong>수동 텍스트 기반 영역 지우기</strong>
     편집기에서 그린 텍스트 기반 영역은 <code>_apply_manual_ubox_lama()</code>가 따로 처리합니다. 박스 안에서 글자 색 픽셀만 마스크로 잡고, 박스 바깥 24px를 문맥으로 넘깁니다.
     박스가 어두우면 흰 글자로 보고 마스크를 6px 넓힙니다. 흰 테두리가 남으면 LaMa가 글자 모양 얼룩을 되살리기 때문입니다.
-    엔진은 배경 분류(<code>_classify_inpaint_background</code>)로 Telea/LaMa를 고르고, guidance에 <code>inpaint_engine: "lama"</code> 또는 <code>"telea"</code>가 있으면 그 엔진으로 고정합니다. 자동·수동 텍스트 기반 영역 모두 영역 키로 LaMa·Telea를 고정할 수 있고(<code>guidance.inpaint_engine_overrides</code>의 <code>engine</code>, <code>_forced_engine_by_key</code>), 쓴 엔진은 영역에 <code>inpaint_engine_used</code>·<code>inpaint_engine_source</code>로 기록됩니다.
+    엔진은 기본 LaMa이고, guidance에 <code>inpaint_engine: "lama"</code> 또는 <code>"telea"</code>가 있으면 그 엔진으로 고정합니다. 자동·수동 텍스트 기반 영역 모두 영역 키로 LaMa·Telea를 고정할 수 있고(<code>guidance.inpaint_engine_overrides</code>의 <code>engine</code>, <code>_forced_engine_by_key</code>), 쓴 엔진은 영역에 <code>inpaint_engine_used</code>·<code>inpaint_engine_source</code>로 기록됩니다.
   </div>
 
   <div class="info-box info-warn">
@@ -1374,3 +1374,5 @@ python3 run_pipeline.py \
 </html>
 
 <!-- 2026-10-29 review: 기본 자간(Freesentation) 0으로 변경, 단계 로직에는 영향 없음 -->
+
+<!-- 2026-10-29 review: render_text_overlay.py overlay_override_for_cluster가 source_region_id를 가진 번역 조각은 그 번호의 수동값만 쓰도록 변경, 이 문서 내용에는 영향 없음 -->

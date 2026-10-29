@@ -5,7 +5,7 @@ import { rectOf, tgId, imageGroups, defaultGuidance, regionId, imageRegions, reg
 import { createViewport } from "./viewportControls.js";
 import { placeCanvasLabels, promotedTgIds } from "./canvasLabels.js";
 import { regionIsExcluded, tgIsExcluded } from "./regionExclusion.js";
-import { TEXT_BASED, regionProcessingBasis, regionTypeLabel, regionBindingKey } from "./regionTypes.js";
+import { TEXT_BASED, regionProcessingBasis, regionTypeLabel, regionBindingKey, usesEdgeBarrier } from "./regionTypes.js";
 
 const SELECTED_REGION_COLOR = "#e11d48";
 
@@ -468,9 +468,16 @@ const EditorCanvas = forwardRef(function EditorCanvas({ image, baseUrl, guidance
     const x2 = Math.max(start.x, end.x);
     const y2 = Math.max(start.y, end.y);
     if (x2 - x1 < 8 || y2 - y1 < 8) return;
+    setEdgeBarrierBox([x1, y1, x2 - x1, y2 - y1]);
+  }
+
+  // Edge 박스를 가상 벽 4개로 저장한다. 겹치는 기존 박스는 교체한다(크기 조절도 이 경로).
+  function setEdgeBarrierBox(nextRect, replaceMessage = "겹친 Edge 교체", addMessage = "Edge barrier box 추가") {
+    const [x1, y1, w, h] = nextRect;
+    const x2 = x1 + w;
+    const y2 = y1 + h;
     const latest = guidanceRef.current || defaultGuidance(null);
     const id = `edge_box_${Date.now()}`;
-    const nextRect = [x1, y1, x2 - x1, y2 - y1];
     const keptWalls = removeOverlappingEdgeBoxes(latest.virtual_walls || [], nextRect);
     const walls = [
       [[x1, y1], [x2, y1]],
@@ -490,7 +497,7 @@ const EditorCanvas = forwardRef(function EditorCanvas({ image, baseUrl, guidance
     };
     guidanceRef.current = next;
     setGuidance(next);
-    setStatus(keptWalls.length < (latest.virtual_walls || []).length ? "겹친 Edge 교체" : "Edge barrier box 추가");
+    setStatus(keptWalls.length < (latest.virtual_walls || []).length ? replaceMessage : addMessage);
   }
 
   function addManualRegion(kind, start, end) {
@@ -726,17 +733,46 @@ const EditorCanvas = forwardRef(function EditorCanvas({ image, baseUrl, guidance
     });
   }
 
+  // Edge 영역의 크기 조절 기준 상자. 수동 Edge 박스가 영역과 겹치면 그 박스를, 자동 검출이면 영역 사각형을 쓴다.
+  function edgeBoxRectForRegion(currentGuidance, region) {
+    const regionRect = (region.bubble_rect || region.erase_rect || region.source_rect || []).slice(0, 4);
+    if (regionRect.length < 4) return null;
+    const byBox = new Map();
+    (currentGuidance.virtual_walls || []).forEach((item) => {
+      if (!item.box_id) return;
+      if (!byBox.has(item.box_id)) byBox.set(item.box_id, []);
+      byBox.get(item.box_id).push(item);
+    });
+    let best = null;
+    let bestArea = 0;
+    byBox.forEach((items) => {
+      const boxRect = edgeWallRect(items);
+      if (!boxRect || !rectsOverlap(boxRect, regionRect)) return;
+      const w = Math.min(boxRect[0] + boxRect[2], regionRect[0] + regionRect[2]) - Math.max(boxRect[0], regionRect[0]);
+      const h = Math.min(boxRect[1] + boxRect[3], regionRect[1] + regionRect[3]) - Math.max(boxRect[1], regionRect[1]);
+      if (w * h > bestArea) { best = boxRect; bestArea = w * h; }
+    });
+    return best || regionRect;
+  }
+
   function addTextRegionResizer(overlay, visibleRegions, currentGuidance) {
     // 상자 위에서 도구를 바꾸면 상자만 사라지고 mouseleave가 오지 않아 이동 커서가 남으므로 다시 그릴 때마다 지운다
     const container = stageRef.current?.container();
     if (container?.style.cursor === "move") container.style.cursor = "";
     if (toolRef.current !== "select" || selectedRegionRef.current == null || imageRef.current?.processing_excluded) return;
     const region = visibleRegions.find((item) => regionId(item) === Number(selectedRegionRef.current));
-    if (!region || regionProcessingBasis(region) !== TEXT_BASED) return;
+    if (!region) return;
+    const isEdge = usesEdgeBarrier(region);
+    if (regionProcessingBasis(region) !== TEXT_BASED && !isEdge) return;
     const key = regionBindingKey(region);
-    const index = manualResizeIndex(currentGuidance, region, key);
-    const manual = index >= 0 ? currentGuidance.manual_regions[index] : null;
-    const rect = manual ? manual.unboxed_rect || manual.rect : region.unboxed_rect || region.erase_rect;
+    let rect;
+    if (isEdge) {
+      rect = edgeBoxRectForRegion(currentGuidance, region);
+    } else {
+      const index = manualResizeIndex(currentGuidance, region, key);
+      const manual = index >= 0 ? currentGuidance.manual_regions[index] : null;
+      rect = manual ? manual.unboxed_rect || manual.rect : region.unboxed_rect || region.erase_rect;
+    }
     if (!rect) return;
     const box = new Konva.Rect({ ...toStageRect(rect), stroke: "#b45309", strokeWidth: 1, draggable: true, name: "text-region-resize" });
     const transformer = new Konva.Transformer({
@@ -761,6 +797,10 @@ const EditorCanvas = forwardRef(function EditorCanvas({ image, baseUrl, guidance
     setTimeout(() => { skipClickRef.current = false; }, 0);
     if (x2 - x1 < 8 || y2 - y1 < 8) { redraw(); return; }
     const rect = [x1, y1, x2 - x1, y2 - y1];
+    if (usesEdgeBarrier(region)) {
+      setEdgeBarrierBox(rect, `R${regionId(region)} Edge 크기 변경 · 변경사항 적용 시 반영`, `R${regionId(region)} Edge 크기 변경 · 변경사항 적용 시 반영`);
+      return;
+    }
     const latest = guidanceRef.current || defaultGuidance(null);
     const list = [...(latest.manual_regions || [])];
     const index = manualResizeIndex(latest, region, key);

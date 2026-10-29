@@ -418,13 +418,14 @@
         <article class="card">
           <h3>Edge Wall</h3>
           <p>수동 edge는 사용자가 지정하는 가상의 벽입니다. 지정한 box가 상하좌우 경계가 되며, 인접 edge와 직접 overlap이 없으면 서로 독립적으로 취급되어야 합니다.</p>
+          <p>Edge 영역(R)을 선택하면 텍스트 기반 영역처럼 크기 조절 손잡이가 뜹니다. 손잡이를 옮기면 같은 자리의 Edge box가 새 크기로 교체되고, <strong>변경사항 적용</strong>을 눌러야 반영됩니다.</p>
           <p><span class="tag">Guidance only</span> <kbd>E</kbd></p>
         </article>
         <article class="card">
           <h3>경계 기반 / 텍스트 기반</h3>
           <p>경계 기반 검출의 시작점을 추가할 때는 B 도구로 클릭 seed를 찍습니다. 텍스트 기반 처리의 글자 범위를 지정할 때는 U 도구로 사각형을 드래그합니다.</p>
-          <p>텍스트 기반 영역은 사각형 전체를 지우지 않고, 사각형 안에서 글자 색과 같은 픽셀만 골라 지웁니다. 배경이 흰색처럼 평평하면 Telea, 망점·어두운 배경·선화면 LaMa가 자동으로 고릅니다. 박스 안에 속도선이나 머리카락 끝이 걸리면 그 선도 글자로 보고 함께 지우니, 박스는 글자와 후리가나에 바짝 붙여 잡습니다. 자동으로 찾은 말풍선 밖 글자도 그림 위에 있으면 같은 방식으로 지웁니다.</p>
-          <p>자동으로 Telea가 골라진 영역이 깔끔하게 지워지지 않으면, 그 영역(R)을 선택하고 선택 정보 패널의 <strong>지우기</strong> 줄에서 <strong>LaMa</strong>를 고릅니다(도구 모음의 LaMa 버튼도 같음). 지우기 줄은 <strong>자동 · LaMa / LaMa / Telea</strong> 세 칸이며, 자동 칸에는 마지막 분석에서 실제로 쓰인 엔진이 함께 보입니다. 반대로 LaMa가 그림을 뭉개면 <strong>Telea</strong>로 고정합니다. 바꾸면 "변경사항 적용 시 반영"이 뜨고, <strong>변경사항 적용(Ctrl+Enter)</strong>을 눌러야 다시 지웁니다. 고정은 기록에 남고, <strong>자동</strong>을 고르면 자동 판정으로 돌아갑니다. 영역의 범위가 바뀌면 고정이 풀리니 다시 지정합니다.</p>
+          <p>텍스트 기반 영역은 사각형 전체를 지우지 않고, 사각형 안에서 글자 색과 같은 픽셀만 골라 지웁니다. 기본 지우기 엔진은 LaMa입니다. 배경이 흰색이든 망점·어두운 배경·선화든 같은 엔진으로 지웁니다. 박스 안에 속도선이나 머리카락 끝이 걸리면 그 선도 글자로 보고 함께 지우니, 박스는 글자와 후리가나에 바짝 붙여 잡습니다. 자동으로 찾은 말풍선 밖 글자도 그림 위에 있으면 같은 방식으로 지웁니다.</p>
+          <p>지우기 줄은 <strong>자동 · LaMa / LaMa / Telea</strong> 세 칸이며, 자동 칸에는 마지막 분석에서 실제로 쓰인 엔진이 함께 보입니다. LaMa가 그림을 뭉개면 그 영역(R)을 선택하고 선택 정보 패널의 <strong>지우기</strong> 줄에서 <strong>Telea</strong>로 고정합니다. 바꾸면 "변경사항 적용 시 반영"이 뜨고, <strong>변경사항 적용(Ctrl+Enter)</strong>을 눌러야 다시 지웁니다. 고정은 기록에 남고, <strong>자동</strong>을 고르면 자동 판정으로 돌아갑니다. 영역의 범위가 바뀌면 고정이 풀리니 다시 지정합니다.</p>
           <p>상단 바의 <strong>기록</strong>을 펼쳐 텍스트 기반 영역 가이드 줄 오른쪽 <strong>LaMa</strong> 버튼을 켜도 배경 판정과 관계없이 LaMa로 지웁니다. 망점 위 글자가 매끈하게 번져 지워졌다면 켜 봅니다.</p>
           <p><span class="tag">Guidance only</span> <kbd>B</kbd>, <kbd>U</kbd></p>
         </article>
@@ -756,7 +757,7 @@
           <tr data-shortcut="overlay.fontBigger"><td><kbd>=</kbd>, <kbd>Shift</kbd> + <kbd>=</kbd></td><td>글자 크기 +3 (Shift는 +1)</td></tr>
           <tr data-shortcut="overlay.fontSmaller"><td><kbd>-</kbd>, <kbd>Shift</kbd> + <kbd>-</kbd></td><td>글자 크기 -3 (Shift는 -1)</td></tr>
           <tr data-shortcut="overlay.orientation"><td><kbd>O</kbd></td><td>쓰기 방향 순환: 자동 → 가로 → 세로</td></tr>
-          <tr data-shortcut="overlay.apply"><td><kbd>Ctrl</kbd> + <kbd>Enter</kbd></td><td>Overlay 적용 (Apply Overlay)</td></tr>
+          <tr data-shortcut="overlay.apply"><td><kbd>Ctrl</kbd> + <kbd>Enter</kbd></td><td>Overlay 적용 (Apply Overlay). Overlay 탭 오른쪽 패널의 ↶ ↷ 버튼은 실행 취소·다시 실행과 같습니다</td></tr>
         </tbody>
       </table>
       <p class="note">

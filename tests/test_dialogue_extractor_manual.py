@@ -424,7 +424,7 @@ def test_manual_ubox_lama_erases_bright_text_on_dark_background(monkeypatch):
     assert (masked[12, 22] == [20, 20, 20]).all()
 
 
-def test_manual_ubox_uses_telea_for_white_background(monkeypatch):
+def test_manual_ubox_uses_lama_by_default_even_on_white_background(monkeypatch):
     image = np.full((140, 140, 3), 255, dtype=np.uint8)
     cv2.rectangle(image, (70, 65), (80, 85), (0, 0, 0), -1)
     masked = image.copy()
@@ -436,26 +436,23 @@ def test_manual_ubox_uses_telea_for_white_background(monkeypatch):
         "quality_flags": ["manual_ubox"],
     }
     group_by_id = {7: {"text_group_id": 7, "fallback_rect": [68, 62, 16, 28], "text": "あ"}}
-    captured = {}
 
-    def fake_inpaint(roi, mask, radius, method):
-        captured["radius"] = radius
-        captured["method"] = method
-        out = roi.copy()
-        out[mask > 0] = [210, 210, 210]
-        return out
+    def fake_lama():
+        def run(roi_pil, mask_pil):
+            out = np.array(roi_pil).copy()
+            out[np.array(mask_pil) > 0] = [210, 210, 210]
+            return Image.fromarray(out)
+        return run
 
-    monkeypatch.setattr("pipeline.dialogue_extractor.cv2.inpaint", fake_inpaint)
-    monkeypatch.setattr("pipeline.dialogue_extractor._get_lama", lambda: (_ for _ in ()).throw(AssertionError("LaMa should not be used")))
+    monkeypatch.setattr("pipeline.dialogue_extractor._get_lama", fake_lama)
+    monkeypatch.setattr("pipeline.dialogue_extractor.cv2.inpaint", lambda *a, **k: (_ for _ in ()).throw(AssertionError("Telea should not be used")))
 
     applied = _apply_manual_ubox_lama(image, masked, item, group_by_id)
 
     assert applied is True
     assert item["manual_inpaint_background_class"] == "white_flat"
-    assert item["manual_inpaint_engine"] == "telea"
-    assert item["manual_mask_polarity"] == "dark"
-    assert "manual_ubox_telea" in item["quality_flags"]
-    assert captured["method"] == cv2.INPAINT_TELEA
+    assert item["manual_inpaint_engine"] == "lama"
+    assert item["inpaint_engine_source"] == "auto"
     assert (masked[75, 75] == [210, 210, 210]).all()
 
 
@@ -1247,19 +1244,6 @@ def test_unboxed_exclusion_uses_saved_anchors_and_geometry():
               {"text_group_id": 4, "fallback_rect": [20, 20, 30, 40]},
               {"text_group_id": 5, "fallback_rect": [130, 20, 30, 40]}]
     assert _suppressed_text_group_ids(groups, [], [{"anchor_ids": [3, 5], "rect": [10, 10, 60, 60]}]) == {3}
-
-
-def test_color_region_uses_lama_instead_of_telea_unless_white_flat():
-    from pipeline.dialogue_extractor import _engine_for_color
-
-    color = np.zeros((40, 40, 3), dtype=np.uint8)
-    color[..., 2] = 200  # 빨간 무늬
-    gray = np.full((40, 40, 3), 230, dtype=np.uint8)
-
-    assert _engine_for_color("telea", color, "fallback_lightish") == "lama"
-    assert _engine_for_color("telea", color, "white_flat") == "telea"
-    assert _engine_for_color("telea", gray, "fallback_lightish") == "telea"  # 흑백 원고는 그대로
-    assert _engine_for_color("lama", gray, "light_flat") == "lama"
 
 
 def test_manual_split_guide_splits_seed_region_without_any_tg():
