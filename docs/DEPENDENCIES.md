@@ -71,3 +71,5 @@ projects 아래 폴더 ID는 기존 timestamp ID를 유지한다. project.json�
 <!-- 2026-10-29 dialogue_extractor.py(제외 영역 판정 순서) 변경 검토: 의존성 영향 없음 -->
 
 <!-- 2026-10-29 edge_barrier_flood_rescue.py·dialogue_extractor.py(수동 Edge 마스크) 변경 검토: 의존성 영향 없음 -->
+
+<!-- 2026-10-29 dialogue_extractor.py(수동 Edge 글자 픽셀 보강 범위) 변경 검토: 의존성 영향 없음 -->
