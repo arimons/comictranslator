@@ -8,6 +8,8 @@ import { regionIsExcluded, tgIsExcluded } from "./regionExclusion.js";
 import { TEXT_BASED, regionProcessingBasis, regionTypeLabel, regionBindingKey, usesEdgeBarrier } from "./regionTypes.js";
 
 const SELECTED_REGION_COLOR = "#e11d48";
+// Edge는 검출 결과(초록)와 같은 계열로 벽선도 초록으로 그린다. 선택 강조색(빨강)과 겹치지 않게 한다.
+const EDGE_WALL_COLOR = "#16a34a";
 
 const EditorCanvas = forwardRef(function EditorCanvas({ image, baseUrl, guidance, setGuidance, tool, layers, selectedTg, setSelectedTg, selectedRegionId, setSelectedRegionId, onToolComplete, setStatus, speakerLabels }, ref) {
   const hostRef = useRef(null);
@@ -643,7 +645,7 @@ const EditorCanvas = forwardRef(function EditorCanvas({ image, baseUrl, guidance
         color: "#7c2d12",
         label: `TG${item.text_group_id}`,
       }));
-      (currentGuidance.virtual_walls || []).forEach((item) => drawGuideLine(overlay, item.line || item.polyline, "#b91c1c", "edge"));
+      (currentGuidance.virtual_walls || []).forEach((item) => drawGuideLine(overlay, item.line || item.polyline, EDGE_WALL_COLOR, "edge"));
       (currentGuidance.split_guides || []).forEach((item) => splitGuidesToDraw.push({
         line: item.line,
         color: "#f59e0b",
@@ -674,7 +676,7 @@ const EditorCanvas = forwardRef(function EditorCanvas({ image, baseUrl, guidance
       const isRectRegion = currentDragPreview.tool === "ubox";
       const isTextBased = currentDragPreview.tool === "ubox";
       const isWall = currentDragPreview.tool === "wall";
-      const color = isTextBased ? "#b45309" : currentDragPreview.tool === "bubble" ? "#111827" : isWall ? "#b91c1c" : "#b45309";
+      const color = isTextBased ? "#b45309" : currentDragPreview.tool === "bubble" ? "#111827" : isWall ? EDGE_WALL_COLOR : "#b45309";
       if (isRectRegion || isWall) {
         overlay.add(new Konva.Rect({
           ...stageRectFromPoints(currentDragPreview.start, currentDragPreview.end),
@@ -731,6 +733,32 @@ const EditorCanvas = forwardRef(function EditorCanvas({ image, baseUrl, guidance
       return region.source_method === "manual_ubox_guide" && itemRect.length >= 4
         && itemRect.slice(0, 4).every((value, index) => Math.abs(value - (rect[index] ?? NaN)) <= 1);
     });
+  }
+
+  // 화면에 그려진 Edge 벽선을 눌렀을 때 그 박스가 만든 Edge 영역. 영역이 벽 박스보다 작아도 벽선으로 고를 수 있다.
+  function edgeRegionAtWall(point) {
+    const current = guidanceRef.current || defaultGuidance(null);
+    if (layersRef.current?.guidance === false || layersRef.current?.regions === false) return null;
+    const radius = imageHitRadius();
+    const walls = (current.virtual_walls || []).filter((item) => item.box_id);
+    const hit = walls.find((item) => {
+      const line = item.line || item.polyline;
+      return Array.isArray(line) && line.length >= 2 && distanceToSegment(point, line[0], line[line.length - 1]) <= radius;
+    });
+    if (!hit) return null;
+    const boxRect = edgeWallRect(walls.filter((item) => item.box_id === hit.box_id));
+    if (!boxRect) return null;
+    let best = null;
+    let bestArea = 0;
+    imageRegions(imageRef.current).forEach((region) => {
+      if (!usesEdgeBarrier(region) || regionIsExcluded(region, current)) return;
+      const rect = region.bubble_rect || region.erase_rect || region.source_rect;
+      if (!rect) return;
+      const w = Math.min(boxRect[0] + boxRect[2], rect[0] + rect[2]) - Math.max(boxRect[0], rect[0]);
+      const h = Math.min(boxRect[1] + boxRect[3], rect[1] + rect[3]) - Math.max(boxRect[1], rect[1]);
+      if (w > 0 && h > 0 && w * h > bestArea) { best = region; bestArea = w * h; }
+    });
+    return best;
   }
 
   // Edge 영역의 크기 조절 기준 상자. 수동 Edge 박스가 영역과 겹치면 그 박스를, 자동 검출이면 영역 사각형을 쓴다.
@@ -913,6 +941,8 @@ const EditorCanvas = forwardRef(function EditorCanvas({ image, baseUrl, guidance
         return;
       }
       if (currentTool !== "select") return;
+      const wallRegion = edgeRegionAtWall(point);
+      if (wallRegion) { chooseRegion(wallRegion); lastSelectionClick.current = null; return; }
       const groups = layersRef.current?.tg === false ? [] : [...imageGroups(imageRef.current)].reverse().filter(g => !tgIsExcluded(g,guidanceRef.current) && rectContains(rectOf(g),point));
       const regions = layersRef.current?.regions === false ? [] : [...imageRegions(imageRef.current)].reverse().filter(r => !regionIsExcluded(r,guidanceRef.current) && rectContains(regionDisplayRect(r),point));
       const hits = [...groups.map(group=>({kind:"tg",id:tgId(group),group})),...regions.map(region=>({kind:"region",id:regionId(region),region}))];
