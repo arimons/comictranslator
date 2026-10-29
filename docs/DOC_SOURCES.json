@@ -187,6 +187,11 @@
       "topic": "편집기 UI와 MCP 후속 할 일",
       "sources": []
     },
+    "docs/CUSTOM_MASK_PLAN.md": {
+      "role": "hub",
+      "topic": "커스텀 마스크(지우기 보정) 구현 계획",
+      "sources": []
+    },
     "docs/PAGE_PREPARATION.md": {
       "role": "canonical",
       "topic": "원본 보존 페이지 분할 미리보기·서버 상태등·이미지 맞춤",
