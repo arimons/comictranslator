@@ -496,6 +496,7 @@ def _include_text_pixels_in_edge_mask(
     target_groups: List[Dict[str, Any]],
     wall_rect: List[int],
     pad: int = 2,
+    ruby_pad: int = 9,
     dark_threshold: int = 140,
 ) -> Tuple[np.ndarray, List[int]]:
     """채우기가 닿지 못한 글자 픽셀을 마스크에 더한다.
@@ -508,16 +509,23 @@ def _include_text_pixels_in_edge_mask(
     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
     text = np.zeros((img_h, img_w), dtype=np.uint8)
     for group in target_groups:
-        raw = group.get("fallback_rect") or group.get("tight_rect") or group.get("bounding_rect")
-        if not raw:
-            continue
-        gx, gy, gw, gh = _as_rect(raw)
-        x1 = max(0, wx, gx - pad)
-        y1 = max(0, wy, gy - pad)
-        x2 = min(img_w, wx + ww, gx + gw + pad)
-        y2 = min(img_h, wy + wh, gy + gh + pad)
-        if x2 > x1 and y2 > y1:
-            text[y1:y2, x1:x2] = np.where(gray[y1:y2, x1:x2] < dark_threshold, 255, 0).astype(np.uint8)
+        # 글자 줄(열)별 영역만 쓴다. TG 전체 사각형은 글자 없는 모서리까지 포함해, 방사선 가시 픽셀을 글자로 오인한다.
+        line_rects = [line.get("bbox") for line in group.get("lines") or [] if isinstance(line, dict) and line.get("bbox")]
+        if not line_rects:
+            line_rects = [group.get("fallback_rect") or group.get("tight_rect") or group.get("bounding_rect")]
+        vertical = str(group.get("orientation") or "").lower().startswith("v")
+        # 후리가나는 글자열 옆에 붙으므로 글자 진행의 직각 방향을 넉넉히 잡는다
+        pad_x, pad_y = (ruby_pad, pad) if vertical else (pad, ruby_pad)
+        for raw in line_rects:
+            if not raw:
+                continue
+            gx, gy, gw, gh = _as_rect(raw)
+            x1 = max(0, wx, gx - pad_x)
+            y1 = max(0, wy, gy - pad_y)
+            x2 = min(img_w, wx + ww, gx + gw + pad_x)
+            y2 = min(img_h, wy + wh, gy + gh + pad_y)
+            if x2 > x1 and y2 > y1:
+                text[y1:y2, x1:x2] = np.where(gray[y1:y2, x1:x2] < dark_threshold, 255, 0).astype(np.uint8)
     if not text.any():
         return mask, mask_rect
     # 글자 가장자리의 흐린 픽셀까지 지우도록 살짝 넓히되, 박스 밖으로는 나가지 않는다

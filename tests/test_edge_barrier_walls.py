@@ -33,3 +33,14 @@ def test_only_dark_text_pixels_are_added_not_the_whole_text_rect():
     assert result[41, 41] == 255            # 글자는 지운다
     assert result[33, 33] == 0              # 글자 사각형 안의 흰 바탕을 통째로 칠하지 않는다
     assert result[11, 81] == 0              # 사각형 밖 검은 선은 건드리지 않는다
+
+
+def test_dark_pixels_in_text_rect_corners_outside_any_text_line_are_not_added():
+    image = np.full((100, 100, 3), 255, dtype=np.uint8)
+    image[30:40, 40:42] = 0      # 글자 줄 안의 글자 픽셀
+    image[88:92, 28:32] = 0      # TG 사각형 모서리의 방사선 가시
+    mask = np.zeros((100, 100), dtype=np.uint8)
+    group = {"orientation": "vertical", "fallback_rect": [25, 25, 30, 70], "lines": [{"bbox": [38, 28, 8, 30]}]}
+    result, _rect = _include_text_pixels_in_edge_mask(mask, [0, 0, 0, 0], image, [group], [20, 20, 70, 78])
+    assert result[35, 40] == 255
+    assert result[90, 30] == 0
