@@ -3506,9 +3506,8 @@ select.memo-key { width: 100%; padding: 2px; font-size: 12px; }
 .ocr-batch-toast.running small { color: var(--muted, #64748b); }
 .ocr-batch-failed { color: #b91c1c; }
 .ocr-batch-actions { display: flex; justify-content: flex-end; gap: 8px; }
-.ocr-batch-size { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 10px; color: var(--muted, #64748b); font-size: 12px; }
+.ocr-batch-size { display: flex; align-items: center; gap: 8px; margin-top: 10px; color: var(--muted, #64748b); font-size: 12px; }
 .ocr-batch-size span { white-space: nowrap; }
-.ocr-batch-size select { flex: 1; min-width: 0; }
 
 /* 가로 이미지 나누기: 시작 화면 선택과 미리보기 창의 작업 흔적 안내 */
 .split-option { margin-top: 10px; }
@@ -3599,3 +3598,24 @@ select.memo-key { width: 100%; padding: 2px; font-size: 12px; }
 /* 작품 메모: 작품명으로 나무위키 찾기 */
 .memo-namu { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 0 0 8px; font-size: 12px; }
 .memo-namu a { color: #0b57d0; }
+
+/* 대사 리스트: 원문·번역·검수 상태를 읽는 순서로 보여 준다 */
+.dialogue-list { display: grid; gap: 6px; max-height: 420px; overflow: auto; padding-right: 2px; }
+.dialogue-list-head { position: sticky; top: 0; z-index: 1; display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 6px 2px; background: var(--panel); font-size: 12px; }
+.dialogue-ask-count { color: #b45309; font-weight: 700; }
+.dialogue-filters { display: flex; gap: 4px; margin-left: auto; }
+.dialogue-filters button { min-height: 22px; padding: 0 8px; font-size: 11px; }
+.dialogue-filters button.active { background: var(--blue); border-color: var(--blue); color: white; }
+.dialogue-row { border: 1px solid var(--line); border-radius: 8px; background: white; padding: 8px; display: grid; gap: 4px; cursor: pointer; }
+.dialogue-row.active { border-color: var(--blue); background: rgba(37, 99, 235, 0.08); box-shadow: inset 3px 0 0 var(--blue); }
+.dialogue-row.status-ok { border-left: 3px solid #16a34a; }
+.dialogue-row.status-ask { border-left: 3px solid #d97706; }
+.dialogue-row-head { display: flex; align-items: center; gap: 6px; font-size: 12px; }
+.dialogue-warning { padding: 1px 6px; border-radius: 999px; background: #fee2e2; color: #b91c1c; font-size: 11px; font-weight: 700; }
+.dialogue-status-actions { margin-left: auto; display: flex; gap: 4px; }
+.dialogue-status-actions button { min-height: 22px; padding: 0 8px; font-size: 11px; }
+.dialogue-status-actions button.active.ok { background: #16a34a; border-color: #16a34a; color: white; }
+.dialogue-status-actions button.active.ask { background: #d97706; border-color: #d97706; color: white; }
+.dialogue-original, .dialogue-translation { margin: 0; font-size: 12px; line-height: 1.45; white-space: pre-wrap; word-break: break-word; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; }
+.dialogue-original { color: var(--muted); }
+.dialogue-row.active .dialogue-original, .dialogue-row.active .dialogue-translation { -webkit-line-clamp: unset; display: block; }

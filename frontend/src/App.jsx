@@ -9,13 +9,14 @@ import SourceLinks from "./SourceLinks.jsx";
 import StartScreen from "./StartScreen.jsx";
 import ImagePreview from "./ImagePreview.jsx";
 import GuidanceToolIcon from "./GuidanceToolIcon.jsx";
-import OcrBatchPrompt, { OCR_BATCH_SIZES } from "./OcrBatchPrompt.jsx";
+import OcrBatchPrompt, { OCR_PROMPT_MILESTONES } from "./OcrBatchPrompt.jsx";
 import ImageGenerationPanel from "./ImageGenerationPanel.jsx";
 import AiErasePanel from "./AiErasePanel.jsx";
 import ServerStatus from "./ServerStatus.jsx";
 import PagePreparation from "./PagePreparation.jsx";
 import GlossaryPanel from "./GlossaryPanel.jsx";
 import SpeakerPicker from "./SpeakerPicker.jsx";
+import DialogueList, { dialogueFilterMatches } from "./DialogueList.jsx";
 import FloatingPanel from "./FloatingPanel.jsx";
 import { KEYMAP, eventMatches, entryInContext, entryVisibleOnPlatform, shortcutFor, shortcutById } from "./keymap.js";
 import {
@@ -43,6 +44,7 @@ import {
   imageSummaryOf,
   regionSegmentSiblingCount,
   baseRegionText,
+  regionCluster,
   inferredRegionFontStyle,
   inferredRegionWritingMode,
   overlayWritingModeChoice,
@@ -142,11 +144,17 @@ export default function App() {
   const [splitLandscape, setSplitLandscape] = useState(() => readStored("ct.splitLandscape", true, (v) => typeof v === "boolean"));
   // 확인한 페이지(영역 분석 탭에서 보고 넘어간 페이지)가 쌓이면 번역을 백그라운드로 돌릴지 묻는다.
   const [reviewedIds, setReviewedIds] = useState(() => new Set());
-  const [ocrBatchSize, setOcrBatchSize] = useState(() => readStored("ct.ocrBatchSize", 10, (v) => v === 0 || OCR_BATCH_SIZES.includes(v)));
-  const [ocrPromptAnchor, setOcrPromptAnchor] = useState(0);
+  const [ocrPromptOff, setOcrPromptOff] = useState(() => readStored("ct.ocrPromptOff", false, (v) => typeof v === "boolean"));
+  // 알림을 이미 처리한 가장 높은 진행률 기준(0, 60, 80). 세션별로 기억한다.
+  const [ocrMilestone, setOcrMilestone] = useState(0);
+  // 대사 검수 상태: `${페이지 id}|${overlay 키}` -> { status: "ok"|"ask", text }. text는 검수 당시 번역문이라 번역이 바뀌면 미검수로 돌아간다.
+  const [dialogueReview, setDialogueReview] = useState({});
+  const [dialogueFilter, setDialogueFilter] = useState("all");
   // 프로젝트별 '앞으로 묻지 않고 번역' 표시. LLM 비용이 드는 일이라 다른 프로젝트로 번지지 않게 세션 단위로 둔다.
   const [ocrAutoStart, setOcrAutoStart] = useState(false);
   const ocrAutoStartingRef = useRef(false);
+  // 대사 편집을 ⌘Enter로 확정한 영역. 반영된 새 번역문으로 확인을 다시 기록한다.
+  const dialogueConfirmAfterCommitRef = useRef(null);
   const [bgOcr, setBgOcr] = useState({ running: false, total: 0, done: 0, failed: 0, ids: [] });
   const prevPageRef = useRef({ id: null, ready: false });
   const [autoOverlayPreview, setAutoOverlayPreview] = useState(true);
@@ -373,6 +381,8 @@ export default function App() {
   useEffect(() => {
     setReviewedIds(new Set(readStored(`ct.reviewed.${sessionId || ""}`, [], Array.isArray)));
     setOcrAutoStart(Boolean(sessionId) && readStored(`ct.ocrAutoStart.${sessionId}`, false, (v) => typeof v === "boolean"));
+    setDialogueReview(readStored(`ct.dialogueReview.${sessionId || ""}`, {}, (v) => v && typeof v === "object" && !Array.isArray(v)));
+    setOcrMilestone(Number(readStored(`ct.ocrMilestone.${sessionId || ""}`, 0, (v) => OCR_PROMPT_MILESTONES.includes(v) || v === 0)) || 0);
   }, [sessionId]);
   useEffect(() => {
     const prev = prevPageRef.current;
@@ -391,13 +401,26 @@ export default function App() {
     };
   });
   const ocrBatchCandidates = ocrReadyImages.filter((img) => reviewedIds.has(img.id) && img.id !== selected?.id);
-  const showOcrPrompt = ocrBatchSize > 0 && !bgOcr.running && !ocrBusy
-    && ocrBatchCandidates.length - Math.min(ocrPromptAnchor, ocrBatchCandidates.length) >= ocrBatchSize;
+  // 수동 작업 진행률: 처리 대상 페이지 중 확인한 페이지 비율. 60%, 80%를 넘을 때 한 번씩 묻는다.
+  const ocrTargetImages = images.filter((img) => !img.processing_excluded);
+  const ocrProgressPct = ocrTargetImages.length
+    ? Math.round((ocrTargetImages.filter((img) => reviewedIds.has(img.id)).length / ocrTargetImages.length) * 100)
+    : 0;
+  const ocrReachedMilestone = Math.max(0, ...OCR_PROMPT_MILESTONES.filter((value) => ocrProgressPct >= value));
+  const showOcrPrompt = !ocrPromptOff && !bgOcr.running && !ocrBusy
+    && ocrReachedMilestone > ocrMilestone && ocrBatchCandidates.length > 0;
   useEffect(() => {
     if (!ocrAutoStart || !showOcrPrompt || ocrAutoStartingRef.current) return;
     ocrAutoStartingRef.current = true;
     startBackgroundOcr().finally(() => { ocrAutoStartingRef.current = false; });
   }, [ocrAutoStart, showOcrPrompt]);
+  useEffect(() => {
+    const rid = dialogueConfirmAfterCommitRef.current;
+    if (!rid || !selected) return;
+    dialogueConfirmAfterCommitRef.current = null;
+    const row = dialogueRows().find((item) => item.rid === String(rid));
+    if (row && row.status !== "ok") setDialogueStatus(rid, "ok", { toggle: false });
+  });
   // 대기열: 바로 번역할 수 있는 페이지 다음에 영역 분석 전 페이지를 둔다
   const ocrUnanalyzedImages = images.filter((img) => ocrStateForImage(img) === "unanalyzed");
   const ocrQueueImages = [...ocrReadyImages, ...ocrUnanalyzedImages];
@@ -426,7 +449,6 @@ export default function App() {
   const exportFocusedIsGenerated = isImageGenerationFallback(exportFocusedImage);
   const exportPreviewUrl = exportFocusedImage?.final_url || exportFocusedImage?.input_url || "";
   // Region List는 Tab 순서와 같은 읽는 순서(파이프라인이 매긴 region id 순)로 고정한다.
-  const orderedOverlayRegions = overlayRegions;
   useEffect(() => {
     // 목록 순서를 고정했으므로, 선택이 바뀌면 그 행이 보이도록만 스크롤한다.
     document.querySelector(".region-quick-item.active")?.scrollIntoView({ block: "nearest" });
@@ -879,6 +901,73 @@ export default function App() {
       api(`/api/speakers/${encodeURIComponent(sessionId)}/${encodeURIComponent(pageId)}`)
         .then((result) => { setSpeakerByTg(result.by_tg || {}); setSpeakerByRegion(result.by_region_ref || result.by_region || {}); }).catch(() => {});
     }
+    return true;
+  }
+
+  // 대사 리스트 행: overlayRegions 순서(읽는 순서)를 그대로 쓴다. 키는 영역 참조 기반 overlay 키다.
+  function dialogueRows() {
+    if (!selected) return [];
+    return overlayRegions.map((region) => {
+      const rid = overlayItemKey(region);
+      const override = overlayRegionValue(overlayGuidance, rid);
+      const translation = String(override.text_override ?? baseRegionText(selected, region) ?? "").trim();
+      const original = String(regionCluster(selected, region)?.text || "").trim();
+      const saved = dialogueReview[`${selected.id}|${rid}`];
+      const warnings = [];
+      if (!translation) warnings.push("빈 번역");
+      return {
+        rid,
+        region,
+        label: overlayItemLabel(region),
+        original,
+        translation,
+        warnings,
+        status: saved && saved.text === translation ? saved.status : "none",
+      };
+    });
+  }
+
+  function setDialogueStatus(rid, status, { toggle = true } = {}) {
+    const row = dialogueRows().find((item) => item.rid === String(rid));
+    if (!row || !selected) return false;
+    const key = `${selected.id}|${row.rid}`;
+    setDialogueReview((current) => {
+      const next = { ...current };
+      if (toggle && row.status === status) delete next[key];
+      else next[key] = { status, text: row.translation };
+      writeStored(`ct.dialogueReview.${sessionId || ""}`, next);
+      return next;
+    });
+    return true;
+  }
+
+  function moveDialogue(step) {
+    const rows = dialogueRows();
+    const visible = rows.filter((row) => dialogueFilterMatches(row, dialogueFilter));
+    if (!visible.length) return false;
+    const currentKey = selectedRegionRefValue();
+    const fullIndex = rows.findIndex((row) => row.rid === String(currentKey));
+    // 필터 밖 행이 선택돼 있으면 전체 순서에서 그 앞뒤에 있는 보이는 행으로 간다.
+    const candidates = visible.filter((row) => {
+      const index = rows.indexOf(row);
+      return step > 0 ? index > fullIndex : index < fullIndex;
+    });
+    const target = fullIndex < 0 ? (step > 0 ? visible[0] : visible[visible.length - 1]) : (step > 0 ? candidates[0] : candidates[candidates.length - 1]);
+    if (!target) {
+      setStatus(step > 0 ? "마지막 대사입니다" : "첫 대사입니다");
+      return true;
+    }
+    setSelectedRegionTracked(target.rid);
+    overlayCanvasRef.current?.ensureRegionVisible(target.rid);
+    setStatus(`${target.label} 선택 (${rows.indexOf(target) + 1}/${rows.length})`);
+    return true;
+  }
+
+  // Y: 고칠 게 없으면 확인으로 표시하고 다음 대사로 넘어간다.
+  function confirmDialogueAndNext() {
+    const rid = selectedRegionRefValue();
+    if (!rid || !setDialogueStatus(rid, "ok", { toggle: false })) return false;
+    moveDialogue(1);
     return true;
   }
 
@@ -1387,6 +1476,12 @@ export default function App() {
       assignSpeaker(slot === "digit" ? Number(event.code.slice(-1)) : slot);
       return true;
     },
+    "overlay.dialogue": (_event, step) => moveDialogue(step),
+    "overlay.dialogue.confirm": () => confirmDialogueAndNext(),
+    "overlay.dialogue.ask": () => {
+      const rid = selectedRegionRefValue();
+      return rid ? setDialogueStatus(rid, "ask") : false;
+    },
     "overlay.openEditor": () => overlayCanvasRef.current?.openEditorForSelected() ?? false,
     "overlay.style": (_event, style) => {
       const rid = selectedRegionRefValue();
@@ -1407,7 +1502,16 @@ export default function App() {
       if (canRenderOverlayImage(selected) && !overlayBusy) applyOverlay();
       return true;
     },
-    "editor.commit": () => overlayCanvasRef.current?.commitEditor() ?? false,
+    // ⌘Enter: 반영 후 렌더하고, 이 대사를 확인으로 표시한 뒤 다음 대사로 넘어간다.
+    "editor.commit": () => {
+      const rid = selectedRegionRefValue();
+      const committed = overlayCanvasRef.current?.commitEditor() ?? false;
+      if (committed && rid) {
+        dialogueConfirmAfterCommitRef.current = rid;
+        moveDialogue(1);
+      }
+      return committed;
+    },
     "editor.cancel": () => overlayCanvasRef.current?.closeEditor() ?? false,
     "help.toggle": () => setHelpOpen((open) => !open),
   };
@@ -2013,8 +2117,13 @@ export default function App() {
   }
 
   function dismissOcrPrompt() {
-    // 다음 알림은 확인한 페이지가 지금보다 기준 수만큼 더 쌓이면 띄운다
-    setOcrPromptAnchor(ocrBatchCandidates.length);
+    // 지금 넘은 기준까지 처리한 것으로 두고, 다음 기준(80%)에서 다시 묻는다
+    markOcrMilestone(ocrReachedMilestone);
+  }
+
+  function markOcrMilestone(value) {
+    setOcrMilestone(value);
+    if (sessionId) writeStored(`ct.ocrMilestone.${sessionId}`, value);
   }
 
   function setProjectOcrAutoStart(value) {
@@ -2022,10 +2131,9 @@ export default function App() {
     if (sessionId) writeStored(`ct.ocrAutoStart.${sessionId}`, value);
   }
 
-  function changeOcrBatchSize(value) {
-    setOcrBatchSize(value);
-    writeStored("ct.ocrBatchSize", value);
-    setOcrPromptAnchor(0);
+  function changeOcrPromptOff(value) {
+    setOcrPromptOff(value);
+    writeStored("ct.ocrPromptOff", value);
   }
 
   // 확인한 페이지만 모아 OCR·번역을 백그라운드로 돌린다. 작업 잠금(busyTasks)을 쓰지 않아 다른 페이지는 계속 편집할 수 있다.
@@ -2034,7 +2142,7 @@ export default function App() {
     const ids = ocrBatchCandidates.map((img) => img.id);
     if (!ids.length || bgOcr.running || ocrBusy) return;
     const requestSid = sessionId;
-    setOcrPromptAnchor(0);
+    markOcrMilestone(ocrReachedMilestone);
     setBgOcr({ running: true, total: ids.length, done: 0, failed: 0, ids });
     setImageStatuses((current) => {
       const next = { ...current };
@@ -3450,31 +3558,14 @@ export default function App() {
           </div>
         </div>
         <div className="section compact-section">
-          <div className="region-quick-list">
-            <div className="region-quick-head">
-              <strong>Region List</strong>
-              <span>{overlayRegions.length}</span>
-            </div>
-            {orderedOverlayRegions.length ? orderedOverlayRegions.map((region) => {
-              const rid = overlayItemKey(region);
-              const override = overlayRegionValue(overlayGuidance, rid);
-              const style = override.font_style || inferredRegionFontStyle(selected, region);
-              const styleShort = FONT_STYLES.find(([id]) => id === style)?.[1] || "N";
-              const text = (override.text_override ?? baseRegionText(selected, region)).replace(/\s+/g, " ").trim();
-              return (
-                <button
-                  key={rid}
-                  className={`region-quick-item ${selectedRegionRefValue() === rid ? "active" : ""}`}
-                  onClick={() => setSelectedRegionTracked(rid)}
-                >
-                  <strong>{overlayItemLabel(region)}</strong>
-          <RegionTypeBadge region={region} />
-                  <span>{styleShort}</span>
-                  <em>{text || "텍스트 없음"}</em>
-                </button>
-              );
-            }) : <div className="empty compact-empty">Region 없음</div>}
-          </div>
+          <DialogueList
+            rows={dialogueRows()}
+            selectedKey={selectedRegionRefValue()}
+            filter={dialogueFilter}
+            onFilter={setDialogueFilter}
+            onSelect={(rid) => { setSelectedRegionTracked(rid); overlayCanvasRef.current?.ensureRegionVisible(rid); }}
+            onStatus={setDialogueStatus}
+          />
         </div>
         </> : null}
 
@@ -3627,8 +3718,9 @@ export default function App() {
       <OcrBatchPrompt
         show={showOcrPrompt && !ocrAutoStart}
         pending={ocrBatchCandidates.length}
-        size={ocrBatchSize}
-        onSize={changeOcrBatchSize}
+        percent={ocrReachedMilestone}
+        promptOff={ocrPromptOff}
+        onPromptOff={changeOcrPromptOff}
         onStart={startBackgroundOcr}
         onLater={dismissOcrPrompt}
         autoStart={ocrAutoStart}

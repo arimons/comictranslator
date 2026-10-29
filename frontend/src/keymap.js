@@ -81,6 +81,10 @@ export const KEYMAP = [
   { id: "overlay.nudge.big", context: "overlay", group: "편집", label: "선택한 safe rect 10px 이동", kind: "key", when: ["regionSelected"], keys: [["Shift", "←"], ["Shift", "→"], ["Shift", "↑"], ["Shift", "↓"]], match: { code: ["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"], shift: true }, action: "overlay.nudge", arg: 10 },
   { id: "overlay.nextRegion", context: "overlay", group: "편집", label: "다음 region 선택 (읽는 순서)", kind: "key", keys: [["Tab"]], match: { code: "Tab" }, action: "overlay.cycleRegion", arg: 1 },
   { id: "overlay.prevRegion", context: "overlay", group: "편집", label: "이전 region 선택", kind: "key", keys: [["Shift", "Tab"]], match: { code: "Tab", shift: true }, action: "overlay.cycleRegion", arg: -1 },
+  { id: "overlay.dialogue.next", context: "overlay", group: "편집", label: "다음 대사 (대사 리스트 필터 적용)", kind: "key", keys: [["J"]], match: { code: "KeyJ" }, action: "overlay.dialogue", arg: 1 },
+  { id: "overlay.dialogue.prev", context: "overlay", group: "편집", label: "이전 대사", kind: "key", keys: [["K"]], match: { code: "KeyK" }, action: "overlay.dialogue", arg: -1 },
+  { id: "overlay.dialogue.confirm", context: "overlay", group: "편집", label: "대사를 확인으로 표시하고 다음 대사로", kind: "key", when: ["regionSelected"], keys: [["Y"]], match: { code: "KeyY" }, action: "overlay.dialogue.confirm" },
+  { id: "overlay.dialogue.ask", context: "overlay", group: "편집", label: "대사를 질문으로 표시 (다시 누르면 해제)", kind: "key", when: ["regionSelected"], keys: [["Q"]], match: { code: "KeyQ" }, action: "overlay.dialogue.ask" },
   { id: "overlay.openEditor", context: "overlay", group: "편집", label: "선택한 region의 대사 편집 열기", kind: "key", when: ["regionSelected"], keys: [["Enter"]], match: { code: ["Enter", "NumpadEnter"] }, action: "overlay.openEditor" },
   { id: "overlay.delete", context: "overlay", group: "편집", label: "선택한 지우개 영역 삭제. 없으면 선택 region의 위치·크기·회전 수동값 초기화 (대사·스타일은 유지)", kind: "key", keys: [["Delete"], ["Backspace"]], match: { code: ["Delete", "Backspace"] }, action: "delete" },
   { id: "overlay.rotateSnap", context: "overlay", group: "편집", label: "회전 핸들 드래그 중 15° 단위로 맞춤", kind: "pointer", keys: [["Shift", "회전 드래그"]] },
@@ -105,7 +109,7 @@ export const KEYMAP = [
   { id: "overlay.apply", context: "overlay", group: "적용", label: "Overlay 적용 (Apply Overlay)", kind: "key", keys: [["Ctrl", "Enter"]], allowInInput: true, when: ["notInFloatingEditor"], match: { code: ["Enter", "NumpadEnter"], mod: true }, action: "apply" },
 
   // 대사 편집 팝업
-  { id: "editor.commit", context: "floatingEditor", group: "대사 편집", label: "대사 반영 후 overlay render", kind: "key", keys: [["Ctrl", "Enter"]], allowInInput: true, when: ["inFloatingEditor"], match: { code: ["Enter", "NumpadEnter"], mod: true }, action: "editor.commit" },
+  { id: "editor.commit", context: "floatingEditor", group: "대사 편집", label: "대사 반영 후 overlay render, 확인으로 표시하고 다음 대사로", kind: "key", keys: [["Ctrl", "Enter"]], allowInInput: true, when: ["inFloatingEditor"], match: { code: ["Enter", "NumpadEnter"], mod: true }, action: "editor.commit" },
   { id: "editor.cancel", context: "floatingEditor", group: "대사 편집", label: "편집 취소 (초안 버림)", kind: "key", keys: [["Esc"]], allowInInput: true, match: { code: "Escape", shift: "any" }, action: "editor.cancel" },
 
   // 도움말
