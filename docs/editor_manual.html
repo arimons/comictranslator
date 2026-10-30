@@ -434,15 +434,14 @@
         </article>
         <article class="card">
           <h3>지우기 보정</h3>
-          <p>분석이 지운 결과에서 루비나 떨어진 획처럼 덜 지워진 곳이 남았을 때 씁니다. 마스크를 처음부터 다시 그리는 기능이 아닙니다. 분석이 만든 지우기 결과(말풍선 흰칠, 텍스트 기반 LaMa, Edge 모두)는 그대로 두고, 칠한 곳을 마지막에 더해 한 번 더 지웁니다. 영역 종류와 상관없고 R을 선택하지 않아도 됩니다.</p>
-          <p><kbd>M</kbd>을 누르거나 도구 모음의 지우기 보정 버튼을 누릅니다. R이나 TG를 선택해 두었으면 그곳으로 확대됩니다. 칠하는 방법은 세 가지입니다.</p>
+          <p>자동 분석이 애매하게 놓친 글자(루비, 떨어진 획, 영역 밖으로 삐져나온 글자)를 직접 칠해 지정합니다. 칠한 곳은 두 가지로 쓰입니다. 결과 이미지에서는 <strong>흰색으로 칠하고</strong>, 붙은 영역의 <strong>OCR 시트 crop에 더해</strong> 놓친 글자도 OCR·번역에 들어갑니다. 분석이 만든 마스크와 지우기 결과는 그대로 둡니다.</p>
+          <p><kbd>M</kbd>을 누르거나 도구 모음의 지우기 보정 버튼을 누릅니다. 어느 영역에 붙을지는 칠할 때 정해집니다.</p>
           <ul>
-            <li><strong>붓</strong>: 남은 글자 위를 드래그합니다. 굵기는 <kbd>[</kbd> <kbd>]</kbd>로 바꿉니다(원본 2-64px). 포인터 둘레의 원이 붓 크기입니다.</li>
-            <li><strong>다각형</strong>: 경계를 따라 클릭해 꼭짓점을 찍고, 첫 점(흰 점)을 다시 누르거나 <kbd>Enter</kbd>를 누르면 닫혀서 안쪽이 칠해집니다. <kbd>Esc</kbd>는 찍던 다각형만 취소합니다.</li>
-            <li><strong>사각형</strong>: <kbd>Shift</kbd>를 누른 채 드래그합니다.</li>
+            <li><strong>R을 선택하고 칠하면</strong> 그 R에 붙습니다(자홍색). 도구를 켤 때 그 R로 확대됩니다. 재분석으로 R 번호가 바뀌어도 같은 처리 영역을 따라갑니다. 영역이 합쳐지거나 나뉘어 같은 영역을 못 찾으면 OCR 반영만 쉬고 흰칠은 계속됩니다. 기록 줄에 "영역 없음: 흰칠만"이 붙습니다.</li>
+            <li><strong>선택 없이 칠하면</strong> 분석 때 가장 많이 겹치는 영역에 붙습니다(주황색). 어느 영역과도 겹치지 않으면 흰칠만 합니다.</li>
           </ul>
-          <p>도구는 칠한 뒤에도 켜져 있어 여러 번 칠할 수 있습니다. 칠한 곳은 자홍색으로 겹쳐 보이며, <strong>변경사항 적용(Ctrl+Enter)</strong>을 눌러야 지웁니다. 칠한 자리는 LaMa가 주변 그림을 보고 채웁니다. 말풍선 안처럼 흰 곳은 흰색으로 채워집니다. 그림 위를 잘못 칠하면 그림도 지워지니 실행 취소로 되돌립니다.</p>
-          <p>되돌리기는 실행 취소(Ctrl+Z)로 한 번씩 합니다. 이 페이지의 보정을 한꺼번에 지우려면 상단 바 <strong>기록</strong>의 "지우기 보정" 줄을 지웁니다. 보정은 원본 좌표로 페이지에 저장되어, 재분석으로 R 번호나 영역이 바뀌어도 칠한 자리 그대로 남습니다.</p>
+          <p>칠하는 방법은 세 가지입니다. <strong>붓</strong>은 드래그이고 굵기는 <kbd>[</kbd> <kbd>]</kbd>로 바꿉니다(원본 2-64px, 포인터 둘레 원이 붓 크기). <strong>다각형</strong>은 경계를 따라 클릭해 꼭짓점을 찍고, 첫 점(흰 점)을 다시 누르거나 <kbd>Enter</kbd>로 닫습니다. <kbd>Esc</kbd>는 찍던 다각형만 취소합니다. <strong>사각형</strong>은 <kbd>Shift</kbd>+드래그입니다. 도구는 칠한 뒤에도 켜져 있고, <strong>변경사항 적용(Ctrl+Enter)</strong>을 눌러야 반영됩니다.</p>
+          <p>적용 뒤에는 OCR crop이 넓어진 영역에 자홍 점선 상자가 보입니다. 이 상자가 OCR 시트에 들어간 범위입니다. 번역에 반영하려면 그 페이지를 다시 번역합니다. 되돌리기는 실행 취소(Ctrl+Z)로 한 번씩, 묶음 삭제는 상단 바 <strong>기록</strong>의 "R n 지우기 보정"·"지우기 보정(자동 배정)" 줄 삭제로 합니다.</p>
           <p><span class="tag">Guidance only</span> <kbd>M</kbd>, <kbd>[</kbd>, <kbd>]</kbd>, <kbd>Enter</kbd>, <kbd>Shift</kbd>+드래그</p>
         </article>
       </div>
@@ -710,7 +709,7 @@
           <tr data-shortcut="guidance.tool.bubble"><td><kbd>B</kbd></td><td>경계 기반 시작점</td></tr>
           <tr data-shortcut="guidance.tool.region-split"><td><kbd>S</kbd></td><td>영역 분할</td></tr>
           <tr data-shortcut="guidance.tool.ubox"><td><kbd>U</kbd></td><td>텍스트 기반 영역</td></tr>
-          <tr data-shortcut="guidance.tool.mask"><td><kbd>M</kbd></td><td>지우기 보정: 덜 지워진 곳을 칠해 최종 지우기 마스크에 더하기</td></tr>
+          <tr data-shortcut="guidance.tool.mask"><td><kbd>M</kbd></td><td>지우기 보정: 놓친 곳을 칠해 흰칠하고 영역의 OCR 마스크에 더하기 (선택한 R, 없으면 가장 많이 겹치는 영역)</td></tr>
           <tr data-shortcut="guidance.mask.brushSmaller"><td><kbd>[</kbd></td><td>지우기 보정 붓 굵기 줄이기</td></tr>
           <tr data-shortcut="guidance.mask.brushBigger"><td><kbd>]</kbd></td><td>지우기 보정 붓 굵기 키우기</td></tr>
           <tr data-shortcut="guidance.mask.rect"><td><kbd>Shift</kbd>+<kbd>드래그</kbd></td><td>지우기 보정: 사각형으로 칠하기</td></tr>

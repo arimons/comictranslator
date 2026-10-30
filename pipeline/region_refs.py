@@ -77,6 +77,14 @@ POLICY: dict[tuple[str, str], str] = {
     (SPLIT, "context"): "copy_all",
     (GEO, "context"): "move",
     (UNMATCHED, "context"): "dormant",
+    # 지우기 보정(custom_masks)의 OCR 시트 반영. 처리 인스턴스 기록이라 정확히 같은 인스턴스에만 붙고,
+    # 합침·분할·축소로 달라지면 OCR 반영만 쉰다(흰칠은 페이지 좌표라 계속된다). 옮기려면 값을 "move"로 바꾼다.
+    (EXACT, "custom_mask"): "keep",
+    (SHRINK, "custom_mask"): "dormant",
+    (MERGE, "custom_mask"): "dormant",
+    (SPLIT, "custom_mask"): "dormant",
+    (GEO, "custom_mask"): "dormant",
+    (UNMATCHED, "custom_mask"): "dormant",
 }
 
 _LEGACY_KEY_RE = re.compile(r"^(\d+)(?:[:\-](\d+))?$")
@@ -603,6 +611,40 @@ def _geo_match(parsed: dict, rect: list[int] | None, regions: list[dict]) -> dic
             continue
         candidates.append(region)
     return candidates[0] if len(candidates) == 1 else None
+
+
+def resolve_instance_record(
+    record: dict,
+    current_regions: list[dict],
+    consumer: str,
+    current_tg_digest: str | None = None,
+) -> tuple[dict | None, str]:
+    """처리 인스턴스 기록(지우기 보정 등)이 붙을 현재 영역과 해석 종류를 돌려준다. 붙을 곳이 없으면 (None, 종류).
+
+    record: {instance_ref, region_ref, snapshot}. 인스턴스 참조가 정확히 같으면 그 영역이다. 아니면 내용 참조를
+    resolve()로 해석하고 POLICY[(종류, consumer)]가 keep/move이며 대상이 하나이고 출처(자동/가이드)가 같을 때만 붙인다.
+    """
+    regions = [r for r in _annotated(current_regions) if isinstance(r, dict)]
+    instance = str(record.get("instance_ref") or "")
+    comparable = bool(instance) and not instance_ref_is_weak(instance)
+    if comparable:
+        for region in regions:
+            if region.get("region_instance_ref") == instance:
+                return region, EXACT
+    ref = record.get("region_ref") or (instance.split("|", 1)[1] if "|" in instance else "")
+    if not ref:
+        return None, UNMATCHED
+    res = resolve(ref, record.get("snapshot"), regions, current_tg_digest)
+    kind = res["kind"]
+    if kind == EXACT and comparable:
+        return None, UNMATCHED  # 같은 대사라도 다른 처리 인스턴스(자동↔수동)에는 붙이지 않는다
+    if POLICY.get((kind, consumer), "dormant") not in ("keep", "move") or len(res["target_refs"]) != 1:
+        return None, kind
+    target = next((r for r in regions if r.get("region_ref") == res["target_refs"][0]), None)
+    origin = instance.split("|", 1)[0] if "|" in instance else None
+    if target is None or (origin and target.get("region_origin") != origin):
+        return None, kind
+    return target, kind
 
 
 def snapshot_for_region(region: dict, digest: str | None = None) -> dict:

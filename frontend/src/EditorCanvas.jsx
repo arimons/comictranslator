@@ -10,8 +10,9 @@ import { TEXT_BASED, regionProcessingBasis, regionTypeLabel, regionBindingKey, u
 const SELECTED_REGION_COLOR = "#e11d48";
 // Edge는 검출 결과(초록)와 같은 계열로 벽선도 초록으로 그린다. 선택 강조색(빨강)과 겹치지 않게 한다.
 const EDGE_WALL_COLOR = "#16a34a";
-// 지우기 보정 획 색. 영역 종류 색·선택 강조색과 겹치지 않는 자홍색이다.
+// 지우기 보정 색. R에 붙인 기록은 자홍, R 지정 없이 칠한 기록(가장 많이 겹치는 영역에 자동 배정)은 주황이다.
 const CUSTOM_MASK_COLOR = "#d946ef";
+const CUSTOM_MASK_PAGE_COLOR = "#f97316";
 // 다각형 칠하기: 첫 점에서 이 거리(화면 px) 안을 누르면 닫는다. 이보다 덜 움직인 누름은 클릭(꼭짓점)으로 본다.
 const MASK_POLYGON_CLOSE_PX = 10;
 const MASK_CLICK_PX = 3;
@@ -628,12 +629,37 @@ const EditorCanvas = forwardRef(function EditorCanvas({ image, baseUrl, guidance
     setStatus("경계 기반 seed 추가");
   }
 
-  // 칠한 획·Shift+드래그 사각형·클릭 다각형을 페이지의 보정 기록에 덧붙인다. 영역과 상관없이 원본 좌표로 쌓는다.
+  // 칠할 대상: 선택한 R(제외하지 않은 것). 없으면 R 지정 없는 기록이 되어 분석 때 가장 많이 겹치는 영역에 붙는다.
+  function maskTargetRegion() {
+    if (selectedRegionRef.current == null) return null;
+    const region = imageRegions(imageRef.current).find((r) => regionId(r) === Number(selectedRegionRef.current));
+    return region && !regionIsExcluded(region, guidanceRef.current) ? region : null;
+  }
+
+  function isRegionMaskRecord(item) {
+    return Boolean(item?.instance_ref || item?.region_ref || item?.target_key);
+  }
+
+  // 칠한 획·Shift+드래그 사각형·클릭 다각형을 보정 기록에 덧붙인다. R마다 기록 하나, R 지정 없는 기록 하나.
+  // 칠한 곳은 결과 이미지에서 흰칠되고, 붙는 영역의 OCR 시트 crop에도 들어간다.
   function addCustomMaskShape(drag, end) {
     const latest = guidanceRef.current || defaultGuidance(null);
     const list = [...(latest.custom_masks || [])];
-    const index = list.findIndex((item) => (item.mode || "add") === "add");
-    const entry = index >= 0 ? { ...list[index] } : { id: `custom_mask_${Date.now()}`, mode: "add", strokes: [], rects: [], polygons: [] };
+    const region = maskTargetRegion();
+    const index = list.findIndex((item) => (item.mode || "add") === "add" && (region ? isRegionMaskRecord(item) && recordTargetsRegion(item, region) : !isRegionMaskRecord(item)));
+    const entry = index >= 0 ? { ...list[index] } : {
+      id: `custom_mask_${Date.now()}`,
+      mode: "add",
+      ...(region ? {
+        target_key: regionBindingKey(region),
+        ...(region.region_instance_ref ? { instance_ref: region.region_instance_ref } : {}),
+        ...(region.region_ref ? { region_ref: region.region_ref } : {}),
+        snapshot: { rect: regionDisplayRect(region), tg_ids: region.anchor_ids || [] },
+      } : {}),
+      strokes: [],
+      rects: [],
+      polygons: [],
+    };
     if (drag.polygon) {
       entry.polygons = [...(entry.polygons || []), drag.polygon];
     } else if (drag.rect) {
@@ -644,16 +670,18 @@ const EditorCanvas = forwardRef(function EditorCanvas({ image, baseUrl, guidance
     } else {
       entry.strokes = [...(entry.strokes || []), { points: drag.points, width: drag.width }];
     }
+    if (region) entry.display_region_id = regionId(region);
     if (index >= 0) list[index] = entry; else list.push(entry);
     const next = { ...latest, custom_masks: list };
     guidanceRef.current = next;
-    setGuidance(next, "지우기 보정");
+    const label = region ? `R${regionId(region)} 지우기 보정` : "지우기 보정(자동 배정)";
+    setGuidance(next, label);
     const count = (entry.strokes || []).length + (entry.rects || []).length + (entry.polygons || []).length;
-    setStatus(`지우기 보정 ${count}개 · 변경사항 적용 시 반영`);
+    setStatus(`${label} ${count}개 · 변경사항 적용 시 흰칠·OCR 반영`);
     return true;
   }
 
-  function drawCustomMaskShapes(layer, entry, opacity) {
+  function drawCustomMaskShapes(layer, entry, opacity, color = CUSTOM_MASK_COLOR) {
     const scale = transformRef.current.scale;
     const group = new Konva.Group({ opacity, listening: false });
     (entry.strokes || []).forEach((stroke) => {
@@ -661,16 +689,16 @@ const EditorCanvas = forwardRef(function EditorCanvas({ image, baseUrl, guidance
       const width = Math.max(1, Number(stroke.width) || 1) * scale;
       if (points.length === 1) {
         const [x, y] = toStagePoint(points[0]);
-        group.add(new Konva.Circle({ x, y, radius: width / 2, fill: CUSTOM_MASK_COLOR }));
+        group.add(new Konva.Circle({ x, y, radius: width / 2, fill: color }));
       } else if (points.length > 1) {
-        group.add(new Konva.Line({ points: points.flatMap((pt) => toStagePoint(pt)), stroke: CUSTOM_MASK_COLOR, strokeWidth: width, lineCap: "round", lineJoin: "round" }));
+        group.add(new Konva.Line({ points: points.flatMap((pt) => toStagePoint(pt)), stroke: color, strokeWidth: width, lineCap: "round", lineJoin: "round" }));
       }
     });
     (entry.rects || []).forEach((rect) => {
-      if (Array.isArray(rect) && rect.length >= 4) group.add(new Konva.Rect({ ...toStageRect(rect), fill: CUSTOM_MASK_COLOR }));
+      if (Array.isArray(rect) && rect.length >= 4) group.add(new Konva.Rect({ ...toStageRect(rect), fill: color }));
     });
     (entry.polygons || []).forEach((polygon) => {
-      if (Array.isArray(polygon) && polygon.length >= 3) group.add(new Konva.Line({ points: polygon.flatMap((pt) => toStagePoint(pt)), closed: true, fill: CUSTOM_MASK_COLOR }));
+      if (Array.isArray(polygon) && polygon.length >= 3) group.add(new Konva.Line({ points: polygon.flatMap((pt) => toStagePoint(pt)), closed: true, fill: color }));
     });
     layer.add(group);
   }
@@ -856,8 +884,14 @@ const EditorCanvas = forwardRef(function EditorCanvas({ image, baseUrl, guidance
         overlay.add(new Konva.Circle({ x, y, radius: 5, fill: "#ec4899", stroke: "#111827", strokeWidth: 1.5 }));
         overlay.add(new Konva.Text({ text: "seed", x: x + 7, y: y + 5, fontSize: 12, fill: "#ec4899" }));
       });
-      // 지우기 보정은 영역과 상관없는 페이지 기록이라 늘 그린다.
-      (currentGuidance.custom_masks || []).forEach((entry) => drawCustomMaskShapes(overlay, entry, .45));
+      // 지우기 보정은 흰칠이 페이지 좌표라 늘 그린다. R에 붙인 기록과 자동 배정 기록은 색으로 구분한다.
+      (currentGuidance.custom_masks || []).forEach((entry) => drawCustomMaskShapes(overlay, entry, .45, isRegionMaskRecord(entry) ? CUSTOM_MASK_COLOR : CUSTOM_MASK_PAGE_COLOR));
+      // 지난 분석에서 지우기 보정으로 넓어진 OCR crop 범위. OCR에 들어간 범위를 눈으로 확인한다.
+      visibleRegions.forEach((region) => {
+        if (Array.isArray(region.ocr_crop_rect) && region.custom_mask_ocr) {
+          overlay.add(new Konva.Rect({ ...toStageRect(region.ocr_crop_rect), stroke: CUSTOM_MASK_COLOR, strokeWidth: 1.2, dash: [3, 3], opacity: .85, listening: false }));
+        }
+      });
     }
 
     if (toolRef.current === "mask" && !currentImage.processing_excluded) {
@@ -878,8 +912,9 @@ const EditorCanvas = forwardRef(function EditorCanvas({ image, baseUrl, guidance
     }
 
     if (currentDragPreview?.tool === "mask") {
-      if (currentDragPreview.rect) drawCustomMaskShapes(overlay, { rects: [[Math.min(currentDragPreview.start.x, currentDragPreview.end.x), Math.min(currentDragPreview.start.y, currentDragPreview.end.y), Math.abs(currentDragPreview.end.x - currentDragPreview.start.x), Math.abs(currentDragPreview.end.y - currentDragPreview.start.y)]] }, .55);
-      else drawCustomMaskShapes(overlay, { strokes: [{ points: currentDragPreview.points, width: currentDragPreview.width }] }, .55);
+      const previewColor = maskTargetRegion() ? CUSTOM_MASK_COLOR : CUSTOM_MASK_PAGE_COLOR;
+      if (currentDragPreview.rect) drawCustomMaskShapes(overlay, { rects: [[Math.min(currentDragPreview.start.x, currentDragPreview.end.x), Math.min(currentDragPreview.start.y, currentDragPreview.end.y), Math.abs(currentDragPreview.end.x - currentDragPreview.start.x), Math.abs(currentDragPreview.end.y - currentDragPreview.start.y)]] }, .55, previewColor);
+      else drawCustomMaskShapes(overlay, { strokes: [{ points: currentDragPreview.points, width: currentDragPreview.width }] }, .55, previewColor);
     } else if (currentDragPreview && currentDragPreview.tool !== "mask-cursor") {
       const isRectRegion = currentDragPreview.tool === "ubox";
       const isTextBased = currentDragPreview.tool === "ubox";

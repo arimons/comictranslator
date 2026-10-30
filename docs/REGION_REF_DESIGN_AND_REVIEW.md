@@ -207,3 +207,5 @@ S·B 해결. 회귀(지적 1·2) 재확인. 맥미니 서버 재시작 가능으
 ## 10. 회귀 테스트
 
 합성 JSON 기반(T1 사고 재현, T2 재번호, T3 자동→Edge 대체, T4 합침, T5 분할, T5b 축소, T6 seed, T7 자동 분할 자식, T8 재번역, T9 구파일 변환, T10 롤백, T11 API, T12 렌더러 번호 공간 혼용 4곳)과 프런트 proof(F1 번역 번호≠현재 번호에서 현재 영역 외곽선 선택, F2 재분석 뒤 선택 유지). 리뷰 시점의 공백은 지적 9와 v2 평가에 적었다: 구 projection → 렌더러 경로, 분석 탭 선택 유지는 fixture가 약하다.
+
+<!-- 변경 검토(2026-10-30): POLICY에 custom_mask 소비처(정확 일치만 keep, 나머지 dormant)와 resolve_instance_record 추가. 설계 기록은 docs/CUSTOM_MASK_PLAN.md -->

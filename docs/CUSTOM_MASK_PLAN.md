@@ -1,18 +1,26 @@
 # 커스텀 마스크(지우기 보정) 계획서
 
-작성 2026-10-30. 상태: 단계 2-5 구현(2026-10-30). 실제 데이터 전후 비교와 단계 6 적대적 리뷰는 남았다.
+작성 2026-10-30. 상태: §0의 확정 설계로 구현(2026-10-30). 실제 데이터 전후 확인과 적대적 리뷰는 남았다.
 
-## 0. 구현 결과와 계획과 달라진 점
+## 0. 확정 설계와 구현 (2026-10-30)
 
-사용자 결정(2026-10-30)으로 영역에 붙이는 설계를 버리고 **페이지 단위 최종 합성**으로 바꿨다. 아래 §1-§5의 영역 연결·휴면·POLICY·영역 rect 자르기 내용은 이 결정으로 대체된다.
+사용자와 여러 번 정정한 끝에 확정한 의도: 칠한 곳은 **자동 분석이 애매하게 놓친 자리의 수동 지정**이다. 처리는 두 가지다.
+1. 결과 이미지에서 칠한 곳을 **흰색으로 칠한다**. LaMa·엔진 자동 판단은 쓰지 않는다.
+2. 칠한 곳을 붙는 영역의 **OCR 시트 crop에 합쳐** 놓친 글자가 OCR·번역에 들어가게 한다. 이것이 핵심 의도다.
 
-- 대상: 영역 종류(경계 기반·Edge·텍스트 기반)와 상관없다. R을 선택하지 않아도 칠할 수 있다.
-- 저장: `guidance.custom_masks = [{id, mode: "add", strokes: [{points, width}], rects, polygons}]`. 원본 좌표만 저장하고 영역 참조·영역 키가 없다. 재분석으로 R이 바뀌어도 그대로 적용되며 휴면이 없다.
-- 합성: Step 3에서 말풍선 흰칠·텍스트 LaMa·보호 범위 복원이 모두 끝난 결과 이미지에 마지막으로 적용한다(`_apply_custom_masks`). 칠한 자리는 LaMa로 채운다. 덩어리마다 둘레 24px(`CUSTOM_MASK_CONTEXT_PAD`)를 함께 잘라 넘기는데, LaMa가 주변을 보고 채우는 원래 방식 때문이다. 영역 rect로 자르지 않는다.
-- 결과 기록: `regions.json` 최상위 `custom_masks_applied = {mask_ids, strokes, rects, polygons, pixels, windows}`.
-- 캐시: 보정이 바뀌면 이전 지우기 결과를 재사용하지 않는다. 재사용할 때도 보정은 다시 적용한다.
-- 편집기: 도구 `M`(R·TG 선택이 있으면 그곳으로 확대), 붓 굵기 `[` `]`(2-64px), 클릭 다각형(첫 점·Enter로 닫기, Esc 취소), Shift+드래그 사각형. 기록 목록에 "지우기 보정" 한 줄(지우면 이 페이지 보정 전체 삭제).
-- 남은 일: 실제 데이터 전후 비교(1-3건), 텍스트 기반 자동 마스크를 화면에 겹쳐 보기, 돋보기.
+중간에 버린 안: 영역의 `safe_text_mask`에 합쳐 LaMa로 함께 지우기(1차 구현), 페이지 단위로 마지막에 LaMa로 지우기(`5021f72`). 두 안 모두 OCR에 들어가지 않았고, LaMa가 필요 없었다.
+
+- **붙는 영역**: R을 선택하고 칠하면 그 R. 선택 없이 칠하면 Step 3에서 가장 많이 겹치는 영역(경계 기반은 영역 마스크, 그 밖은 사각형과 겹친 픽셀 수). 어느 영역과도 안 겹치면 OCR에는 넣지 않고 흰칠만 한다.
+- **저장**: `guidance.custom_masks = [{id, mode: "add", strokes: [{points, width}], rects, polygons}]`. R 지정 기록에는 `instance_ref`·`region_ref`·`target_key`·`snapshot`·`display_region_id`가 더 붙는다. R마다 기록 하나, 지정 없는 기록 하나다. 좌표는 원본 기준이다. 참조 없는 기존 기록(`5021f72`)은 지정 없는 기록으로 읽는다.
+- **흰칠**: `dialogue_extractor._whiten_custom_masks`. 말풍선 흰칠·텍스트 LaMa·보호 범위 복원이 모두 끝난 뒤, `cv2.imwrite(output_masked_path)` 직전에 한다. 페이지 좌표라 R이 바뀌어도 계속되고, 재사용한 이전 결과 위에도 다시 칠한다.
+- **OCR 반영**: `_attach_custom_masks_to_ocr`. `regions.json` 영역에 영역 참조를 붙인 직후, indexed sheet를 만들기 전에 한다. 붙을 영역의 crop을 칠한 범위까지 넓히고, 칠한 픽셀은 원본 이미지에서 가져온다. 경계 기반은 마스크 밖이 흰 crop이라 칠한 곳만 새로 보인다. 넓어진 crop의 원점은 `ocr_crop_rect`로 남기고, 모든 영역의 `sheet_rect`를 다시 계산한다. `bubble_rect`·`unboxed_rect`·마스크·윤곽은 바꾸지 않아 글자 배치와 영역 키가 그대로다. `font_style_analyzer.py`는 `ocr_crop_rect`를 시트 crop 원점으로 쓴다. `*_flood_regions.json`은 CLI 파이프라인 산출물이라 편집기 경로에서는 쓰지 않는다.
+- **재분석 참조**: `region_refs.resolve_instance_record`와 POLICY `custom_mask`(정확 일치만 keep, 합침·축소·분할·geo·짝 없음은 dormant). 휴면이면 OCR 반영만 쉬고 흰칠은 계속한다. 인스턴스 참조가 약하면(geo·충돌 접미사) `target_key`로 찾는다. 옮겨 붙이려면 POLICY 값만 `move`로 바꾸면 된다.
+- **결과 기록**: 영역마다 `ocr_crop_rect`·`custom_mask_ocr = {mask_ids, shapes, pixels}`, `regions.json` 최상위 `custom_masks_applied = {mask_ids, strokes, rects, polygons, pixels, ocr_regions, ocr_shapes, not_in_ocr}`.
+- **캐시**: 보정이 바뀌면 이전 지우기 결과를 재사용하지 않는다(`guidance_allows_unboxed_mask_reuse`의 `stable_keys`).
+- **편집기**: 도구 `M`(선택한 R·TG로 확대), 붓 `[` `]`(2-64px), 클릭 다각형(첫 점·Enter로 닫기, Esc 취소), Shift+드래그 사각형. R 지정 기록은 자홍, 자동 배정 기록은 주황으로 그린다. 분석 뒤 OCR crop이 넓어진 영역은 자홍 점선 상자로 보여 준다. 기록 목록은 "R n 지우기 보정"(휴면이면 "영역 없음: 흰칠만")과 "지우기 보정(자동 배정)".
+- **남은 일**: 실제 데이터로 OCR 시트 전후 확인(1-3건), 텍스트 기반 자동 마스크를 겹쳐 보기, 돋보기.
+
+아래 §1-§6은 처음 계획이다. §0과 다르면 §0을 따른다.
 
 ## 1. 목적
 

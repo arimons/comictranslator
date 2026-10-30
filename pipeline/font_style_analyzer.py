@@ -79,7 +79,8 @@ def _style_crop_rect_in_sheet(region: dict, image_width: int, image_height: int)
         return None
     cx, cy, cw, ch = content
 
-    bubble_rect = region.get("bubble_rect") or region.get("unboxed_rect") or region.get("original_rect")
+    # 지우기 보정으로 OCR crop이 넓어지면 crop 원점은 ocr_crop_rect다.
+    bubble_rect = region.get("ocr_crop_rect") or region.get("bubble_rect") or region.get("unboxed_rect") or region.get("original_rect")
     text_rects = region.get("ocr_text_rects") or []
     text_union = _union_rects(text_rects)
     if bubble_rect and len(bubble_rect) == 4 and text_union:
@@ -101,7 +102,8 @@ def _map_original_rect_to_sheet(region: dict, original_rect: Any, image_width: i
     if not original_rect or len(original_rect) != 4:
         return None
     content = _content_origin_in_sheet(region)
-    bubble_rect = region.get("bubble_rect") or region.get("unboxed_rect") or region.get("original_rect")
+    # 지우기 보정으로 OCR crop이 넓어지면 crop 원점은 ocr_crop_rect다.
+    bubble_rect = region.get("ocr_crop_rect") or region.get("bubble_rect") or region.get("unboxed_rect") or region.get("original_rect")
     if content is None or not bubble_rect or len(bubble_rect) != 4:
         return None
     cx, cy, _cw, _ch = content

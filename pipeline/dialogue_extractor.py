@@ -27,7 +27,7 @@ SimpleLama: Any | None = None
 
 try:
     from pipeline.region_types import TEXT_BASED, BOUNDARY_BASED, region_processing_basis
-    from pipeline.region_refs import annotate_regions, instance_ref_of, instance_ref_is_weak
+    from pipeline.region_refs import annotate_regions, instance_ref_of, instance_ref_is_weak, resolve_instance_record
     from pipeline.bubble_detector import build_ocr_region_sheet, _load_json, _is_dark_bg_text, _is_horizontal_text_group, _fill_mask_holes
     from pipeline.geometry import as_rect as _as_rect, union_rect as _union_rect
     from pipeline.unboxed_grouping import (
@@ -49,7 +49,7 @@ try:
     from pipeline.flood_split import collect_inflection_candidates, split_mask_by_erosion_components, split_mask_by_inflection_line
 except ImportError:
     from region_types import TEXT_BASED, BOUNDARY_BASED, region_processing_basis
-    from region_refs import annotate_regions, instance_ref_of, instance_ref_is_weak
+    from region_refs import annotate_regions, instance_ref_of, instance_ref_is_weak, resolve_instance_record
     from bubble_detector import build_ocr_region_sheet, _load_json, _is_dark_bg_text, _is_horizontal_text_group, _fill_mask_holes
     from geometry import as_rect as _as_rect, union_rect as _union_rect
     from unboxed_grouping import (
@@ -419,11 +419,12 @@ def _forced_engine_for_crop(
     return None if key in comparable else by_key.get(key)
 
 
-# 지우기 보정(guidance.custom_masks): 분석이 만든 지우기 결과에 사용자가 칠한 마스크를 마지막에 더해 지운다.
-# 영역 종류(경계 기반·Edge·텍스트 기반)와 영역 번호에 묶이지 않는 페이지 단위 원본 좌표다.
-# 칠한 자리는 LaMa로 채운다. LaMa는 주변 그림을 보고 채우므로 덩어리마다 둘레를 조금 더 잘라 넘긴다.
+# 지우기 보정(guidance.custom_masks): 자동 분석이 애매하게 놓친 자리를 사람이 칠해 지정한다.
+# 1) 칠한 곳은 결과 이미지에서 흰색으로 칠한다(LaMa 없음). 페이지 원본 좌표라 영역이 바뀌어도 계속된다.
+# 2) 칠한 곳을 영역의 OCR 시트 crop에도 합쳐 놓친 글자가 OCR에 들어가게 한다.
+#    R을 지정해 칠한 기록은 그 처리 인스턴스(region_refs POLICY "custom_mask")에, 지정 없는 기록은 가장 많이 겹치는 영역에 붙는다.
+#    붙을 영역이 없으면 OCR 반영만 쉬고 흰칠은 그대로 한다.
 CUSTOM_MASK_MODES = ("add",)  # "subtract"는 스키마 자리만 두고 아직 처리하지 않는다
-CUSTOM_MASK_CONTEXT_PAD = 24  # LaMa에 함께 넘기는 둘레(px). 기존 수동 텍스트 영역의 문맥 여유와 같다
 CUSTOM_MASK_MAX_WIDTH = 200
 
 
@@ -437,35 +438,30 @@ def _int_points(raw: Any) -> List[Tuple[int, int]]:
     return points
 
 
-def _custom_mask_layer(
-    custom_masks: List[Dict[str, Any]] | None,
-    image_shape: Tuple[int, ...],
-) -> Tuple[np.ndarray | None, Dict[str, Any] | None]:
-    """페이지의 지우기 보정(붓 획·사각형·다각형)을 원본 크기 마스크 하나로 그린다. 이미지 밖은 잘린다."""
-    records = [item for item in custom_masks or [] if isinstance(item, dict) and str(item.get("mode") or "add") in CUSTOM_MASK_MODES]
-    if not records:
-        return None, None
+def _custom_mask_shapes(custom_masks: List[Dict[str, Any]] | None, image_shape: Tuple[int, ...]) -> List[Dict[str, Any]]:
+    """기록의 모양(붓 획·사각형·다각형)을 하나씩 원본 크기 마스크로 그린다. 이미지 밖은 잘린다."""
     img_h, img_w = image_shape[:2]
-    layer = np.zeros((img_h, img_w), dtype=np.uint8)
-    strokes = rects = polygons = 0
-    for record in records:
+    shapes: List[Dict[str, Any]] = []
+    for record in custom_masks or []:
+        if not isinstance(record, dict) or str(record.get("mode") or "add") not in CUSTOM_MASK_MODES:
+            continue
         for stroke in record.get("strokes") or []:
             if not isinstance(stroke, dict):
                 continue
             points = _int_points(stroke.get("points"))
             try:
-                width = int(round(float(stroke.get("width") or 1)))
+                width = max(1, min(CUSTOM_MASK_MAX_WIDTH, int(round(float(stroke.get("width") or 1)))))
             except (TypeError, ValueError):
                 continue
             if not points:
                 continue
-            width = max(1, min(CUSTOM_MASK_MAX_WIDTH, width))
+            mask = np.zeros((img_h, img_w), dtype=np.uint8)
             if len(points) == 1:
-                cv2.circle(layer, points[0], max(1, width // 2), 255, -1)
+                cv2.circle(mask, points[0], max(1, width // 2), 255, -1)
             else:
                 for a, b in zip(points, points[1:]):
-                    cv2.line(layer, a, b, 255, thickness=width)
-            strokes += 1
+                    cv2.line(mask, a, b, 255, thickness=width)
+            shapes.append({"record": record, "kind": "strokes", "mask": mask})
         for raw in record.get("rects") or []:
             if not isinstance(raw, list) or len(raw) < 4:
                 continue
@@ -475,52 +471,113 @@ def _custom_mask_layer(
                 continue
             if w <= 0 or h <= 0:
                 continue
-            cv2.rectangle(layer, (x, y), (x + w - 1, y + h - 1), 255, -1)
-            rects += 1
+            mask = np.zeros((img_h, img_w), dtype=np.uint8)
+            cv2.rectangle(mask, (x, y), (x + w - 1, y + h - 1), 255, -1)
+            shapes.append({"record": record, "kind": "rects", "mask": mask})
         for raw in record.get("polygons") or []:
             points = _int_points(raw)
             if len(points) < 3:
                 continue
-            cv2.fillPoly(layer, [np.array(points, dtype=np.int32)], 255)
-            polygons += 1
-    meta = {
-        "mask_ids": [str(item.get("id")) for item in records if item.get("id")],
-        "strokes": strokes,
-        "rects": rects,
-        "polygons": polygons,
-    }
-    return layer, meta
+            mask = np.zeros((img_h, img_w), dtype=np.uint8)
+            cv2.fillPoly(mask, [np.array(points, dtype=np.int32)], 255)
+            shapes.append({"record": record, "kind": "polygons", "mask": mask})
+    return [shape for shape in shapes if shape["mask"].any()]
 
 
-def _apply_custom_masks(masked_image: np.ndarray, custom_masks: List[Dict[str, Any]] | None) -> Dict[str, Any] | None:
-    """지우기가 끝난 결과 이미지에서 칠한 자리를 LaMa로 채운다. 가까운 덩어리는 한 번에 처리한다."""
-    layer, meta = _custom_mask_layer(custom_masks, masked_image.shape)
-    if layer is None:
+def _custom_mask_ids(shapes: List[Dict[str, Any]]) -> List[str]:
+    return list(dict.fromkeys(str(shape["record"].get("id")) for shape in shapes if shape["record"].get("id")))
+
+
+def _whiten_custom_masks(masked_image: np.ndarray, shapes: List[Dict[str, Any]]) -> Dict[str, Any] | None:
+    """칠한 곳을 결과 이미지에서 흰색으로 칠한다. 모든 지우기가 끝난 뒤 부른다."""
+    if not shapes:
         return None
-    meta["pixels"] = int(np.count_nonzero(layer))
-    meta["windows"] = []
-    if not meta["pixels"]:
-        return meta
-    pad = CUSTOM_MASK_CONTEXT_PAD
-    kernel = np.ones((pad * 2 + 1, pad * 2 + 1), dtype=np.uint8)
-    num, _labels, stats, _ = cv2.connectedComponentsWithStats(cv2.dilate(layer, kernel), connectivity=8)
-    img_h, img_w = layer.shape
-    lama = _get_lama()
-    for label in range(1, num):
-        x, y, w, h = (int(v) for v in stats[label, :4])
-        x2, y2 = min(img_w, x + w), min(img_h, y + h)
-        window_mask = layer[y:y2, x:x2]
-        if not window_mask.any():
-            continue
-        roi = masked_image[y:y2, x:x2].copy()
-        out = lama(Image.fromarray(cv2.cvtColor(roi, cv2.COLOR_BGR2RGB)), Image.fromarray(window_mask))
-        filled = cv2.cvtColor(np.array(out), cv2.COLOR_RGB2BGR)
-        fh, fw = min(filled.shape[0], window_mask.shape[0]), min(filled.shape[1], window_mask.shape[1])
-        target = masked_image[y:y + fh, x:x + fw]
-        apply = window_mask[:fh, :fw] > 0
-        target[apply] = filled[:fh, :fw][apply]
-        meta["windows"].append([x, y, x2 - x, y2 - y])
-    return meta
+    union = np.zeros(masked_image.shape[:2], dtype=np.uint8)
+    for shape in shapes:
+        union |= shape["mask"]
+    masked_image[union > 0] = (255, 255, 255)
+    report = {"mask_ids": _custom_mask_ids(shapes), "pixels": int(np.count_nonzero(union))}
+    for kind in ("strokes", "rects", "polygons"):
+        report[kind] = sum(1 for shape in shapes if shape["kind"] == kind)
+    return report
+
+
+def _crop_ocr_area_overlap(item: Dict[str, Any], mask: np.ndarray) -> int:
+    """모양이 영역의 OCR 대상(경계 기반은 영역 마스크, 그 밖은 사각형)과 겹치는 픽셀 수."""
+    region_mask = item.get("mask")
+    if isinstance(region_mask, np.ndarray) and region_mask.shape == mask.shape:
+        return int(np.count_nonzero((region_mask > 0) & (mask > 0)))
+    rect = item.get("source_rect")
+    if not isinstance(rect, list) or len(rect) < 4:
+        return 0
+    x, y, w, h = _as_rect(rect)
+    return int(np.count_nonzero(mask[max(0, y):y + h, max(0, x):x + w]))
+
+
+def _custom_mask_target_index(
+    shape: Dict[str, Any],
+    crops: List[Dict[str, Any]],
+    output_regions: List[Dict[str, Any]],
+) -> Tuple[int | None, str]:
+    """모양이 붙을 영역 순번과 사유(exact/overlap/dormant/no_overlap 등)."""
+    from pipeline.region_types import region_binding_key
+
+    record = shape["record"]
+    if record.get("instance_ref") or record.get("region_ref") or record.get("target_key"):
+        region, kind = resolve_instance_record(record, output_regions, "custom_mask")
+        if region is None and record.get("target_key") and instance_ref_is_weak(record.get("instance_ref")):
+            # 인스턴스 참조로 비교할 수 없는 기록은 구형 영역 키로 찾는다.
+            region = next((r for r in output_regions if region_binding_key(r) == record["target_key"]), None)
+            kind = "target_key" if region is not None else kind
+        if region is None:
+            return None, f"dormant_{kind}"
+        index = next((i for i, r in enumerate(output_regions) if r.get("region_id") == region.get("region_id")), None)
+        return index, kind
+    best = max(((_crop_ocr_area_overlap(item, shape["mask"]), i) for i, item in enumerate(crops)), default=(0, None))
+    return (best[1], "overlap") if best[0] > 0 else (None, "no_overlap")
+
+
+def _attach_custom_masks_to_ocr(
+    image: np.ndarray,
+    crops: List[Dict[str, Any]],
+    output_regions: List[Dict[str, Any]],
+    shapes: List[Dict[str, Any]],
+) -> Dict[str, Any] | None:
+    """칠한 모양을 붙을 영역의 OCR crop에 합친다. crop이 넓어지면 원점을 ocr_crop_rect로 남긴다."""
+    if not shapes:
+        return None
+    by_index: Dict[int, List[Dict[str, Any]]] = {}
+    skipped: Dict[str, int] = {}
+    for shape in shapes:
+        index, reason = _custom_mask_target_index(shape, crops, output_regions)
+        if index is None:
+            skipped[reason] = skipped.get(reason, 0) + 1
+        else:
+            by_index.setdefault(index, []).append(shape)
+    for index, items in by_index.items():
+        item, region = crops[index], output_regions[index]
+        union = np.zeros(image.shape[:2], dtype=np.uint8)
+        for shape in items:
+            union |= shape["mask"]
+        # 기존 crop의 원점: 마스크 없는 경계 기반 crop은 ocr_rect, 그 밖은 영역 사각형에서 잘랐다.
+        origin = item.get("ocr_rect") if item.get("mask") is None and item.get("ocr_rect") else item["source_rect"]
+        ox, oy = int(origin[0]), int(origin[1])
+        oh, ow = item["crop"].shape[:2]
+        ys, xs = np.nonzero(union)
+        x1, y1 = min(ox, int(xs.min())), min(oy, int(ys.min()))
+        x2, y2 = max(ox + ow, int(xs.max()) + 1), max(oy + oh, int(ys.max()) + 1)
+        canvas = np.full((y2 - y1, x2 - x1, 3), 255, dtype=np.uint8)
+        canvas[oy - y1:oy - y1 + oh, ox - x1:ox - x1 + ow] = item["crop"]
+        painted = union[y1:y2, x1:x2] > 0
+        canvas[painted] = image[y1:y2, x1:x2][painted]
+        item["crop"] = canvas
+        region["ocr_crop_rect"] = [x1, y1, x2 - x1, y2 - y1]
+        region["custom_mask_ocr"] = {"mask_ids": _custom_mask_ids(items), "shapes": len(items), "pixels": int(np.count_nonzero(painted))}
+    return {
+        "ocr_regions": sorted(int(output_regions[i]["region_id"]) for i in by_index),
+        "ocr_shapes": sum(len(items) for items in by_index.values()),
+        "not_in_ocr": skipped,
+    }
 
 
 def _forced_lama_keys(overrides: List[Dict[str, Any]] | None) -> set[str]:
@@ -3466,9 +3523,10 @@ def build_dialogue_sheet(
     scaled_bubble_mask_erode = _scaled_erode_px(bubble_mask_erode, image.shape)
     bubble_overlay_mask = _erode_mask(bubble_base_mask, scaled_bubble_mask_erode)
     masked_image[bubble_overlay_mask > 0] = (255, 255, 255)
-    # 지우기 보정은 모든 지우기(말풍선 흰칠·텍스트 LaMa·보호 범위 복원)가 끝난 뒤 마지막에 합성한다.
-    # 재사용한 이전 결과 위에도 다시 적용한다(보호 범위 복원이 이전 보정을 되돌렸을 수 있다).
-    custom_mask_report = _apply_custom_masks(masked_image, custom_masks)
+    # 지우기 보정은 모든 지우기(말풍선 흰칠·텍스트 LaMa·보호 범위 복원)가 끝난 뒤 마지막에 흰색으로 칠한다.
+    # 재사용한 이전 결과 위에도 다시 칠한다(보호 범위 복원이 이전 보정을 되돌렸을 수 있다).
+    custom_shapes = _custom_mask_shapes(custom_masks, image.shape)
+    custom_mask_report = _whiten_custom_masks(masked_image, custom_shapes)
 
     cv2.imwrite(output_masked_path, masked_image)
 
@@ -3568,6 +3626,18 @@ def build_dialogue_sheet(
         for key in ("region_origin", "region_ref", "region_instance_ref", "region_ref_weak", "region_ref_collision"):
             if key in annotated:
                 region_data[key] = annotated[key]
+
+    # 지우기 보정을 OCR crop에 합친다. 영역 참조가 붙은 뒤라야 R 지정 기록을 처리 인스턴스로 찾을 수 있다.
+    custom_ocr_report = _attach_custom_masks_to_ocr(image, crops, output_regions, custom_shapes)
+    if custom_ocr_report and custom_ocr_report["ocr_regions"]:
+        sheet_x = 0
+        for i, (item, region_data) in enumerate(zip(crops, output_regions)):
+            h, w = item["crop"].shape[:2]
+            region_data["sheet_rect"] = [sheet_x, 0, w, h]
+            sheet_x += w + (_SHEET_GAP if i < n_crops - 1 else 0)
+        max_height = max((c["crop"].shape[0] for c in crops), default=1)
+    if custom_mask_report is not None and custom_ocr_report is not None:
+        custom_mask_report.update(custom_ocr_report)
 
     # Indexed sheet — 각 crop 왼쪽에 라벨 컬럼 배치 (상단 gutter 제거)
     _LABEL_W = max(0, indexed_label_gutter)  # 좌측 라벨 열 너비 (기존 파라미터 재활용)

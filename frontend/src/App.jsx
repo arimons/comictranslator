@@ -70,7 +70,7 @@ const TOOL_HINTS = {
   bubble: "말풍선 안쪽 빈 곳을 클릭하세요",
   "region-split": "나눌 경계를 따라 선을 그으세요",
   ubox: "글자를 감싸도록 상자를 드래그하세요",
-  mask: "덜 지워진 곳을 칠하세요 · 드래그는 붓, 클릭은 다각형(첫 점·Enter로 닫기), Shift+드래그는 사각형",
+  mask: "놓친 곳을 칠하세요(흰칠 + OCR 반영) · 드래그는 붓, 클릭은 다각형(첫 점·Enter로 닫기), Shift+드래그는 사각형",
 };
 // 지우기 보정 붓 굵기(원본 px) 단계. [ ]로 한 단계씩 바꾼다.
 const MASK_BRUSH_STEPS = [2, 4, 6, 8, 12, 16, 24, 32, 48, 64];
@@ -2653,9 +2653,15 @@ export default function App() {
       items.push({ key: `engine-${index}`, kind: "inpaint_engine_overrides", index, label: `R${item.display_region_id || "?"} ${ENGINE_NAMES[item.engine] || item.engine} 고정`, detail: `지우기 엔진을 ${ENGINE_NAMES[item.engine] || item.engine}로 고정` });
     });
     (guidance.custom_masks || []).forEach((item, index) => {
-      // 페이지 단위 기록이라 영역 번호가 없다. 줄을 지우면 이 페이지의 보정이 모두 지워진다.
+      // R에 붙인 기록은 R마다 한 줄, R 지정 없이 칠한 기록(가장 많이 겹치는 영역에 자동 배정)은 한 줄이다.
+      const attached = Boolean(item.instance_ref || item.region_ref || item.target_key);
+      const dormant = attached && !guidanceRegions.some((region) => recordTargetsRegion(item, region));
       const shapes = `붓 ${(item.strokes || []).length} · 다각형 ${(item.polygons || []).length} · 사각형 ${(item.rects || []).length}`;
-      items.push({ key: `custom-mask-${index}`, kind: "custom_masks", index, label: "지우기 보정", detail: shapes });
+      items.push({
+        key: `custom-mask-${index}`, kind: "custom_masks", index,
+        label: attached ? `R${item.display_region_id || "?"} 지우기 보정` : "지우기 보정(자동 배정)",
+        detail: dormant ? `${shapes} · 영역 없음: 흰칠만` : shapes,
+      });
     });
     return items;
   }
@@ -2707,11 +2713,14 @@ export default function App() {
     setStatus(`R${regionId(region)} 지우기: ${engine ? `${ENGINE_NAMES[engine]} 고정` : "자동 판정"} · 변경사항 적용(${shortcutById("guidance.apply")})으로 반영됩니다.`);
   }
 
-  // 지우기 보정 도구를 켠다. 페이지 어디든 칠할 수 있고, R·TG를 선택해 두었으면 그곳으로 확대한다.
+  // 지우기 보정 도구를 켠다. R을 선택해 두었으면 그 R로 확대하고 칠한 것을 그 R의 OCR에 붙인다.
+  // 선택이 없으면 분석 때 가장 많이 겹치는 영역에 붙는다. 칠한 곳은 어느 쪽이든 흰칠된다.
   function startMaskTool() {
     setTool("mask");
     if (selectedGuidanceRegion || selectedTg != null) editorCanvasRef.current?.zoomToSelection();
-    setStatus("지우기 보정 · 드래그는 붓, 클릭은 다각형, Shift+드래그는 사각형 · 변경사항 적용 때 마지막에 지웁니다");
+    setStatus(selectedGuidanceRegion
+      ? `R${regionId(selectedGuidanceRegion)}에 지우기 보정 · 칠한 곳은 흰칠되고 이 R의 OCR에 들어갑니다`
+      : "지우기 보정(자동 배정) · 칠한 곳은 흰칠되고 가장 많이 겹치는 영역의 OCR에 들어갑니다");
   }
 
   // 선택한 R이 바뀌면 메모 입력칸을 저장된 값으로 되돌린다.
