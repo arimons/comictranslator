@@ -24,6 +24,7 @@ try:
         reconcile_overlay_guidance,
         resolve_cluster_refs,
         segment_index_by_ref,
+        tg_digest,
     )
 except ImportError:
     from background_restore import apply_restore_patches
@@ -35,6 +36,7 @@ except ImportError:
         reconcile_overlay_guidance,
         resolve_cluster_refs,
         segment_index_by_ref,
+        tg_digest,
     )
 
 # 번역 시점에 있던 대사가 현재 영역에서 완전히 사라졌을 때(TG 비활성화·영역 제외) 그 번역 조각을 그릴지.
@@ -152,6 +154,7 @@ def build_ref_context(
     overlay_newer_than_integrated: bool = True,
     overlay_newer_than_regions: bool = False,
     manual_guidance: dict | None = None,
+    text_groups: list | None = None,
 ) -> dict | None:
     """번역 조각·수동값을 R 번호가 아니라 현재 영역의 region_ref에 붙인다. regions.json을 못 읽으면 None(구형 번호 경로).
 
@@ -170,7 +173,8 @@ def build_ref_context(
     # 앱 projection과 같은 참조를 쓰도록 guidance(가이드 id 파생)를 함께 넘긴다.
     regions = annotate_regions([r for r in raw_regions if isinstance(r, dict)], manual_guidance)
     integrated = {"clusters": clusters}
-    refs = resolve_cluster_refs(integrated, regions)
+    digest = tg_digest(text_groups) if isinstance(text_groups, list) and text_groups else None
+    refs = resolve_cluster_refs(integrated, regions, digest)
     region_by_ref = {r["region_ref"]: r for r in regions}
     annotated: list[dict] = []
     for cluster, info in zip(clusters, refs):
@@ -190,7 +194,7 @@ def build_ref_context(
         overlay_newer_than_integrated,
         overlay_newer_than_regions,
     )
-    v1, _report = reconcile_overlay_guidance(v1, regions, segments=segment_index_by_ref(integrated, regions))
+    v1, _report = reconcile_overlay_guidance(v1, regions, digest, segments=segment_index_by_ref(integrated, regions, digest))
     return {
         "clusters": annotated,
         "overlay_guidance": v1,
@@ -4778,6 +4782,18 @@ def restore_rect_for_preserved_cluster(cluster: dict, fallback_bbox: list[int]) 
     return [int(v) for v in rect[:4]]
 
 
+def _load_raw_text_groups(regions_json: Path | None) -> list | None:
+    """`<이름>_regions.json` 옆의 원본 TG(`<이름>_text_groups.json`). 없으면 None(TG 재부여 보호 없음)."""
+    if regions_json is None or not regions_json.name.endswith("_regions.json"):
+        return None
+    path = regions_json.with_name(regions_json.name[: -len("_regions.json")] + "_text_groups.json")
+    try:
+        data = json.loads(path.read_text(encoding="utf-8")) if path.exists() else None
+    except Exception:
+        return None
+    return data if isinstance(data, list) else None
+
+
 def _manual_guidance_path_for(regions_json: Path | None, explicit: Path | None) -> Path | None:
     """가이드 id 파생에 쓸 편집기 guidance. 지정이 없으면 `<이름>_regions.json` 옆의 `<이름>_manual_guidance.json`."""
     if explicit is not None:
@@ -4834,6 +4850,7 @@ def apply_text_overlay(
         _overlay_is_newer_than_integrated(overlay_guidance_path, integrated_json),
         _overlay_is_newer_than_integrated(overlay_guidance_path, regions_json),
         manual_guidance,
+        _load_raw_text_groups(regions_json),
     )
     if ref_context is not None:
         clusters = ref_context["clusters"]

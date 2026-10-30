@@ -160,10 +160,10 @@ class ResolveTest(unittest.TestCase):
         self.assertEqual(rr.resolve("geo:b:400,400", None, regions)["kind"], rr.UNMATCHED)
 
     def test_iou_rematch_opens_only_when_tg_digest_changed(self) -> None:
-        snapshot = {"rect": R_B, "tg_digest": "old"}
-        self.assertEqual(rr.resolve("tg:99", snapshot, self.regions, "old")["kind"], rr.UNMATCHED)
+        snapshot = {"rect": R_B, "tg_digest": "raw:old"}
+        self.assertEqual(rr.resolve("tg:99", snapshot, self.regions, "raw:old")["kind"], rr.UNMATCHED)
         self.assertEqual(rr.resolve("tg:99", snapshot, self.regions, None)["kind"], rr.UNMATCHED)
-        changed = rr.resolve("tg:99", snapshot, self.regions, "new")
+        changed = rr.resolve("tg:99", snapshot, self.regions, "raw:new")
         self.assertEqual((changed["kind"], changed["target_refs"]), (rr.GEO, ["tg:3"]))
 
     def test_tg_digest_changes_with_ids_or_rects(self) -> None:
@@ -499,6 +499,38 @@ class ReviewFixesTest(unittest.TestCase):
         self.assertEqual(rr.legacy_key_map(v1, integrated, regions), {"tg:4": "3"})
 
 
+class RawDigestTest(unittest.TestCase):
+    """재검토 v3 S·B: digest는 원본 TG 재부여 신호로만 쓴다."""
+
+    def test_tg_off_cycle_keeps_value_when_digest_is_unchanged(self) -> None:
+        d = rr.tg_digest([{"text_group_id": 3, "bounding_rect": R_A}, {"text_group_id": 5, "bounding_rect": R_B}])
+        guidance = {"regions_by_ref": {"tg:3,5": {"font_size": 44, "_anchor": {"rect": R_A, "tg_digest": d}}}}
+        shrunk, _ = rr.reconcile_overlay_guidance(guidance, [region(8, [5], [391, 682, 44, 50])], d)
+        self.assertEqual(shrunk["regions_by_ref"]["tg:5"]["font_size"], 44)
+        back, _ = rr.reconcile_overlay_guidance(shrunk, [region(8, [3, 5], R_A)], d)
+        self.assertEqual(back["regions_by_ref"]["tg:3,5"]["font_size"], 44)
+        self.assertEqual(back["unmatched_regions"], {})
+
+    def test_legacy_effective_digest_is_ignored_and_false_stash_returns(self) -> None:
+        d = rr.tg_digest([{"text_group_id": 3, "bounding_rect": R_A}])
+        legacy_live = {"regions_by_ref": {"tg:3,5": {"font_size": 44, "_anchor": {"rect": R_A, "tg_digest": "978a07d296a6384f"}}}}
+        out, _ = rr.reconcile_overlay_guidance(legacy_live, [region(8, [5], [391, 682, 44, 50])], d)
+        self.assertEqual(out["regions_by_ref"]["tg:5"]["font_size"], 44)
+        stash = {"unmatched_regions": {"tg:5": {"font_size": 44, "_unmatched_ref": "tg:5", "_unmatched_key": "tg:5",
+                                                  "_unmatched_reason": "tg_digest_changed", "_anchor": {"rect": R_B, "tg_digest": "7ec7f60844478a11"}}},
+                 "regions_by_ref": {}}
+        back, report = rr.reconcile_overlay_guidance(stash, [region(8, [3, 5], R_A)], d)
+        self.assertEqual(back["regions_by_ref"]["tg:3,5"]["font_size"], 44)
+        self.assertEqual(back["unmatched_regions"], {})
+
+    def test_reissued_raw_tg_numbers_still_use_iou_only(self) -> None:
+        old = rr.tg_digest([{"text_group_id": 2, "bounding_rect": R_B}])
+        new = rr.tg_digest([{"text_group_id": 2, "bounding_rect": R_C}])
+        guidance = {"regions_by_ref": {"tg:2": {"font_size": 30, "_anchor": {"rect": R_B, "tg_digest": old}}}}
+        out, _ = rr.reconcile_overlay_guidance(guidance, [region(1, [2], R_C)], new)
+        self.assertEqual(out["regions_by_ref"], {})
+
+
 class PolicyTableTest(unittest.TestCase):
     def test_every_kind_has_a_policy_for_every_consumer(self) -> None:
         for kind in (rr.EXACT, rr.SHRINK, rr.MERGE, rr.SPLIT, rr.GEO, rr.UNMATCHED):
@@ -567,29 +599,29 @@ class TgDigestGuardTest(unittest.TestCase):
     """재검토 R1: TG 번호가 전부 새로 매겨졌으면(digest 변경) 같은 참조 문자열이어도 바로 붙이지 않는다(설계 A7)."""
 
     def test_exact_ref_with_changed_digest_goes_through_iou(self) -> None:
-        snap = {"rect": R_B, "tg_digest": "old"}
+        snap = {"rect": R_B, "tg_digest": "raw:old"}
         other_place = [region(1, [2], R_C)]  # 같은 TG2지만 전혀 다른 말풍선
-        res = rr.resolve("tg:2", snap, other_place, "new")
+        res = rr.resolve("tg:2", snap, other_place, "raw:new")
         self.assertEqual(res["kind"], rr.UNMATCHED)
         same_place = [region(1, [2], R_B)]
-        self.assertEqual(rr.resolve("tg:2", snap, same_place, "new")["kind"], rr.GEO)
-        self.assertEqual(rr.resolve("tg:2", snap, other_place, "old")["kind"], rr.EXACT)
+        self.assertEqual(rr.resolve("tg:2", snap, same_place, "raw:new")["kind"], rr.GEO)
+        self.assertEqual(rr.resolve("tg:2", snap, other_place, "raw:old")["kind"], rr.EXACT)
         # 현재 digest를 모르면(렌더러 등) 예전처럼 정확 일치로 본다.
         self.assertEqual(rr.resolve("tg:2", snap, other_place, None)["kind"], rr.EXACT)
 
     def test_live_value_after_tg_renumbering_is_not_kept_on_another_bubble(self) -> None:
-        guidance = {"regions_by_ref": {"tg:2": {"font_size": 30, "_anchor": {"rect": R_B, "tg_digest": "old"}}}}
-        out, report = rr.reconcile_overlay_guidance(guidance, [region(1, [2], R_C)], "new")
+        guidance = {"regions_by_ref": {"tg:2": {"font_size": 30, "_anchor": {"rect": R_B, "tg_digest": "raw:old"}}}}
+        out, report = rr.reconcile_overlay_guidance(guidance, [region(1, [2], R_C)], "raw:new")
         self.assertEqual(out["regions_by_ref"], {})
         self.assertEqual(len(out["unmatched_regions"]), 1)
 
     def test_stash_does_not_return_to_a_different_bubble_after_renumbering(self) -> None:
         stash = {"tg:2": {"font_size": 30, "_unmatched_ref": "tg:2", "_unmatched_key": "tg:2", "_unmatched_reason": "no_region",
-                          "_anchor": {"rect": R_B, "tg_digest": "old"}}}
+                          "_anchor": {"rect": R_B, "tg_digest": "raw:old"}}}
         moved = {"unmatched_regions": stash, "regions_by_ref": {}}
-        out, _ = rr.reconcile_overlay_guidance(moved, [region(1, [2], R_C)], "new")
+        out, _ = rr.reconcile_overlay_guidance(moved, [region(1, [2], R_C)], "raw:new")
         self.assertEqual(out["regions_by_ref"], {})
-        same, _ = rr.reconcile_overlay_guidance(moved, [region(1, [2], R_C)], "old")
+        same, _ = rr.reconcile_overlay_guidance(moved, [region(1, [2], R_C)], "raw:old")
         self.assertIn("tg:2", same["regions_by_ref"])  # digest가 같으면 원래대로 돌아온다
 
     def test_stash_without_digest_returns_only_if_geometry_agrees(self) -> None:
@@ -597,13 +629,13 @@ class TgDigestGuardTest(unittest.TestCase):
         def stash(rect):
             return {"unmatched_regions": {"tg:2": {"font_size": 30, "_unmatched_ref": "tg:2", "_unmatched_key": "tg:2", "_anchor": {"rect": rect}}},
                     "regions_by_ref": {}}
-        out, _ = rr.reconcile_overlay_guidance(stash(R_B), [region(1, [2], R_C)], "new")
+        out, _ = rr.reconcile_overlay_guidance(stash(R_B), [region(1, [2], R_C)], "raw:new")
         self.assertEqual(out["regions_by_ref"], {})
-        near, _ = rr.reconcile_overlay_guidance(stash(R_B), [region(1, [2], R_B)], "new")
+        near, _ = rr.reconcile_overlay_guidance(stash(R_B), [region(1, [2], R_B)], "raw:new")
         self.assertIn("tg:2", near["regions_by_ref"])
         unknown, _ = rr.reconcile_overlay_guidance(stash(R_B), [region(1, [2], R_C)], None)
         self.assertIn("tg:2", unknown["regions_by_ref"])
 
     def test_snapshot_records_the_digest(self) -> None:
-        out, _ = rr.reconcile_overlay_guidance({"regions_by_ref": {"tg:2": {"font_size": 1}}}, [region(1, [2], R_B)], "abc")
-        self.assertEqual(out["regions_by_ref"]["tg:2"]["_anchor"]["tg_digest"], "abc")
+        out, _ = rr.reconcile_overlay_guidance({"regions_by_ref": {"tg:2": {"font_size": 1}}}, [region(1, [2], R_B)], "raw:abc")
+        self.assertEqual(out["regions_by_ref"]["tg:2"]["_anchor"]["tg_digest"], "raw:abc")

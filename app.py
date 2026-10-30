@@ -1431,11 +1431,12 @@ def image_record(
         regions = regions_with_processing_basis(load_json(json_dir / f"{stem}_regions.json", default={}))
         integrated = load_json(json_dir / f"{stem}_integrated.json", default=[])
         effective_text_groups = load_json(json_dir / f"{stem}_text_groups_effective.json", default=[])
+        raw_text_groups = load_json(json_dir / f"{stem}_text_groups.json", default=[])
         manual_guidance = load_json(json_dir / f"{stem}_manual_guidance.json", default={})
         overlay_guidance = load_json(json_dir / f"{stem}_overlay_guidance.json", default={})
         # 영역 참조: 저장 파일은 그대로 두고 읽을 때 메모리로만 region_ref 등을 붙인다.
         projection = project_page(
-            regions, integrated, overlay_guidance, manual_guidance, effective_text_groups,
+            regions, integrated, overlay_guidance, manual_guidance, raw_text_groups,
             _overlay_is_newer_than_integrated(json_dir / f"{stem}_overlay_guidance.json", json_dir / f"{stem}_integrated.json"),
             _overlay_is_newer_than_integrated(json_dir / f"{stem}_overlay_guidance.json", json_dir / f"{stem}_regions.json") and (json_dir / f"{stem}_regions.json").exists(),
         )
@@ -2258,8 +2259,10 @@ def _overlay_page_inputs(record: dict[str, Any]) -> tuple[Any, list[dict[str, An
 
 
 def _current_tg_digest(record: dict[str, Any]) -> str | None:
-    """현재 유효 TG(id·사각형 목록)의 해시. 값이 달라졌다면 CV/Step 2를 다시 돌려 TG가 새로 매겨진 것이다(설계 A7)."""
-    path = record.get("effective_text_groups_json")
+    """원본 TG(text_groups.json, CV/Step 2 산출)의 해시. TG 끄기·분할로는 변하지 않고 TG가 새로 매겨졌을 때만 변한다(설계 A7).
+
+    원본 파일이 없으면(예: 일부 페이지) None이라 이 보호는 꺼진다."""
+    path = record.get("text_groups_json")
     groups = load_json(Path(path), default=None) if path and Path(path).exists() else None
     return tg_digest(groups) if isinstance(groups, list) and groups else None
 

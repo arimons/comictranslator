@@ -104,3 +104,5 @@ Syncthing 현황(2026-10-21 MacBook 설정 확인, 2026-10-29부터 코드도 Sy
 <!-- 2026-10-29 review: app.py·region_refs.py TG digest 보호와 메모 보관 저장 경로. 이 문서 내용 영향 없음 -->
 
 <!-- 변경 검토(2026-10-30): 페이지 가이드 파일에 custom_masks 키가 추가됐을 뿐 저장 위치·구조는 그대로라 이 문서 내용 영향 없음 -->
+
+<!-- 2026-10-29 review: region_refs.py·app.py·render_text_overlay.py TG digest를 원본 TG 기준으로 변경. 이 문서 내용 영향 없음 -->

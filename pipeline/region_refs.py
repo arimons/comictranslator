@@ -387,8 +387,21 @@ def instance_ref_is_weak(instance_ref: str | None) -> bool:
     return not text or "|geo:" in text or "@" in text or f"|{METHOD_ORIGIN_PREFIX}" in text or text.startswith(METHOD_ORIGIN_PREFIX)
 
 
+RAW_DIGEST_PREFIX = "raw:"
+
+
+def digest_changed(stored: str | None, current: str | None) -> bool:
+    """두 TG digest가 모두 raw 기준이고 서로 다를 때만 True. 예전 effective 기준 digest(접두사 없음)는 비교하지 않는다."""
+    return bool(
+        stored and current and str(stored).startswith(RAW_DIGEST_PREFIX) and str(current).startswith(RAW_DIGEST_PREFIX)
+        and stored != current
+    )
+
+
 def tg_digest(text_groups: Iterable[dict] | None) -> str:
-    """TG id와 사각형 목록의 해시. 달라졌다면 CV/Step 2를 다시 돌려 TG가 새로 매겨진 것이다."""
+    """원본 TG(CV/Step 2 산출 text_groups.json)의 id·사각형 목록 해시. 달라졌다면 TG가 새로 매겨진 것이다.
+
+    TG 끄기·분할은 effective 목록만 바꾸고 원본은 그대로라 digest가 변하지 않는다. 반드시 원본 목록을 넘긴다."""
     rows = []
     for index, group in enumerate(text_groups or [], start=1):
         if not isinstance(group, dict):
@@ -397,7 +410,7 @@ def tg_digest(text_groups: Iterable[dict] | None) -> str:
         rect = _rect4(group.get("bounding_rect") or group.get("tight_rect")) or []
         rows.append([gid, rect])
     rows.sort(key=lambda row: str(row[0]))
-    return hashlib.sha1(json.dumps(rows, ensure_ascii=False, separators=(",", ":")).encode()).hexdigest()[:16]
+    return RAW_DIGEST_PREFIX + hashlib.sha1(json.dumps(rows, ensure_ascii=False, separators=(",", ":")).encode()).hexdigest()[:16]
 
 
 # ----------------------------------------------------------- integrated ---
@@ -512,8 +525,7 @@ def resolve(
     snapshot = snapshot or {}
     regions = _annotated(current_regions)
     by_ref = {r["region_ref"]: r for r in regions if isinstance(r, dict)}
-    stored_digest = snapshot.get("tg_digest")
-    if stored_digest and current_tg_digest and stored_digest != current_tg_digest:
+    if digest_changed(snapshot.get("tg_digest"), current_tg_digest):
         # CV/Step 2를 다시 돌려 TG 번호가 새로 매겨졌다. 같은 참조 문자열도 다른 말풍선일 수 있으니 위치(IoU)로만 찾는다(A7).
         rect = _rect4(snapshot.get("rect"))
         if rect:
@@ -566,8 +578,7 @@ def resolve(
             return _resolution(GEO, [found["region_ref"]], "geo_tolerance", old_ref)
         return _resolution(UNMATCHED, [], "no_geo_match", old_ref)
 
-    stored_digest = snapshot.get("tg_digest")
-    if rect and stored_digest and current_tg_digest and stored_digest != current_tg_digest:
+    if rect and digest_changed(snapshot.get("tg_digest"), current_tg_digest):
         scored = sorted(
             ((rect_iou(rect, region_rect(r) or [0, 0, 0, 0]), r) for r in regions),
             key=lambda item: -item[0],
@@ -927,12 +938,18 @@ def reconcile_overlay_guidance(
             continue
         snapshot = item.get(ANCHOR_FIELD) if isinstance(item.get(ANCHOR_FIELD), dict) else {}
         res = resolve(base, snapshot, regions, current_tg_digest)
-        usable = res["kind"] == EXACT or (res["kind"] == GEO and res["reason"] == "iou_after_tg_change")
+        # 예전 effective 기준 digest 때문에 보관된 값(tg_digest_changed)은 거짓 신호였으니 TG 관계(축소·합침)로도 되돌린다.
+        false_signal = item.get("_unmatched_reason") == "tg_digest_changed" and not str(snapshot.get("tg_digest") or "").startswith(RAW_DIGEST_PREFIX)
+        if false_signal:
+            res = resolve(base, {**snapshot, "tg_digest": None}, regions, None)
+        usable = res["kind"] == EXACT or (res["kind"] == GEO and res["reason"] == "iou_after_tg_change") or (
+            false_signal and res["kind"] in {SHRINK, MERGE}
+        )
         if not usable:
             continue
         target = res["target_refs"][0]
-        if res["kind"] == EXACT and current_tg_digest and not snapshot.get("tg_digest"):
-            # 예전 보관분은 TG digest가 없다. 지금 digest를 알면 위치가 맞을 때만 되돌린다(보수적).
+        if res["kind"] == EXACT and current_tg_digest and not str(snapshot.get("tg_digest") or "").startswith(RAW_DIGEST_PREFIX) and not false_signal:
+            # digest가 없는 예전 보관분은 지금 digest를 알 때 위치(IoU 0.5)가 맞을 때만 되돌린다(보수적).
             old_rect, new_rect = _rect4(snapshot.get("rect")), region_rect(by_ref_regions[target])
             if old_rect and new_rect and rect_iou(old_rect, new_rect) < GEO_MIN_IOU:
                 continue

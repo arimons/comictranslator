@@ -134,3 +134,5 @@ UI 검증은 별도 headless Chromium에서 실행한다. `proof/src/run_headles
 <!-- 2026-10-29 review: app.py·region_refs.py TG digest 보호와 메모 보관 저장 경로. 이 문서 내용 영향 없음 -->
 
 <!-- 변경 검토(2026-10-30): 지우기 보정(custom_masks) 가이드 키 추가, 이 문서 내용 영향 없음 -->
+
+<!-- 2026-10-29 review: region_refs.py·app.py·render_text_overlay.py TG digest를 원본 TG 기준으로 변경. 이 문서 내용 영향 없음 -->

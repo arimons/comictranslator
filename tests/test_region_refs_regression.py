@@ -320,3 +320,21 @@ class RenderHintRefreshTest(unittest.TestCase):
             cluster = json.loads((tmp / "integrated.json").read_text(encoding="utf-8"))["clusters"][0]
             self.assertEqual(cluster["source_region_id"], 3)
             self.assertEqual(cluster["source_region_ref"], "tg:3")
+
+
+class RendererDigestTest(unittest.TestCase):
+    def test_renderer_uses_the_same_raw_tg_digest_as_the_app(self) -> None:
+        """재검토 v3 B: 앱이 TG 재부여로 보관한 값을 렌더러가 같은 참조 문자열의 다른 말풍선에 다시 붙이지 않는다."""
+        old = rr.tg_digest([{"text_group_id": 2, "bounding_rect": RECTS["B"]}])
+        overlay = {"key_scheme": "region_ref_v1", "legacy_digest": rr.legacy_digest({}), "regions": {},
+                   "regions_by_ref": {"tg:2": {"font_size": 31, "_anchor": {"rect": RECTS["B"], "tg_digest": old}}}}
+        clusters = [_cluster(1, 2, "D")]
+        regions = [_region(1, 2, "D")]  # TG2가 전혀 다른 말풍선(D)이 됐다
+        with tempfile.TemporaryDirectory() as raw:
+            tmp = Path(raw)
+            groups = [{"text_group_id": 2, "bounding_rect": RECTS["D"]}]
+            (tmp / "p_text_groups.json").write_text(json.dumps(groups), encoding="utf-8")
+            (tmp / "p_regions.json").write_text(json.dumps({"regions": regions}), encoding="utf-8")
+            self.assertEqual(rto._load_raw_text_groups(tmp / "p_regions.json"), groups)  # apply_text_overlay가 읽는 경로
+            ctx = rto.build_ref_context(clusters, tmp / "p_regions.json", overlay, text_groups=groups)
+        self.assertEqual(ctx["overlay_guidance"]["regions_by_ref"], {})

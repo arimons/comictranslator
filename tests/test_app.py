@@ -2067,7 +2067,7 @@ def test_sync_overlay_stashes_value_when_tg_numbers_were_reissued(tmp_path, monk
 
     rect_a, rect_b = [10, 10, 100, 80], [200, 10, 100, 80]
     record = _overlay_record(tmp_path, monkeypatch, {"clusters": [_cluster_row(1, [2], rect_a)]}, [_rect_region(1, [2], rect_a)])
-    effective = Path(record["effective_text_groups_json"])
+    effective = Path(record["text_groups_json"])  # 원본 TG(CV/Step 2 산출)
     effective.parent.mkdir(parents=True, exist_ok=True)
     effective.write_text(json.dumps([{"text_group_id": 2, "bounding_rect": rect_a}]), encoding="utf-8")
     saved = app.store_overlay_guidance(record, {"regions": {"tg:2": {"font_size": 30}}, "key_scheme": "region_ref_v1"}, replace=True)
@@ -2079,3 +2079,25 @@ def test_sync_overlay_stashes_value_when_tg_numbers_were_reissued(tmp_path, monk
     after = json.loads(Path(record["overlay_guidance_json"]).read_text(encoding="utf-8"))
     assert after["regions_by_ref"] == {}
     assert after["unmatched_regions"]["tg:2"]["font_size"] == 30
+
+
+def test_turning_a_tg_off_and_on_keeps_the_manual_value(tmp_path, monkeypatch):
+    """시각 검증 S: TG를 끄고 다시 켜도(원본 TG는 그대로) 영역 수동값이 유지된다. TG 끄기는 TG 재부여 신호가 아니다."""
+    import json
+
+    big, small = [391, 682, 88, 141], [391, 682, 44, 50]
+    record = _overlay_record(tmp_path, monkeypatch, {"clusters": [_cluster_row(8, [3, 5], big)]}, [_rect_region(8, [3, 5], big)])
+    raw = Path(record["text_groups_json"]); raw.parent.mkdir(parents=True, exist_ok=True)
+    raw.write_text(json.dumps([{"text_group_id": 3, "bounding_rect": [391, 682, 40, 60]}, {"text_group_id": 5, "bounding_rect": [430, 700, 44, 50]}]), encoding="utf-8")
+    app.store_overlay_guidance(record, {"regions": {"tg:3,5": {"font_size": 44}}, "key_scheme": "region_ref_v1"}, replace=True)
+    # 처음 끄기(효과 TG 목록만 줄고 원본은 그대로): 영역이 줄어든다.
+    Path(record["regions_json"]).write_text(json.dumps({"regions": [_rect_region(8, [5], small)]}), encoding="utf-8")
+    app.sync_overlay_guidance_for_record(record)
+    mid = json.loads(Path(record["overlay_guidance_json"]).read_text(encoding="utf-8"))
+    assert mid["regions_by_ref"]["tg:5"]["font_size"] == 44
+    # 두 번째 변경(다시 켜기)에도 값이 따라간다.
+    Path(record["regions_json"]).write_text(json.dumps({"regions": [_rect_region(8, [3, 5], big)]}), encoding="utf-8")
+    app.sync_overlay_guidance_for_record(record)
+    after = json.loads(Path(record["overlay_guidance_json"]).read_text(encoding="utf-8"))
+    assert after["regions_by_ref"]["tg:3,5"]["font_size"] == 44
+    assert after["unmatched_regions"] == {}
