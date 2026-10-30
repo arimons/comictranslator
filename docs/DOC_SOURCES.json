@@ -187,6 +187,13 @@
       "topic": "편집기 UI와 MCP 후속 할 일",
       "sources": []
     },
+    "docs/REGION_REF_DESIGN_AND_REVIEW.md": {
+      "role": "record",
+      "topic": "2026-10-29〜30 영역 참조(region_ref) 설계안과 적대적 리뷰 기록",
+      "sources": [
+        "pipeline/region_refs.py"
+      ]
+    },
     "docs/CUSTOM_MASK_PLAN.md": {
       "role": "hub",
       "topic": "커스텀 마스크(지우기 보정) 구현 계획",
