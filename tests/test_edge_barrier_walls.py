@@ -93,3 +93,24 @@ def test_mask_polygon_follows_mask_shape_not_rect():
     polygon = _mask_polygon(mask)
     assert polygon is not None and len(polygon) >= 5
     assert _mask_polygon(np.zeros((10, 10), np.uint8)) is None
+
+
+def test_manual_split_on_polygon_only_region_stays_inside_polygon():
+    import numpy as np
+    import cv2
+    from pipeline.dialogue_extractor import _split_region_variants
+
+    shape = (200, 200)
+    polygon = cv2.ellipse2Poly((100, 100), (60, 80), 0, 0, 360, 10).tolist()
+    groups = {
+        1: {"text_group_id": 1, "tight_rect": [80, 40, 40, 30], "bounding_rect": [80, 40, 40, 30]},
+        2: {"text_group_id": 2, "tight_rect": [80, 130, 40, 30], "bounding_rect": [80, 130, 40, 30]},
+    }
+    region = {"is_valid": True, "anchor_ids": [1, 2], "bubble_rect": [40, 20, 120, 160], "polygon": polygon, "method": "flood"}
+    out = _split_region_variants(region, groups, [{"line": [[20, 100], [180, 100]]}], image_shape=shape)
+    assert len(out) == 2
+    ellipse = np.zeros(shape, np.uint8)
+    cv2.fillPoly(ellipse, [np.array(polygon, np.int32)], 255)
+    for child in out:
+        assert not np.any((child["mask"] > 0) & (ellipse == 0))
+        assert child["polygon"] != polygon

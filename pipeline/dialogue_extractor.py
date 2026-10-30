@@ -1587,6 +1587,9 @@ def _split_region_variants(
     if not region.get("is_valid"):
         return [region]
     mask = region.get("mask") if isinstance(region.get("mask"), np.ndarray) else None
+    if mask is None and image_shape is not None and region.get("polygon"):
+        # 자동 검출 영역은 mask 없이 polygon만 가진다. 사각형으로 가르면 말풍선 밖까지 칠해지므로 polygon으로 mask를 만든다.
+        mask = _polygon_to_mask(region.get("polygon"), tuple(image_shape))
     anchor_ids: List[int] = []
     for raw_aid in region.get("anchor_ids", []):
         try:
@@ -1643,6 +1646,14 @@ def _split_region_variants(
             split_shape = (max_y + 4, max_x + 4)
         split_result = _split_rect_by_manual_line(split_shape, parent_rect, guide_anchor_ids, guide_anchor_centers, guide_anchor_rects, p1, p2)
         if split_result is not None:
+            if mask is not None:
+                # 사각형 조각을 원래 영역 모양으로 한정해 말풍선 밖이 지워지지 않게 한다
+                for item in split_result:
+                    clipped = np.where((item["sub_mask"] > 0) & (mask > 0), 255, 0).astype(np.uint8)
+                    clipped_rect = _mask_bounding_rect(clipped)
+                    if clipped_rect is not None:
+                        item["sub_mask"] = clipped
+                        item["bubble_rect"] = clipped_rect
             split_source = "manual_split_rect_fallback"
             break
 
@@ -1672,6 +1683,7 @@ def _split_region_variants(
             "anchor_ids": child_anchor_ids,
             "bubble_rect": child_rect,
             "mask": sub["sub_mask"],
+            "polygon": _mask_polygon(sub["sub_mask"]) or region.get("polygon"),
             "split_parent_mask": mask if mask is not None else None,
             "split_line": sub.get("split_line"),
             "split_parent_rect": parent_rect,
