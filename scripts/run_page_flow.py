@@ -129,6 +129,7 @@ ERASE_CROP_PROMPT = (
 ERASE_MIN_PIXELS = 700_000  # 모델 최소(655,360)에 16배수 덧대기 여유를 더한 값
 ERASE_MAX_RATIO = 2.8
 ERASE_MARGIN = 60
+STROKE_DILATE = 8
 
 
 def context_rect(rect: list[int], page_w: int, page_h: int) -> list[int]:
@@ -160,6 +161,7 @@ def erase_regions(client: TestClient, sid: str, iid: str, quality: str, model: s
     import numpy as np
 
     from pipeline.ai_text_erase import erase_page_text
+    from pipeline.background_restore import MaskParams, build_text_stroke_mask
     from pipeline.gemini_image import image_model_for
 
     record = comic_app._restore_record(sid, iid)
@@ -169,6 +171,12 @@ def erase_regions(client: TestClient, sid: str, iid: str, quality: str, model: s
         sys.exit("가이던스에 영역이 없습니다. regions 단계를 먼저 실행하세요.")
     page = comic_app._read_bgr(record["input_path"])
     page_h, page_w = page.shape[:2]
+    # 이전 AI 지우기 패치는 지우고 다시 만든다(다른 엔진의 패치는 건드리지 않는다)
+    for old in comic_app._restore_state(record).get("patches", []):
+        if old.get("engine") == comic_app.AI_ERASE_ENGINE:
+            call(client, "POST", "/api/restore/patch/remove", json={"session_id": sid, "image_id": iid, "patch_id": old["id"]})
+    # 사각형 전체가 아니라 글자 획 주변만 합성한다. 평평한 배경에서 지운 사각형의 색 차이가 비치지 않는다.
+    stroke_mask = build_text_stroke_mask(page, [{"rect": r, "fragments": []} for r in rects], MaskParams(dilate_px=STROKE_DILATE))
     image_model = image_model_for(model, comic_app.IMAGE_MODEL)
     total = 0.0
     for index, rect in enumerate(rects, start=1):
@@ -180,7 +188,9 @@ def erase_regions(client: TestClient, sid: str, iid: str, quality: str, model: s
         erased, meta = erase_page_text(crop, job_dir, model=image_model, quality=quality, prompt=ERASE_CROP_PROMPT)
         mask = np.zeros(crop.shape[:2], dtype=np.uint8)
         rx, ry, rw, rh = rect
-        mask[max(0, ry - cy):max(0, ry - cy + rh), max(0, rx - cx):max(0, rx - cx + rw)] = 255
+        region = np.zeros((page_h, page_w), dtype=np.uint8)
+        region[ry:ry + rh, rx:rx + rw] = 255
+        mask = cv2.bitwise_and(stroke_mask, region)[cy:cy + ch, cx:cx + cw]
         cv2.imwrite(str(job_dir / "crop_before.png"), crop)
         cv2.imwrite(str(job_dir / "crop_after.png"), erased)
         cv2.imwrite(str(job_dir / "crop_mask.png"), mask)
