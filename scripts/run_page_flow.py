@@ -305,18 +305,20 @@ def erase_regions(client: TestClient, sid: str, iid: str, quality: str, model: s
     return total
 
 
-def overlay_suppression(record: dict) -> dict | None:
-    """R로 등록했지만 AI가 이미 그린 영역(제목·라벨)에는 빈 text_override를 줘서 폰트가 겹치지 않게 한다."""
+def overlay_suppression(record: dict) -> dict:
+    """R로 등록했지만 AI가 이미 그린 영역(제목·라벨)에는 빈 text_override를 줘서 폰트가 겹치지 않게 한다.
+    번호 키는 이전 실행의 R 번호와 섞여 엉뚱한 영역에 붙을 수 있어 영역 참조(region_ref)로 지정한다.
+    스크립트가 만든 페이지의 수동값은 이 값으로 통째로 교체한다(이전 실행에서 남은 억제 값을 없애기 위해)."""
+    refs: dict[str, dict] = {}
     draw_path = Path(record["work_dir"]) / "json" / f"{record['id']}_ai_draw.json"
-    if not draw_path.exists():
-        return None
-    plan = json.loads(draw_path.read_text(encoding="utf-8"))
-    register_ids = set(plan.get("register_ids", [])) if isinstance(plan, dict) else set()
-    if not register_ids:
-        return None
-    regions = comic_app.load_json(record["regions_json"], default={}).get("regions", [])
-    ids = [r["region_id"] for r in regions if r.get("region_origin") in register_ids]
-    return {"regions": {str(i): {"text_override": ""} for i in ids}} if ids else None
+    if draw_path.exists():
+        plan = json.loads(draw_path.read_text(encoding="utf-8"))
+        register_ids = set(plan.get("register_ids", [])) if isinstance(plan, dict) else set()
+        regions = comic_app.load_json(record["regions_json"], default={}).get("regions", [])
+        for region in regions:
+            if region.get("region_origin") in register_ids and region.get("region_ref"):
+                refs[region["region_ref"]] = {"text_override": ""}
+    return {"key_scheme": "region_ref_v1", "regions_by_ref": refs, "regions": {}}
 
 
 def main() -> None:
@@ -358,9 +360,8 @@ def main() -> None:
         body = {"session_id": sid, "image_id": iid, "ocr_model": args.ocr_model, "force": args.force,
                 "extra_prompt": args.extra_prompt}
         item = comic_app.get_image(sid, iid)
-        suppress = overlay_suppression(comic_app.image_record(sid, Path(item["input_path"]), item.get("image_sha256")))
-        if suppress:
-            body["overlay_guidance"] = suppress
+        body["overlay_guidance"] = overlay_suppression(comic_app.image_record(sid, Path(item["input_path"]), item.get("image_sha256")))
+        body["replace"] = True
         if args.font:
             body["font_path"] = args.font
         call(client, "POST", "/api/run-final", json=body)

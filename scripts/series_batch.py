@@ -61,9 +61,8 @@ def process_page(client: TestClient, sid: str, iid: str, args) -> float:
         cost = rpf.erase_regions(client, sid, iid, args.erase_quality, args.ocr_model)
     body = {"session_id": sid, "image_id": iid, "ocr_model": args.ocr_model, "force": True, "extra_prompt": args.extra_prompt}
     item = comic_app.get_image(sid, iid)
-    suppress = rpf.overlay_suppression(comic_app.image_record(sid, Path(item["input_path"]), item.get("image_sha256")))
-    if suppress:
-        body["overlay_guidance"] = suppress
+    body["overlay_guidance"] = rpf.overlay_suppression(comic_app.image_record(sid, Path(item["input_path"]), item.get("image_sha256")))
+    body["replace"] = True
     rpf.call(client, "POST", "/api/run-final", json=body)
     ensure_final(sid, iid)
     done_marker(sid, iid).write_text(json.dumps({"ai_cost_usd": round(cost, 4)}), encoding="utf-8")
