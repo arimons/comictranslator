@@ -23,7 +23,6 @@ from fastapi.testclient import TestClient  # noqa: E402
 
 import app as comic_app  # noqa: E402
 from pipeline.openai_tasks import TERRA_MODEL  # noqa: E402
-from pipeline.region_refs import legacy_digest  # noqa: E402
 
 
 def call(client: TestClient, method: str, url: str, **kw) -> dict:
@@ -37,7 +36,6 @@ RUBY_GUIDE = ("후리가나(루비)가 달린 단어는 후리가나 발음을 �
               "후리가나가 설정 용어의 뜻을 따로 설명하면 번역 뒤에 괄호로 짧게 덧붙이세요. "
               "예: 본 글자가 '초능력자'이고 후리가나가 '레벨 5'이면 '초능력자(레벨 5)'.")
 REGION_PAD = 14
-REGISTER_DRAW_KINDS = {"title", "label"}  # AI가 그려도 R로 등록할 종류(효과음은 등록하지 않는다)
 DRAW_MIN_LINE_RATIO = 0.030  # 글자 한 줄 높이가 페이지 가로폭의 3% 미만이면 AI가 그리지 않고 폰트로 넣는다
 CLUE_MAX_SIDE = 1800
 REGION_PROMPT = """일본어 만화 한 페이지입니다. 이미지에는 Cloud Vision이 찾은 글자 조각(TG)이 번호 박스로 그려져 있습니다.
@@ -118,7 +116,7 @@ def terra_guidance(record: dict, model: str) -> dict:
         return [round(norm[0] * width / 1000), round(norm[1] * height / 1000),
                 round(norm[2] * width / 1000), round(norm[3] * height / 1000)]
 
-    manual, disabled, report, draws, keep_rects, register_ids = [], set(), [], [], [], []
+    manual, disabled, report, draws, keep_rects = [], set(), [], [], []
     used: set[int] = set()
     regions = list(enumerate(plan.get("regions", []), start=1))
     # 번역 영역이 TG를 먼저 가져간다. 한 TG는 한 영역에만 속한다(terra가 같은 TG를 중복 배정하는 경우가 있다)
@@ -146,10 +144,6 @@ def terra_guidance(record: dict, model: str) -> dict:
             if line_h >= DRAW_MIN_LINE_RATIO * width:
                 disabled.update(ids)
                 draws.append({"rect": draw_rect, "ko": str(region["ko"]).strip(), "kind": region.get("kind")})
-                if region.get("kind") in REGISTER_DRAW_KINDS:
-                    manual_id = f"terra_draw_{index}"
-                    manual.append({"id": manual_id, "type": "unboxed", "unboxed_rect": draw_rect, "source_method": "manual_ubox_guide"})
-                    register_ids.append(manual_id)
                 report.append({"tg_ids": ids, "translate": True, "draw": True, "kind": region.get("kind"),
                                "rect": draw_rect, "line_h": round(line_h), "ko": region["ko"]})
                 continue
@@ -160,7 +154,7 @@ def terra_guidance(record: dict, model: str) -> dict:
         manual.append({"id": f"terra_ubox_{index}", "type": "unboxed", "unboxed_rect": rect_cv, "source_method": "manual_ubox_guide"})
         report.append({"tg_ids": ids, "translate": True, "kind": region.get("kind"), "rect": rect_cv,
                        "tg_incomplete": bool(region.get("tg_incomplete"))})
-    return {"manual_regions": manual, "disabled_tg_ids": sorted(disabled)}, report, {"draws": draws, "keep_rects": keep_rects, "register_ids": register_ids}
+    return {"manual_regions": manual, "disabled_tg_ids": sorted(disabled)}, report, {"draws": draws, "keep_rects": keep_rects}
 
 
 ERASE_CROP_PROMPT = (
@@ -241,9 +235,7 @@ def erase_regions(client: TestClient, sid: str, iid: str, quality: str, model: s
     draw_path = Path(record["work_dir"]) / "json" / f"{iid}_ai_draw.json"
     draw_plan = json.loads(draw_path.read_text(encoding="utf-8")) if draw_path.exists() else {}
     draws, keep_rects = draw_plan.get("draws", []), draw_plan.get("keep_rects", [])
-    registered = set(draw_plan.get("register_ids", []))  # R로 등록된 draw 영역은 지우기가 아니라 그리기로만 처리한다
-    erase_rects = [item["unboxed_rect"] for item in guidance.get("manual_regions", [])
-                   if item.get("unboxed_rect") and item.get("id") not in registered]
+    erase_rects = [item["unboxed_rect"] for item in guidance.get("manual_regions", []) if item.get("unboxed_rect")]
     if not erase_rects and not draws:
         sys.exit("처리할 영역이 없습니다. regions 단계를 먼저 실행하세요.")
     page = comic_app._read_bgr(record["input_path"])
@@ -306,23 +298,6 @@ def erase_regions(client: TestClient, sid: str, iid: str, quality: str, model: s
     return total
 
 
-def overlay_suppression(record: dict) -> dict:
-    """R로 등록했지만 AI가 이미 그린 영역(제목·라벨)에는 빈 text_override를 줘서 폰트가 겹치지 않게 한다.
-    번호 키는 이전 실행의 R 번호와 섞여 엉뚱한 영역에 붙을 수 있어 영역 참조(region_ref)로 지정한다.
-    스크립트가 만든 페이지의 수동값은 이 값으로 통째로 교체한다(이전 실행에서 남은 억제 값을 없애기 위해)."""
-    refs: dict[str, dict] = {}
-    draw_path = Path(record["work_dir"]) / "json" / f"{record['id']}_ai_draw.json"
-    if draw_path.exists():
-        plan = json.loads(draw_path.read_text(encoding="utf-8"))
-        register_ids = set(plan.get("register_ids", [])) if isinstance(plan, dict) else set()
-        regions = comic_app.load_json(record["regions_json"], default={}).get("regions", [])
-        for region in regions:
-            if region.get("region_origin") in register_ids and region.get("region_ref"):
-                refs[region["region_ref"]] = {"text_override": ""}
-    # legacy_digest가 구형 regions의 요약값과 맞아야 정규화가 regions_by_ref를 버리지 않고 그대로 쓴다
-    return {"key_scheme": "region_ref_v1", "regions_by_ref": refs, "regions": {}, "legacy_digest": legacy_digest({})}
-
-
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--session-id", required=True)
@@ -361,9 +336,6 @@ def main() -> None:
     if "final" in stages:
         body = {"session_id": sid, "image_id": iid, "ocr_model": args.ocr_model, "force": args.force,
                 "extra_prompt": args.extra_prompt}
-        item = comic_app.get_image(sid, iid)
-        body["overlay_guidance"] = overlay_suppression(comic_app.image_record(sid, Path(item["input_path"]), item.get("image_sha256")))
-        body["replace"] = True
         if args.font:
             body["font_path"] = args.font
         call(client, "POST", "/api/run-final", json=body)
