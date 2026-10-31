@@ -3383,6 +3383,12 @@ select.memo-key { width: 100%; padding: 2px; font-size: 12px; }
 .dialogue-filters button.active { background: var(--blue); border-color: var(--blue); color: white; }
 .dialogue-row { border: 1px solid var(--line); border-radius: 8px; background: white; padding: 8px; display: grid; gap: 4px; cursor: pointer; }
 .dialogue-row.active { border-color: var(--blue); background: rgba(37, 99, 235, 0.08); box-shadow: inset 3px 0 0 var(--blue); }
+.dialogue-row.grouped { border-color: var(--blue); background: rgba(37, 99, 235, 0.05); box-shadow: inset 3px 0 0 rgba(37, 99, 235, 0.5); }
+.overlay-group-card { display: flex; flex-direction: column; gap: 6px; font-size: 12px; }
+.overlay-group-hint { color: var(--muted, #667085); }
+.overlay-group-chips { display: flex; flex-wrap: wrap; gap: 4px; }
+.overlay-group-chip { padding: 1px 7px; border: 1px solid var(--blue); border-radius: 10px; color: var(--blue); }
+.group-font-size-input { width: 56px; text-align: center; }
 .dialogue-row.status-ok { border-left: 3px solid #16a34a; }
 .dialogue-row.status-ask { border-left: 3px solid #d97706; }
 .dialogue-row-head { display: flex; align-items: center; gap: 6px; font-size: 12px; }

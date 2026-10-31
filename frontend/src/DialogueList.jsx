@@ -17,7 +17,7 @@ export function dialogueFilterMatches(row, filter) {
   return row.status === filter;
 }
 
-export default function DialogueList({ rows, selectedKey, filter, onFilter, onSelect, onStatus }) {
+export default function DialogueList({ rows, selectedKey, extraKeys = [], filter, onFilter, onSelect, onStatus }) {
   const activeRef = useRef(null);
   const visible = rows.filter((row) => dialogueFilterMatches(row, filter));
   const okCount = rows.filter((row) => row.status === "ok").length;
@@ -40,12 +40,13 @@ export default function DialogueList({ rows, selectedKey, filter, onFilter, onSe
       </div>
       {visible.length ? visible.map((row) => {
         const active = row.rid === selectedKey;
+        const grouped = extraKeys.includes(row.rid);
         return (
           <div
             key={row.rid}
             ref={active ? activeRef : null}
-            className={`dialogue-row status-${row.status} ${active ? "active" : ""}`}
-            onClick={() => onSelect(row.rid)}
+            className={`dialogue-row status-${row.status} ${active ? "active" : ""} ${grouped ? "grouped" : ""}`}
+            onClick={(event) => onSelect(row.rid, event)}
           >
             <div className="dialogue-row-head">
               <strong>{row.label}</strong>

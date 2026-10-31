@@ -25,7 +25,7 @@ const DRAG_COMMIT_THRESHOLD_PX = 3;
 // 회전 핸들을 Shift와 함께 끌면 이 각도 단위로 맞춘다.
 const ROTATION_SNAP_DEG = 15;
 
-const OverlayCanvas = forwardRef(function OverlayCanvas({ image, overlayGuidance, setOverlayGuidance, selectedRegionId, setSelectedRegionId, setStatus, onRequestApply, tool = "select", setTool }, ref) {
+const OverlayCanvas = forwardRef(function OverlayCanvas({ image, overlayGuidance, setOverlayGuidance, selectedRegionId, setSelectedRegionId, extraSelectedIds = [], onToggleRegion, setStatus, onRequestApply, tool = "select", setTool }, ref) {
   const hostRef = useRef(null);
   const stageRef = useRef(null);
   const imageObjRef = useRef(null);
@@ -38,6 +38,10 @@ const OverlayCanvas = forwardRef(function OverlayCanvas({ image, overlayGuidance
   const imageRef = useRef(image);
   const overlayRef = useRef(overlayGuidance);
   const selectedRegionRef = useRef(selectedRegionId);
+  const extraSelectedRef = useRef(extraSelectedIds);
+  extraSelectedRef.current = extraSelectedIds;
+  const onToggleRegionRef = useRef(onToggleRegion);
+  onToggleRegionRef.current = onToggleRegion;
   const loadedPageKeyRef = useRef("");
   const [floatingEditor, setFloatingEditor] = useState(null);
   const [floatingDraft, setFloatingDraft] = useState("");
@@ -622,6 +626,7 @@ const OverlayCanvas = forwardRef(function OverlayCanvas({ image, overlayGuidance
       const rid = overlayItemKey(region);
       const labelText = overlayItemLabel(region);
       const selected = rid === String(selectedRegionRef.current);
+      const grouped = !selected && extraSelectedRef.current.includes(rid);
       const processingBasis = regionProcessingBasis(region);
       const regionColor = overlayRegionColor(region);
       const regionRect = region.region_outline_rect || region.bubble_rect || region.unboxed_rect || region.source_rect;
@@ -634,6 +639,16 @@ const OverlayCanvas = forwardRef(function OverlayCanvas({ image, overlayGuidance
         ? (region.safe_text_rect || regionRect || safeRect)
         : safeRect;
       if (editableSafeRect) {
+        if (grouped) {
+          layer.add(new Konva.Rect({
+            ...toStageRotatedRect(editableSafeRect, rotationDeg),
+            fill: "#2563eb",
+            opacity: 0.14,
+            stroke: "#2563eb",
+            strokeWidth: 1.5,
+            listening: false,
+          }));
+        }
         if (selected) {
           const moveRect = new Konva.Rect({
             ...toStageRotatedRect(editableSafeRect, rotationDeg),
@@ -788,6 +803,14 @@ const OverlayCanvas = forwardRef(function OverlayCanvas({ image, overlayGuidance
       }
       const hit = findRegionAt(point);
       const hitKey = hit ? overlayItemKey(hit) : null;
+      const domEvent = event?.evt || event;
+      if (hit && (domEvent?.shiftKey || domEvent?.metaKey || domEvent?.ctrlKey) && onToggleRegionRef.current) {
+        // Shift/Cmd+클릭: 여러 박스를 선택에 더하거나 뺀다(이동·크기 조절 없음).
+        onToggleRegionRef.current(hitKey);
+        dragRef.current = null;
+        clearPreviewRect();
+        return;
+      }
       const previousSelectedKey = selectedRegionRef.current ? String(selectedRegionRef.current) : null;
       const wasSelectedHit = Boolean(hitKey && previousSelectedKey === String(hitKey));
       if (hit) {
@@ -986,7 +1009,7 @@ const OverlayCanvas = forwardRef(function OverlayCanvas({ image, overlayGuidance
 
   useEffect(() => {
     draw();
-  }, [image, overlayGuidance, selectedRegionId, eraserActive, selectedEraser]);
+  }, [image, overlayGuidance, selectedRegionId, extraSelectedIds, eraserActive, selectedEraser]);
 
   const editorRegion = floatingEditor
     ? overlayControlItems(image, overlayGuidance).find((region) => overlayItemKey(region) === String(floatingEditor.rid))

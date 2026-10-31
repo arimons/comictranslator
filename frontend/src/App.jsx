@@ -124,6 +124,8 @@ export default function App() {
   const [selectedTg, setSelectedTg] = useState(null);
   const [selectedGuidanceRegionId, setSelectedGuidanceRegionId] = useState(null);
   const [selectedRegionId, setSelectedRegionId] = useState(null);
+  // Shift/Cmd+클릭으로 더한 추가 선택. 글꼴·크기 같은 공통 스타일만 한꺼번에 바꾼다.
+  const [extraSelectedIds, setExtraSelectedIds] = useState([]);
   const [guidance, setGuidance] = useState(defaultGuidance(null));
   const [overlayGuidance, setOverlayGuidance] = useState(defaultOverlayGuidance(null));
   const [layers, setLayers] = useState({ tg: true, regions: true, guidance: true });
@@ -360,6 +362,18 @@ export default function App() {
   const selectedStrokeWidth = Number.isFinite(Number(selectedOverlayOverride.stroke_width))
     ? Number(selectedOverlayOverride.stroke_width)
     : 2;
+  // 여러 Region 선택: 존재하는 Region만 남기고 기본 선택을 맨 앞에 둔다.
+  const groupKeys = selectedRegion
+    ? [overlayItemKey(selectedRegion), ...extraSelectedIds.filter((id) => overlayRegions.some((region) => overlayItemKey(region) === id))]
+    : [];
+  const isGroupSelection = groupKeys.length > 1;
+  const groupRegions = groupKeys.map((key) => overlayRegions.find((region) => overlayItemKey(region) === key)).filter(Boolean);
+  const groupValue = (pick) => {
+    const values = groupRegions.map((region) => pick(overlayRegionValue(overlayGuidance, overlayItemKey(region)), region));
+    return values.every((value) => value === values[0]) ? values[0] : null;
+  };
+  const groupFontSize = isGroupSelection ? groupValue((o, region) => Number(o.font_size || overlayItemFontSize(region) || 0)) : null;
+  const groupFontStyle = isGroupSelection ? groupValue((o, region) => o.font_style || inferredRegionFontStyle(selected, region)) : null;
   const statusLabel = { idle: "대기", unanalyzed: "분석 전", queued: "대기", running: "진행", done: "완료", failed: "실패", skipped: "대상 아님" };
   const inputBusy = Boolean(busyTasks.input);
   const analyzeBusy = Boolean(busyTasks.analyze);
@@ -492,6 +506,28 @@ export default function App() {
   function setSelectedRegionTracked(nextId) {
     selectedRegionIdRef.current = nextId || null;
     setSelectedRegionId(nextId || null);
+    setExtraSelectedIds((items) => (items.length ? [] : items));
+  }
+
+  // 여러 Region 선택에 더하거나 뺀다. 첫 번째가 기본 선택(Selected Region 표시)이다.
+  function toggleRegionInGroup(rid) {
+    const key = rid ? String(rid) : "";
+    if (!key) return;
+    const primary = selectedRegionIdRef.current ? String(selectedRegionIdRef.current) : "";
+    if (!primary) {
+      selectedRegionIdRef.current = key;
+      setSelectedRegionId(key);
+      return;
+    }
+    if (key === primary) {
+      const [nextPrimary, ...rest] = extraSelectedIds;
+      if (!nextPrimary) return;
+      selectedRegionIdRef.current = nextPrimary;
+      setSelectedRegionId(nextPrimary);
+      setExtraSelectedIds(rest);
+      return;
+    }
+    setExtraSelectedIds((items) => (items.includes(key) ? items.filter((item) => item !== key) : [...items, key]));
   }
 
   function guidanceEquals(left, right) {
@@ -660,6 +696,21 @@ export default function App() {
           }),
         },
       };
+    }, { historyKey });
+  }
+
+  // 여러 Region에 같은 스타일 patch를 한 번의 편집(Undo 한 단계)으로 적용한다. 글자 내용은 건드리지 않는다.
+  function updateOverlayRegions(keys, patch, historyKey = null) {
+    const targets = [...new Set(keys.filter(Boolean).map(String))];
+    if (!targets.length) return;
+    setOverlayGuidanceTracked((current) => {
+      const regions = { ...((current || {}).regions || {}) };
+      targets.forEach((key) => {
+        const previousRegion = normalizeOverlayRegionOverride(regions[key] || {});
+        const patchValue = typeof patch === "function" ? patch(previousRegion, key) : patch;
+        regions[key] = normalizeOverlayRegionOverride({ ...previousRegion, ...(patchValue || {}) });
+      });
+      return { ...(current || { regions: {} }), regions };
     }, { historyKey });
   }
 
@@ -1028,6 +1079,32 @@ export default function App() {
     }, `size:${rid}`);
   }
 
+  // 스타일 편집은 여러 선택이면 모두에, 아니면 기본 선택에만 적용한다.
+  function updateOverlayStyle(patch, historyKey = null) {
+    if (isGroupSelection) updateOverlayRegions(groupKeys, patch, historyKey && `${historyKey}:group`);
+    else if (selectedRegionRefValue()) updateOverlayRegion(selectedRegionRefValue(), patch, historyKey && `${historyKey}:${selectedRegionRefValue()}`);
+  }
+
+  function adjustOverlayStyleFontSize(delta) {
+    if (!isGroupSelection) {
+      adjustOverlayFontSize(selectedRegionRefValue(), delta);
+      return;
+    }
+    // 각 박스의 현재 크기에서 같은 만큼 올리고 내린다. 크기를 맞추려면 숫자 칸을 쓴다.
+    updateOverlayRegions(groupKeys, (current, key) => {
+      const region = overlayRegions.find((item) => overlayItemKey(item) === key);
+      return { font_size: normalizedFontSize(Number(current.font_size || overlayItemFontSize(region) || 24) + delta) };
+    }, "size:group");
+    setStatus(`${groupKeys.length}개 font size ${delta > 0 ? "+" : ""}${delta}`);
+  }
+
+  function setOverlayStyleFontSize(value) {
+    const size = normalizedFontSize(value);
+    if (!size) return;
+    updateOverlayStyle({ font_size: size }, "size");
+    if (isGroupSelection) setStatus(`${groupKeys.length}개 font size ${size}로 통일`);
+  }
+
   function setOverlayWritingMode(rid, mode) {
     if (!rid) return;
     if (mode === "horizontal") {
@@ -1220,6 +1297,7 @@ export default function App() {
     setGuidance(next);
     resetGuidanceHistory();
     setOverlayGuidance(defaultOverlayGuidance(selected));
+    setExtraSelectedIds([]);
     resetOverlayHistory();
     // 페이지가 바뀌면 edit version을 한 단계 올리고 적용 완료로 맞춘다.
     // 이전 페이지 요청의 version은 새 페이지 version과 절대 같아지지 않는다.
@@ -3389,6 +3467,8 @@ export default function App() {
                     setOverlayGuidance={setOverlayGuidanceTracked}
                     selectedRegionId={selectedRegionRefValue()}
                     setSelectedRegionId={setSelectedRegionTracked}
+                    extraSelectedIds={extraSelectedIds}
+                    onToggleRegion={toggleRegionInGroup}
                     setStatus={setStatus}
                     onRequestApply={() => setOverlayApplyRequest((count) => count + 1)}
                   />
@@ -3516,23 +3596,45 @@ export default function App() {
               <div className="side-section-head">
                 <h2>Selected Region</h2>
               </div>
-              {selectedRegion ? renderOverlayRegionCard(selectedRegion) : <div className="empty compact-empty">Region을 선택하세요</div>}
+              {isGroupSelection ? (
+                <div className="overlay-group-card">
+                  <strong>{groupKeys.length}개 선택됨</strong>
+                  <span className="overlay-group-hint">글꼴·크기 같은 공통 스타일만 바꿉니다. 글자 내용은 그대로 둡니다.</span>
+                  <div className="overlay-group-chips">
+                    {groupRegions.map((region) => <span key={overlayItemKey(region)} className="overlay-group-chip">{overlayItemLabel(region)}</span>)}
+                  </div>
+                  <button type="button" onClick={() => setExtraSelectedIds([])}>추가 선택 해제</button>
+                </div>
+              ) : selectedRegion ? renderOverlayRegionCard(selectedRegion) : <div className="empty compact-empty">Region을 선택하세요. Shift/Cmd+클릭으로 여러 개를 고를 수 있습니다.</div>}
             </div>
             <div className="selected-overlay-pane overlay-style-section">
               <div className="side-section-head overlay-style-head">
                 <h2>Selected Style</h2>
                 <div className="font-size-control compact-font-size">
-                  <button onClick={() => adjustOverlayFontSize(selectedRegionRefValue(), -1)} disabled={!selectedRegionRefValue()}>−</button>
-                  <span>Size {selectedFontSize || "-"}</span>
-                  <button onClick={() => adjustOverlayFontSize(selectedRegionRefValue(), 1)} disabled={!selectedRegionRefValue()}>+</button>
+                  <button onClick={() => adjustOverlayStyleFontSize(-1)} disabled={!selectedRegionRefValue()}>−</button>
+                  {isGroupSelection ? (
+                    <input
+                      type="number"
+                      className="group-font-size-input"
+                      min="8"
+                      max="160"
+                      placeholder="혼합"
+                      key={`${groupKeys.join(",")}:${groupFontSize || 0}`}
+                      defaultValue={groupFontSize || ""}
+                      onBlur={(e) => { if (e.target.value && Number(e.target.value) !== groupFontSize) setOverlayStyleFontSize(e.target.value); }}
+                      onKeyDown={(e) => { if (e.key === "Enter") e.currentTarget.blur(); }}
+                      title="숫자를 입력하고 Enter를 누르면 선택한 박스의 글자 크기를 이 값으로 통일합니다"
+                    />
+                  ) : <span>Size {selectedFontSize || "-"}</span>}
+                  <button onClick={() => adjustOverlayStyleFontSize(1)} disabled={!selectedRegionRefValue()}>+</button>
                 </div>
               </div>
               <div className="font-style-toolbar">
                 {FONT_STYLES.map(([id, _short, label, sample]) => (
                   <button
                     key={id}
-                    className={selectedEffectiveFontStyle === id ? "active" : ""}
-                    onClick={() => selectedRegionRefValue() && updateOverlayRegion(selectedRegionRefValue(), overlayFontStylePatch(id))}
+                    className={(isGroupSelection ? groupFontStyle : selectedEffectiveFontStyle) === id ? "active" : ""}
+                    onClick={() => updateOverlayStyle(overlayFontStylePatch(id))}
                     disabled={!selectedRegionRefValue()}
                     title={`${label} (${shortcutById(`overlay.style.${id}`)})`}
                   >
@@ -3542,13 +3644,13 @@ export default function App() {
                 ))}
               </div>
               <div className="overlay-style-fields">
-                {selectedEffectiveFontStyle === "etc" ? (
+                {(isGroupSelection ? groupFontStyle : selectedEffectiveFontStyle) === "etc" ? (
                   <>
                     <div className="field compact-field">
                       <label>Etc font</label>
                       <select
-                        value={selectedOverlayOverride.font_path || ""}
-                        onChange={(e) => selectedRegionRefValue() && updateOverlayRegion(selectedRegionRefValue(), { font_path: e.target.value })}
+                        value={(isGroupSelection ? groupValue((o) => o.font_path || "") : selectedOverlayOverride.font_path) || ""}
+                        onChange={(e) => updateOverlayStyle({ font_path: e.target.value })}
                         disabled={!selectedRegionRefValue()}
                       >
                         <option value="">Default</option>
@@ -3558,8 +3660,8 @@ export default function App() {
                     <div className="field compact-field">
                       <label>Weight</label>
                       <select
-                        value={selectedOverlayOverride.font_weight || ""}
-                        onChange={(e) => selectedRegionRefValue() && updateOverlayRegion(selectedRegionRefValue(), { font_weight: e.target.value })}
+                        value={(isGroupSelection ? groupValue((o) => o.font_weight || "") : selectedOverlayOverride.font_weight) || ""}
+                        onChange={(e) => updateOverlayStyle({ font_weight: e.target.value })}
                         disabled={!selectedRegionRefValue()}
                       >
                         <option value="">Default</option>
@@ -3584,8 +3686,8 @@ export default function App() {
                     type="number"
                     min="0"
                     max="12"
-                    value={selectedStrokeWidth}
-                    onChange={(e) => selectedRegionRefValue() && updateOverlayRegion(selectedRegionRefValue(), { stroke_width: e.target.value }, `stroke:${selectedRegionRefValue()}`)}
+                    value={isGroupSelection ? (groupValue((o) => (Number.isFinite(Number(o.stroke_width)) ? Number(o.stroke_width) : 2)) ?? "") : selectedStrokeWidth}
+                    onChange={(e) => updateOverlayStyle({ stroke_width: e.target.value }, "stroke")}
                     disabled={!selectedRegionRefValue()}
                   />
                 </div>
@@ -3597,9 +3699,14 @@ export default function App() {
           <DialogueList
             rows={dialogueRows()}
             selectedKey={selectedRegionRefValue()}
+            extraKeys={extraSelectedIds}
             filter={dialogueFilter}
             onFilter={setDialogueFilter}
-            onSelect={(rid) => { setSelectedRegionTracked(rid); overlayCanvasRef.current?.ensureRegionVisible(rid); }}
+            onSelect={(rid, event) => {
+              if (event && (event.shiftKey || event.metaKey || event.ctrlKey)) { toggleRegionInGroup(rid); return; }
+              setSelectedRegionTracked(rid);
+              overlayCanvasRef.current?.ensureRegionVisible(rid);
+            }}
             onStatus={setDialogueStatus}
           />
         </div>
