@@ -116,6 +116,11 @@ def main() -> None:
         picks = set(json.loads(picks_path.read_text(encoding="utf-8")).get("picks", [])) if picks_path.exists() else set()
         only_ids = picks if only_ids is None else (only_ids & picks)
         print(f"선별 페이지 {len(only_ids)}장만 처리합니다", flush=True)
+    if only_ids is not None:
+        known = {i["id"] for i in data["images"]}
+        missing_ids = sorted(only_ids - known)
+        if missing_ids:
+            print(f"경고: 선별 목록 중 프로젝트에 없는 ID {len(missing_ids)}개 {missing_ids[:5]}", flush=True)
     if args.stage in ("screen", "all"):
         st.run_screen(data, args.session_id, guide, args.ocr_model, args.workers, args.limit, only=only_ids)
     if args.stage in ("process", "all"):

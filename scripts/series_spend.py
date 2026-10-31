@@ -21,7 +21,7 @@ def main() -> None:
     root = Path.home() / "ComicTranslator/projects"
     ai = screen = processed_screen = 0.0
     pages = 0
-    for project in sorted(root.glob("*_railgun_*")):
+    for project in sorted([*root.glob("*_railgun_*"), *root.glob("*_shibou_*")]):
         json_dir = project / "work/json"
         done = {f.name[: -len("_flow_done.json")] for f in json_dir.glob("*_flow_done.json")}
         for marker in json_dir.glob("*_flow_done.json"):

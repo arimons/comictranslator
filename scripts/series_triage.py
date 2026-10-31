@@ -80,8 +80,28 @@ def classify(client: OpenAI, files: list[Path]) -> tuple[list[dict], int]:
     return [], 0
 
 
-def triage_volume(client: OpenAI, vol: str, workers: int) -> dict:
-    files = sorted(p for p in (BASE / vol).iterdir() if p.suffix.lower() in {".jpg", ".jpeg", ".png", ".webp"})
+def color_page_ids(files: list[Path], threshold: float) -> set[str]:
+    """평균 채도가 threshold 이상인 컬러 페이지(표지·컬러 일러스트 등). 로컬 계산이라 비용이 없다."""
+    import numpy as np
+
+    ids = set()
+    for path in files:
+        try:
+            with Image.open(path) as im:
+                im.draft("RGB", (320, 460))
+                hsv = np.asarray(im.convert("RGB").resize((160, 230)).convert("HSV"), dtype=np.uint8)
+        except Exception:  # noqa: BLE001
+            continue
+        sat, val = hsv[..., 1].astype(np.float32), hsv[..., 2].astype(np.float32)
+        mask = (val > 40) & (val < 250)
+        if mask.sum() >= 50 and float(sat[mask].mean()) >= threshold:
+            ids.add(path.stem)
+    return ids
+
+
+def triage_volume(client: OpenAI, vol: str, workers: int, base: Path | None = None, color_sat: float | None = None) -> dict:
+    base = base or BASE
+    files = sorted(p for p in (base / vol).iterdir() if p.suffix.lower() in {".jpg", ".jpeg", ".png", ".webp"})
     chunks = [files[i:i + PER_SHEET] for i in range(0, len(files), PER_SHEET)]
     with ThreadPoolExecutor(max_workers=workers) as pool:
         results = list(pool.map(lambda chunk: classify(client, chunk), chunks))
@@ -97,7 +117,9 @@ def triage_volume(client: OpenAI, vol: str, workers: int) -> dict:
         missing += len(chunk) - len(seen)
     picks = sorted((pid for pid, v in pages.items() if v["kind"] in CANDIDATE_KINDS and v["translate"]),
                    key=lambda pid: (PRIORITY.get(pages[pid]["kind"], 9), pid))
-    return {"picks": sorted(picks), "rule": "thumbnail_sheet_triage", "pages": pages, "tokens": tokens, "missing": missing}
+    color = color_page_ids(files, color_sat) if color_sat is not None else set()
+    return {"picks": sorted(set(picks) | color), "rule": "thumbnail_sheet_triage" + ("+color" if color_sat is not None else ""),
+            "pages": pages, "tokens": tokens, "missing": missing, "color": sorted(color)}
 
 
 def main() -> None:
@@ -107,13 +129,15 @@ def main() -> None:
     parser.add_argument("--merge-dir", help="합칠 기존 선별 목록 폴더(권별 <권>.json, 예: 컬러 페이지)")
     parser.add_argument("--merged-dir", help="합친 결과를 쓸 폴더(--merge-dir와 함께)")
     parser.add_argument("--workers", type=int, default=4)
+    parser.add_argument("--base-dir", help="권 폴더들이 들어 있는 작품 폴더(기본: 초전자포)")
+    parser.add_argument("--color-sat", type=float, help="평균 채도가 이 값 이상인 컬러 페이지도 후보에 합친다(예: 5)")
     args = parser.parse_args()
     client = OpenAI(api_key=os.environ["OPENAI_API_KEY"], timeout=120, max_retries=1)
     out = Path(args.out_dir)
     out.mkdir(parents=True, exist_ok=True)
     total_tokens = total_picks = 0
     for vol in args.volumes.split(","):
-        result = triage_volume(client, vol, args.workers)
+        result = triage_volume(client, vol, args.workers, Path(args.base_dir) if args.base_dir else None, args.color_sat)
         (out / f"{vol}.json").write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
         merged = set(result["picks"])
         if args.merge_dir and args.merged_dir:
