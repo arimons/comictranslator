@@ -27,6 +27,10 @@ def done_marker(session_id: str, image_id: str) -> Path:
     return comic_app.session_dir(session_id) / "work" / "json" / f"{image_id}_flow_done.json"
 
 
+def failed_marker(session_id: str, image_id: str) -> Path:
+    return comic_app.session_dir(session_id) / "work" / "json" / f"{image_id}_flow_failed.json"
+
+
 def redraw_ids(session_id: str, data: dict) -> list[str]:
     json_dir = comic_app.session_dir(session_id) / "work" / "json"
     ids = []
@@ -48,6 +52,10 @@ def ensure_final(sid: str, iid: str) -> None:
     if not final.exists() and preview.exists():
         final.parent.mkdir(parents=True, exist_ok=True)
         cv2.imwrite(str(final), cv2.imread(str(preview)), [cv2.IMWRITE_JPEG_QUALITY, 92])
+
+
+def mark_failed(session_id: str, image_id: str, reason: str) -> None:
+    failed_marker(session_id, image_id).write_text(json.dumps({"reason": reason[:400]}, ensure_ascii=False), encoding="utf-8")
 
 
 def process_page(client: TestClient, sid: str, iid: str, args) -> float:
@@ -77,6 +85,7 @@ def main() -> None:
     parser.add_argument("--max-pages", type=int, help="process: 이번 실행에서 처리할 최대 장수")
     parser.add_argument("--budget-usd", type=float, help="process: 이미지 편집 추정 비용이 이 값에 닿으면 새 페이지를 시작하지 않는다")
     parser.add_argument("--only", help="process: 쉼표로 구분한 페이지 ID만")
+    parser.add_argument("--retry-failed", action="store_true", help="process: 이전에 실패 표식이 남은 페이지도 다시 시도")
     parser.add_argument("--workers", type=int, default=2)
     parser.add_argument("--ocr-model", default=st.SCREEN_MODEL)
     parser.add_argument("--erase-quality", default="medium", choices=["low", "medium", "high"])
@@ -95,10 +104,12 @@ def main() -> None:
         ids = redraw_ids(args.session_id, data)
         if args.only:
             ids = [i for i in ids if i in set(args.only.split(","))]
-        todo = [i for i in ids if not done_marker(args.session_id, i).exists()]
+        pending = [i for i in ids if not done_marker(args.session_id, i).exists()]
+        # 안전 필터 거절 등으로 실패한 페이지는 표식을 남겨 다음 실행에서 되풀이하지 않는다(--retry-failed로 다시 시도)
+        todo = [i for i in pending if args.retry_failed or not failed_marker(args.session_id, i).exists()]
         if args.max_pages:
             todo = todo[: args.max_pages]
-        print(f"처리 대상 {len(todo)}장 (판정 redraw {len(ids)}장 중 미완료)", flush=True)
+        print(f"처리 대상 {len(todo)}장 (판정 redraw {len(ids)}장 중 미완료 {len(pending)}장)", flush=True)
         spent, lock, failed = [0.0], threading.Lock(), []
 
         def work(iid: str) -> None:
@@ -109,9 +120,11 @@ def main() -> None:
             try:
                 cost = process_page(client, args.session_id, iid, args)
             except SystemExit as exc:  # rpf.call이 오류를 SystemExit로 올린다
-                failed.append(iid); print(f"  [{iid}] 실패: {exc}", flush=True); return
+                mark_failed(args.session_id, iid, str(exc)); failed.append(iid); print(f"  [{iid}] 실패: {exc}", flush=True); return
             except Exception as exc:  # noqa: BLE001 - 한 장의 실패가 전체를 멈추지 않게 한다
-                failed.append(iid); print(f"  [{iid}] 실패: {type(exc).__name__}: {exc}", flush=True); return
+                mark_failed(args.session_id, iid, f"{type(exc).__name__}: {exc}"); failed.append(iid)
+                print(f"  [{iid}] 실패: {type(exc).__name__}: {exc}", flush=True); return
+            failed_marker(args.session_id, iid).unlink(missing_ok=True)
             with lock:
                 spent[0] += cost
                 print(f"  [{iid}] 완료 AI ${cost:.4f} (누적 ${spent[0]:.3f})", flush=True)
@@ -120,6 +133,8 @@ def main() -> None:
             for future in as_completed([pool.submit(work, i) for i in todo]):
                 future.result()
         print(f"처리 종료: 누적 이미지 편집 ${spent[0]:.3f}, 실패 {len(failed)}장 {failed}", flush=True)
+        remaining = [i for i in ids if not done_marker(args.session_id, i).exists() and not failed_marker(args.session_id, i).exists()]
+        print(f"남은 대상 {len(remaining)}장", flush=True)  # 드라이버가 이 줄을 읽어 같은 권을 새 프로세스로 이어서 돌린다
 
 
 if __name__ == "__main__":
