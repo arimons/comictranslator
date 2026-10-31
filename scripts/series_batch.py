@@ -62,11 +62,11 @@ def mark_failed(session_id: str, image_id: str, reason: str) -> None:
 def process_page(client: TestClient, sid: str, iid: str, args) -> float:
     rpf.call(client, "POST", "/api/analyze", json={"session_id": sid, "image_id": iid, "force": False})
     record = comic_app.image_record(sid, Path(comic_app.get_image(sid, iid)["input_path"]), comic_app.get_image(sid, iid).get("image_sha256"))
-    guidance, _report, draw_plan = rpf.terra_guidance(record, args.ocr_model)
+    guidance, _report, draw_plan = rpf.terra_guidance(record, args.ocr_model, allow_draw=not args.no_ai_edit)
     Path(record["work_dir"], "json", f"{iid}_ai_draw.json").write_text(json.dumps(draw_plan, ensure_ascii=False, indent=2), encoding="utf-8")
     rpf.call(client, "POST", "/api/guidance", json={"session_id": sid, "image_id": iid, "guidance": guidance})
     cost = 0.0
-    if guidance["manual_regions"] or draw_plan["draws"]:
+    if not args.no_ai_edit and (guidance["manual_regions"] or draw_plan["draws"]):
         cost = rpf.erase_regions(client, sid, iid, args.erase_quality, args.ocr_model)
     body = {"session_id": sid, "image_id": iid, "ocr_model": args.ocr_model, "force": True, "extra_prompt": args.extra_prompt}
     rpf.call(client, "POST", "/api/run-final", json=body)
@@ -86,6 +86,7 @@ def main() -> None:
     parser.add_argument("--max-pages", type=int, help="process: 이번 실행에서 처리할 최대 장수")
     parser.add_argument("--budget-usd", type=float, help="process: 이미지 편집 추정 비용이 이 값에 닿으면 새 페이지를 시작하지 않는다")
     parser.add_argument("--only", help="process: 쉼표로 구분한 페이지 ID만")
+    parser.add_argument("--no-ai-edit", action="store_true", help="이미지 편집 모델을 쓰지 않는다(기존 LaMa 지우기 + 폰트 오버레이만). 안전 필터로 거절된 페이지용")
     parser.add_argument("--retry-failed", action="store_true", help="process: 이전에 실패 표식이 남은 페이지도 다시 시도")
     parser.add_argument("--workers", type=int, default=2)
     parser.add_argument("--ocr-model", default=st.SCREEN_MODEL)

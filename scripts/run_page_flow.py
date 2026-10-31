@@ -89,7 +89,7 @@ def union(rects: list[list[int]]) -> list[int]:
     return [x1, y1, x2 - x1, y2 - y1]
 
 
-def terra_guidance(record: dict, model: str) -> dict:
+def terra_guidance(record: dict, model: str, allow_draw: bool = True) -> dict:
     import json as _json
     import os
 
@@ -135,7 +135,7 @@ def terra_guidance(record: dict, model: str) -> dict:
         if norm_rect and (region.get("tg_incomplete") or not rects):
             rects.append(norm_rect)
         rect_cv = padded(union(rects)) if rects else None
-        wants_draw = bool(region.get("draw")) and bool(str(region.get("ko", "")).strip())
+        wants_draw = allow_draw and bool(region.get("draw")) and bool(str(region.get("ko", "")).strip())
         # CV가 제목·로마자를 한 TG로 묶는 경우가 있어, 그리는 영역은 terra가 눈으로 정한 사각형을 우선한다
         draw_rect = padded(norm_rect) if norm_rect else rect_cv
         if wants_draw and draw_rect:
