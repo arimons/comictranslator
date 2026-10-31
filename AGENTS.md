@@ -76,6 +76,20 @@ Step 5: Text Overlay            → output_dir/final/{name}_final.jpg
 
 레거시 (파이프라인 외): `*_ocr_v5.json`, `*_integrated_translated.json`, `*_flood_vis.json`, `*_flood_regions.json`
 
+### JSON 최상위 구조 (헷갈리기 쉬움)
+
+`regions.json`과 `integrated.json`은 비슷해 보이지만 배열 이름과 단위가 다르다. 코드·스크립트에서 영역을 조회할 때 이 표를 기준으로 한다.
+
+| 파일 | 만든 곳 | 최상위 키 | 항목 단위 |
+|------|---------|-----------|-----------|
+| `*_regions.json` | Step 3 | `regions`, `clusters`, `analysis_status`, `ocr_region_count` 등 | `regions[]` = R 영역 하나. `region_id`, `processing_basis`, `unboxed_rect`/`bubble_rect`, `anchor_ids`(TG 번호), `region_ref`, `region_origin` |
+| `*_integrated.json` | Step 4 | `clusters`, `unmatched_clusters`, `model`, `ocr_source`, `region_ref_scheme` (재요청 실패 시 `missing_region_ids`) | `clusters[]` = 번역 단위 하나. `text`(원문), `text_translated`, `render_hint_final`, `source_region_id`(= `regions[].region_id`), `source_region_ref`, `source_segment_index` |
+
+- `integrated.json`에는 `regions` 배열이 없다. R 번호로 번역을 찾으려면 `clusters[].source_region_id`를 본다.
+- 한 R이 여러 줄·문장으로 나뉘면 cluster가 여러 개가 되고 `source_segment_index`로 구분한다.
+- OCR 대상 R이 없으면 Step 4는 `status: skipped`만 담은 `integrated.json`을 만들고 렌더는 건너뛴다(`ocr_status.json`의 `message: no_ocr_regions`). 이때 `final.jpg`가 만들어지지 않는다.
+- 확정한 AI 글자 지우기 패치는 `work/restore/<이미지 stem>/`에 영역 단위로 쌓이고, 오버레이 단계가 있어야 `final.jpg`에 합성된다.
+
 ---
 
 ## 핵심 파일
