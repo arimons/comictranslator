@@ -120,6 +120,84 @@ def terra_guidance(record: dict, model: str) -> dict:
     return {"manual_regions": manual, "disabled_tg_ids": sorted(disabled)}, report
 
 
+ERASE_CROP_PROMPT = (
+    "Remove ALL Japanese text from this image, including small furigana above words. If the text sits on a "
+    "semi-transparent box, keep the box with its tint and rounded corners exactly, and restore the artwork or "
+    "background behind the text naturally. Keep everything else exactly the same. "
+    "Do not add any text, letters or new objects."
+)
+ERASE_MIN_PIXELS = 700_000  # 모델 최소(655,360)에 16배수 덧대기 여유를 더한 값
+ERASE_MAX_RATIO = 2.8
+ERASE_MARGIN = 60
+
+
+def context_rect(rect: list[int], page_w: int, page_h: int) -> list[int]:
+    """영역을 감싸되 모델 최소 크기·비율을 만족하도록 넓힌 크롭 사각형."""
+    x, y, w, h = rect
+    x1, y1, x2, y2 = x - ERASE_MARGIN, y - ERASE_MARGIN, x + w + ERASE_MARGIN, y + h + ERASE_MARGIN
+    cw, ch = x2 - x1, y2 - y1
+    if cw > ch * ERASE_MAX_RATIO:
+        grow = int(cw / ERASE_MAX_RATIO - ch)
+        y1, y2 = y1 - grow // 2, y2 + grow - grow // 2
+    elif ch > cw * ERASE_MAX_RATIO:
+        grow = int(ch / ERASE_MAX_RATIO - cw)
+        x1, x2 = x1 - grow // 2, x2 + grow - grow // 2
+    while (x2 - x1) * (y2 - y1) < ERASE_MIN_PIXELS:
+        x1, y1, x2, y2 = x1 - 20, y1 - 20, x2 + 20, y2 + 20
+    # 페이지 밖으로 나가면 반대쪽으로 민다(크기는 유지)
+    dx = max(0, -x1) - max(0, x2 - page_w)
+    dy = max(0, -y1) - max(0, y2 - page_h)
+    x1, x2, y1, y2 = x1 + dx, x2 + dx, y1 + dy, y2 + dy
+    x1, y1, x2, y2 = max(0, x1), max(0, y1), min(page_w, x2), min(page_h, y2)
+    return [x1, y1, x2 - x1, y2 - y1]
+
+
+def erase_regions(client: TestClient, sid: str, iid: str, quality: str, model: str) -> None:
+    """가이던스의 영역마다 크롭을 AI로 지워 영역별 배경 패치로 확정한다(영역 안쪽만 합성)."""
+    import hashlib
+
+    import cv2
+    import numpy as np
+
+    from pipeline.ai_text_erase import erase_page_text
+    from pipeline.gemini_image import image_model_for
+
+    record = comic_app._restore_record(sid, iid)
+    guidance = comic_app.load_json(record["guidance_json"], default={}) or {}
+    rects = [item["unboxed_rect"] for item in guidance.get("manual_regions", []) if item.get("unboxed_rect")]
+    if not rects:
+        sys.exit("가이던스에 영역이 없습니다. regions 단계를 먼저 실행하세요.")
+    page = comic_app._read_bgr(record["input_path"])
+    page_h, page_w = page.shape[:2]
+    image_model = image_model_for(model, comic_app.IMAGE_MODEL)
+    total = 0.0
+    for index, rect in enumerate(rects, start=1):
+        cx, cy, cw, ch = context_rect(rect, page_w, page_h)
+        crop = page[cy:cy + ch, cx:cx + cw].copy()
+        job_id = f"{time.strftime('%H%M%S')}_ai-erase_{hashlib.sha1(str(rect).encode()).hexdigest()[:6]}"
+        job_dir = Path(record["restore_dir"]) / "jobs" / job_id
+        job_dir.mkdir(parents=True, exist_ok=True)
+        erased, meta = erase_page_text(crop, job_dir, model=image_model, quality=quality, prompt=ERASE_CROP_PROMPT)
+        mask = np.zeros(crop.shape[:2], dtype=np.uint8)
+        rx, ry, rw, rh = rect
+        mask[max(0, ry - cy):max(0, ry - cy + rh), max(0, rx - cx):max(0, rx - cx + rw)] = 255
+        cv2.imwrite(str(job_dir / "crop_before.png"), crop)
+        cv2.imwrite(str(job_dir / "crop_after.png"), erased)
+        cv2.imwrite(str(job_dir / "crop_mask.png"), mask)
+        usage = {k: meta[k] for k in ("input_tokens", "output_tokens", "estimated_cost_usd", "request_size")}
+        with comic_app._RESTORE_JOBS_LOCK:
+            comic_app._RESTORE_JOBS[job_id] = {
+                "job_id": job_id, "session_id": sid, "image_id": iid, "engine": comic_app.AI_ERASE_ENGINE,
+                "source": "original", "status": "done", "_job_dir": str(job_dir),
+                "meta": {"context_rect": [cx, cy, cw, ch],
+                         "params": {"engine": comic_app.AI_ERASE_ENGINE, "model": meta["model"], "quality": meta["quality"]},
+                         "timing": {"total_sec": meta["elapsed_sec"]}, "usage": usage}}
+        call(client, "POST", "/api/restore/accept", json={"session_id": sid, "image_id": iid, "job_id": job_id})
+        total += meta["estimated_cost_usd"]
+        print(f"  영역 {index}/{len(rects)} 지우기 확정 rect={rect} 크롭={[cx, cy, cw, ch]} ${meta['estimated_cost_usd']}", flush=True)
+    print(f"AI 지우기 완료: 패치 {len(rects)}개, 추정 ${round(total, 4)}", flush=True)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--session-id", required=True)
@@ -150,19 +228,7 @@ def main() -> None:
         call(client, "POST", "/api/guidance", json={"session_id": sid, "image_id": iid, "guidance": guidance})
         print(f"R 영역 {len(guidance['manual_regions'])}개 확정(제외 TG {guidance['disabled_tg_ids']})", flush=True)
     if "erase" in stages:
-        job = call(client, "POST", "/api/restore/ai-erase",
-                   json={"session_id": sid, "image_id": iid, "quality": args.erase_quality, "ocr_model": args.ocr_model})
-        job_id = job.get("job_id") or job.get("job", {}).get("job_id")
-        while True:
-            state = call(client, "GET", f"/api/restore/job/{job_id}")
-            if state.get("status") in {"done", "error"}:
-                break
-            time.sleep(3)
-        if state["status"] != "done":
-            sys.exit(f"AI 지우기 실패: {state.get('error')}")
-        print("AI 지우기 완료", state.get("meta", {}).get("usage"), flush=True)
-        call(client, "POST", "/api/restore/accept", json={"session_id": sid, "image_id": iid, "job_id": job_id})
-        print("배경 패치 확정", flush=True)
+        erase_regions(client, sid, iid, args.erase_quality, args.ocr_model)
     if "final" in stages:
         body = {"session_id": sid, "image_id": iid, "ocr_model": args.ocr_model, "force": args.force}
         if args.font:
