@@ -2329,6 +2329,30 @@ def _lama_device() -> Any:
     return torch.device(name)
 
 
+class _LamaReleasingCache:
+    """LaMa 호출 뒤 torch가 쥔 GPU 작업 메모리를 비운다. 모델은 내리지 않는다.
+
+    입력 크기가 바뀔 때마다 MPS 작업 메모리가 쌓여 상주 프로세스의 점유가 계속 늘었다.
+    120회 측정에서 6.2GB → 4.1GB로 줄었고 결과 픽셀은 같다. 기록: docs/BATCH_MEMORY_GROWTH_NOTES.md
+    """
+
+    def __init__(self, model: Any) -> None:
+        self.model = model
+        self.device = getattr(model, "device", None)
+
+    def __call__(self, image: Any, mask: Any) -> Any:
+        try:
+            return self.model(image, mask)
+        finally:
+            import torch
+
+            kind = getattr(self.device, "type", "cpu")
+            if kind == "mps":
+                torch.mps.empty_cache()
+            elif kind == "cuda":
+                torch.cuda.empty_cache()
+
+
 def _get_lama() -> Any:
     """LaMa 모델을 처음 필요할 때 한 번만 올린다. 여러 스레드가 동시에 불러도 한 번만 로드한다.
 
@@ -2346,14 +2370,14 @@ def _get_lama() -> Any:
                 raise RuntimeError("simple_lama_inpainting is not installed. Install requirements.txt in .venv.")
             device = _lama_device()
             try:
-                _lama = lama_class(device)
+                _lama = _LamaReleasingCache(lama_class(device))
             except Exception as exc:  # noqa: BLE001 - GPU 초기화 실패는 CPU로 대신한다
                 if device.type == "cpu":
                     raise
                 print(f"[lama] {device.type} 초기화 실패, cpu로 실행: {exc}", file=sys.stderr, flush=True)
                 import torch
 
-                _lama = lama_class(torch.device("cpu"))
+                _lama = _LamaReleasingCache(lama_class(torch.device("cpu")))
     return _lama
 
 

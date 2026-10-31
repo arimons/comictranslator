@@ -41,7 +41,8 @@ def test_get_lama_loads_model_once_across_threads(monkeypatch):
         thread.join()
 
     assert len(created) == 1
-    assert all(item is created[0] for item in results)
+    assert all(item is results[0] for item in results)
+    assert results[0].model is created[0]  # 호출 뒤 GPU 메모리를 비우는 래퍼로 감싸 돌려준다
 
 
 def test_get_lama_reports_missing_package(monkeypatch):
