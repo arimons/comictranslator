@@ -11,6 +11,7 @@ import argparse
 import json
 import sys
 import threading
+import traceback
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
@@ -122,8 +123,9 @@ def main() -> None:
             except SystemExit as exc:  # rpf.call이 오류를 SystemExit로 올린다
                 mark_failed(args.session_id, iid, str(exc)); failed.append(iid); print(f"  [{iid}] 실패: {exc}", flush=True); return
             except Exception as exc:  # noqa: BLE001 - 한 장의 실패가 전체를 멈추지 않게 한다
-                mark_failed(args.session_id, iid, f"{type(exc).__name__}: {exc}"); failed.append(iid)
-                print(f"  [{iid}] 실패: {type(exc).__name__}: {exc}", flush=True); return
+                where = " > ".join(f"{Path(f.filename).name}:{f.lineno}:{f.name}" for f in traceback.extract_tb(exc.__traceback__)[-3:])
+                mark_failed(args.session_id, iid, f"{type(exc).__name__}: {exc} @ {where}"); failed.append(iid)
+                print(f"  [{iid}] 실패: {type(exc).__name__}: {str(exc)[:160]} @ {where}", flush=True); return
             failed_marker(args.session_id, iid).unlink(missing_ok=True)
             with lock:
                 spent[0] += cost
