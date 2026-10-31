@@ -874,7 +874,7 @@ python3 run_pipeline.py \
   각 crop 왼쪽에 <code>R1 TG2,3</code> / <code>U1 TG5</code> 형태의 라벨 컬럼을 추가해
   OpenAI가 region을 식별할 수 있게 합니다.</p>
   <ul>
-    <li>정렬 기준(2026-10-29, <code>pipeline/reading_order.py</code>): 페이지 이미지에서 칸 사이 흰 여백(거의 완전히 밝은 줄, 3px 이상)을 찾아 칸을 나눈다(가로 여백 먼저 위→아래, 다음 세로 여백 오른쪽→왼쪽, 재귀). 같은 칸 안에서는 y와 상관없이 x 중심이 큰(오른쪽) 영역이 먼저다. 여백이 비스듬해 두 칸이 한 칸으로 합쳐진 경우만, y 중심 간격이 칸 안 평소 간격의 2.5배 이상·페이지 높이 20% 이상이고 그 사이에 칸 폭을 가로지르는 비스듬한 흰 선(98% 이상 밝음, 기울기 폭의 25% 이내)이 실제로 있을 때 위→아래 띠로 나눈다. 분할 조각은 부모 상자를 공유해 <code>source_order</code>·split_order 순으로 붙는다. 펼침면은 오른쪽 쪽을 먼저 끝낸다.</li>
+    <li>정렬 기준(2026-10-30, <code>pipeline/reading_order.py</code>): 영역 y 중심 분포로 먼저 층(단)을 나눈다(y 중심 간격이 평소 간격의 2.5배 이상·페이지 높이 20% 이상). 층마다 그 범위 안에서 칸 사이 흰 여백(거의 완전히 밝은 줄, 3px 이상)을 다시 찾아 칸을 나눈다(가로 여백 먼저 위→아래, 다음 세로 여백 오른쪽→왼쪽, 재귀). 그래서 그림이 여백을 끊어 페이지 전체가 한 칸으로 잡혀도 위 단을 끝낸 뒤 아래 단으로 넘어간다. 단, 페이지에서 찾은 칸이 층 경계를 가로지르고 그 옆에 나란한 칸에도 영역이 있으면(세로로 긴 칸) 두 층을 합쳐 옆 칸과 번갈아 읽지 않는다. 칸 안에서는 비스듬한 흰 여백선이 실제로 있을 때만 위→아래 띠로 나누고, 띠 안은 x 중심이 큰(오른쪽) 영역이 먼저다. 분할 조각은 부모 상자를 공유해 <code>source_order</code>·split_order 순으로 붙는다. 펼침면은 오른쪽 쪽을 먼저 끝낸다. 남은 한계: 검은 칸 여백은 여백으로 보지 않는다.</li>
     <li><code>R{id}</code> = 경계 기반 영역, <code>U{id}</code> = 텍스트 기반 영역 (OCR sheet 호환 표기; 앱에서는 공통 R 번호와 배지 사용)</li>
     <li><code>TG{ids}</code> = 해당 region에 포함된 TG id 목록</li>
     <li>출력된 <code>*_regions.json</code>에 <code>sheet_rect</code>(시트 내 x offset)와 <code>bubble_rect</code>/<code>unboxed_rect</code>(원본 좌표)를 모두 기록</li>
@@ -910,8 +910,8 @@ python3 run_pipeline.py \
   </div>
 
   <h3>모델 선택</h3>
-  <p>Step 4는 모델 이름의 접두어로 제공자를 고릅니다. <code>gpt-*</code>는 OpenAI Responses API, <code>gemini-*</code>는 Gemini <code>generate_content</code>로 보냅니다. 선택지는 <code>gpt-6.1-sol</code>(기본, reasoning <code>low</code>), <code>gpt-6-luna</code>, <code>gemini-3.8-flash</code>, <code>gemini-3.5-flash-lite</code> 네 가지이고, Gemini는 thinking <code>low</code>와 이미지 해상도 <code>medium</code>으로 호출합니다. Gemini를 고르려면 <code>.env</code>에 <code>GEMINI_API_KEY</code>가 필요합니다. CLI 예: <code>run_pipeline.py --ocr-model gpt-6.1-sol</code>. 편집기 OCR 모델 선택에서 나머지 모델을 수동으로 고를 수 있지만, 실제 만화의 OCR·번역 품질은 별도 확인이 필요합니다. 이전 모델의 비교 기록을 새 모델의 품질 보증으로 사용하지 않습니다.</p>
-  <p>저장 자료의 용어 정리는 <code>pipeline/openai_tasks.py</code>가 길이·자료 수만으로 자동 라우팅합니다. 짧은 자료는 GPT-6 Luna, 긴 다중 자료는 GPT-6.1 Sol이며 분류용 API 호출은 없습니다. 이미지 생성은 전용 <code>gpt-image-2.5-sunburst</code>, 번역·레이아웃 가이드는 GPT-6.1 Sol입니다. 첫 단계 Cloud Vision 좌표 추출은 별도 경로입니다.</p>
+  <p>Step 4는 모델 이름의 접두어로 제공자를 고릅니다. <code>gpt-*</code>는 OpenAI Responses API, <code>gemini-*</code>는 Gemini <code>generate_content</code>로 보냅니다. 선택지는 <code>gpt-6.1-terra</code>(기본, reasoning <code>low</code>), <code>gpt-6.1-sol</code>, <code>gpt-6-luna</code>, <code>gemini-3.8-flash</code>, <code>gemini-3.5-flash-lite</code> 다섯 가지이고, Gemini는 thinking <code>low</code>와 이미지 해상도 <code>medium</code>으로 호출합니다. Gemini를 고르려면 <code>.env</code>에 <code>GEMINI_API_KEY</code>가 필요합니다. CLI 예: <code>run_pipeline.py --ocr-model gpt-6.1-sol</code>. 편집기 OCR 모델 선택에서 나머지 모델을 수동으로 고를 수 있지만, 실제 만화의 OCR·번역 품질은 별도 확인이 필요합니다. 이전 모델의 비교 기록을 새 모델의 품질 보증으로 사용하지 않습니다.</p>
+  <p>저장 자료의 용어 정리는 <code>pipeline/openai_tasks.py</code>가 길이·자료 수만으로 자동 라우팅합니다. 짧은 자료는 GPT-6 Luna, 긴 다중 자료는 GPT-6.1 Sol이며 분류용 API 호출은 없습니다. 이미지 생성은 전용 <code>gpt-image-2.5-sunburst</code>, 번역·레이아웃 가이드는 GPT-6.1 Terra(2026-10-31부터, 이전 기본은 Sol)입니다. 첫 단계 Cloud Vision 좌표 추출은 별도 경로입니다.</p>
 
   <h3>OCR 청크 분할 전략</h3>
   <p>한 페이지에 region이 많으면 OpenAI 한 번에 보내는 대신 여러 청크로 나눠 전송합니다.</p>
@@ -1408,3 +1408,5 @@ python3 run_pipeline.py \
 <!-- 2026-10-29 review: region_refs.py·app.py·render_text_overlay.py TG digest를 원본 TG 기준으로 변경. 이 문서 내용 영향 없음 -->
 
 <!-- 2026-10-30 review: dialogue_extractor.py 수동 분할선이 polygon 영역을 사각형이 아닌 영역 모양으로 가르도록 수정. 이 문서 내용 영향 없음 -->
+
+<!-- 2026-10-31 review: pipeline_runner.py stop_after="text_groups" 추가(일괄 처리용, 단계 순서는 그대로). 단계 설명 영향 없음 -->

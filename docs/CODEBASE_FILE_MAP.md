@@ -64,7 +64,7 @@ NEW_COMIC_TRANSLATOR/
     ├── cloud_vision_api.py     # Step 1
     ├── text_group_builder_v2.py  # Step 2
     ├── dialogue_extractor.py   # Step 3 진입점 (경계 기반 검출 + 텍스트 기반 지우기 + OCR sheet)
-    ├── reading_order.py        # R 번호 읽기 순서: 칸 여백 XY-cut → (비스듬한 여백이면 띠 분리) → 칸 안은 오른쪽→왼쪽
+    ├── reading_order.py        # R 번호 읽기 순서: y 분포 층 → 층 안 칸 여백 XY-cut(나란한 세로 칸은 층 합침) → 칸 안은 오른쪽→왼쪽
     ├── bubble_detector.py      # 말풍선 FloodFill 검출 코어 (구 floodfill_anchor_probe.py)
     ├── flood_split.py          # shared flood region split 후보 평가
     ├── edge_barrier_flood_rescue.py  # 열린 말풍선 edge barrier 구제
@@ -78,8 +78,8 @@ NEW_COMIC_TRANSLATOR/
     ├── region_types.py         # 처리 기준 상수·기존 JSON 타입 호환·비파괴 projection
     ├── editor_review_bridge.py # 세션 산출물 조회·이미지 crop·revision·미적용 검토 초안
     ├── geometry.py             # 사각형 좌표 유틸
-    ├── gemini_ocr_translate_v5.py  # Step 4 (GPT-6.1 Sol 기본, OpenAI Responses API · Gemini generate_content 선택)
-    ├── openai_tasks.py        # OpenAI 작업별 Sol/Luna 라우팅·JSON 출력·제한 승격
+    ├── gemini_ocr_translate_v5.py  # Step 4 (GPT-6.1 Terra 기본, OpenAI Responses API · Gemini generate_content 선택)
+    ├── openai_tasks.py        # OpenAI 작업별 Terra/Sol/Luna 라우팅·JSON 출력·제한 승격
     ├── work_glossary.py        # 작품 메모 저장·이전 형식 이관·URL 초안(OpenAI 1회)·번역 참고문·region 화자 프롬프트
     ├── work_sources.py         # 공개 작품 URL의 제한 수집·본문 추출
     ├── font_style_analyzer.py  # Step 4 직후 render_hint CV 보정
@@ -161,7 +161,7 @@ guidance(수동 보정)가 있는 이미지는 `guidance_digest`(guidance 내용
 | `POST /api/import-path`, `/api/upload` | 이미지 폴더/파일을 세션에 추가 |
 | `POST /api/pages/override` | 가로 이미지 나누기 페이지별 지정(`split_override`: 가로 그대로·분할선 x) 저장 |
 | `GET /api/fs/list` | 서버 폴더 선택 창용: 하위 폴더 이름, 현재 폴더 이미지 수, 홈·외장 볼륨 바로가기 |
-| `POST /api/analyze(-stream)` | Step 1~3 실행 (pre_ocr까지), 캐시 우선 재사용 |
+| `POST /api/analyze(-stream)` | Step 1~3 실행 (pre_ocr까지), 캐시 우선 재사용. `POST /api/analyze`는 `stop_after="text_groups"`를 받으면 Step 1~2(CV·글자 묶음)까지만 하고 분석 캐시에는 저장하지 않는다(`-stream`은 미지원) |
 | `POST /api/guidance`, `/api/guidance/clear` | 수동 보정(TG 삭제/split, edge barrier, manual region 등) 반영 후 Step 3 재실행 |
 | `POST /api/run-final(-stream)` | Step 4(OCR/번역) + Step 5(오버레이) 실행. body의 `ocr_model`로 모델 지정. `image_id`는 페이지 ID·`all`·`failed`·`batch`(`image_ids`로 지정한 페이지만, 이미 번역된 페이지는 건너뜀) |
 | `GET /api/ocr-models` | OCR/번역 모델 목록(`id`, `label`, `note`)과 기본값 |
@@ -207,7 +207,7 @@ guidance(수동 보정)가 있는 이미지는 `guidance_digest`(guidance 내용
 | `frontend/src/OcrBatchPrompt.jsx` | 확인한 페이지(영역 분석 탭에서 적용 안 한 변경 없이 넘긴 페이지, `App.jsx`가 브라우저에 세션별로 기억)의 비율이 처리 대상 페이지의 60%, 80%를 넘을 때마다 한 번씩 비차단 알림을 띄우고, 시작하면 `image_id: "batch"`로 백그라운드 OCR·번역을 돌린다. 진행 중에는 그 페이지만 편집을 잠근다 |
 | `frontend/src/ShortcutHelp.jsx` | `?`로 여는 단축키 도움말. 현재 탭의 keymap 항목을 묶어 표시 |
 | `frontend/src/AiErasePanel.jsx` | 영역 분석 탭의 AI 글자 지우기. 시작은 도구 모음의 AI 지우개 버튼(`App.jsx`)이 여는 확인 창(모델·시간·비용 안내, 취소 포커스, Esc 닫기)에서 하고, 오른쪽 패널에는 진행·후보·적용됨 상태일 때만 카드가 뜬다. 후보를 비교 미리보기 "AI 지움 후보" 탭에 띄우고 적용·버리기·해제. 적용하면 이전 AI 지움 패치를 교체한다 |
-| `frontend/src/DialogueList.jsx` | 글자 입히기 탭 오른쪽 패널의 대사 리스트 — 읽는 순서, 원문·번역, 확인/질문 상태, 빈 번역 경고, 필터. 상태 계산과 J/K/Y/Q 동작은 `App.jsx`가 맡는다 |
+| `frontend/src/DialogueList.jsx` | 글자 입히기 탭 오른쪽 패널의 대사 리스트 — 읽는 순서, 원문·번역, 확인/질문 상태, 빈 번역 경고, 필터. Shift/Cmd+클릭으로 여러 박스를 고르면 `extraKeys`에 든 행을 `grouped`로 강조하고, 클릭 이벤트를 `onSelect(rid, event)`로 넘긴다. 상태 계산과 J/K/Y/Q 동작, 다중 선택 처리는 `App.jsx`가 맡는다 |
 | `frontend/src/App.jsx` | 세션 관리, 이미지 목록, 워크플로우 탭(분석/OCR/오버레이/내보내기) 전체 상태. Action History의 텍스트 기반 줄에서 LaMa 강제 토글(`manual_regions[].inpaint_engine = "lama"`). 선택한 텍스트 기반 영역(자동·수동 모두)은 도구 모음 LaMa 버튼·오른쪽 패널로 영역 키에 고정하며(`guidance.inpaint_engine_overrides = [{target_key, engine: "lama"}]`), 분석 적용 때 Step 3가 반영한다 |
 | `frontend/src/main.jsx` | React 엔트리포인트 |
 
@@ -218,7 +218,7 @@ guidance(수동 보정)가 있는 이미지는 `guidance_digest`(guidance 내용
 CLI 진입점. 단일 이미지 또는 폴더 배치 처리.
 
 ```bash
-python run_pipeline.py --input image.jpg --output output/ [--force] [--workers 4] [--ocr-model gpt-5.6-terra] [--pre-ocr]
+python run_pipeline.py --input image.jpg --output output/ [--force] [--workers 4] [--ocr-model gpt-6.1-terra] [--pre-ocr]
 ```
 
 - 입력은 `input_preprocessor.prepare_pipeline_inputs()`로 정리한다(가로 2페이지 spread는 `{work_dir}/split_input/`에 분할).
@@ -401,10 +401,10 @@ flood 실패 후보에 TELEA inpaint를 적용하는 승격 후보 실험 모듈
 OCR, 번역, Text Group 매칭을 한 번에 수행하고 integrated JSON을 생성한다.
 
 - 표준 입력: `--ocr-sheet-image`(indexed OCR sheet) + `--ocr-sheet-json`(`*_regions.json`) + `*_text_groups.json`. OCR sheet가 없을 때만 원본 이미지 + CV cluster 힌트 경로로 fallback한다.
-- `--model`로 모델을 고른다. `gpt-*`는 OpenAI Responses API, `gemini-*`는 Gemini `generate_content`로 보낸다(`resolve_provider`). 선택지는 `gpt-6.1-sol`(기본)·`gpt-6-luna`·`gemini-3.8-flash`·`gemini-3.5-flash-lite`이고, UI 노출 목록은 `SUPPORTED_OCR_MODELS`, 기본값은 `MODEL_NAME`이다. Gemini는 `GEMINI_API_KEY`가 있어야 하며 thinking low·이미지 해상도 medium(`GEMINI_MEDIA_RESOLUTION`)으로 호출한다.
+- `--model`로 모델을 고른다. `gpt-*`는 OpenAI Responses API, `gemini-*`는 Gemini `generate_content`로 보낸다(`resolve_provider`). 선택지는 `gpt-6.1-terra`(기본)·`gpt-6.1-sol`·`gpt-6-luna`·`gemini-3.8-flash`·`gemini-3.5-flash-lite`이고, UI 노출 목록은 `SUPPORTED_OCR_MODELS`, 기본값은 `MODEL_NAME`이다. Gemini는 `GEMINI_API_KEY`가 있어야 하며 thinking low·이미지 해상도 medium(`GEMINI_MEDIA_RESOLUTION`)으로 호출한다.
 - OCR 직후 `font_style_analyzer.update_integrated_render_hints()`로 render_hint를 보정한다.
 - 출력: `*_integrated.json`
-- 출력 구조: `clusters`(=Text Group), `unmatched_clusters`, `model`, `ocr_source`. 번역을 끝내 받지 못한 region이 있으면 `missing_region_ids`도 쓴다.
+- 출력 구조: `clusters`, `unmatched_clusters`, `model`, `ocr_source`, `region_ref_scheme`. 번역을 끝내 받지 못한 region이 있으면 `missing_region_ids`도 쓴다. `regions` 배열은 없다. `clusters[]`는 R 영역(또는 한 R 안의 문장 하나)당 하나인 번역 단위이고, `source_region_id`로 `regions.json`의 `regions[].region_id`에 연결된다. 구조 비교표는 `AGENTS.md`의 "JSON 최상위 구조"를 본다.
 - 부분 성공 보존: chunk 응답은 region 단위로 검증한다(`collect_valid_ocr_regions`). 통과한 region은 보관하고, 다음 시도(최대 3회)에는 실패한 region만 담은 시트(`*_chunk_NN_retryK.jpg`)를 다시 보낸다. 끝까지 실패한 region은 `missing_region_ids`로 남기고 페이지는 성공 처리한다. 렌더는 누락 region을 원본으로 두므로 편집기에서 직접 번역을 넣는다. region을 하나도 받지 못하면(API 키·네트워크 오류) 페이지를 실패로 둔다.
 - 각 항목은 `sentence_id`, `text`, `text_translated`, `matched_cluster`, `matched_cluster_details`, `bounding_rect`, `location`, `source_region_id`, render_hint 관련 필드를 포함한다.
 
@@ -416,7 +416,7 @@ indexed sheet crop의 획두께·ink density를 재서 OpenAI가 준 `render_hin
 
 5단계 파이프라인 실행 엔진이다.
 
-- `run_single_image()`: 1장 처리. 각 단계를 `python -m pipeline.*` subprocess로 순차 실행하며 중간 파일 캐시를 활용한다. `stop_after="extract"`/`"pre_ocr"`면 Step 3에서 멈추고, 이때는 final 이미지가 있어도 Step 1-3 산출물을 다시 확인한다.
+- `run_single_image()`: 1장 처리. 각 단계를 `python -m pipeline.*` subprocess로 순차 실행하며 중간 파일 캐시를 활용한다. `stop_after="extract"`/`"pre_ocr"`면 Step 3에서 멈추고, 이때는 final 이미지가 있어도 Step 1-3 산출물을 다시 확인한다. `"text_groups"`면 Step 2(글자 묶음)에서 멈춘다. 영역을 가이던스로 확정하는 일괄 처리(`scripts/series_batch.py`)가 분석의 Step 3(LaMa 지우기) 중복을 피하려고 쓰며, `/api/guidance`가 영역 확정 뒤에 Step 3를 돌린다.
 - `run_batch_images()`: 이미지별 `run_single_image()`를 ThreadPoolExecutor로 병렬 실행한다. Step 1도 이미지 단위로 호출한다.
 - 어느 단계든 subprocess가 실패하면(`PipelineError`) 그 이미지는 실패로 끝난다.
 - Step 4는 Step 3 산출물(`regions.json`, indexed sheet, `text_groups.json`)이 `integrated.json`보다 새로우면 다시 만든다.
@@ -548,3 +548,5 @@ OCR·번역 모델로 Gemini를 고른 세션의 이미지 작업(글자 지우�
 <!-- 2026-10-29 review: region_refs.py 합침 메모 보관 반영 -->
 <!-- 변경 검토(2026-10-30): 지우기 보정(custom_masks) 추가 -->
 <!-- 변경 검토(2026-10-30): region_refs.py POLICY에 custom_mask 소비처와 resolve_instance_record 추가 -->
+
+<!-- 2026-10-31 review: pipeline_runner.py stop_after="text_groups"·app.py /api/analyze stop_after 추가를 반영 -->

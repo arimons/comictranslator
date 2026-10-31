@@ -121,3 +121,5 @@ OpenAI 전환(2026-10-20): pipeline_runner의 Step 4 호출 로그와 모델 기
 저장 구조·이전·맥 미니 실행은 [저장 위치 안내](STORAGE_LAYOUT.md)를 참고합니다. 내보낸 zip 기본 위치는 데이터 홈의 exports입니다.
 
 이전 후 검증(2026-10-21): 원본·등록 후보·편집 값은 보존되며 임시 분석 복사본도 프로젝트 상대 경로로 저장합니다. 검증 스크립트의 출력은 데이터 홈 legacy/proof_outputs에 둡니다.
+
+<!-- 2026-10-31 review: pipeline_runner.py에 stop_after="text_groups" 추가. 작업 폴더 규칙에는 영향 없음 -->

@@ -12,7 +12,6 @@
       "sources": [
         "pipeline/work_glossary.py",
         "frontend/src/GlossaryPanel.jsx",
-        "app.py",
         "pipeline/work_sources.py",
         "pipeline/openai_tasks.py"
       ]
@@ -103,6 +102,14 @@
       "role": "hub",
       "topic": "용어집과 링크 허브",
       "sources": []
+    },
+    "docs/BATCH_MEMORY_GROWTH_NOTES.md": {
+      "role": "record",
+      "topic": "2026-10-31 일괄 처리 배치 메모리 증가 조사",
+      "sources": [
+        "scripts/probe_step3_memory.py",
+        "scripts/probe_lama_shape_memory.py"
+      ]
     },
     "docs/PIPELINE_STATUS.md": {
       "role": "record",
@@ -204,7 +211,6 @@
       "topic": "원본 보존 페이지 분할 미리보기·서버 상태등·이미지 맞춤",
       "sources": [
         "pipeline/page_preparation.py",
-        "app.py",
         "frontend/src/PagePreparation.jsx",
         "frontend/src/ServerStatus.jsx",
         "frontend/src/ImagePreview.jsx",
@@ -250,8 +256,7 @@
       "sources": [
         "pipeline/paths.py",
         "pipeline/project_paths.py",
-        "scripts/migrate_workspace.py",
-        "app.py"
+        "scripts/migrate_workspace.py"
       ]
     },
     "docs/DEPENDENCIES.md": {
@@ -281,7 +286,6 @@
         "pipeline/project_paths.py",
         "pipeline/page_preparation.py",
         "pipeline/editor_review_bridge.py",
-        "app.py",
         "scripts/migrate_input_sources.py",
         "frontend/src/SourceLinks.jsx",
         "frontend/src/StartScreen.jsx"
