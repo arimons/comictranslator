@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 import time
 from pathlib import Path
@@ -41,6 +42,8 @@ JSON 객체 하나로만 답하세요.
   {"tg_ids": [이 영역에 속하는 TG 번호들],
    "translate": 한국어로 번역해 다시 넣어야 하면 true (로마자 표기·쪽번호·영문 로고·장식은 false),
    "kind": "caption | title | label | sfx | keep",
+   "draw": true면 이미지 모델이 한국어 글자를 직접 새로 그려야 하는 영역(눈에 띄게 크거나 서체가 장식적이라 일반 폰트로는 어울리지 않는 제목·로고풍 글자). 그 외 평범한 글자는 false(지운 뒤 폰트로 넣음),
+   "ko": draw=true일 때만 그 영역의 한국어 번역(작품 참고 정보의 표기 우선). 아니면 빈 문자열,
    "tg_incomplete": 이 영역의 글자 중 TG 박스로 덮이지 않은 부분이 있으면 true,
    "rect_norm": [x, y, w, h]  // 이 영역 글자 전체를 감싸는 사각형. 페이지 가로·세로를 각각 0-1000으로 본 좌표
   }]}
@@ -48,6 +51,7 @@ JSON 객체 하나로만 답하세요.
 규칙:
 - 읽는 단위(한 문단, 한 줄 제목, 한 줄 라벨)가 하나의 영역입니다. 한 문단의 TG를 여러 영역으로 나누지 마세요.
 - 반투명 박스 안의 문단은 박스 전체가 아니라 글자가 있는 부분을 하나의 영역으로 묶으세요.
+- draw 판단은 글자의 크기·장식성으로 하세요. 문단·대사·소개문처럼 읽는 글은 draw=false입니다.
 - 어느 영역에도 안 들어가는 TG는 translate=false 영역으로 따로 적으세요."""
 
 
@@ -98,7 +102,7 @@ def terra_guidance(record: dict, model: str) -> dict:
         text={"format": {"type": "json_object"}}, max_output_tokens=4000, store=False)
     plan = _json.loads(response.output_text)
     by_id = {g["text_group_id"]: g for g in groups}
-    manual, disabled, report = [], set(), []
+    manual, disabled, report, draws = [], set(), [], []
     for index, region in enumerate(plan.get("regions", []), start=1):
         ids = [i for i in region.get("tg_ids", []) if i in by_id]
         if not region.get("translate"):
@@ -114,10 +118,15 @@ def terra_guidance(record: dict, model: str) -> dict:
             continue
         x, y, w, h = union(rects)
         rect = [max(0, x - REGION_PAD), max(0, y - REGION_PAD), w + 2 * REGION_PAD, h + 2 * REGION_PAD]
+        if region.get("draw") and str(region.get("ko", "")).strip():
+            disabled.update(ids)  # 오버레이·LaMa 대상에서 빼고 이미지 모델이 그린다
+            draws.append({"rect": rect, "ko": str(region["ko"]).strip(), "kind": region.get("kind")})
+            report.append({"tg_ids": ids, "translate": True, "draw": True, "kind": region.get("kind"), "rect": rect, "ko": region["ko"]})
+            continue
         manual.append({"id": f"terra_ubox_{index}", "type": "unboxed", "unboxed_rect": rect, "source_method": "manual_ubox_guide"})
         report.append({"tg_ids": ids, "translate": True, "kind": region.get("kind"), "rect": rect,
                        "tg_incomplete": bool(region.get("tg_incomplete"))})
-    return {"manual_regions": manual, "disabled_tg_ids": sorted(disabled)}, report
+    return {"manual_regions": manual, "disabled_tg_ids": sorted(disabled)}, report, draws
 
 
 ERASE_CROP_PROMPT = (
@@ -153,46 +162,89 @@ def context_rect(rect: list[int], page_w: int, page_h: int) -> list[int]:
     return [x1, y1, x2 - x1, y2 - y1]
 
 
-def erase_regions(client: TestClient, sid: str, iid: str, quality: str, model: str) -> None:
-    """가이던스의 영역마다 크롭을 AI로 지워 영역별 배경 패치로 확정한다(영역 안쪽만 합성)."""
+def pct(rect: list[int], ctx: list[int]) -> str:
+    x, y, w, h = rect
+    cx, cy, cw, ch = ctx
+    return (f"left {round((x - cx) / cw * 100)}%, top {round((y - cy) / ch * 100)}%, "
+            f"width {round(w / cw * 100)}%, height {round(h / ch * 100)}%")
+
+
+def build_edit_prompt(erase_rects: list[list[int]], draws: list[dict], ctx: list[int], extra: str) -> str:
+    lines = ["This is a crop of a manga page. Edit it as described and keep everything else exactly the same "
+             "(artwork, colors, lines, logos, Latin letters, layout)."]
+    for item in draws:
+        lines.append(f'- Large title text at ({pct(item["rect"], ctx)}): remove the Japanese title completely and redraw it as '
+                     f'Korean text "{item["ko"]}" on one line, in a heavy bold display typeface with similar weight, size, '
+                     "color and position as the original title.")
+    if erase_rects:
+        boxes = "; ".join(f"({pct(r, ctx)})" for r in erase_rects)
+        lines.append(f"- Erase ALL Japanese text, including small furigana, inside these areas: {boxes}. Leave the areas "
+                     "empty. If the text sits on a semi-transparent box, keep the box tint and rounded corners and restore "
+                     "the background behind the text naturally.")
+    lines.append("- Do not touch Latin/English text or logos. Do not add any other text, letters or objects.")
+    if extra.strip():
+        lines.append(extra.strip())
+    return "\n".join(lines)
+
+
+def erase_regions(client: TestClient, sid: str, iid: str, quality: str, model: str, extra: str = "") -> None:
+    """영역들을 한 번의 이미지 호출로 처리한다(큰 제목은 한국어로 다시 그리기, 나머지는 글자 지우기).
+    결과는 크롭 하나를 패치로 확정하고, 합성 마스크는 제목=영역 전체, 작은 글씨=글자 획 주변으로 만든다."""
     import hashlib
 
     import cv2
     import numpy as np
 
-    from pipeline.ai_text_erase import erase_page_text
+    from pipeline.ai_text_erase import MAX_SIDE, erase_page_text
     from pipeline.background_restore import MaskParams, build_text_stroke_mask
     from pipeline.gemini_image import image_model_for
 
     record = comic_app._restore_record(sid, iid)
     guidance = comic_app.load_json(record["guidance_json"], default={}) or {}
-    rects = [item["unboxed_rect"] for item in guidance.get("manual_regions", []) if item.get("unboxed_rect")]
-    if not rects:
-        sys.exit("가이던스에 영역이 없습니다. regions 단계를 먼저 실행하세요.")
+    erase_rects = [item["unboxed_rect"] for item in guidance.get("manual_regions", []) if item.get("unboxed_rect")]
+    draw_path = Path(record["work_dir"]) / "json" / f"{iid}_ai_draw.json"
+    draws = json.loads(draw_path.read_text(encoding="utf-8")) if draw_path.exists() else []
+    if not erase_rects and not draws:
+        sys.exit("처리할 영역이 없습니다. regions 단계를 먼저 실행하세요.")
     page = comic_app._read_bgr(record["input_path"])
     page_h, page_w = page.shape[:2]
-    # 이전 AI 지우기 패치는 지우고 다시 만든다(다른 엔진의 패치는 건드리지 않는다)
     for old in comic_app._restore_state(record).get("patches", []):
         if old.get("engine") == comic_app.AI_ERASE_ENGINE:
             call(client, "POST", "/api/restore/patch/remove", json={"session_id": sid, "image_id": iid, "patch_id": old["id"]})
-    # 사각형 전체가 아니라 글자 획 주변만 합성한다. 평평한 배경에서 지운 사각형의 색 차이가 비치지 않는다.
-    stroke_mask = build_text_stroke_mask(page, [{"rect": r, "fragments": []} for r in rects], MaskParams(dilate_px=STROKE_DILATE))
+    stroke_mask = build_text_stroke_mask(page, [{"rect": r, "fragments": []} for r in erase_rects], MaskParams(dilate_px=STROKE_DILATE))
     image_model = image_model_for(model, comic_app.IMAGE_MODEL)
+
+    everything = [("erase", r) for r in erase_rects] + [("draw", d["rect"]) for d in draws]
+    ctx = context_rect(union([r for _, r in everything]), page_w, page_h)
+    if max(ctx[2], ctx[3]) <= MAX_SIDE:
+        groups = [(erase_rects, draws)]
+    else:  # 한 크롭에 다 안 들어가면 항목별로 따로 처리한다
+        groups = [([r], []) for r in erase_rects] + [([], [d]) for d in draws]
     total = 0.0
-    for index, rect in enumerate(rects, start=1):
-        cx, cy, cw, ch = context_rect(rect, page_w, page_h)
+    for gi, (g_erase, g_draws) in enumerate(groups, start=1):
+        cx, cy, cw, ch = context_rect(union(g_erase + [d["rect"] for d in g_draws]), page_w, page_h)
         crop = page[cy:cy + ch, cx:cx + cw].copy()
-        job_id = f"{time.strftime('%H%M%S')}_ai-erase_{hashlib.sha1(str(rect).encode()).hexdigest()[:6]}"
+        prompt = build_edit_prompt(g_erase, g_draws, [cx, cy, cw, ch], extra)
+        job_id = f"{time.strftime('%H%M%S')}_ai-erase_{hashlib.sha1((str(g_erase) + str(g_draws)).encode()).hexdigest()[:6]}"
         job_dir = Path(record["restore_dir"]) / "jobs" / job_id
         job_dir.mkdir(parents=True, exist_ok=True)
-        erased, meta = erase_page_text(crop, job_dir, model=image_model, quality=quality, prompt=ERASE_CROP_PROMPT)
-        mask = np.zeros(crop.shape[:2], dtype=np.uint8)
-        rx, ry, rw, rh = rect
-        region = np.zeros((page_h, page_w), dtype=np.uint8)
-        region[ry:ry + rh, rx:rx + rw] = 255
-        mask = cv2.bitwise_and(stroke_mask, region)[cy:cy + ch, cx:cx + cw]
+        (job_dir / "prompt.txt").write_text(prompt, encoding="utf-8")
+        edited, meta = erase_page_text(crop, job_dir, model=image_model, quality=quality, prompt=prompt)
+        mask = np.zeros((page_h, page_w), dtype=np.uint8)
+        for r in g_erase:
+            x, y, w, h = r
+            mask[y:y + h, x:x + w] = stroke_mask[y:y + h, x:x + w]
+        for d in g_draws:
+            x, y, w, h = d["rect"]
+            mask[y:y + h, x:x + w] = 255
+            # 순백이던 자리는 순백으로 되돌린다(이미지 모델이 흰색을 살짝 회색으로 바꾸는 것을 막는다)
+            sub_o = crop[max(0, y - cy):max(0, y - cy) + h, max(0, x - cx):max(0, x - cx) + w]
+            sub_e = edited[max(0, y - cy):max(0, y - cy) + sub_o.shape[0], max(0, x - cx):max(0, x - cx) + sub_o.shape[1]]
+            white = (sub_o.min(axis=2) >= 250) & (sub_e.min(axis=2) >= 238)
+            sub_e[white] = sub_o[white]
+        mask = mask[cy:cy + ch, cx:cx + cw]
         cv2.imwrite(str(job_dir / "crop_before.png"), crop)
-        cv2.imwrite(str(job_dir / "crop_after.png"), erased)
+        cv2.imwrite(str(job_dir / "crop_after.png"), edited)
         cv2.imwrite(str(job_dir / "crop_mask.png"), mask)
         usage = {k: meta[k] for k in ("input_tokens", "output_tokens", "estimated_cost_usd", "request_size")}
         with comic_app._RESTORE_JOBS_LOCK:
@@ -204,8 +256,9 @@ def erase_regions(client: TestClient, sid: str, iid: str, quality: str, model: s
                          "timing": {"total_sec": meta["elapsed_sec"]}, "usage": usage}}
         call(client, "POST", "/api/restore/accept", json={"session_id": sid, "image_id": iid, "job_id": job_id})
         total += meta["estimated_cost_usd"]
-        print(f"  영역 {index}/{len(rects)} 지우기 확정 rect={rect} 크롭={[cx, cy, cw, ch]} ${meta['estimated_cost_usd']}", flush=True)
-    print(f"AI 지우기 완료: 패치 {len(rects)}개, 추정 ${round(total, 4)}", flush=True)
+        print(f"  호출 {gi}/{len(groups)} 확정 지우기 {len(g_erase)}·그리기 {len(g_draws)} 크롭={[cx, cy, cw, ch]} "
+              f"토큰 {usage['input_tokens']}/{usage['output_tokens']} ${meta['estimated_cost_usd']}", flush=True)
+    print(f"AI 편집 완료: 호출 {len(groups)}회, 추정 ${round(total, 4)}", flush=True)
 
 
 def main() -> None:
@@ -217,6 +270,7 @@ def main() -> None:
     parser.add_argument("--erase-quality", default="medium", choices=["low", "medium", "high"])
     parser.add_argument("--ocr-model", default=TERRA_MODEL)
     parser.add_argument("--font", help="오버레이 폰트 경로(비우면 기본 폰트)")
+    parser.add_argument("--prompt-extra", default="", help="erase: 이미지 편집 프롬프트 끝에 덧붙일 지시(프롬프트 제어 시험용)")
     parser.add_argument("--force", action="store_true", help="analyze·final을 캐시 무시하고 다시 실행")
     args = parser.parse_args()
     sid, iid = args.session_id, args.image_id
@@ -232,13 +286,15 @@ def main() -> None:
     if "regions" in stages:
         record = comic_app.get_image(sid, iid)
         record = comic_app.image_record(sid, Path(record["input_path"]), record.get("image_sha256"))
-        guidance, report = terra_guidance(record, args.ocr_model)
+        guidance, report, draws = terra_guidance(record, args.ocr_model)
+        Path(record["work_dir"], "json", f"{iid}_ai_draw.json").write_text(
+            json.dumps(draws, ensure_ascii=False, indent=2), encoding="utf-8")
         for row in report:
             print("  ", row, flush=True)
         call(client, "POST", "/api/guidance", json={"session_id": sid, "image_id": iid, "guidance": guidance})
         print(f"R 영역 {len(guidance['manual_regions'])}개 확정(제외 TG {guidance['disabled_tg_ids']})", flush=True)
     if "erase" in stages:
-        erase_regions(client, sid, iid, args.erase_quality, args.ocr_model)
+        erase_regions(client, sid, iid, args.erase_quality, args.ocr_model, args.prompt_extra)
     if "final" in stages:
         body = {"session_id": sid, "image_id": iid, "ocr_model": args.ocr_model, "force": args.force}
         if args.font:
