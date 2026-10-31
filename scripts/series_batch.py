@@ -37,6 +37,19 @@ def redraw_ids(session_id: str, data: dict) -> list[str]:
     return ids
 
 
+def ensure_final(sid: str, iid: str) -> None:
+    """오버레이할 영역이 없으면 앱이 렌더를 건너뛰어 final이 없다. 이때는 AI 패치를 얹은 미리보기를 final로 쓴다."""
+    import cv2
+
+    item = comic_app.get_image(sid, iid)
+    record = comic_app.image_record(sid, Path(item["input_path"]), item.get("image_sha256"))
+    final = Path(record["final_jpg"])
+    preview = Path(record["restore_dir"]) / "preview.png"
+    if not final.exists() and preview.exists():
+        final.parent.mkdir(parents=True, exist_ok=True)
+        cv2.imwrite(str(final), cv2.imread(str(preview)), [cv2.IMWRITE_JPEG_QUALITY, 92])
+
+
 def process_page(client: TestClient, sid: str, iid: str, args) -> float:
     rpf.call(client, "POST", "/api/analyze", json={"session_id": sid, "image_id": iid, "force": False})
     record = comic_app.image_record(sid, Path(comic_app.get_image(sid, iid)["input_path"]), comic_app.get_image(sid, iid).get("image_sha256"))
@@ -48,6 +61,7 @@ def process_page(client: TestClient, sid: str, iid: str, args) -> float:
         cost = rpf.erase_regions(client, sid, iid, args.erase_quality, args.ocr_model)
     rpf.call(client, "POST", "/api/run-final", json={"session_id": sid, "image_id": iid, "ocr_model": args.ocr_model,
                                                      "force": True, "extra_prompt": args.extra_prompt})
+    ensure_final(sid, iid)
     done_marker(sid, iid).write_text(json.dumps({"ai_cost_usd": round(cost, 4)}), encoding="utf-8")
     return cost
 
