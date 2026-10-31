@@ -34,6 +34,31 @@ def test_bands_split_merged_panels_by_y_center_gap():
     assert len(_bands(items, 2000)) == 1
 
 
+def test_upper_tier_comes_first_even_when_art_breaks_every_gutter():
+    # 위 단 두 칸(오른쪽·왼쪽)과 아래 단 두 칸. 아래 왼쪽 그림이 위 칸 경계까지 이어져 가로·세로 여백이 모두 끊긴다
+    gray = np.full((800, 600), 255, np.uint8)
+    for x0, y0, x1, y1 in ((310, 20, 580, 380), (20, 20, 300, 380), (240, 400, 580, 780)):
+        gray[y0:y1, x0:x1] = 120
+    gray[300:780, 20:240] = 90
+    assert len(panel_cells(gray)) == 1
+    items = {"top_right": [480, 60, 60, 120], "top_left": [120, 80, 60, 120],
+             "bottom_right": [500, 450, 60, 120], "bottom_left": [60, 520, 60, 120]}
+    ordered = reading_sequence([{"name": k, "rect": v} for k, v in items.items()], gray)
+    # 예전에는 페이지 전체가 한 칸이라 x 순서(bottom_right가 1번)였다
+    assert [entry["name"] for entry in ordered] == ["top_right", "top_left", "bottom_right", "bottom_left"]
+
+
+def test_tall_side_panel_is_not_cut_into_tiers():
+    # 오른쪽 칸과 그 옆의 세로로 긴 왼쪽 칸. 왼쪽 칸 대사의 y 간격이 커도 오른쪽 칸과 번갈아 읽지 않는다
+    gray = np.full((900, 600), 255, np.uint8)
+    for x0, y0, x1, y1 in ((310, 20, 580, 700), (20, 60, 300, 700), (20, 720, 580, 880)):
+        gray[y0:y1, x0:x1] = 120
+    items = {"left_top": [150, 80, 60, 120], "right_a": [450, 300, 60, 120], "right_b": [380, 480, 60, 120],
+             "left_mid": [100, 330, 60, 120], "left_low": [60, 500, 60, 120], "bottom": [300, 760, 60, 100]}
+    ordered = reading_sequence([{"name": k, "rect": v} for k, v in items.items()], gray)
+    assert [entry["name"] for entry in ordered] == ["right_a", "right_b", "left_top", "left_mid", "left_low", "bottom"]
+
+
 def test_split_pieces_of_same_parent_stay_together_and_wide_spread_reads_right_page_first():
     gray = np.full((400, 800), 255, np.uint8)
     pieces = [{"name": "a2", "rect": [500, 50, 100, 100], "sub": 2e-5}, {"name": "a1", "rect": [500, 50, 100, 100], "sub": 1e-5},

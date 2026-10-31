@@ -2,6 +2,7 @@
 
 가로 흰 줄로 먼저 위→아래 띠를 나누고, 띠 안은 세로 흰 줄로 오른쪽→왼쪽 칸을 나눈다. 칸 안에서 다시 같은 방식으로 나눈다.
 흰 여백이 끊긴 칸(그림이 칸 밖으로 넘친 경우)은 나뉘지 않고 한 칸으로 남는다.
+그래서 R 순서는 영역 y 분포로 층(단)을 먼저 나누고, 층마다 그 범위에서 여백을 다시 찾아 칸 순서를 정한다(`reading_sequence`).
 """
 from __future__ import annotations
 
@@ -148,24 +149,72 @@ def _panel_bands(items: list[dict], white: np.ndarray, cell: list[int]) -> list[
     return merged
 
 
+def _center(item: dict) -> tuple[float, float]:
+    x, y, w, h = item["rect"]
+    return x + w / 2, y + h / 2
+
+
+def _tiers(items: list[dict], cells: list[list[int]], page_height: int) -> list[list[dict]]:
+    """y 중심 분포로 나눈 층(위→아래). 칸 여백 없이도 단(段)을 먼저 정하기 위한 것이다.
+
+    여백으로 잡힌 칸이 층 경계를 가로질러 양쪽에 항목을 갖고, 그 칸 옆에 나란히 선 다른 칸에도 항목이 있으면
+    (세로로 긴 칸과 옆 칸이 나란한 배치) 경계를 버리고 두 층을 합친다. 그래야 옆 칸과 대사를 번갈아 읽지 않는다.
+    옆 칸이 없으면(비스듬한 여백으로 위아래 칸이 한 칸으로 합쳐진 경우 등) 층 경계를 그대로 쓴다.
+    """
+    bands = _bands(items, page_height)
+
+    def side_by_side(a: list[int], b: list[int]) -> bool:
+        ax, ay, aw, ah = a
+        bx, by, bw, bh = b
+        apart = ax + aw <= bx or bx + bw <= ax
+        overlap = min(ay + ah, by + bh) - max(ay, by)
+        return apart and overlap > 0.5 * min(ah, bh)
+
+    tiers = [bands[0]]
+    for band in bands[1:]:
+        upper = {cell_index(cells, *_center(entry)) for entry in tiers[-1]}
+        lower = {cell_index(cells, *_center(entry)) for entry in band}
+        occupied = upper | lower
+        crossing = [index for index in upper & lower
+                    if any(side_by_side(cells[index], cells[other]) for other in occupied if other != index)]
+        if crossing:
+            tiers[-1] = tiers[-1] + band
+        else:
+            tiers.append(band)
+    return tiers
+
+
 def reading_sequence(items: list[dict], gray: np.ndarray, wide_spread: bool = False) -> list[dict]:
     """읽기 순서대로 정렬한 items. 각 item은 rect([x,y,w,h])와 선택 키 sub(같은 부모 조각끼리의 순서)를 가진다.
 
-    순서: (펼침면이면 오른쪽 쪽 먼저) → 칸(위→아래, 오른쪽→왼쪽) → 칸 안의 띠(위→아래) → 띠 안은 x가 큰 쪽부터.
+    순서: (펼침면이면 오른쪽 쪽 먼저) → 층(y 분포, 위→아래) → 층 안의 칸(그 층 범위에서 다시 찾은 여백, 위→아래·오른쪽→왼쪽)
+    → 칸 안의 띠(위→아래) → 띠 안은 x가 큰 쪽부터.
+    칸 여백이 그림에 끊겨 페이지 전체가 한 칸으로 잡혀도, 층을 먼저 나눠 위 단을 끝낸 뒤 아래 단으로 넘어간다.
     """
     if not items:
         return []
-    width = gray.shape[1]
+    height, width = gray.shape[:2]
     cells = panel_cells(gray)
     white = gray >= WHITE_LEVEL
-    groups: dict[tuple[int, int], list[dict]] = {}
+    halves: dict[int, list[dict]] = {}
     for item in items:
-        x, y, w, h = item["rect"]
-        cx, cy = x + w / 2, y + h / 2
-        page = 1 if (wide_spread and cx < width / 2) else 0
-        groups.setdefault((page, cell_index(cells, cx, cy)), []).append(item)
+        page = 1 if (wide_spread and _center(item)[0] < width / 2) else 0
+        halves.setdefault(page, []).append(item)
     ordered: list[dict] = []
-    for key in sorted(groups):
-        for band in _panel_bands(groups[key], white, cells[key[1]]):
-            ordered.extend(sorted(band, key=lambda entry: (-(entry["rect"][0] + entry["rect"][2] / 2), entry.get("sub", 0.0))))
+    for page in sorted(halves):
+        x0, x1 = (0, width) if not wide_spread else ((width // 2, width) if page == 0 else (0, width // 2))
+        tiers = _tiers(halves[page], cells, height)
+        for index, tier in enumerate(tiers):
+            # 층 경계는 이웃 층 항목 사이의 가운데. 그 범위 안에서 칸 여백을 다시 찾는다
+            top = 0 if index == 0 else (max(e["rect"][1] + e["rect"][3] for e in tiers[index - 1]) + min(e["rect"][1] for e in tier)) // 2
+            bottom = height if index == len(tiers) - 1 else (max(e["rect"][1] + e["rect"][3] for e in tier) + min(e["rect"][1] for e in tiers[index + 1])) // 2
+            top = int(min(max(top, 0), height - 1))
+            bottom = int(min(max(bottom, top + 1), height))
+            tier_cells = [[x + x0, y + top, w, h] for x, y, w, h in panel_cells(gray[top:bottom, x0:x1])]
+            groups: dict[int, list[dict]] = {}
+            for item in tier:
+                groups.setdefault(cell_index(tier_cells, *_center(item)), []).append(item)
+            for key in sorted(groups):
+                for band in _panel_bands(groups[key], white, tier_cells[key]):
+                    ordered.extend(sorted(band, key=lambda entry: (-_center(entry)[0], entry.get("sub", 0.0))))
     return ordered
