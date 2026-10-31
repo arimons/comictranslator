@@ -163,7 +163,7 @@ export default function App() {
   const prevPageRef = useRef({ id: null, ready: false });
   const [autoOverlayPreview, setAutoOverlayPreview] = useState(true);
   const [exportImageModel, setExportImageModel] = useState("gpt-image-2.5-sunburst");
-  const [exportTextModel, setExportTextModel] = useState("gpt-6.1-sol");
+  const [exportTextModel, setExportTextModel] = useState("gpt-6.1-terra");
   const [exportImageQuality, setExportImageQuality] = useState("medium");
   const [exportImageSize, setExportImageSize] = useState("match_input");
   const [exportOutputFormat, setExportOutputFormat] = useState("jpeg");
@@ -1186,7 +1186,7 @@ export default function App() {
   useEffect(() => {
     const gemini = ocrProvider === "gemini";
     setExportImageModel((gemini ? imageModels.gemini : imageModels.openai) || "gpt-image-2.5-sunburst");
-    setExportTextModel(gemini ? effectiveOcrModel : "gpt-6.1-sol");
+    setExportTextModel(gemini ? effectiveOcrModel : "gpt-6.1-terra");
   }, [ocrProvider, effectiveOcrModel, imageModels]);
 
   useEffect(() => {
@@ -2335,7 +2335,7 @@ export default function App() {
           model: exportImageModel || "gpt-image-2.5-sunburst",
           prompt_guide: exportPromptGuide,
           analyze_first: exportAnalyzeFirst,
-          text_model: exportTextModel || "gpt-6.1-sol",
+          text_model: exportTextModel || "gpt-6.1-terra",
           quality: exportImageQuality,
           size: exportImageSize,
           output_format: exportOutputFormat,

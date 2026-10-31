@@ -436,7 +436,7 @@ class GenerateMissingFinalRequest(BaseModel):
     model: str = IMAGE_MODEL
     prompt_guide: str = ""
     analyze_first: bool = True
-    text_model: str = "gpt-6.1-sol"
+    text_model: str = "gpt-6.1-terra"
     quality: str = "medium"
     size: str = "match_input"
     output_format: str = "jpeg"
@@ -1611,7 +1611,7 @@ def write_export_recovery_generated(record: dict[str, Any], req: GenerateMissing
         "generated_at": dt.datetime.now(dt.timezone.utc).isoformat(),
         "attempts": attempts,
         "model": req.model or IMAGE_MODEL,
-        "text_model": req.text_model or "gpt-6.1-sol",
+        "text_model": req.text_model or "gpt-6.1-terra",
         "analyze_first": bool(req.analyze_first),
         "quality": req.quality or "medium",
         "size": req.size or "match_input",
@@ -2670,7 +2670,7 @@ def generate_missing_finals_with_openai(req: GenerateMissingFinalRequest) -> dic
             record["final_jpg"],
             model_name=req.model or IMAGE_MODEL,
             prompt_guide=req.prompt_guide or "",
-            text_model_name=req.text_model or "gpt-6.1-sol",
+            text_model_name=req.text_model or "gpt-6.1-terra",
             analyze_first=req.analyze_first,
             quality=req.quality or "medium",
             size=req.size or "match_input",
@@ -2745,7 +2745,7 @@ def stream_generate_missing_finals(req: GenerateMissingFinalRequest):
                     record["final_jpg"],
                     model_name=req.model or IMAGE_MODEL,
                     prompt_guide=req.prompt_guide or "",
-                    text_model_name=req.text_model or "gpt-6.1-sol",
+                    text_model_name=req.text_model or "gpt-6.1-terra",
                     analyze_first=req.analyze_first,
                     quality=req.quality or "medium",
                     size=req.size or "match_input",

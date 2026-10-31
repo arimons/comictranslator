@@ -6,6 +6,7 @@ import os
 
 SOL_MODEL = 'gpt-6.1-sol'
 LUNA_MODEL = 'gpt-6-luna'
+TERRA_MODEL = 'gpt-6.1-terra'
 # 이미지 편집(통번역 재생성·글자 지우기)이 함께 쓰는 모델. 바꿀 때는 이 값 하나만 고친다.
 IMAGE_MODEL = 'gpt-image-2.5-sunburst'
 ROUTING_VERSION = 'openai-tasks-v1'
@@ -18,8 +19,10 @@ def route_task(task: str, *, text_chars: int = 0, source_count: int = 0, overrid
         return {'model': override, 'reason': '사용자가 지정한 모델', 'policy': ROUTING_VERSION}
     if task == 'glossary' and text_chars <= 12000 and source_count <= 3:
         return {'model': LUNA_MODEL, 'reason': '짧은 저장 자료의 용어 추출·JSON 정리', 'policy': ROUTING_VERSION}
-    if task in ('glossary', 'ocr_translate', 'image_translation_guide'):
-        return {'model': SOL_MODEL, 'reason': '문맥 OCR·번역 또는 긴 다중 자료의 정리', 'policy': ROUTING_VERSION}
+    if task in ('ocr_translate', 'image_translation_guide'):
+        return {'model': TERRA_MODEL, 'reason': '문맥 OCR·번역 기본 모델', 'policy': ROUTING_VERSION}
+    if task == 'glossary':
+        return {'model': SOL_MODEL, 'reason': '긴 다중 자료의 용어 정리', 'policy': ROUTING_VERSION}
     raise ValueError('지원하지 않는 OpenAI 작업입니다.')
 
 

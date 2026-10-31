@@ -4,15 +4,15 @@ import json
 
 import pytest
 import openai
-from pipeline.openai_tasks import route_task, response_json, SOL_MODEL, LUNA_MODEL
+from pipeline.openai_tasks import route_task, response_json, SOL_MODEL, LUNA_MODEL, TERRA_MODEL
 
 
 def test_routes_by_workload_without_classifier_calls():
     assert route_task('glossary', text_chars=1000, source_count=1)['model'] == LUNA_MODEL
     assert route_task('glossary', text_chars=12001, source_count=1)['model'] == SOL_MODEL
     assert route_task('glossary', text_chars=5000, source_count=4)['model'] == SOL_MODEL
-    assert route_task('ocr_translate')['model'] == SOL_MODEL
-    assert route_task('image_translation_guide')['model'] == SOL_MODEL
+    assert route_task('ocr_translate')['model'] == TERRA_MODEL
+    assert route_task('image_translation_guide')['model'] == TERRA_MODEL
     assert route_task('glossary', override=SOL_MODEL)['model'] == SOL_MODEL
     with pytest.raises(ValueError): route_task('glossary', override='gemini-3-flash-preview')
 

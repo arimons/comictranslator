@@ -132,7 +132,7 @@ def _layout_notes_with_gemini(
 
 def build_translation_layout_notes(
     image_path: str | Path,
-    model_name: str = "gpt-6.1-sol",
+    model_name: str = "gpt-6.1-terra",
     prompt_guide: str = "",
     log_callback: LogCallback | None = None,
 ) -> str:
@@ -182,7 +182,7 @@ def redraw_image_with_openai(
     model_name: str = IMAGE_MODEL,
     prompt_guide: str = "",
     translation_layout_notes: str = "",
-    text_model_name: str = "gpt-6.1-sol",
+    text_model_name: str = "gpt-6.1-terra",
     analyze_first: bool = False,
     quality: str = "medium",
     size: str = "match_input",

@@ -64,9 +64,9 @@ OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
 # Step 4 기본 모델. --model 인자로 교체할 수 있다.
-MODEL_NAME = "gpt-6.1-sol"
+MODEL_NAME = "gpt-6.1-terra"
 
-# GPT-6.1 Sol은 none을 지원하지 않으므로 low를 유지한다.
+# GPT-6.1 Terra·Sol은 none을 지원하지 않으므로 low를 유지한다.
 OPENAI_REASONING_EFFORT = "low"
 
 # Gemini 3.8 Flash는 minimal을 지원하지 않으므로(오류), 두 Gemini 모델 모두 low로 맞춘다.
@@ -83,7 +83,8 @@ OCR_SHEET_SOFT_MAX_REGIONS = 6
 # UI에 노출할 모델 목록. 근거는 docs/OCR_MODEL_COMPARISON.md 참고.
 # id는 각 제공자의 API 식별자 그대로다. Sol은 6과 6.1 가격이 같아 6.1만 쓴다.
 SUPPORTED_OCR_MODELS = [
-    {"id": "gpt-6.1-sol", "provider": "openai", "label": "GPT-6.1 Sol (기본)", "note": "문맥 OCR·번역 기본. reasoning low"},
+    {"id": "gpt-6.1-terra", "provider": "openai", "label": "GPT-6.1 Terra (기본)", "note": "문맥 OCR·번역 기본. reasoning low"},
+    {"id": "gpt-6.1-sol", "provider": "openai", "label": "GPT-6.1 Sol (수동 선택)", "note": "이전 기본 모델. reasoning low"},
     {"id": "gpt-6-luna", "provider": "openai", "label": "GPT-6 Luna (수동 선택)", "note": "저비용 모델. OCR·번역 품질은 페이지별 확인 필요"},
     {"id": "gemini-3.8-flash", "provider": "gemini", "label": "Gemini 3.8 Flash (수동 선택)", "note": "GEMINI_API_KEY 필요. thinking low. 페이지별 확인 필요"},
     {"id": "gemini-3.5-flash-lite", "provider": "gemini", "label": "Gemini 3.5 Flash-Lite (수동 선택)", "note": "GEMINI_API_KEY 필요. 저비용. thinking low. 페이지별 확인 필요"},

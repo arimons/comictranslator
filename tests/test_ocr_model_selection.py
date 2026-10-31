@@ -23,8 +23,8 @@ def test_resolve_provider_rejects_unknown(model_name):
 
 def test_supported_models_use_confirmed_api_ids():
     ids = [m["id"] for m in ocr.SUPPORTED_OCR_MODELS]
-    assert ids == ["gpt-6.1-sol", "gpt-6-luna", "gemini-3.8-flash", "gemini-3.5-flash-lite"]
-    assert ocr.MODEL_NAME == "gpt-6.1-sol"
+    assert ids == ["gpt-6.1-terra", "gpt-6.1-sol", "gpt-6-luna", "gemini-3.8-flash", "gemini-3.5-flash-lite"]
+    assert ocr.MODEL_NAME == "gpt-6.1-terra"
     assert all(ocr.resolve_provider(m["id"]) == m["provider"] for m in ocr.SUPPORTED_OCR_MODELS)
 
 
@@ -39,7 +39,7 @@ def test_default_and_explicit_model_dispatch_by_provider(monkeypatch):
     ocr._run_model_json("sheet.jpg", "JSON prompt", 0.2)
     ocr._run_model_json("sheet.jpg", "JSON prompt", 0.2, model_name="gpt-6-luna")
     ocr._run_model_json("sheet.jpg", "JSON prompt", 0.2, model_name="gemini-3.8-flash")
-    assert seen == [("openai", "gpt-6.1-sol"), ("openai", "gpt-6-luna"), ("gemini", "gemini-3.8-flash")]
+    assert seen == [("openai", "gpt-6.1-terra"), ("openai", "gpt-6-luna"), ("gemini", "gemini-3.8-flash")]
     with pytest.raises(ValueError): ocr._run_model_json("sheet.jpg", "prompt", 0.2, model_name="claude-opus-5")
 
 
