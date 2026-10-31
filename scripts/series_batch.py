@@ -90,6 +90,7 @@ def main() -> None:
     parser.add_argument("--budget-usd", type=float, help="process: 이미지 편집 추정 비용이 이 값에 닿으면 새 페이지를 시작하지 않는다")
     parser.add_argument("--only", help="screen·process: 쉼표로 구분한 페이지 ID만")
     parser.add_argument("--use-picks", action="store_true", help="series_select가 고른 페이지(work/selection.json)만 스크리닝·처리한다")
+    parser.add_argument("--picks-file", help="선별 페이지 목록 JSON({\"picks\": [\"00001\", ...]})만 스크리닝·처리한다(프로젝트가 아직 없어도 된다)")
     parser.add_argument("--no-ai-edit", action="store_true", help="이미지 편집 모델을 쓰지 않는다(기존 LaMa 지우기 + 폰트 오버레이만). 안전 필터로 거절된 페이지용")
     parser.add_argument("--retry-failed", action="store_true", help="process: 이전에 실패 표식이 남은 페이지도 다시 시도")
     parser.add_argument("--tight", action="store_true", help="process: 영역마다 따로 작게 잘라 이미지 편집을 부른다(안전 필터에 걸린 페이지 재시도용)")
@@ -106,6 +107,10 @@ def main() -> None:
     client = TestClient(comic_app.create_app())
     rpf.call(client, "POST", "/api/glossary/bind", json={"session_id": args.session_id, "work_id": args.glossary})
     only_ids: set[str] | None = set(args.only.split(",")) if args.only else None
+    if args.picks_file:
+        picks = set(json.loads(Path(args.picks_file).read_text(encoding="utf-8")).get("picks", []))
+        only_ids = picks if only_ids is None else (only_ids & picks)
+        print(f"선별 목록 {args.picks_file}: {len(only_ids)}장만 처리합니다", flush=True)
     if args.use_picks:
         picks_path = comic_app.session_dir(args.session_id) / "work" / "selection.json"
         picks = set(json.loads(picks_path.read_text(encoding="utf-8")).get("picks", [])) if picks_path.exists() else set()
