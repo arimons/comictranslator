@@ -32,6 +32,9 @@ def call(client: TestClient, method: str, url: str, **kw) -> dict:
     return response.json()
 
 
+RUBY_GUIDE = ("후리가나(루비)가 달린 단어는 후리가나 발음을 옮기지 말고 본 글자의 뜻을 한국어로 옮기세요. "
+              "후리가나가 설정 용어의 뜻을 따로 설명하면 번역 뒤에 괄호로 짧게 덧붙이세요. "
+              "예: 본 글자가 '초능력자'이고 후리가나가 '레벨 5'이면 '초능력자(레벨 5)'.")
 REGION_PAD = 14
 CLUE_MAX_SIDE = 1800
 REGION_PROMPT = """일본어 만화 한 페이지입니다. 이미지에는 Cloud Vision이 찾은 글자 조각(TG)이 번호 박스로 그려져 있습니다.
@@ -42,7 +45,7 @@ JSON 객체 하나로만 답하세요.
   {"tg_ids": [이 영역에 속하는 TG 번호들],
    "translate": 한국어로 번역해 다시 넣어야 하면 true (로마자 표기·쪽번호·영문 로고·장식은 false),
    "kind": "caption | title | label | sfx | keep",
-   "draw": true면 이미지 모델이 한국어 글자를 직접 새로 그려야 하는 영역(눈에 띄게 크거나 서체가 장식적이라 일반 폰트로는 어울리지 않는 제목·로고풍 글자). 그 외 평범한 글자는 false(지운 뒤 폰트로 넣음),
+   "draw": true면 이미지 모델이 한국어 글자를 직접 새로 그려야 하는 영역. 제목·이름·성우 줄·라벨·짧은 대사·효과음처럼 짧거나 눈에 띄는 글자는 true. 여러 줄로 이어지는 설명 문단(소개문·긴 서술)만 false(지운 뒤 폰트로 넣음),
    "ko": draw=true일 때만 그 영역의 한국어 번역(작품 참고 정보의 표기 우선). 아니면 빈 문자열,
    "tg_incomplete": 이 영역의 글자 중 TG 박스로 덮이지 않은 부분이 있으면 true,
    "rect_norm": [x, y, w, h]  // 이 영역 글자 전체를 감싸는 사각형. 페이지 가로·세로를 각각 0-1000으로 본 좌표
@@ -51,7 +54,7 @@ JSON 객체 하나로만 답하세요.
 규칙:
 - 읽는 단위(한 문단, 한 줄 제목, 한 줄 라벨)가 하나의 영역입니다. 한 문단의 TG를 여러 영역으로 나누지 마세요.
 - 반투명 박스 안의 문단은 박스 전체가 아니라 글자가 있는 부분을 하나의 영역으로 묶으세요.
-- draw 판단은 글자의 크기·장식성으로 하세요. 문단·대사·소개문처럼 읽는 글은 draw=false입니다.
+- draw 판단은 글자 양으로 하세요. 한두 줄의 짧은 글은 draw=true, 세 줄 이상 이어지는 설명 문단은 draw=false입니다.
 - 어느 영역에도 안 들어가는 TG는 translate=false 영역으로 따로 적으세요."""
 
 
@@ -270,6 +273,7 @@ def main() -> None:
     parser.add_argument("--erase-quality", default="medium", choices=["low", "medium", "high"])
     parser.add_argument("--ocr-model", default=TERRA_MODEL)
     parser.add_argument("--font", help="오버레이 폰트 경로(비우면 기본 폰트)")
+    parser.add_argument("--extra-prompt", default=RUBY_GUIDE, help="final: Step 4 OCR·번역에 덧붙일 지시")
     parser.add_argument("--prompt-extra", default="", help="erase: 이미지 편집 프롬프트 끝에 덧붙일 지시(프롬프트 제어 시험용)")
     parser.add_argument("--force", action="store_true", help="analyze·final을 캐시 무시하고 다시 실행")
     args = parser.parse_args()
@@ -296,7 +300,8 @@ def main() -> None:
     if "erase" in stages:
         erase_regions(client, sid, iid, args.erase_quality, args.ocr_model, args.prompt_extra)
     if "final" in stages:
-        body = {"session_id": sid, "image_id": iid, "ocr_model": args.ocr_model, "force": args.force}
+        body = {"session_id": sid, "image_id": iid, "ocr_model": args.ocr_model, "force": args.force,
+                "extra_prompt": args.extra_prompt}
         if args.font:
             body["font_path"] = args.font
         call(client, "POST", "/api/run-final", json=body)
