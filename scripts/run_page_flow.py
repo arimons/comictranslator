@@ -23,6 +23,7 @@ from fastapi.testclient import TestClient  # noqa: E402
 
 import app as comic_app  # noqa: E402
 from pipeline.openai_tasks import TERRA_MODEL  # noqa: E402
+from pipeline.region_refs import legacy_digest  # noqa: E402
 
 
 def call(client: TestClient, method: str, url: str, **kw) -> dict:
@@ -318,7 +319,8 @@ def overlay_suppression(record: dict) -> dict:
         for region in regions:
             if region.get("region_origin") in register_ids and region.get("region_ref"):
                 refs[region["region_ref"]] = {"text_override": ""}
-    return {"key_scheme": "region_ref_v1", "regions_by_ref": refs, "regions": {}}
+    # legacy_digest가 구형 regions의 요약값과 맞아야 정규화가 regions_by_ref를 버리지 않고 그대로 쓴다
+    return {"key_scheme": "region_ref_v1", "regions_by_ref": refs, "regions": {}, "legacy_digest": legacy_digest({})}
 
 
 def main() -> None:
