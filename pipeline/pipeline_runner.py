@@ -302,7 +302,7 @@ def run_single_image(
 
     # 분석만 요청한 경우(pre_ocr/extract)는 final이 있어도 Step 1-3 산출물을 확인해야 한다.
     # final만 있고 regions가 없는 이미지(이미지 생성 fallback 등)가 분석 완료로 보이는 것을 막는다.
-    if not force and stop_after not in {"extract", "pre_ocr"} and output_path.exists():
+    if not force and stop_after not in {"extract", "pre_ocr", "text_groups"} and output_path.exists():
         _append_log(log, f"  ✅ 캐시: {output_path.name}", log_callback)
         return True, "\n".join(log)
 
@@ -338,6 +338,11 @@ def run_single_image(
         else:
             _append_log(log, "  ✅ 캐시 사용", log_callback)
         _append_log(log, f"  ⏱️ 단계 소요 {time.time() - step_started:.1f}s / 누적 {elapsed()}", log_callback)
+
+        if stop_after == "text_groups":
+            # Step 3를 건너뛴다. 영역을 가이던스로 확정하는 흐름은 /api/guidance가 Step 3를 다시 돌리므로 여기서 돌리면 중복이다.
+            _append_log(log, f"\n✅ Step 1-2 완료(글자 묶음까지): {name} (총 {time.time() - t0:.1f}s)\n  text_groups: {clusters_json}", log_callback)
+            return True, "\n".join(log)
 
         # Step 3: 만화 대사 추출 — Bubble Detect + Unboxed Erase(LaMa) + OCR Sheet
         _append_log(log, "\n🗨️ Step 3: 만화 대사 추출", log_callback)

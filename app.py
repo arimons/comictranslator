@@ -337,6 +337,8 @@ class AnalyzeRequest(BaseModel):
     image_id: str = "all"
     force: bool = False
     max_workers: int = DEFAULT_ANALYZE_WORKERS
+    # "text_groups"면 Step 1-2(CV·글자 묶음)까지만 한다. Step 3(LaMa 지우기)는 /api/guidance가 영역 확정 뒤에 돌린다.
+    stop_after: str = "pre_ocr"
 
 
 class GuidanceRequest(BaseModel):
@@ -3659,21 +3661,24 @@ def create_app() -> FastAPI:
                 continue
             cv_ready = hydrate_cv_cache(record, image_hash, req.force, logs.append, item)
             _unlink_symlinked_analysis_outputs(record)
+            stop_after = req.stop_after if req.stop_after in {"pre_ocr", "text_groups"} else "pre_ocr"
             ok, log = run_single_image(
                 record["input_path"],
                 record["work_dir"],
                 record["final_jpg"],
                 force=req.force,
                 _skip_step1=cv_ready,
-                stop_after="pre_ocr",
+                stop_after=stop_after,
             )
             logs.append(log)
             if not ok:
                 raise HTTPException(status_code=500, detail=log)
             store_cv_cache(record, image_hash)
-            store_analysis_cache(record, image_hash)
-            clear_guidance_cleared_marker(record)
-            reapply_guidance_if_present(req.session_id, record, logs.append)
+            if stop_after == "pre_ocr":
+                # Step 3 산출물이 없는 부분 분석은 분석 캐시에 넣지 않는다(다음 분석이 빈 결과를 재사용하지 않게).
+                store_analysis_cache(record, image_hash)
+                clear_guidance_cleared_marker(record)
+                reapply_guidance_if_present(req.session_id, record, logs.append)
         save_session(data)
         images = session_image_summaries(req.session_id)
         return {"ok": True, "logs": "\n\n".join(logs), "images": images}

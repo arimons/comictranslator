@@ -62,7 +62,8 @@ def mark_failed(session_id: str, image_id: str, reason: str) -> None:
 
 
 def process_page(client: TestClient, sid: str, iid: str, args) -> float:
-    rpf.call(client, "POST", "/api/analyze", json={"session_id": sid, "image_id": iid, "force": False})
+    # Step 3(LaMa 지우기)는 terra가 영역을 정한 뒤 /api/guidance에서 돌아가므로 분석에서는 Step 1-2까지만 한다
+    rpf.call(client, "POST", "/api/analyze", json={"session_id": sid, "image_id": iid, "force": False, "stop_after": "text_groups"})
     record = comic_app.image_record(sid, Path(comic_app.get_image(sid, iid)["input_path"]), comic_app.get_image(sid, iid).get("image_sha256"))
     guidance, _report, draw_plan = rpf.terra_guidance(record, args.ocr_model, allow_draw=not args.no_ai_edit)
     Path(record["work_dir"], "json", f"{iid}_ai_draw.json").write_text(json.dumps(draw_plan, ensure_ascii=False, indent=2), encoding="utf-8")
