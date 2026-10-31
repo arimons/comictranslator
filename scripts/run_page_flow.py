@@ -291,6 +291,9 @@ def erase_regions(client: TestClient, sid: str, iid: str, quality: str, model: s
                          "params": {"engine": comic_app.AI_ERASE_ENGINE, "model": meta["model"], "quality": meta["quality"]},
                          "timing": {"total_sec": meta["elapsed_sec"]}, "usage": usage}}
         call(client, "POST", "/api/restore/accept", json={"session_id": sid, "image_id": iid, "job_id": job_id})
+        # 확정된 패치는 patches/에 복사돼 있다. 작업 폴더의 PNG는 중복이라 지워 디스크를 아낀다(prompt.txt는 남김)
+        for png in job_dir.glob("*.png"):
+            png.unlink(missing_ok=True)
         total += meta["estimated_cost_usd"]
         print(f"  호출 {gi}/{len(groups)} 확정 지우기 {len(g_erase)}·그리기 {len(g_draws)} 크롭={[cx, cy, cw, ch]} "
               f"토큰 {usage['input_tokens']}/{usage['output_tokens']} ${meta['estimated_cost_usd']}", flush=True)
