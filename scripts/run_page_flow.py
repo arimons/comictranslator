@@ -168,6 +168,7 @@ ERASE_MAX_RATIO = 2.8
 ERASE_MARGIN = 60
 STROKE_DILATE = 8
 KEEP_PAD = 6
+DRAW_MASK_SPREAD = 0.2
 
 
 def context_rect(rect: list[int], page_w: int, page_h: int) -> list[int]:
@@ -204,7 +205,8 @@ def build_edit_prompt(erase_rects: list[list[int]], draws: list[dict], ctx: list
     for item in draws:
         lines.append(f'- Large title text at ({pct(item["rect"], ctx)}): remove the Japanese title completely and redraw it as '
                      f'Korean text "{item["ko"]}" on one line, in a heavy bold display typeface with similar weight, size, '
-                     "color and position as the original title.")
+                     "color and position as the original title. If the Korean text is longer than the original, reduce its size slightly "
+                     "so it fits within about the same width.")
     if erase_rects:
         boxes = "; ".join(f"({pct(r, ctx)})" for r in erase_rects)
         lines.append(f"- Erase ALL Japanese text, including small furigana, inside these areas: {boxes}. Leave the areas "
@@ -266,7 +268,9 @@ def erase_regions(client: TestClient, sid: str, iid: str, quality: str, model: s
             mask[y:y + h, x:x + w] = stroke_mask[y:y + h, x:x + w]
         for d in g_draws:
             x, y, w, h = d["rect"]
-            mask[y:y + h, x:x + w] = 255
+            # 한국어가 일본어보다 길어질 수 있어 좌우를 넓혀 합성한다
+            gx = int(w * DRAW_MASK_SPREAD)
+            mask[y:y + h, max(0, x - gx):x + w + gx] = 255
             for kx, ky, kw, kh in keep_rects:  # 로마자 등 보존 영역은 AI 결과를 합성하지 않는다
                 mask[max(0, ky - KEEP_PAD):ky + kh + KEEP_PAD, max(0, kx - KEEP_PAD):kx + kw + KEEP_PAD] = 0
             # 순백이던 자리는 순백으로 되돌린다(이미지 모델이 흰색을 살짝 회색으로 바꾸는 것을 막는다)
