@@ -169,6 +169,7 @@ ERASE_MARGIN = 60
 STROKE_DILATE = 8
 KEEP_PAD = 6
 DRAW_MASK_SPREAD = 0.2
+MODERATION_RETRIES = 3
 
 
 def context_rect(rect: list[int], page_w: int, page_h: int) -> list[int]:
@@ -218,7 +219,7 @@ def build_edit_prompt(erase_rects: list[list[int]], draws: list[dict], ctx: list
     return "\n".join(lines)
 
 
-def erase_regions(client: TestClient, sid: str, iid: str, quality: str, model: str, extra: str = "") -> float:
+def erase_regions(client: TestClient, sid: str, iid: str, quality: str, model: str, extra: str = "", tight: bool = False) -> float:
     """영역들을 한 번의 이미지 호출로 처리한다(큰 제목은 한국어로 다시 그리기, 나머지는 글자 지우기).
     결과는 크롭 하나를 패치로 확정하고, 합성 마스크는 제목=영역 전체, 작은 글씨=글자 획 주변으로 만든다."""
     import hashlib
@@ -248,7 +249,7 @@ def erase_regions(client: TestClient, sid: str, iid: str, quality: str, model: s
 
     everything = [("erase", r) for r in erase_rects] + [("draw", d["rect"]) for d in draws]
     ctx = context_rect(union([r for _, r in everything]), page_w, page_h)
-    if max(ctx[2], ctx[3]) <= MAX_SIDE:
+    if not tight and max(ctx[2], ctx[3]) <= MAX_SIDE:
         groups = [(erase_rects, draws)]
     else:  # 한 크롭에 다 안 들어가면 항목별로 따로 처리한다
         groups = [([r], []) for r in erase_rects] + [([], [d]) for d in draws]
@@ -261,7 +262,16 @@ def erase_regions(client: TestClient, sid: str, iid: str, quality: str, model: s
         job_dir = Path(record["restore_dir"]) / "jobs" / job_id
         job_dir.mkdir(parents=True, exist_ok=True)
         (job_dir / "prompt.txt").write_text(prompt, encoding="utf-8")
-        edited, meta = erase_page_text(crop, job_dir, model=image_model, quality=quality, prompt=prompt)
+        for attempt in range(1, MODERATION_RETRIES + 1):
+            try:
+                edited, meta = erase_page_text(crop, job_dir, model=image_model, quality=quality, prompt=prompt)
+                break
+            except Exception as exc:  # noqa: BLE001
+                # 생성 결과가 안전 필터(moderation_blocked, output 단계)에 걸리면 결과가 매번 달라서 다시 시도하면 통과하기도 한다
+                if "moderation_blocked" in str(exc) and attempt < MODERATION_RETRIES:
+                    print(f"  생성 결과가 안전 필터에 걸려 다시 시도합니다({attempt}/{MODERATION_RETRIES})", flush=True)
+                    continue
+                raise
         mask = np.zeros((page_h, page_w), dtype=np.uint8)
         for r in g_erase:
             x, y, w, h = r

@@ -67,7 +67,7 @@ def process_page(client: TestClient, sid: str, iid: str, args) -> float:
     rpf.call(client, "POST", "/api/guidance", json={"session_id": sid, "image_id": iid, "guidance": guidance})
     cost = 0.0
     if not args.no_ai_edit and (guidance["manual_regions"] or draw_plan["draws"]):
-        cost = rpf.erase_regions(client, sid, iid, args.erase_quality, args.ocr_model)
+        cost = rpf.erase_regions(client, sid, iid, args.erase_quality, args.ocr_model, tight=args.tight)
     body = {"session_id": sid, "image_id": iid, "ocr_model": args.ocr_model, "force": True, "extra_prompt": args.extra_prompt}
     rpf.call(client, "POST", "/api/run-final", json=body)
     ensure_final(sid, iid)
@@ -88,6 +88,7 @@ def main() -> None:
     parser.add_argument("--only", help="process: 쉼표로 구분한 페이지 ID만")
     parser.add_argument("--no-ai-edit", action="store_true", help="이미지 편집 모델을 쓰지 않는다(기존 LaMa 지우기 + 폰트 오버레이만). 안전 필터로 거절된 페이지용")
     parser.add_argument("--retry-failed", action="store_true", help="process: 이전에 실패 표식이 남은 페이지도 다시 시도")
+    parser.add_argument("--tight", action="store_true", help="process: 영역마다 따로 작게 잘라 이미지 편집을 부른다(안전 필터에 걸린 페이지 재시도용)")
     parser.add_argument("--workers", type=int, default=2)
     parser.add_argument("--ocr-model", default=st.SCREEN_MODEL)
     parser.add_argument("--erase-quality", default="medium", choices=["low", "medium", "high"])
