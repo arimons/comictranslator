@@ -114,12 +114,14 @@ def screen_page(client, path: Path, guide: str, model: str) -> dict:
     return result
 
 
-def run_screen(data: dict, session_id: str, guide: str, model: str, workers: int, limit: int | None) -> None:
+def run_screen(data: dict, session_id: str, guide: str, model: str, workers: int, limit: int | None, only: set[str] | None = None) -> None:
     from openai import OpenAI
     base = comic_app.session_dir(session_id)
     json_dir = base / "work" / "json"
     json_dir.mkdir(parents=True, exist_ok=True)
     items = comic_app.sorted_image_records(data["images"])
+    if only is not None:  # 선별한 페이지만 스크리닝한다(나머지 페이지에는 terra 비용을 쓰지 않는다)
+        items = [i for i in items if i["id"] in only]
     if limit:
         items = items[:limit]
     todo = [i for i in items if not (json_dir / f"{i['id']}_screen.json").exists()]
