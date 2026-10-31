@@ -218,7 +218,7 @@ def build_edit_prompt(erase_rects: list[list[int]], draws: list[dict], ctx: list
     return "\n".join(lines)
 
 
-def erase_regions(client: TestClient, sid: str, iid: str, quality: str, model: str, extra: str = "") -> None:
+def erase_regions(client: TestClient, sid: str, iid: str, quality: str, model: str, extra: str = "") -> float:
     """영역들을 한 번의 이미지 호출로 처리한다(큰 제목은 한국어로 다시 그리기, 나머지는 글자 지우기).
     결과는 크롭 하나를 패치로 확정하고, 합성 마스크는 제목=영역 전체, 작은 글씨=글자 획 주변으로 만든다."""
     import hashlib
@@ -295,6 +295,7 @@ def erase_regions(client: TestClient, sid: str, iid: str, quality: str, model: s
         print(f"  호출 {gi}/{len(groups)} 확정 지우기 {len(g_erase)}·그리기 {len(g_draws)} 크롭={[cx, cy, cw, ch]} "
               f"토큰 {usage['input_tokens']}/{usage['output_tokens']} ${meta['estimated_cost_usd']}", flush=True)
     print(f"AI 편집 완료: 호출 {len(groups)}회, 추정 ${round(total, 4)}", flush=True)
+    return total
 
 
 def main() -> None:
