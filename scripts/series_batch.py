@@ -8,9 +8,11 @@
 from __future__ import annotations
 
 import argparse
+import copy
 import json
 import sys
 import threading
+import time
 import traceback
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
@@ -71,7 +73,7 @@ def process_page(client: TestClient, sid: str, iid: str, args) -> float:
     body = {"session_id": sid, "image_id": iid, "ocr_model": args.ocr_model, "force": True, "extra_prompt": args.extra_prompt}
     rpf.call(client, "POST", "/api/run-final", json=body)
     ensure_final(sid, iid)
-    done_marker(sid, iid).write_text(json.dumps({"ai_cost_usd": round(cost, 4)}), encoding="utf-8")
+    done_marker(sid, iid).write_text(json.dumps({"ai_cost_usd": round(cost, 4), "no_ai_edit": bool(args.no_ai_edit)}), encoding="utf-8")
     return cost
 
 
@@ -115,13 +117,31 @@ def main() -> None:
         print(f"처리 대상 {len(todo)}장 (판정 redraw {len(ids)}장 중 미완료 {len(pending)}장)", flush=True)
         spent, lock, failed = [0.0], threading.Lock(), []
 
+        def attempt(iid: str) -> tuple[float, bool]:
+            """안전 필터 거절은 이미지 편집 없이 대체 모드로 바로 처리하고, 그 밖의 오류는 20초 뒤 한 번 더 시도한다."""
+            last: BaseException | None = None
+            for tries in range(2):
+                try:
+                    return process_page(client, args.session_id, iid, args), False
+                except (Exception, SystemExit) as exc:  # noqa: BLE001 - rpf.call은 오류를 SystemExit로 올린다
+                    last = exc
+                    if "safety system" in str(exc):
+                        break
+                    if tries == 0:
+                        time.sleep(20)  # 마운트 끊김·시간 초과 같은 일시 오류
+            if last is not None and "safety system" in str(last) and not args.no_ai_edit:
+                fallback = copy.copy(args)
+                fallback.no_ai_edit = True
+                return process_page(client, args.session_id, iid, fallback), True
+            raise last  # type: ignore[misc]
+
         def work(iid: str) -> None:
             with lock:
                 if args.budget_usd is not None and spent[0] >= args.budget_usd:
                     print(f"  [{iid}] 예산 도달로 건너뜀", flush=True)
                     return
             try:
-                cost = process_page(client, args.session_id, iid, args)
+                cost, fell_back = attempt(iid)
             except SystemExit as exc:  # rpf.call이 오류를 SystemExit로 올린다
                 mark_failed(args.session_id, iid, str(exc)); failed.append(iid); print(f"  [{iid}] 실패: {exc}", flush=True); return
             except Exception as exc:  # noqa: BLE001 - 한 장의 실패가 전체를 멈추지 않게 한다
@@ -131,7 +151,7 @@ def main() -> None:
             failed_marker(args.session_id, iid).unlink(missing_ok=True)
             with lock:
                 spent[0] += cost
-                print(f"  [{iid}] 완료 AI ${cost:.4f} (누적 ${spent[0]:.3f})", flush=True)
+                print(f"  [{iid}] 완료 AI ${cost:.4f} (누적 ${spent[0]:.3f}){' [안전 필터 거절 -> 이미지 편집 없는 대체 모드]' if fell_back else ''}", flush=True)
 
         with ThreadPoolExecutor(max_workers=args.workers) as pool:
             for future in as_completed([pool.submit(work, i) for i in todo]):
