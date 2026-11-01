@@ -3209,6 +3209,7 @@ export default function App() {
                   image={selected}
                   baseUrl={guidanceEditorUrl}
                   guidance={guidance}
+                  stale={guidanceDirty}
                   setGuidance={setGuidanceTracked}
                   tool={tool}
                   layers={layers}

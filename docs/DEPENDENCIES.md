@@ -93,3 +93,5 @@ projects 아래 폴더 ID는 기존 timestamp ID를 유지한다. project.json�
 <!-- 2026-10-30 review: dialogue_extractor.py 수동 분할선이 polygon 영역을 사각형이 아닌 영역 모양으로 가르도록 수정. 이 문서 내용 영향 없음 -->
 
 <!-- 2026-10-31 review: dialogue_extractor.py LaMa 호출 뒤 torch GPU 작업 메모리를 비우는 래퍼 추가. 새 의존성 없음, 이 문서 내용 영향 없음 -->
+
+<!-- 2026-11-02 review: 편집기 EditorCanvas 미적용 변경 표시(이전 분석 영역을 점선·옅게). 이 문서 내용 영향 없음 -->

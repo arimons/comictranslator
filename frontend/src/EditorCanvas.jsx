@@ -57,7 +57,7 @@ function pruneDeletedEdgeBoxes(guidance) {
   };
 }
 
-const EditorCanvas = forwardRef(function EditorCanvas({ image, baseUrl, guidance, setGuidance, tool, layers, selectedTg, setSelectedTg, selectedRegionId, setSelectedRegionId, onToolComplete, setStatus, speakerLabels, maskBrushWidth = 12 }, ref) {
+const EditorCanvas = forwardRef(function EditorCanvas({ image, baseUrl, guidance, setGuidance, tool, layers, selectedTg, setSelectedTg, selectedRegionId, setSelectedRegionId, onToolComplete, setStatus, speakerLabels, maskBrushWidth = 12, stale = false }, ref) {
   const hostRef = useRef(null);
   const stageRef = useRef(null);
   const imageObjRef = useRef(null);
@@ -68,6 +68,9 @@ const EditorCanvas = forwardRef(function EditorCanvas({ image, baseUrl, guidance
   const toolRef = useRef(tool);
   const imageRef = useRef(image);
   const guidanceRef = useRef(guidance);
+  // 가이드를 고쳤지만 아직 적용하지 않아, 화면의 영역 표시가 이전 분석 결과일 때 true
+  const staleRef = useRef(stale);
+  staleRef.current = stale;
   const layersRef = useRef(layers);
   const selectedTgRef = useRef(selectedTg);
   const selectedRegionRef = useRef(selectedRegionId);
@@ -818,9 +821,9 @@ const EditorCanvas = forwardRef(function EditorCanvas({ image, baseUrl, guidance
           stroke: color,
           // 윤곽(폴리곤)이 있으면 실제 모양을 실선으로 그리고, 사각형은 클릭 영역용으로 옅게만 남긴다
           strokeWidth: hasContour ? 1 : regionSelected ? 3 : 1.8,
-          opacity: hasContour ? (regionSelected ? .6 : .22) : regionSelected ? 1 : .9,
+          opacity: (hasContour ? (regionSelected ? .6 : .22) : regionSelected ? 1 : .9) * (staleRef.current ? .6 : 1),
           fill: hasContour ? "transparent" : tint,
-          dash: isTextBased ? [6, 4] : undefined,
+          dash: isTextBased || staleRef.current ? [6, 4] : undefined,
         }));
         const anchors = (region.anchor_ids || []).map(id => `TG${id}`);
         const id = `R${regionId(region)}`;
@@ -840,7 +843,7 @@ const EditorCanvas = forwardRef(function EditorCanvas({ image, baseUrl, guidance
           // 분할 결과가 바로 보이도록 굵게 긋고, 어두운 그림 위에서도 보이게 흰 테두리를 깐다
           const width = regionSelected ? 3.5 : 2.5;
           overlay.add(new Konva.Line({ points, closed: true, stroke: "#ffffff", strokeWidth: width + 2.5, opacity: .7, lineJoin: "round", listening: false }));
-          overlay.add(new Konva.Line({ points, closed: true, stroke: color, strokeWidth: width, fill: tint, opacity: regionSelected ? 1 : .9, lineJoin: "round" }));
+          overlay.add(new Konva.Line({ points, closed: true, stroke: color, strokeWidth: width, fill: tint, opacity: (regionSelected ? 1 : .9) * (staleRef.current ? .6 : 1), dash: staleRef.current ? [6, 4] : undefined, lineJoin: "round" }));
         }
       });
     }
@@ -934,6 +937,13 @@ const EditorCanvas = forwardRef(function EditorCanvas({ image, baseUrl, guidance
     }
 
     splitGuidesToDraw.forEach((item) => drawGuideLine(overlay, item.line, item.color, item.label, { prominent: true }));
+
+    if (staleRef.current && currentLayers.regions) {
+      const badge = new Konva.Label({ x: imageBounds.x + 6, y: imageBounds.y + 6, listening: false });
+      badge.add(new Konva.Tag({ fill: "#c2410c", opacity: .92, cornerRadius: 4 }));
+      badge.add(new Konva.Text({ text: "미적용 변경 · 영역 표시는 이전 분석 결과", fontSize: 12, fontStyle: "bold", fill: "#ffffff", padding: 5 }));
+      overlay.add(badge);
+    }
 
     placeCanvasLabels(labels, obstacles, imageBounds, {width, height}).forEach(label => {
       if (label.outside) {
@@ -1277,7 +1287,7 @@ const EditorCanvas = forwardRef(function EditorCanvas({ image, baseUrl, guidance
 
   useEffect(() => {
     redraw();
-  }, [image, guidance, tool, layers, selectedTg, selectedRegionId, dragPreview, speakerLabels, maskBrushWidth, maskPolygon]);
+  }, [image, guidance, tool, layers, selectedTg, selectedRegionId, dragPreview, speakerLabels, maskBrushWidth, maskPolygon, stale]);
 
   const menuAction = action => { setContextMenu(null); action(); };
   const automaticRegion = contextMenu?.region;
