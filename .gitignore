@@ -72,8 +72,9 @@ claudedocs/
 cluster_cv.py
 
 # Fonts (user should add their own)
-Fonts/*.ttf
-Fonts/*.otf
+Fonts/*
+!Fonts/README.md
+!Fonts/licenses/
 
 # Images
 test_image/
