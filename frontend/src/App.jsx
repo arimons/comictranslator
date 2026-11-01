@@ -1912,10 +1912,16 @@ export default function App() {
     setStatus("프로젝트를 삭제했습니다.");
   }
 
+  function releaseLamaWorker() {
+    // 프로젝트를 떠나면 서버의 LaMa 작업 프로세스를 끝내 메모리를 돌려준다. 다른 작업이 돌고 있으면 서버가 미룬다.
+    api("/api/lama/release", { method: "POST" }).catch(() => {});
+  }
+
   function returnToStartPage() {
     if (!window.confirm("홈으로 돌아가시겠습니까? 현재 프로젝트는 저장된 상태로 유지됩니다.")) return;
     setWorkspaceStarted(false);
     forgetOpenWorkspace();
+    releaseLamaWorker();
     setActiveTab("guidance");
     setAnalysisPolicy("reuse");
     api("/api/sessions/recent").then((data) => setRecentSessions(data.sessions || [])).catch(() => {});

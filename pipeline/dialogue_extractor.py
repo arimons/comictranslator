@@ -2273,7 +2273,7 @@ def _load_simple_lama_class() -> Any | None:
 # 병렬 분석(기본 4장)에서 LaMa 페이지가 겹치면 16〜18GB Mac이 멈출 수 있다.
 # 그래서 LaMa를 올린 프로세스 수를 머신 전체에서 LAMA_MAX_PROCESSES개(기본 2)로 묶는다.
 # 모델은 프로세스가 끝날 때까지 메모리에 남으므로 슬롯도 프로세스가 끝날 때 OS가 푼다.
-# 상주 서버(app)가 모델을 올리면 슬롯 하나를 계속 쓴다. 그래서 1로 줄이면 분석이 멈출 수 있다.
+# 상주 서버(app)는 LaMa 작업 프로세스(pipeline/lama_worker.py)가 살아 있는 동안 슬롯 하나를 쓴다. 그래서 1로 줄이면 분석이 멈출 수 있다.
 _LAMA_SLOT_DIR = Path(tempfile.gettempdir()) / "comic_translator_lama_slots"
 _lama_slot_handle: Any = None
 
@@ -2353,11 +2353,29 @@ class _LamaReleasingCache:
                 torch.cuda.empty_cache()
 
 
-def _get_lama() -> Any:
-    """LaMa 모델을 처음 필요할 때 한 번만 올린다. 여러 스레드가 동시에 불러도 한 번만 로드한다.
+# 상주 서버는 모델을 프로세스 안에 올리지 않고 작업 프로세스(pipeline/lama_worker.py)에 맡긴다.
+# app.py가 set_lama_provider로 대리 객체를 등록한다. Step 3 서브프로세스·CLI는 등록하지 않으므로 직접 올린다.
+_lama_provider: Any | None = None
 
-    상주 서버에서는 Step 3 재적용과 배경 복원 탭(background_restore)이 이 모델 하나를 같이 쓴다.
+
+def set_lama_provider(provider: Any | None) -> None:
+    """provider()가 lama(image, mask) 호출 객체를 돌려준다. None이면 이 프로세스에 직접 올린다."""
+    global _lama_provider
+    _lama_provider = provider
+
+
+def _get_lama() -> Any:
+    """LaMa 호출 객체. 상주 서버는 작업 프로세스 대리 객체, 그 밖에는 이 프로세스의 모델.
+
+    상주 서버에서는 Step 3 재적용과 배경 복원 탭(background_restore)이 같은 작업 프로세스를 같이 쓴다.
     """
+    if _lama_provider is not None:
+        return _lama_provider()
+    return _load_lama_in_process()
+
+
+def _load_lama_in_process() -> Any:
+    """LaMa 모델을 처음 필요할 때 한 번만 이 프로세스에 올린다. 여러 스레드가 동시에 불러도 한 번만 로드한다."""
     global _lama
     if _lama is not None:
         return _lama

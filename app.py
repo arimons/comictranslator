@@ -3187,7 +3187,7 @@ def bundle_version() -> str:
 # 처리 중인 /api 요청 수. 스트리밍 응답은 마지막 body를 보낼 때까지 센다. 서버 재시작 전 확인용.
 _INFLIGHT = {"count": 0}
 _INFLIGHT_LOCK = threading.Lock()
-_UNCOUNTED_PATHS = {"/api/health", "/api/server/restart"}
+_UNCOUNTED_PATHS = {"/api/health", "/api/server/restart", "/api/lama/release", "/api/lama/status"}
 
 
 class InflightCounter:
@@ -3234,9 +3234,28 @@ def restart_current_process(delay: float = 0.4) -> None:
     os.execv(sys.executable, [sys.executable, *sys.argv])
 
 
+def use_lama_worker_process() -> None:
+    """서버 안의 LaMa 호출(Step 3 재적용·배경 복원)을 작업 프로세스로 보낸다. 기록: docs/BATCH_MEMORY_GROWTH_NOTES.md"""
+    from pipeline import dialogue_extractor
+    from pipeline.lama_worker import shared_client
+
+    dialogue_extractor.set_lama_provider(shared_client)
+
+
+def release_lama_worker(reason: str) -> dict[str, Any]:
+    """다른 작업이 없을 때만 LaMa 작업 프로세스를 끝낸다. 작업 중이면 그대로 두고, 유휴 시간 기준으로 나중에 끝난다."""
+    from pipeline.lama_worker import release_shared, shared_status
+
+    busy = busy_job_count()
+    if busy:
+        return {"released": False, "busy": busy, "status": shared_status()}
+    return {"released": release_shared(reason), "busy": 0, "status": shared_status()}
+
+
 def create_app() -> FastAPI:
     app = FastAPI(title="Comic Translator Review UI")
     app.add_middleware(InflightCounter)
+    use_lama_worker_process()
 
     @app.post("/api/page-processing")
     def set_page_processing(req: PageProcessingRequest) -> dict:
@@ -3466,6 +3485,17 @@ def create_app() -> FastAPI:
             raise HTTPException(status_code=409, detail=f"진행 중인 작업 {busy}개가 있습니다. 재시작하면 중단됩니다.")
         threading.Thread(target=restart_current_process, daemon=True, name="server-restart").start()
         return {"ok": True, "interrupted": busy}
+
+    @app.post("/api/lama/release")
+    def lama_release() -> dict[str, Any]:
+        # 프로젝트 홈으로 나갈 때 화면이 부른다. 프로젝트 안에서는 모델을 살려 둔다.
+        return release_lama_worker("프로젝트 홈으로 이동")
+
+    @app.get("/api/lama/status")
+    def lama_status() -> dict[str, Any]:
+        from pipeline.lama_worker import shared_status
+
+        return shared_status()
 
     @app.get("/api/health")
     def server_health() -> dict[str, Any]:

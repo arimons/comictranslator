@@ -136,3 +136,5 @@ UI 검증은 별도 headless Chromium에서 실행한다. `proof/src/run_headles
 <!-- 변경 검토(2026-10-30): 지우기 보정(custom_masks) 가이드 키 추가, 이 문서 내용 영향 없음 -->
 
 <!-- 2026-10-29 review: region_refs.py·app.py·render_text_overlay.py TG digest를 원본 TG 기준으로 변경. 이 문서 내용 영향 없음 -->
+
+<!-- 2026-11-01 review: 서버의 LaMa를 작업 프로세스(pipeline/lama_worker.py)로 옮김. 프로젝트 홈으로 나가거나 1시간 쓰지 않으면 끝내 메모리를 돌려줌. 화면 조작과 결과 변화 없음, 이 문서 내용 영향 없음 -->

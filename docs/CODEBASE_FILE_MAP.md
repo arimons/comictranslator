@@ -86,6 +86,7 @@ NEW_COMIC_TRANSLATOR/
     ├── render_text_overlay.py  # Step 5
     ├── overlay_anchor.py       # 영역 사각형 겹침(IoU) 계산과 구형 위치 재매칭(서버는 단계 6부터 region_refs.py를 쓴다)
     ├── region_refs.py          # 영역 참조(region_ref) 해석기: 번역·수동값·화자·메모를 R 번호 대신 TG 집합으로 연결 (순수 함수)
+    ├── lama_worker.py          # 상주 서버용 LaMa 작업 프로세스(프로젝트 홈 이동·1시간 유휴 시 종료해 메모리 반환)
     ├── background_restore.py   # 배경 복원 엔진 (문맥 영역·마스크 분리, LaMa, 확정 패치 합성). 편집기 탭은 제거됐고 AI 글자 지우기가 쓴다
     ├── ai_text_erase.py        # 이미지 편집 모델로 페이지 글자 지우기 (16배수 덧대기·잘라내기, gemini-*는 gemini_image로)
     ├── gemini_image.py         # Gemini 이미지 모델(Nano Banana 2.1) 편집. 비율 프리셋 덧대기·축소·잘라내기
@@ -168,6 +169,8 @@ guidance(수동 보정)가 있는 이미지는 `guidance_digest`(guidance 내용
 | `GET /api/glossary/{session_id}`, `POST /api/glossary/bind`, `/api/glossary/unbind`, `/api/glossary/save`, `/api/glossary/draft` | 작품 메모 연결·저장·URL 초안. 메모 참고문을 Step 4 프롬프트에 붙인다 |
 | `GET /api/namu-lookup` | 작품명으로 나무위키 문서 주소 찾기(`pipeline/work_sources.py`의 `namu_lookup`, 이동 주소만 읽음) |
 | `POST /api/server/restart` | 같은 명령으로 서버 프로세스를 다시 띄운다. 진행 중 작업이 있으면 409, `?force=true`면 중단하고 재시작 |
+| `POST /api/lama/release` | 프로젝트 홈으로 나갈 때 화면이 부른다. 다른 작업이 없으면 LaMa 작업 프로세스를 끝내 메모리를 돌려주고, 있으면 그대로 둔다(`released`, `busy`, `status`) |
+| `GET /api/lama/status` | LaMa 작업 프로세스 상태(`running`, `pid`, `idle_sec`, `uptime_sec`, `idle_release_sec`) |
 | `GET /api/health` | 연결 확인. `stale_code`(서버 시작 뒤 바뀐 Python 파일)와 `bundle`(화면 번들 버전)을 함께 돌려준다 |
 | `POST /api/region-context` | R별 번역 메모 저장(`context_by_region`, 영역 키). 다음 OCR/번역 때 영역별 번역 가이드로 붙는다 |
 | `GET /api/speakers/{session_id}/{image_id}`, `POST /api/speakers` | 페이지별 R→화자 지정(`work/speakers/{image_id}.json`의 by_region, 기존 by_tg 호환). Step 4가 R 화자 목록을 프롬프트에 붙인다 |
@@ -313,8 +316,8 @@ Step 3 진입점이다. `pipeline_runner`가 `python -m pipeline.dialogue_extrac
 - `build_dialogue_sheet()`: ① `bubble_detector.build_ocr_region_sheet()`로 경계 기반 검출·마스킹 → ② 텍스트 기반 영역의 글자를 LaMa(`simple_lama_inpainting`)로 지움 → ③ 두 종류 crop을 읽기 순서(`reading_order.reading_sequence`, 칸 여백 기반)로 모아 indexed OCR sheet + `regions.json` 저장
 - 편집기 guidance(`manual_regions`, `manual_seed_points`, `virtual_walls`, `split_guides`, suppressed region)를 인자로 받아 반영한다.
 - region별 `safe_text_rect`(`_compute_safe_text_rect`)와 `mask_centroid`(`_compute_mask_centroid`)를 계산해 `regions.json`에 기록한다. Step 5 배치의 기준값이다.
-- LaMa 실행 장치(`_lama_device`): `LAMA_DEVICE`(cpu|mps|cuda)가 없으면 cuda → mps → cpu 순으로 고른다. M3 Pro에서 MPS는 첫 호출(GPU 준비)이 CPU보다 조금 느리고 이후 호출은 약 3배 빠르며, 결과 차이는 최대 수 단계(0〜255)다. MPS 초기화가 실패하면 CPU로 돈다. 상주 서버에서는 `background_restore`도 이 모델 하나를 같이 쓴다.
-- LaMa 동시 실행 제한(`_acquire_lama_process_slot`): 분석은 페이지마다 Step 3 프로세스를 따로 띄우고, LaMa를 올린 프로세스는 2〜3.7GB를 쓴다. 그래서 LaMa를 올리기 전에 임시 폴더의 슬롯 파일(`comic_translator_lama_slots/slotN.lock`)에 배타 잠금을 걸어, LaMa를 쓰는 프로세스를 머신 전체에서 `LAMA_MAX_PROCESSES`개(기본 2)로 묶는다. 자리가 없으면 기다리고, 슬롯은 프로세스가 끝날 때 풀린다. 상주 서버가 모델을 올리면 슬롯 하나를 계속 쓰므로 1로 줄이지 않는다. fcntl이 없는 Windows에서는 제한하지 않는다.
+- LaMa 실행 장치(`_lama_device`): `LAMA_DEVICE`(cpu|mps|cuda)가 없으면 cuda → mps → cpu 순으로 고른다. M3 Pro에서 MPS는 첫 호출(GPU 준비)이 CPU보다 조금 느리고 이후 호출은 약 3배 빠르며, 결과 차이는 최대 수 단계(0〜255)다. MPS 초기화가 실패하면 CPU로 돈다. 상주 서버는 모델을 프로세스 안에 올리지 않는다. `app.create_app()`이 `set_lama_provider`로 작업 프로세스 대리 객체(`pipeline/lama_worker.py`)를 등록하고, Step 3 재적용과 `background_restore`가 그 작업 프로세스 하나를 같이 쓴다. Step 3 서브프로세스·CLI는 등록하지 않으므로 `_load_lama_in_process`로 직접 올린다.
+- LaMa 동시 실행 제한(`_acquire_lama_process_slot`): 분석은 페이지마다 Step 3 프로세스를 따로 띄우고, LaMa를 올린 프로세스는 2〜3.7GB를 쓴다. 그래서 LaMa를 올리기 전에 임시 폴더의 슬롯 파일(`comic_translator_lama_slots/slotN.lock`)에 배타 잠금을 걸어, LaMa를 쓰는 프로세스를 머신 전체에서 `LAMA_MAX_PROCESSES`개(기본 2)로 묶는다. 자리가 없으면 기다리고, 슬롯은 프로세스가 끝날 때 풀린다. 상주 서버의 LaMa 작업 프로세스가 살아 있는 동안 슬롯 하나를 쓰므로 1로 줄이지 않는다. fcntl이 없는 Windows에서는 제한하지 않는다.
 - 수동 Edge 지우기(`_manual_edge_barrier_regions`): 설계는 "새는 길에 벽을 세워 그 한계선까지만 채운다"이다. 수동 box는 한계선이라 `run_edge_barrier_rescue(confine_to_walls=True)`로 ROI를 box+16px로 줄이고 box 바깥을 전부 장벽으로 막아(`_block_outside_rect`) 채우기가 넘지 못하게 한다. 벽은 box 바깥쪽으로 칠하고(`_draw_virtual_walls`), 시작점은 box 안의 밝은 비장벽 픽셀로 옮기며(`_free_seed_inside_rect`), 안쪽 3px 침식은 하지 않는다. 앵커 가드·ROI 변형 후보는 쓰지 않는다. 방사형처럼 가시가 파고들어 채우기가 글자를 둘러싸지 못하면, 글자 줄(열)별 영역 안의 어두운 덩어리만 마스크에 더해(`_include_text_pixels_in_edge_mask`) 지운다. 줄 영역 안에 통째로 들어가는 덩어리(글자·후리가나)는 전부, 영역 밖 가시와 이어진 덩어리는 글자 줄 안쪽만 더하므로 방사선은 보존된다.
 - 영역 자동 검출 캐시(`_detect_regions_cached`): `build_ocr_region_sheet`는 이미지와 유효 텍스트 그룹만으로 결정되고 수동 가이드와 무관(수동 벽 없이 호출)하다. 그래서 (이미지 경로·mtime·크기·유효 TG 내용 해시)를 키로 서버 프로세스 메모리에 최근 6페이지까지 보관해, 가이드만 바꿔 다시 분석할 때 이 단계를 건너뛴다. 결과는 캐시 없는 전체 재분석과 같다(regions·마스크·시각화 동일 확인). 22번 페이지 재분석 0.94초가 0.41초가 된다. 이미지나 텍스트 그룹이 바뀌면 키가 달라 다시 검출한다.
 - 제외 영역 판정(`build_dialogue_sheet`): 화면은 마스크로 줄어든 출력 사각형으로 제외 키를 저장하므로, 크롭을 만들기 전에 `bubble_rect`를 마스크 경계로 맞추고 제외를 한 번 더 판정한다. 맞추지 않으면 제외한 넓은 영역이 살아남아 그 안의 수동 텍스트 박스가 `_dedupe_dialogue_crops`에서 중복으로 지워진다.
@@ -446,6 +449,15 @@ indexed sheet crop의 획두께·ink density를 재서 OpenAI가 준 `render_hin
 - 표준 경로는 `--regions_json`을 `build_flood_info_from_regions_json`, `build_shared_flood_groups_from_regions_json`으로 읽어 bbox·safe rect를 고른다. `--flood_vis_json`(`build_flood_info_by_anchor`, `build_shared_flood_groups`)은 선택 입력으로 남아 있다.
 - 확정한 배경 복원 패치(AI 글자 지우기 포함)는 `--restore-state`(`state.json`)로 받아 렌더 직전 마스크 안쪽에만 합성한다(`background_restore.apply_restore_patches`).
 - 구버전: `archive/render_text_overlay_legacy.py`
+
+### `pipeline/lama_worker.py`
+
+상주 서버용 LaMa 작업 프로세스다. 서버 프로세스 안에서 LaMa(torch·MPS)를 돌리면 입력 크기가 바뀔 때마다 작업 메모리가 쌓이고, 모델을 내려도 malloc이 쥔 조각은 운영체제로 돌아가지 않았다(`docs/BATCH_MEMORY_GROWTH_NOTES.md`). 그래서 모델을 별도 프로세스에 올리고, 끝낼 때 프로세스째 메모리를 돌려준다.
+
+- `LamaWorkerClient`: `lama(image, mask) -> PIL.Image`로 부르는 대리 객체. 처음 호출할 때 `python -m pipeline.lama_worker`를 띄우고, 표준 입출력으로 길이+pickle 프레임을 주고받는다. 호출은 잠금으로 하나씩 처리한다. 작업 프로세스가 죽으면 다음 호출에서 새로 띄운다.
+- 수명: 한 프로젝트를 작업하는 동안 유지한다. 프로젝트 홈으로 나갈 때(`POST /api/lama/release`, 다른 작업이 없을 때만) 또는 마지막 호출 뒤 `LAMA_IDLE_RELEASE_SEC`(기본 3600초, 최소 60초) 동안 쓰지 않으면 끝낸다(감시 스레드 `lama-idle`). 서버가 끝나거나 재시작(`execv`)하면 입력이 닫혀 작업 프로세스도 끝난다.
+- `shared_client()`·`release_shared()`·`shared_status()`: 서버 전체가 함께 쓰는 인스턴스. 테스트는 `tests/test_lama_worker.py`(가짜 모델 명령 주입)와, `create_app()` 등록이 다음 테스트로 새지 않게 되돌리는 `tests/conftest.py`.
+- 결과는 프로세스 안 직접 실행과 같다(합성 20장 마스킹 결과 최대 픽셀 차 0, Linux CPU 확인).
 
 ### `pipeline/background_restore.py`
 
