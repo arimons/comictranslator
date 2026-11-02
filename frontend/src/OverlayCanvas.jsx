@@ -25,7 +25,7 @@ const DRAG_COMMIT_THRESHOLD_PX = 3;
 // 회전 핸들을 Shift와 함께 끌면 이 각도 단위로 맞춘다.
 const ROTATION_SNAP_DEG = 15;
 
-const OverlayCanvas = forwardRef(function OverlayCanvas({ image, overlayGuidance, setOverlayGuidance, selectedRegionId, setSelectedRegionId, extraSelectedIds = [], onToggleRegion, setStatus, onRequestApply, tool = "select", setTool }, ref) {
+const OverlayCanvas = forwardRef(function OverlayCanvas({ image, overlayGuidance, setOverlayGuidance, selectedRegionId, setSelectedRegionId, extraSelectedIds = [], onToggleRegion, onSelectRegions, setStatus, onRequestApply, tool = "select", setTool }, ref) {
   const hostRef = useRef(null);
   const stageRef = useRef(null);
   const imageObjRef = useRef(null);
@@ -42,6 +42,8 @@ const OverlayCanvas = forwardRef(function OverlayCanvas({ image, overlayGuidance
   extraSelectedRef.current = extraSelectedIds;
   const onToggleRegionRef = useRef(onToggleRegion);
   onToggleRegionRef.current = onToggleRegion;
+  const onSelectRegionsRef = useRef(onSelectRegions);
+  onSelectRegionsRef.current = onSelectRegions;
   const loadedPageKeyRef = useRef("");
   const [floatingEditor, setFloatingEditor] = useState(null);
   const [floatingDraft, setFloatingDraft] = useState("");
@@ -555,15 +557,16 @@ const OverlayCanvas = forwardRef(function OverlayCanvas({ image, overlayGuidance
     const previewRect = Array.isArray(preview) ? preview : preview.rect;
     if (!previewRect || previewRect[2] < 1 || previewRect[3] < 1) return;
     const isEraserPreview = !Array.isArray(preview) && preview.tool === "eraser";
+    const isMarqueePreview = !Array.isArray(preview) && preview.tool === "marquee";
     if (!previewNodeRef.current || previewNodeRef.current.isDestroyed?.()) {
       previewNodeRef.current = new Konva.Rect({ listening: false });
       layer.add(previewNodeRef.current);
     }
     previewNodeRef.current.setAttrs({
       ...toStageRect(previewRect),
-      fill: isEraserPreview ? "white" : undefined,
-      opacity: isEraserPreview ? 0.55 : 1,
-      stroke: isEraserPreview ? "#06b6d4" : "#ef4444",
+      fill: isEraserPreview ? "white" : (isMarqueePreview ? "#2563eb" : undefined),
+      opacity: isEraserPreview ? 0.55 : (isMarqueePreview ? 0.15 : 1),
+      stroke: isEraserPreview ? "#06b6d4" : (isMarqueePreview ? "#2563eb" : "#ef4444"),
       strokeWidth: 2,
       dash: [4, 3],
     });
@@ -813,6 +816,28 @@ const OverlayCanvas = forwardRef(function OverlayCanvas({ image, overlayGuidance
       }
       const previousSelectedKey = selectedRegionRef.current ? String(selectedRegionRef.current) : null;
       const wasSelectedHit = Boolean(hitKey && previousSelectedKey === String(hitKey));
+      if (!hit && onSelectRegionsRef.current) {
+        // 빈 곳을 끌면 사각형 안의 박스를 한꺼번에 고른다. Shift/Cmd를 누르고 시작하면 기존 선택에 더한다.
+        const additive = Boolean(domEvent?.shiftKey || domEvent?.metaKey || domEvent?.ctrlKey);
+        if (!additive) {
+          selectRegionId(null);
+          selectedRegionRef.current = null;
+        }
+        closeFloatingEditor();
+        dragSeqRef.current += 1;
+        dragRef.current = {
+          id: dragSeqRef.current,
+          start: point,
+          startClient: eventClientPoint(event),
+          moved: false,
+          active: true,
+          mode: "marquee",
+          additive,
+          imageSize: null,
+        };
+        clearPreviewRect();
+        return;
+      }
       if (hit) {
         selectRegionId(hitKey);
         selectedRegionRef.current = hitKey;
@@ -879,7 +904,7 @@ const OverlayCanvas = forwardRef(function OverlayCanvas({ image, overlayGuidance
       const point = eventToImage(event) || pointerToImage(stage);
       const rect = dragRectAt(point);
       if (rect && rect[2] >= 4 && rect[3] >= 4) {
-        setPreviewRect(drag?.mode === "eraser" ? { tool: "eraser", rect } : rect);
+        setPreviewRect(drag?.mode === "eraser" || drag?.mode === "marquee" ? { tool: drag.mode, rect } : rect);
       } else if (drag?.mode === "rotate" && drag.startRect && selectedRegionRef.current) {
         const angle = rotationAngleForPoint(point, drag.startRect, Boolean((event?.evt || event)?.shiftKey));
         // window/stage mousemove가 같은 이벤트로 두 번 들어오므로 같은 각도는 다시 커밋하지 않는다.
@@ -911,6 +936,19 @@ const OverlayCanvas = forwardRef(function OverlayCanvas({ image, overlayGuidance
           const index = eraserIndexAt(end);
           selectEraserIndex(index);
           if (index != null) setStatus(`지우개 영역 ${index + 1} 선택 (Delete로 삭제)`);
+        }
+      } else if (drag?.mode === "marquee") {
+        if (moved && rect && rect[2] >= 4 && rect[3] >= 4) {
+          const keys = overlayControlItems(imageRef.current, overlayRef.current)
+            .filter((region) => {
+              const box = regionDisplayRect(region);
+              return box && box[0] < rect[0] + rect[2] && box[0] + box[2] > rect[0] && box[1] < rect[1] + rect[3] && box[1] + box[3] > rect[1];
+            })
+            .map((region) => overlayItemKey(region));
+          if (keys.length) {
+            onSelectRegionsRef.current?.(keys, drag.additive);
+            setStatus(`${keys.length}개 박스 선택`);
+          }
         }
       } else if (drag?.mode === "rotate") {
         if (moved && drag.startRect && selectedRegionRef.current) {

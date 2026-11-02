@@ -516,6 +516,16 @@ export default function App() {
     setExtraSelectedIds((items) => (items.length ? [] : items));
   }
 
+  // 드래그 사각형으로 고른 Region들. additive면 기존 선택에 더하고, 아니면 이것들로 바꾼다.
+  function selectRegionsInGroup(keys, additive) {
+    const current = additive ? [selectedRegionIdRef.current, ...extraSelectedIds].filter(Boolean).map(String) : [];
+    const merged = [...new Set([...current, ...keys.map(String)])];
+    if (!merged.length) return;
+    selectedRegionIdRef.current = merged[0];
+    setSelectedRegionId(merged[0]);
+    setExtraSelectedIds(merged.slice(1));
+  }
+
   // 여러 Region 선택에 더하거나 뺀다. 첫 번째가 기본 선택(Selected Region 표시)이다.
   function toggleRegionInGroup(rid) {
     const key = rid ? String(rid) : "";
@@ -3523,6 +3533,7 @@ export default function App() {
                     setSelectedRegionId={setSelectedRegionTracked}
                     extraSelectedIds={extraSelectedIds}
                     onToggleRegion={toggleRegionInGroup}
+                    onSelectRegions={selectRegionsInGroup}
                     setStatus={setStatus}
                     onRequestApply={() => setOverlayApplyRequest((count) => count + 1)}
                   />
