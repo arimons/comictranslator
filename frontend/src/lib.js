@@ -604,3 +604,67 @@ export function overlayRegionBaseKey(region) {
 export function overlayEraserRects(overlayGuidance) {
   return Array.isArray(overlayGuidance?.eraser_rects) ? overlayGuidance.eraser_rects : [];
 }
+
+// ── 첫 편집 때 자동 배치 고정 ─────────────────────────────────────────────
+// 글자 크기·줄바꿈 자동 계산은 처음 배치 때 한 번만 한다. 영역을 처음 고치는 순간(글·스타일·정렬·외곽선·박스 등)
+// 그때 렌더가 정한 글자 크기와 줄을 수동값(font_size, text_override)으로 함께 저장해, 이후 렌더가 다시 고르지 않게 한다.
+// 글자색·외곽선색만 바꾸는 것은 배치와 무관하므로 고정하지 않는다.
+const AUTO_LAYOUT_PIN_EXEMPT_KEYS = new Set(["font_color", "stroke_color"]);
+const WRITING_MODE_KEYS = ["force_vertical", "force_horizontal"];
+
+function overrideValueEqual(a, b) {
+  const norm = (value) => (value === undefined || value === null || value === "" || value === false ? null : value);
+  return JSON.stringify(norm(a)) === JSON.stringify(norm(b));
+}
+
+function changedOverrideKeys(before, after) {
+  const keys = new Set([...Object.keys(before || {}), ...Object.keys(after || {})]);
+  return [...keys].filter((key) => !key.startsWith("_") && !overrideValueEqual(before?.[key], after?.[key]));
+}
+
+export function pinAutoLayoutOnFirstEdit(previous, next, image) {
+  const prevRegions = previous?.regions || {};
+  const nextRegions = next?.regions || {};
+  let items = null;
+  let changed = false;
+  const regions = { ...nextRegions };
+  Object.entries(nextRegions).forEach(([key, region]) => {
+    const before = prevRegions[key] || {};
+    if (!region || region === before) return;
+    const diff = changedOverrideKeys(before, region);
+    if (!diff.length) return;
+    const meaningful = Object.keys(region).some((field) => !field.startsWith("_") && !overrideValueEqual(region[field], null));
+    if (!meaningful) return;
+    // 쓰기 방향을 바꾸면 그 방향으로 한 번 다시 배치한다(고정된 글은 방향에 맞는 줄로 바꾸고 크기 고정은 푼다).
+    if (diff.some((field) => WRITING_MODE_KEYS.includes(field))) {
+      const text = region.text_override;
+      if (typeof text !== "string" || !text.trim()) return;
+      const lines = text.split("\n").map((line) => line.trim()).filter(Boolean);
+      let converted = null;
+      if (region.force_vertical) converted = [...text.replace(/\s+/g, "")].join("\n");
+      else if (lines.length > 1 && lines.every((line) => [...line].length <= 1)) converted = lines.join("");
+      if (converted == null) return;
+      const { font_size: _size, font_size_delta: _delta, ...rest } = region;
+      regions[key] = { ...rest, text_override: converted };
+      changed = true;
+      return;
+    }
+    if (diff.every((field) => AUTO_LAYOUT_PIN_EXEMPT_KEYS.has(field))) return;
+    const hasSize = Number(region.font_size) > 0;
+    const hasText = typeof region.text_override === "string";
+    if (hasSize && hasText) return;
+    items = items || overlayControlItems(image, next);
+    const item = items.find((candidate) => overlayItemKey(candidate) === String(key));
+    const entry = item ? overlayLayoutEntry(image, item) : null;
+    if (!entry) return;
+    const patch = {};
+    // 사용자가 이번에 크기를 직접 바꾼 경우에는 그 값을 쓴다.
+    const sizeEdited = diff.includes("font_size") || diff.includes("font_size_delta");
+    if (!hasSize && !sizeEdited && Number(entry.font_size) > 0) patch.font_size = Math.round(Number(entry.font_size));
+    if (!hasText && typeof entry.text_layout === "string" && entry.text_layout.trim()) patch.text_override = entry.text_layout.trim();
+    if (!Object.keys(patch).length) return;
+    regions[key] = { ...region, ...patch };
+    changed = true;
+  });
+  return changed ? { ...next, regions } : next;
+}

@@ -290,6 +290,16 @@
         "frontend/src/SourceLinks.jsx",
         "frontend/src/StartScreen.jsx"
       ]
+    },
+    "docs/OVERLAY_INPLACE_EDITOR.md": {
+      "role": "canonical",
+      "topic": "글자 입히기 탭의 제자리 텍스트 편집기(PPT식 WYSIWYG) 의도·방식·한계",
+      "sources": [
+        "frontend/src/OverlayCanvas.jsx",
+        "frontend/src/OriginalFocusPane.jsx",
+        "pipeline/render_text_overlay.py",
+        "frontend/src/lib.js"
+      ]
     }
   }
 }

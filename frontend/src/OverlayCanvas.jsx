@@ -25,6 +25,40 @@ import { TEXT_BASED, regionProcessingBasis, regionTypeLabel } from "./regionType
 import { createViewport } from "./viewportControls.js";
 import { shortcutFor } from "./keymap.js";
 
+// 툴바 아이콘: 정렬 줄 모양 / 가로·세로쓰기 / 글자·외곽선 "A"
+const ALIGN_LINES = {
+  left: [[3, 15], [3, 10], [3, 15], [3, 8]],
+  center: [[3, 15], [6, 12], [3, 15], [7, 11]],
+  right: [[3, 15], [8, 15], [3, 15], [10, 15]],
+};
+
+function AlignIcon({ kind }) {
+  return (
+    <svg width="18" height="16" viewBox="0 0 18 16" aria-hidden="true">
+      {ALIGN_LINES[kind].map(([x1, x2], index) => (
+        <line key={index} x1={x1} x2={x2} y1={3 + index * 3.4} y2={3 + index * 3.4} stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+      ))}
+    </svg>
+  );
+}
+
+function WritingIcon({ vertical }) {
+  return vertical
+    ? <span className="wm-icon vertical" aria-hidden="true"><i>가</i><i>나</i><i>다</i></span>
+    : <span className="wm-icon" aria-hidden="true">가나다</span>;
+}
+
+function ColorLetterIcon({ color, outlined }) {
+  return (
+    <span className="color-letter" aria-hidden="true">
+      <b className={outlined ? "outlined" : ""}>A</b>
+      <i style={{ background: color }} />
+    </span>
+  );
+}
+
+const COLOR_PRESETS = [["#000000", "검정"], ["#ffffff", "흰색"]];
+
 // 제자리 편집 글꼴: 렌더가 쓰는 폰트 파일(/fonts/<이름>)을 FontFace로 한 번만 불러 둔다.
 const editorFontFaces = new Map();
 const editorFontListeners = new Set();
@@ -84,6 +118,36 @@ function measureEditorText(font, letterSpacingPx, lines) {
   };
 }
 
+// 제자리 편집에서 글자 입력을 가이던스(=미리보기 렌더 요청·실행 취소 기록)에 모아 반영하는 지연
+const EDITOR_COMMIT_DELAY_MS = 120;
+// 편집 중에도 캔버스를 다시 그릴 필요가 없는 영역 값(글·글자 스타일). 이것만 바뀌면 Konva 재구성을 건너뛴다.
+const EDITOR_TEXT_STYLE_KEYS = new Set([
+  "text_override", "font_size", "font_size_delta", "font_style", "font_path", "custom_font_path", "font_weight",
+  "font_color", "stroke_color", "stroke_width", "text_align", "force_horizontal", "force_vertical",
+]);
+
+function onlyEditorTextStyleChanged(prev, next, rid) {
+  if (!prev || !next || rid == null) return false;
+  if (prev === next) return true;
+  const prevKeys = Object.keys(prev);
+  for (const key of new Set([...prevKeys, ...Object.keys(next)])) {
+    if (key === "regions") continue;
+    if (prev[key] !== next[key]) return false;
+  }
+  const a = prev.regions || {};
+  const b = next.regions || {};
+  for (const key of new Set([...Object.keys(a), ...Object.keys(b)])) {
+    if (a[key] === b[key]) continue;
+    if (key !== String(rid)) return false;
+    const ra = a[key] || {};
+    const rb = b[key] || {};
+    for (const field of new Set([...Object.keys(ra), ...Object.keys(rb)])) {
+      if (ra[field] !== rb[field] && !EDITOR_TEXT_STYLE_KEYS.has(field)) return false;
+    }
+  }
+  return true;
+}
+
 // 클릭/더블클릭의 미세한 흔들림을 이동으로 저장하지 않기 위한 화면 px 기준
 const DRAG_COMMIT_THRESHOLD_PX = 3;
 
@@ -100,6 +164,7 @@ const OverlayCanvas = forwardRef(function OverlayCanvas({ image, overlayGuidance
   const dragRef = useRef(null);
   const dragSeqRef = useRef(0);
   const [viewTick, setViewTick] = useState(0);
+  const [colorPopover, setColorPopover] = useState(null);
   const floatingEditorRef = useRef(null);
   const floatingEditorStateRef = useRef(null);
   const onFocusRectRef = useRef(null);
@@ -120,8 +185,29 @@ const OverlayCanvas = forwardRef(function OverlayCanvas({ image, overlayGuidance
   const [floatingEditor, setFloatingEditor] = useState(null);
   floatingEditorStateRef.current = floatingEditor;
   const [floatingDraft, setFloatingDraft] = useState("");
-  // 편집 중인데 미리보기 이미지가 아직 현재 편집을 반영하지 못했으면 true. 이때만 구워진 글자를 덮는다.
-  const editorPendingRef = useRef(false);
+  // 편집 중 글자 배치 기준(열 때의 렌더 기록). editorSnapshotFrom 참고.
+  const editorSnapshotRef = useRef(null);
+  // 입력은 입력창 상태로 바로 그리고, 가이던스 반영은 잠깐 모아서(EDITOR_COMMIT_DELAY_MS) 한 번에 한다.
+  const editorCommitTimerRef = useRef(null);
+  const editorPendingTextRef = useRef(null);
+  const editorComposingRef = useRef(false);
+  const [editorCaret, setEditorCaret] = useState({ start: 0, end: 0, dir: "none", focused: false });
+  const editorTextareaRef = useRef(null);
+  useEffect(() => {
+    // 프로그램으로 바꾼 선택(setSelectionRange 등)도 커서에 반영한다.
+    const onSelectionChange = () => {
+      const el = editorTextareaRef.current;
+      if (!el) return;
+      const focused = document.activeElement === el;
+      setEditorCaret((current) => (
+        current.start === el.selectionStart && current.end === el.selectionEnd && current.focused === focused
+          ? current
+          : { start: el.selectionStart, end: el.selectionEnd, dir: el.selectionDirection, focused }
+      ));
+    };
+    document.addEventListener("selectionchange", onSelectionChange);
+    return () => document.removeEventListener("selectionchange", onSelectionChange);
+  }, []);
   const [, setFontTick] = useState(0);
   useEffect(() => {
     const listener = () => setFontTick((tick) => tick + 1);
@@ -559,23 +645,51 @@ const OverlayCanvas = forwardRef(function OverlayCanvas({ image, overlayGuidance
     return [x1, y1, x2 - x1, y2 - y1];
   }
 
-  // 편집 글자를 렌더가 그린 자리·글꼴·크기 그대로 놓는다. 렌더가 그린 줄 위치(overlay_layout의 draw)를 기준으로 하고,
-  // 미리보기가 현재 편집을 이미 그렸으면(pending=false) 입력 글자는 투명하게 두어 렌더 결과 자체를 보여 준다.
-  function editorTextGeometry({ image: img, rid, region, override, draft, box, innerFallback, fallbackFontImg }) {
-    const t = transformRef.current;
-    const s = t.scale || 1;
+  // 편집 중 글자 배치의 기준. 편집을 연 시점(또는 스타일을 바꾼 뒤 그 렌더가 도착한 시점)의 렌더 기록으로 고정한다.
+  // 타이핑으로 서버 미리보기가 갱신돼도 기준을 바꾸지 않아, 편집 중 글자가 렌더 결과로 바뀌며 움직이지 않는다.
+  function editorSnapshotFrom(img, region, rid) {
     const entry = overlayLayoutEntry(img, region);
     const draw = entry?.draw && Array.isArray(entry.draw.lines) && entry.draw.lines.length ? entry.draw : null;
-    const rendered = defaultOverlayGuidance(img).regions?.[String(rid)] || {};
-    const pending = !overridesMatch(rendered, override);
+    const renderedOverride = defaultOverlayGuidance(img).regions?.[String(rid)] || {};
+    return {
+      draw,
+      fontPath: entry?.font_path || "",
+      fontSize: Number(draw?.font_size) || Number(entry?.font_size) || 0,
+      inner: draw?.inner_rect || entry?.inner_rect || null,
+      textLayout: typeof entry?.text_layout === "string" ? entry.text_layout : null,
+      renderedOverride,
+      styleSig: `${editorStyleSignature(renderedOverride)}|${Number(draw?.font_size) || Number(entry?.font_size) || 0}`,
+    };
+  }
+
+  // 글 내용·글자 크기를 뺀 스타일 값(+ 렌더된 글자 크기). 이것이 바뀌었을 때만 새 렌더를 배치 기준으로 다시 받는다.
+  // 글만 고친 경우의 새 렌더는 기준으로 받지 않으므로 편집 중 글자가 렌더 결과로 바뀌며 움직이지 않는다.
+  function editorStyleSignature(override) {
+    const rest = {};
+    Object.keys(override || {}).sort().forEach((key) => {
+      if (key.startsWith("_") || key === "text_override" || key === "font_size") return;
+      const value = override[key];
+      if (value === undefined || value === null || value === "" || value === false) return;
+      rest[key] = value;
+    });
+    return JSON.stringify(rest);
+  }
+
+  // 편집 글자를 렌더가 그린 자리·글꼴·크기·외곽선 그대로 DOM으로 그린다(편집 중 그 영역은 항상 마스크 위의 이 글자).
+  function editorTextGeometry({ snapshot, override, draft, box, innerFallback, fallbackFontImg }) {
+    const t = transformRef.current;
+    const s = t.scale || 1;
+    const draw = snapshot?.draw || null;
+    const rendered = snapshot?.renderedOverride || {};
     const styleFonts = editorStyleFonts || {};
-    let fontPath = entry?.font_path;
+    let fontPath = snapshot?.fontPath;
     const customFont = override.custom_font_path || override.font_path;
     if (customFont && customFont !== (rendered.custom_font_path || rendered.font_path)) fontPath = customFont;
     else if (override.font_style && override.font_style !== rendered.font_style && styleFonts[override.font_style]) fontPath = styleFonts[override.font_style];
     const family = editorFontFamily(fontPath);
-    const renderedSize = Number(draw?.font_size) || Number(entry?.font_size) || 0;
-    const fontImg = (pending ? Number(override.font_size) : 0) || renderedSize || Number(override.font_size) || fallbackFontImg || 24;
+    const renderedSize = Number(snapshot?.fontSize) || 0;
+    const fontImg = Number(override.font_size) || renderedSize || fallbackFontImg || 24;
+    const sizeRatio = fontImg / (Number(draw?.font_size) || fontImg);
     // 줄 간격: 렌더가 실제로 그린 줄 사이 거리(세로쓰기는 line_height보다 촘촘하다). 점(…) 줄은 따로 붙으므로 뺀다.
     let lineImg = Math.round(fontImg * 1.14);
     if (draw) {
@@ -586,7 +700,7 @@ const OverlayCanvas = forwardRef(function OverlayCanvas({ image, overlayGuidance
       }
       deltas.sort((a, b) => a - b);
       const step = deltas.length ? deltas[Math.floor(deltas.length / 2)] : Number(draw.line_height);
-      lineImg = step * (fontImg / (Number(draw.font_size) || fontImg));
+      lineImg = step * sizeRatio;
     }
     const trackingImg = Number(draw?.tracking) || 0;
     const strokeImg = Number.isFinite(Number(override.stroke_width)) && override.stroke_width !== "" && override.stroke_width != null
@@ -596,55 +710,83 @@ const OverlayCanvas = forwardRef(function OverlayCanvas({ image, overlayGuidance
     const weight = override.font_style === "etc" && Number(override.font_weight) ? Number(override.font_weight) : null;
     const lines = String(draft ?? "").split("\n");
     const n = Math.max(1, lines.length);
-    const inner = draw?.inner_rect || entry?.inner_rect || innerFallback || [0, 0, 100, 100];
+    const inner = snapshot?.inner || innerFallback || [0, 0, 100, 100];
 
     const fontPx = fontImg * s;
     const lhPx = lineImg * s;
     const trackPx = trackingImg * s;
     const strokePx = strokeImg * s;
     const familyCss = family ? `"${family}", sans-serif` : "sans-serif";
-    const m = measureEditorText(`${weight || 400} ${fontPx}px ${familyCss}`, trackPx, lines);
+    const fontCss = `${weight || 400} ${fontPx}px ${familyCss}`;
+    const m = measureEditorText(fontCss, trackPx, lines);
     const asc = Number.isFinite(m.ascent) && m.ascent > 0 ? m.ascent : fontPx * 0.9;
     const desc = Number.isFinite(m.descent) && m.descent >= 0 ? m.descent : fontPx * 0.25;
     const pad = Math.ceil(strokePx) + 3;
     const maxW = Math.max(1, ...m.widths);
 
-    let left;
-    let top;
-    let width;
-    let height;
     // 렌더러는 가로·세로 모두 줄(세로는 한 글자씩의 줄)을 위에서 아래로 쌓아 그린다. 입력창도 같은 줄을 그대로 쌓는다.
-    // 세로 위치: 렌더가 그린 첫 줄의 기준선(y + ascent)에 맞춘다. 줄 수·크기가 바뀌면 글 묶음 가운데를 유지한다.
+    // 세로 위치: 렌더처럼 글 묶음의 잉크 가운데를 같은 자리에 둔다(줄 수가 바뀌어도). 기준선은 첫 줄 y + ascent.
     let firstY;
     let ascentImg;
     if (draw) {
       const rn = draw.lines.length;
       const rSize = Number(draw.font_size) || fontImg;
-      const center = (draw.lines[0].y + draw.lines[rn - 1].y + rSize) / 2;
-      firstY = n === rn && fontImg === rSize ? draw.lines[0].y : center - ((n - 1) * lineImg + fontImg) / 2;
-      ascentImg = (Number(draw.ascent) || rSize * 0.9) * (fontImg / rSize);
+      ascentImg = (Number(draw.ascent) || rSize * 0.9) * sizeRatio;
+      if (Number.isFinite(Number(draw.block_y)) && Number.isFinite(Number(draw.visual_top))) {
+        const vt = Number(draw.visual_top);
+        const vb = Number(draw.visual_bottom);
+        const rStep = rn > 1 ? (draw.lines[rn - 1].y - draw.lines[0].y) / (rn - 1) : lineImg / sizeRatio;
+        const center = Number(draw.block_y) + (vt + vb) / 2;
+        // 첫 줄 잉크 윗변과 마지막 줄 잉크 아랫변의 줄 기준 위치는 크기에 비례한다고 본다.
+        const top0 = vt * sizeRatio;
+        const bottomLast = (vb - (rn - 1) * rStep) * sizeRatio;
+        firstY = center - (top0 + (n - 1) * lineImg + bottomLast) / 2;
+      } else {
+        const center = (draw.lines[0].y + draw.lines[rn - 1].y + rSize) / 2;
+        firstY = n === rn && fontImg === rSize ? draw.lines[0].y : center - ((n - 1) * lineImg + fontImg) / 2;
+      }
     } else {
       firstY = inner[1] + (inner[3] - ((n - 1) * lineImg + fontImg)) / 2;
       ascentImg = asc / s;
     }
     const baseline = t.y + (firstY + ascentImg) * s;
     const textTop = baseline - ((lhPx - (asc + desc)) / 2 + asc);
-    width = maxW + pad * 2 + 2;
-    height = n * lhPx + pad * 2;
-    top = textTop - pad;
+    const width = maxW + pad * 2 + 2;
+    const height = n * lhPx + pad * 2;
+    const top = textTop - pad;
+    let left;
     if (align === "left") left = t.x + inner[0] * s - pad;
     else if (align === "right") left = t.x + (inner[0] + inner[2]) * s - width + pad;
     else left = t.x + (inner[0] + inner[2] / 2) * s - width / 2;
     const color = /^#[0-9a-f]{6}$/i.test(String(override.font_color || "")) ? override.font_color : "#000000";
     const strokeColor = /^#[0-9a-f]{6}$/i.test(String(override.stroke_color || "")) ? override.stroke_color : "#ffffff";
+    const relLeft = left + box.offsetX - box.left;
+    const relTop = top + box.offsetY - box.top;
+    // 커서 위치 계산용: 줄마다 시작 x(입력창 안쪽 기준)와 글자 폭 측정.
+    const contentW = width - pad * 2;
+    const lineStartX = (index) => {
+      const w = m.widths[index] || 0;
+      if (align === "left") return pad;
+      if (align === "right") return pad + contentW - w;
+      return pad + (contentW - w) / 2;
+    };
     return {
-      pending,
       fontImg,
-      renderedText: typeof entry?.text_layout === "string" ? entry.text_layout : null,
+      caretAt(offset) {
+        const before = String(draft ?? "").slice(0, Math.max(0, offset));
+        const row = before.split("\n").length - 1;
+        const prefix = before.slice(before.lastIndexOf("\n") + 1);
+        const prefixW = prefix ? measureEditorText(fontCss, trackPx, [prefix]).widths[0] : 0;
+        return {
+          left: relLeft + lineStartX(row) + prefixW,
+          top: relTop + pad + row * lhPx + Math.max(0, (lhPx - (asc + desc)) / 2) - 1,
+          height: Math.min(lhPx, asc + desc) + 2,
+        };
+      },
       style: {
         position: "absolute",
-        left: left + box.offsetX - box.left,
-        top: top + box.offsetY - box.top,
+        left: relLeft,
+        top: relTop,
         width,
         height,
         padding: pad,
@@ -659,10 +801,9 @@ const OverlayCanvas = forwardRef(function OverlayCanvas({ image, overlayGuidance
         textAlign: align,
         whiteSpace: "pre",
         overflow: "hidden",
-        // 미리보기가 현재 편집과 같으면 렌더 결과를 그대로 보여 주고 입력 글자는 투명하게(커서·선택만) 둔다.
-        color: pending ? color : "transparent",
-        WebkitTextFillColor: pending ? color : "transparent",
-        WebkitTextStroke: pending && strokePx > 0 ? `${strokePx * 2}px ${strokeColor}` : "0px transparent",
+        color,
+        WebkitTextFillColor: color,
+        WebkitTextStroke: strokePx > 0 ? `${strokePx * 2}px ${strokeColor}` : "0px transparent",
       },
     };
   }
@@ -702,18 +843,47 @@ const OverlayCanvas = forwardRef(function OverlayCanvas({ image, overlayGuidance
     selectRegionId(key);
     selectedRegionRef.current = key;
     // 한쪽 축이 거의 찰 만큼 확대한다. 위쪽 툴바 자리로 약간 남긴다.
-    vpRef.current.zoomToRect(rect, 0.82);
+    vpRef.current.zoomToRect(rect, 0.72);
     focusOpenedAtRef.current = Date.now();
     const text = override.text_override ?? baseRegionText(imageRef.current, region);
     const fontImg = Number(override.font_size) || overlayItemFontSize(region) || 24;
     const fontPx = Math.max(9, Math.round(fontImg * transformRef.current.scale));
+    editorSnapshotRef.current = editorSnapshotFrom(imageRef.current, region, key);
+    editorPendingTextRef.current = null;
     setFloatingDraft(text);
     setFloatingEditor({ rid: key, stage: toStageRect(rect), fontPx, fontImg });
     onFocusRectRef.current?.(rect);
   }
 
   // fit이 true면 확대를 풀고 전체 보기로 되돌린다(편집 창이 열려 있었을 때만).
-  function closeFloatingEditor({ fit = false } = {}) {
+  // 모아 둔 글 입력을 가이던스에 반영한다. 처음 고칠 때의 글자 크기 고정은 App의 setOverlayGuidance
+  // (pinAutoLayoutOnFirstEdit)가 함께 한다.
+  function commitEditorText() {
+    clearTimeout(editorCommitTimerRef.current);
+    editorCommitTimerRef.current = null;
+    const open = floatingEditorStateRef.current;
+    const value = editorPendingTextRef.current;
+    editorPendingTextRef.current = null;
+    if (!open || value == null) return;
+    updateRegionOverride(open.rid, { text_override: value }, `text:${open.rid}`);
+  }
+
+  function scheduleEditorCommit() {
+    clearTimeout(editorCommitTimerRef.current);
+    editorCommitTimerRef.current = setTimeout(() => {
+      if (!editorComposingRef.current) commitEditorText();
+    }, EDITOR_COMMIT_DELAY_MS);
+  }
+
+  function closeFloatingEditor({ fit = false, discard = false } = {}) {
+    setColorPopover(null);
+    if (discard) {
+      clearTimeout(editorCommitTimerRef.current);
+      editorPendingTextRef.current = null;
+    } else {
+      commitEditorText();
+    }
+    editorComposingRef.current = false;
     const wasOpen = Boolean(floatingEditorStateRef.current);
     setFloatingEditor(null);
     setFloatingDraft("");
@@ -859,7 +1029,7 @@ const OverlayCanvas = forwardRef(function OverlayCanvas({ image, overlayGuidance
     // 제자리 편집 중에는 미리보기에 구워진 그 영역의 글자를 지운 배경(마스크 이미지)으로 덮는다.
     // 그래야 편집 박스의 글자만 보이고 이중으로 겹치지 않는다.
     const editing = floatingEditorStateRef.current;
-    if (editing?.rid && editorPendingRef.current) {
+    if (editing?.rid) {
       const editRegion = overlayControlItems(imageRef.current, overlayRef.current).find((item) => overlayItemKey(item) === String(editing.rid));
       const cover = editRegion ? editorCoverRect(editRegion, overlayRegionValue(overlayRef.current, editing.rid), img) : null;
       if (cover) {
@@ -1282,7 +1452,8 @@ const OverlayCanvas = forwardRef(function OverlayCanvas({ image, overlayGuidance
   }, []);
 
   useEffect(() => {
-    closeFloatingEditor();
+    // 다른 페이지로 바뀐 뒤라 모아 둔 입력을 새 페이지에 쓰지 않는다.
+    closeFloatingEditor({ discard: true });
     selectEraserIndex(null);
   }, [image?.id, image?.input_url]);
 
@@ -1342,9 +1513,21 @@ const OverlayCanvas = forwardRef(function OverlayCanvas({ image, overlayGuidance
     };
   }, [maskUrl]);
 
+  const drawnGuidanceRef = useRef(null);
+  const drawDepsRef = useRef(null);
   useEffect(() => {
+    // 편집 중 그 영역의 글·글자 스타일만 바뀐 경우에는 캔버스(영역 상자·덮개)가 그대로라 전체 재구성을 건너뛴다.
+    const deps = [image, selectedRegionId, extraSelectedIds, eraserActive, selectedEraser, floatingEditor];
+    const sameOthers = drawDepsRef.current && deps.every((value, index) => value === drawDepsRef.current[index]);
+    const rid = floatingEditorStateRef.current?.rid;
+    drawDepsRef.current = deps;
+    const prevGuidance = drawnGuidanceRef.current;
+    drawnGuidanceRef.current = overlayGuidance;
+    if (sameOthers && rid != null && onlyEditorTextStyleChanged(prevGuidance, overlayGuidance, rid)) return;
     draw();
   }, [image, overlayGuidance, selectedRegionId, extraSelectedIds, eraserActive, selectedEraser, floatingEditor]);
+
+  useEffect(() => () => clearTimeout(editorCommitTimerRef.current), []);
 
   const editorRegion = floatingEditor
     ? overlayControlItems(image, overlayGuidance).find((region) => overlayItemKey(region) === String(floatingEditor.rid))
@@ -1374,18 +1557,48 @@ const OverlayCanvas = forwardRef(function OverlayCanvas({ image, overlayGuidance
         const box = focusEditorBox(liveRect ? toStageRect(liveRect) : floatingEditor.stage);
         const align = override.text_align || "center";
         const style = override.font_style || inferredRegionFontStyle(image, editorRegion);
-        const geo = editorTextGeometry({ image, rid: floatingEditor.rid, region: editorRegion, override, draft: floatingDraft, box, innerFallback: liveRect, fallbackFontImg: floatingEditor.fontImg });
-        const fontImg = geo.fontImg;
-        editorPendingRef.current = geo.pending;
-        // 직접 고친 글이 없으면 입력창 내용은 렌더가 실제로 그린 줄 그대로다(가로·세로 전환 등으로 줄이 바뀌면 따라간다).
-        const renderedDraft = geo.renderedText?.trim();
-        if (!geo.pending && override.text_override == null && renderedDraft && renderedDraft !== floatingDraft) {
-          setFloatingDraft(renderedDraft);
+        // 스타일(가로·세로, 글꼴, 크기 등)을 바꾼 뒤 그 렌더가 도착했을 때만 배치 기준을 새 렌더로 바꾼다.
+        // 글만 고친 렌더는 받지 않는다. 직접 고친 글이 없으면 입력창 내용도 새 렌더의 줄로 맞춘다(세로 전환 등).
+        if (editorPendingTextRef.current == null && !editorComposingRef.current) {
+          const fresh = editorSnapshotFrom(image, editorRegion, floatingEditor.rid);
+          if (fresh.styleSig !== editorSnapshotRef.current?.styleSig && overridesMatch(fresh.renderedOverride, override)) {
+            editorSnapshotRef.current = fresh;
+            const renderedDraft = fresh.textLayout?.trim();
+            if (override.text_override == null && renderedDraft && renderedDraft !== floatingDraft) setFloatingDraft(renderedDraft);
+          }
+          // 실행 취소·쓰기 방향 전환 등으로 저장된 글이 바뀌면 입력창도 따라간다(입력 중인 글이 없을 때만).
+          if (typeof override.text_override === "string" && override.text_override !== floatingDraft) setFloatingDraft(override.text_override);
         }
-        const patch = (value, key) => updateRegionOverride(floatingEditor.rid, value, key);
+        const geo = editorTextGeometry({ snapshot: editorSnapshotRef.current, override, draft: floatingDraft, box, innerFallback: liveRect, fallbackFontImg: floatingEditor.fontImg });
+        const fontImg = geo.fontImg;
+        const patch = (value, key) => {
+          commitEditorText();
+          updateRegionOverride(floatingEditor.rid, value, key);
+        };
+        const colorKey = colorPopover === "stroke" ? "stroke_color" : "font_color";
+        const hexOr = (value, fallback) => (/^#[0-9a-f]{6}$/i.test(String(value || "")) ? value : fallback);
+        const textColor = hexOr(override.font_color, "#000000");
+        const outlineColor = hexOr(override.stroke_color, "#ffffff");
+        const strokeNow = Number.isFinite(Number(override.stroke_width)) && override.stroke_width !== "" && override.stroke_width != null
+          ? Number(override.stroke_width)
+          : (Number.isFinite(Number(editorSnapshotRef.current?.draw?.stroke_width)) ? Number(editorSnapshotRef.current.draw.stroke_width) : 2);
+        const syncCaret = (el, focused = document.activeElement === el) => {
+          setEditorCaret((current) => (
+            current.start === el.selectionStart && current.end === el.selectionEnd && current.focused === focused
+              ? current
+              : { start: el.selectionStart, end: el.selectionEnd, dir: el.selectionDirection, focused }
+          ));
+        };
+        const caretOffset = editorCaret.dir === "backward" ? editorCaret.start : editorCaret.end;
+        const caret = editorCaret.focused && editorCaret.start === editorCaret.end ? geo.caretAt(caretOffset) : null;
         const stop = (event) => event.stopPropagation();
         const guard = {
-          onPointerDownCapture: (event) => { event.stopPropagation(); suppressStagePointerUntilRef.current = Date.now() + 800; dragRef.current = null; },
+          onPointerDownCapture: (event) => {
+            event.stopPropagation();
+            suppressStagePointerUntilRef.current = Date.now() + 800;
+            dragRef.current = null;
+            if (colorPopover && !(event.target instanceof Element && event.target.closest(".inplace-popover-anchor"))) setColorPopover(null);
+          },
           onMouseDownCapture: (event) => { event.stopPropagation(); suppressStagePointerUntilRef.current = Date.now() + 800; dragRef.current = null; },
           onMouseUpCapture: stop,
           onPointerDown: (event) => { event.stopPropagation(); suppressStagePointerUntilRef.current = Date.now() + 800; },
@@ -1395,68 +1608,141 @@ const OverlayCanvas = forwardRef(function OverlayCanvas({ image, overlayGuidance
           onDoubleClick: stop,
         };
         return (
-          <div ref={floatingEditorRef} className="inplace-editor" style={{ left: box.left, top: box.top, width: box.width, height: box.height }} {...guard}>
-            <div className="inplace-toolbar" style={{ left: -Math.min(Math.max(0, box.left + 700 - ((hostRef.current?.clientWidth || 800) - 12)), Math.max(0, box.left - 12)) }}>
-              <strong>{overlayItemLabel(editorRegion)}</strong>
-              <span className="inplace-group inplace-size" title="글자 크기">
-                <button type="button" onClick={() => patch({ font_size: Math.max(8, fontImg - 1) }, `size:${floatingEditor.rid}`)}>−</button>
-                <input
-                  type="number"
-                  min="8"
-                  max="160"
-                  key={fontImg}
-                  defaultValue={fontImg}
-                  onKeyDown={(event) => { if (event.key === "Enter") event.currentTarget.blur(); event.stopPropagation(); }}
-                  onBlur={(event) => {
-                    const value = Math.round(Number(event.target.value));
-                    if (Number.isFinite(value) && value >= 8 && value <= 160 && value !== fontImg) patch({ font_size: value }, `size:${floatingEditor.rid}`);
-                    else event.target.value = fontImg;
-                  }}
-                />
-                <button type="button" onClick={() => patch({ font_size: Math.min(160, fontImg + 1) }, `size:${floatingEditor.rid}`)}>+</button>
-              </span>
-              <span className="inplace-group" title="정렬">
-                {[["left", "좌"], ["center", "중"], ["right", "우"]].map(([id, label]) => (
-                  <button key={id} type="button" className={align === id ? "active" : ""} onClick={() => patch({ text_align: id })}>{label}</button>
-                ))}
-              </span>
-              <span className="inplace-group" title="쓰기 방향">
-                <button type="button" className={vertical ? "" : "active"} onClick={() => patch({ force_horizontal: true, force_vertical: false })}>가로</button>
-                <button type="button" className={vertical ? "active" : ""} onClick={() => patch({ force_vertical: true, force_horizontal: false })}>세로</button>
-              </span>
-              <span className="inplace-group" title="글꼴 스타일">
-                {FONT_STYLES.filter(([id]) => id !== "etc").map(([id, short, label]) => (
-                  <button key={id} type="button" className={style === id ? "active" : ""} title={label} onClick={() => patch({ font_style: id, font_path: "", custom_font_path: "", font_weight: "" })}>{short}</button>
-                ))}
-              </span>
-              <span className="inplace-group" title="글자색">
-                <button type="button" className="swatch" style={{ background: "#000000" }} onClick={() => patch({ font_color: "#000000" })} aria-label="글자 검정" />
-                <button type="button" className="swatch" style={{ background: "#ffffff" }} onClick={() => patch({ font_color: "#ffffff" })} aria-label="글자 흰색" />
-                {"EyeDropper" in window ? (
-                  <button type="button" title="캔버스에서 글자색 찍기" onClick={async () => {
-                    try { const r = await new window.EyeDropper().open(); if (r?.sRGBHex) patch({ font_color: r.sRGBHex }); } catch (_e) { /* 취소 */ }
-                  }}>스포이드</button>
-                ) : null}
-              </span>
-              <button type="button" className="icon-button" onClick={() => closeFloatingEditor({ fit: true })} title="닫고 원래 배율로 (Esc)">×</button>
+          <>
+          <div className="inplace-toolbar-dock" {...guard}>
+            <div className="inplace-toolbar">
+              <div className="inplace-row">
+                <strong className="inplace-name">{overlayItemLabel(editorRegion)}</strong>
+                <span className="inplace-group inplace-size" title="글자 크기">
+                  <button type="button" onClick={() => patch({ font_size: Math.max(8, fontImg - 1) }, `size:${floatingEditor.rid}`)}>−</button>
+                  <input
+                    type="number"
+                    min="8"
+                    max="160"
+                    key={fontImg}
+                    defaultValue={fontImg}
+                    onKeyDown={(event) => { if (event.key === "Enter") event.currentTarget.blur(); event.stopPropagation(); }}
+                    onBlur={(event) => {
+                      const value = Math.round(Number(event.target.value));
+                      if (Number.isFinite(value) && value >= 8 && value <= 160 && value !== fontImg) patch({ font_size: value }, `size:${floatingEditor.rid}`);
+                      else event.target.value = fontImg;
+                    }}
+                  />
+                  <button type="button" onClick={() => patch({ font_size: Math.min(160, fontImg + 1) }, `size:${floatingEditor.rid}`)}>+</button>
+                </span>
+                <span className="inplace-sep" />
+                <span className="inplace-group" role="group" aria-label="정렬">
+                  {[["left", "왼쪽 정렬"], ["center", "가운데 정렬"], ["right", "오른쪽 정렬"]].map(([id, label]) => (
+                    <button key={id} type="button" className={`icon ${align === id ? "active" : ""}`} title={label} aria-label={label} onClick={() => patch({ text_align: id })}><AlignIcon kind={id} /></button>
+                  ))}
+                </span>
+                <span className="inplace-sep" />
+                <span className="inplace-group" role="group" aria-label="쓰기 방향">
+                  <button type="button" className={vertical ? "" : "active"} title="가로쓰기" onClick={() => patch({ force_horizontal: true, force_vertical: false })}><WritingIcon />가로쓰기</button>
+                  <button type="button" className={vertical ? "active" : ""} title="세로쓰기" onClick={() => patch({ force_vertical: true, force_horizontal: false })}><WritingIcon vertical />세로쓰기</button>
+                </span>
+                <span className="inplace-sep" />
+                <span className="inplace-group inplace-popover-anchor">
+                  <button type="button" className={`icon wide ${colorPopover === "font" ? "active" : ""}`} title="글자색" aria-label="글자색" onClick={() => setColorPopover((cur) => (cur === "font" ? null : "font"))}><ColorLetterIcon color={textColor} /></button>
+                  <button type="button" className={`icon wide ${colorPopover === "stroke" ? "active" : ""}`} title="외곽선색" aria-label="외곽선색" onClick={() => setColorPopover((cur) => (cur === "stroke" ? null : "stroke"))}><ColorLetterIcon color={outlineColor} outlined /></button>
+                  {colorPopover ? (
+                    <div className="color-popover" role="dialog" aria-label={colorPopover === "font" ? "글자색" : "외곽선색"}>
+                      <div className="color-popover-title">{colorPopover === "font" ? "글자색" : "외곽선색"}</div>
+                      <div className="color-popover-row">
+                        {COLOR_PRESETS.map(([hex, label]) => (
+                          <button key={hex} type="button" className="swatch" style={{ background: hex }} title={label} aria-label={label} onClick={() => { patch({ [colorKey]: hex }); setColorPopover(null); }} />
+                        ))}
+                        {"EyeDropper" in window ? (
+                          <button type="button" title="화면에서 색 찍기" onClick={async () => {
+                            try { const r = await new window.EyeDropper().open(); if (r?.sRGBHex) patch({ [colorKey]: r.sRGBHex }); } catch (_e) { /* 취소 */ }
+                            setColorPopover(null);
+                          }}>스포이드</button>
+                        ) : null}
+                        <label className="color-custom" title="직접 선택">
+                          <input type="color" value={colorPopover === "font" ? textColor : outlineColor} onChange={(event) => patch({ [colorKey]: event.target.value }, `${colorKey}:${floatingEditor.rid}`)} />
+                        </label>
+                        <button type="button" title="기본색으로" onClick={() => { patch({ [colorKey]: "" }); setColorPopover(null); }}>기본</button>
+                      </div>
+                    </div>
+                  ) : null}
+                </span>
+                <span className="inplace-group inplace-size" title="외곽선 두께">
+                  <span className="inplace-mini-label">외곽선</span>
+                  <button type="button" onClick={() => patch({ stroke_width: Math.max(0, strokeNow - 1) }, `stroke:${floatingEditor.rid}`)}>−</button>
+                  <input
+                    type="number"
+                    min="0"
+                    max="12"
+                    key={`stroke-${strokeNow}`}
+                    defaultValue={strokeNow}
+                    onKeyDown={(event) => { if (event.key === "Enter") event.currentTarget.blur(); event.stopPropagation(); }}
+                    onBlur={(event) => {
+                      const value = Math.round(Number(event.target.value));
+                      if (Number.isFinite(value) && value >= 0 && value <= 12 && value !== strokeNow) patch({ stroke_width: value }, `stroke:${floatingEditor.rid}`);
+                      else event.target.value = strokeNow;
+                    }}
+                  />
+                  <button type="button" onClick={() => patch({ stroke_width: Math.min(12, strokeNow + 1) }, `stroke:${floatingEditor.rid}`)}>+</button>
+                </span>
+                <button type="button" className="icon-button inplace-close" onClick={() => closeFloatingEditor({ fit: true })} title="닫고 원래 배율로 (Esc)">×</button>
+              </div>
+              <div className="inplace-row styles" role="group" aria-label="글꼴 스타일">
+                {FONT_STYLES.filter(([id]) => id !== "etc").map(([id, _short, label]) => {
+                  const family = editorFontFamily(editorStyleFonts?.[id]);
+                  return (
+                    <button key={id} type="button" className={`style-sample ${style === id ? "active" : ""}`} title={label} aria-label={label} onClick={() => patch({ font_style: id, font_path: "", custom_font_path: "", font_weight: "" })}>
+                      <span style={family ? { fontFamily: `"${family}", sans-serif` } : undefined}>가</span>
+                      <small>{label}</small>
+                    </button>
+                  );
+                })}
+              </div>
             </div>
+          </div>
+          <div ref={floatingEditorRef} className="inplace-editor" style={{ left: box.left, top: box.top, width: box.width, height: box.height }} {...guard}>
             {/* 입력하는 대로 바로 반영된다. Esc는 닫기, Cmd/Ctrl+Enter는 렌더 후 다음 대사로(App의 전역 디스패처). */}
             <textarea
+              ref={editorTextareaRef}
+              key={floatingEditor.rid}
               autoFocus
               wrap="off"
               spellCheck={false}
               value={floatingDraft}
-              className={geo.pending ? "" : "in-sync"}
+              className="inplace-text"
               style={geo.style}
-              onFocus={(event) => { const end = event.target.value.length; event.target.setSelectionRange(end, end); }}
+              onFocus={(event) => {
+                if (!event.target.dataset.focusedOnce) {
+                  event.target.dataset.focusedOnce = "1";
+                  const end = event.target.value.length;
+                  event.target.setSelectionRange(end, end);
+                }
+                syncCaret(event.target, true);
+              }}
+              onBlur={(event) => { syncCaret(event.target, false); commitEditorText(); }}
+              onSelect={(event) => syncCaret(event.target)}
+              onKeyUp={(event) => syncCaret(event.target)}
+              onMouseUp={(event) => syncCaret(event.target)}
+              onCompositionStart={() => { editorComposingRef.current = true; }}
+              onCompositionEnd={() => { editorComposingRef.current = false; scheduleEditorCommit(); }}
               onChange={(event) => {
+                // 화면(입력창 글자)은 바로 바꾸고, 가이던스 반영·미리보기 요청은 잠깐 모아서 한다.
                 const value = event.target.value;
                 setFloatingDraft(value);
-                updateRegionOverride(floatingEditor.rid, { text_override: value }, `text:${floatingEditor.rid}`);
+                syncCaret(event.target);
+                editorPendingTextRef.current = value;
+                if (!editorComposingRef.current) scheduleEditorCommit();
               }}
               placeholder="번역문을 입력하세요"
             />
+            {caret ? (
+              <div
+                key={`${caretOffset}:${floatingDraft.length}`}
+                className="inplace-caret"
+                style={{ left: Math.round(caret.left) - 2, top: caret.top, height: caret.height }}
+              />
+            ) : null}
           </div>
+          </>
         );
       })() : null}
     </div>

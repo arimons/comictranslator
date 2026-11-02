@@ -53,6 +53,7 @@ import {
   writeSessionSettings,
   removeSessionSettings,
   imageRegions,
+  pinAutoLayoutOnFirstEdit,
 } from "./lib.js";
 import { recordTargetsRegion, regionIsExcluded } from "./regionExclusion.js";
 
@@ -784,9 +785,9 @@ export default function App() {
   // options.historyKey: 같은 key의 연속 변경(타이핑, 회전 드래그, 방향키 이동)은 기록 한 칸으로 묶는다.
   function setOverlayGuidanceTracked(nextGuidance, options = {}) {
     setOverlayGuidance((current) => {
-      const resolved = normalizeOverlayGuidance(
-        typeof nextGuidance === "function" ? nextGuidance(current || { regions: {} }) : nextGuidance
-      );
+      const requested = typeof nextGuidance === "function" ? nextGuidance(current || { regions: {} }) : nextGuidance;
+      // 영역을 처음 고칠 때 그때의 렌더 글자 크기·줄을 함께 고정한다(이후 자동 재배치 없음).
+      const resolved = normalizeOverlayGuidance(pinAutoLayoutOnFirstEdit(current || { regions: {} }, requested, selected));
       if (guidanceEquals(current || {}, resolved || {})) return current;
       recordOverlayHistory(current, options?.historyKey);
       bumpOverlayEditVersion();

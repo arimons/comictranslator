@@ -2944,6 +2944,39 @@ class RenderTextOverlayTest(unittest.TestCase):
         self.assertEqual(prepared[0][4].lines, override_text.splitlines())
         self.assertEqual(prepared[0][4].font_size, 48)
 
+    def test_text_override_with_font_size_keeps_single_and_wide_lines_as_written(self) -> None:
+        # 직접 고친 글 + 고정 크기: 박스보다 넓어도 줄을 다시 나누거나 크기를 줄이지 않는다(한 줄 포함).
+        if not Path(FONT_PATH).exists():
+            self.skipTest(f"font not found: {FONT_PATH}")
+        image = np.full((420, 220, 3), 255, dtype=np.uint8)
+        clusters = [{
+            "matched_cluster": [1],
+            "source_region_id": 2,
+            "location": "bubble",
+            "text_translated": "자동 줄바꿈 대상",
+            "matched_cluster_details": [{"bounding_rect": [60, 50, 90, 300], "lines": [{"bbox": [60, 50, 90, 300]}]}],
+        }]
+        flood_info = {
+            1: {
+                "region_id": 2,
+                "anchor_ids": [1],
+                "safe_text_rect": [60, 50, 90, 300],
+                "is_valid": True,
+                "region_type_guess": "bubble",
+            }
+        }
+        for override_text in ("박스보다 훨씬 긴 한 줄 문장입니다", "전혀\n이해할 수 없어 정말로"):
+            with self.subTest(text=override_text):
+                prepared = prepare_page_layouts(
+                    image,
+                    clusters,
+                    flood_info_by_anchor=flood_info,
+                    font_path=FONT_PATH,
+                    overlay_guidance={"regions": {"2": {"text_override": override_text, "font_size": 40}}},
+                )
+                self.assertEqual(prepared[0][4].lines, override_text.splitlines())
+                self.assertEqual(prepared[0][4].font_size, 40)
+
     def test_text_override_with_ellipsis_keeps_compact_line_height(self) -> None:
         if not Path(FONT_PATH).exists():
             self.skipTest(f"font not found: {FONT_PATH}")

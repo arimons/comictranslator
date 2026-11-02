@@ -3104,6 +3104,10 @@ def draw_text_block_pil(
             "rotation_deg": float(rotation_deg or 0.0),
             "vertical_dot_run": bool(vertical_dot_run),
             "inner_rect": [int(v) for v in layout.inner_rect],
+            # 글 묶음 기준 y와 잉크 상하단(그 y 기준). 편집기가 줄 수가 바뀌어도 렌더와 같은 가운데에 놓는 데 쓴다.
+            "block_y": round(float(y), 2),
+            "visual_top": round(float(visual_top), 2),
+            "visual_bottom": round(float(visual_bottom), 2),
             "lines": [],
         })
     decorative_kind = decorative_line_kind(layout.lines)
@@ -4408,7 +4412,12 @@ def prepare_page_layouts(
                 mask_centroid=mask_centroid, round_score=round_score, fvs=fvs, fvt=fvt,
             )
         explicit_override_lines = [line.strip() for line in text.splitlines() if line.strip()]
-        if font_size_override and has_text_override and len(explicit_override_lines) > 1:
+        # 직접 고친 글 + 고정 크기면 줄을 다시 나누거나 크기를 다시 고르지 않는다. 한 줄도 그대로 한 줄로 둔다
+        # (단 세로쓰기를 고른 한 줄은 세로 배치를 위해 자동 경로로 보낸다).
+        use_manual_lines = bool(font_size_override and has_text_override and explicit_override_lines) and (
+            len(explicit_override_lines) > 1 or not force_vertical
+        )
+        if use_manual_lines:
             manual_inner = inner_rect_for(
                 bbox,
                 (img_w, img_h),
@@ -4438,7 +4447,7 @@ def prepare_page_layouts(
                 preserve_explicit_lines=has_text_override,
             )
         pre_manual_layout = raw
-        if font_size_override and not (has_text_override and len(explicit_override_lines) > 1):
+        if font_size_override and not use_manual_lines:
             raw = layout_with_font_size(draw, raw, cluster_font_path, font_size_override)
         if font_size_delta:
             raw = layout_with_font_size_delta(draw, raw, cluster_font_path, font_size_delta)

@@ -3600,3 +3600,87 @@ select.memo-key { width: 100%; padding: 2px; font-size: 12px; }
 .inplace-editor textarea:focus { outline: none; }
 
 .inplace-editor textarea::-webkit-scrollbar { display: none; }
+
+/* 제자리 편집 글자: 브라우저 기본 커서는 가늘어 배경에 묻히므로 숨기고 굵은 커서를 따로 그린다 */
+.inplace-editor textarea.inplace-text { caret-color: transparent; }
+.inplace-editor textarea.inplace-text::selection { background: rgba(37, 99, 235, 0.45); }
+.inplace-caret {
+  position: absolute;
+  width: 4px;
+  background: #ff1f5a;
+  border-radius: 1px;
+  box-shadow: 0 0 0 1px #ffffff, 0 0 0 2px rgba(17, 24, 39, 0.75);
+  pointer-events: none;
+  animation: inplace-caret-blink 1.06s steps(1, end) infinite;
+}
+@keyframes inplace-caret-blink {
+  0%, 55% { opacity: 1; }
+  56%, 100% { opacity: 0; }
+}
+
+/* 박스 위 서식 툴바(2줄): 정렬 줄 아이콘, 쓰기 방향, 글자·외곽선색 팝오버, 글꼴 스타일 샘플 */
+.inplace-toolbar {
+  width: 600px;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 4px;
+  padding: 6px 8px;
+  white-space: normal;
+}
+.inplace-toolbar.below { bottom: auto; top: calc(100% + 6px); }
+.inplace-row { display: flex; align-items: center; gap: 6px; flex-wrap: nowrap; }
+.inplace-row.styles { gap: 4px; padding-top: 4px; border-top: 1px solid var(--line); }
+.inplace-name { font-size: 12px; min-width: 24px; }
+.inplace-sep { width: 1px; align-self: stretch; margin: 2px 2px; background: var(--line); }
+.inplace-toolbar .inplace-group { gap: 2px; position: relative; }
+.inplace-toolbar button.icon { width: 30px; min-width: 30px; height: 28px; padding: 0; display: inline-flex; align-items: center; justify-content: center; }
+.inplace-toolbar button.icon.wide { width: 34px; min-width: 34px; }
+.inplace-toolbar .inplace-group > button { min-height: 28px; font-weight: 700; }
+.inplace-toolbar .inplace-group > button:not(.icon):not(.swatch) { display: inline-flex; align-items: center; gap: 4px; padding: 0 7px; }
+.inplace-toolbar .inplace-size input { width: 44px; min-height: 28px; }
+.inplace-mini-label { font-size: 11px; color: var(--muted); font-weight: 800; padding: 0 2px; align-self: center; }
+.inplace-close { margin-left: auto; }
+.wm-icon { display: inline-block; font-size: 10px; font-weight: 800; line-height: 1; letter-spacing: -0.5px; }
+.wm-icon.vertical { display: inline-flex; flex-direction: column; align-items: center; gap: 0; }
+.wm-icon.vertical i { font-style: normal; font-size: 8px; line-height: 8px; }
+.color-letter { position: relative; display: inline-flex; flex-direction: column; align-items: center; line-height: 1; }
+.color-letter b { font-size: 15px; font-weight: 800; line-height: 15px; }
+.color-letter b.outlined { color: transparent; -webkit-text-stroke: 1.2px currentColor; }
+.color-letter i { display: block; width: 16px; height: 3px; margin-top: 1px; border-radius: 1px; border: 1px solid rgba(17, 24, 39, 0.35); box-sizing: content-box; }
+.inplace-toolbar button.active .color-letter b.outlined { -webkit-text-stroke-color: white; }
+.color-popover {
+  position: absolute;
+  left: 0;
+  top: calc(100% + 6px);
+  z-index: 30;
+  padding: 8px;
+  border: 1px solid rgba(17, 24, 39, 0.18);
+  border-radius: 8px;
+  background: white;
+  box-shadow: 0 10px 28px rgba(17, 24, 39, 0.22);
+  display: grid;
+  gap: 6px;
+  white-space: nowrap;
+}
+.inplace-toolbar.below .color-popover { top: auto; bottom: calc(100% + 6px); }
+.color-popover-title { font-size: 11px; font-weight: 800; color: var(--muted); }
+.color-popover-row { display: flex; align-items: center; gap: 6px; }
+.color-popover .swatch { width: 24px; height: 24px; min-height: 24px; padding: 0; border-radius: 50%; border: 1px solid #9ca3af; }
+.color-popover button:not(.swatch) { min-height: 26px; padding: 0 8px; font-size: 12px; }
+.color-custom input[type="color"] { width: 32px; height: 26px; padding: 1px; border: 1px solid var(--line); border-radius: 6px; background: white; cursor: pointer; }
+.style-sample { display: inline-flex; flex-direction: column; align-items: center; justify-content: center; min-width: 58px; height: 46px; padding: 2px 4px; line-height: 1.1; }
+.style-sample > span { font-size: 20px; font-weight: 400; }
+.style-sample > small { font-size: 9px; font-weight: 700; color: var(--muted); }
+.style-sample.active > small { color: white; }
+
+/* 툴바는 캔버스 위쪽에 고정(독)한다: 박스가 화면을 채워도 가려지지 않는다 */
+.inplace-toolbar-dock { position: absolute; top: 8px; left: 56px; right: 8px; z-index: 25; display: flex; justify-content: center; pointer-events: none; }
+.inplace-toolbar-dock .inplace-toolbar { position: static; width: auto; max-width: 100%; pointer-events: auto; }
+.inplace-toolbar button { white-space: nowrap; }
+.inplace-toolbar-dock .inplace-row { flex-wrap: wrap; row-gap: 4px; }
+.inplace-toolbar-dock .inplace-row.styles { flex-wrap: wrap; }
+.inplace-mini-label { white-space: nowrap; }
+.inplace-toolbar .inplace-group > button:not(.icon):not(.swatch) { font-size: 11px; padding: 0 6px; }
+.inplace-toolbar .wm-icon { flex: none; }
+.inplace-toolbar-dock .inplace-close { margin-left: 0; }
+.inplace-toolbar .color-popover { left: auto; right: -40px; }
