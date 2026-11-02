@@ -21,12 +21,13 @@ export default function DialogueList({ rows, selectedKey, extraKeys = [], filter
   const activeRef = useRef(null);
   // 원문은 번역 검수에만 쓰고 글자 입히기 편집에서는 가치가 낮아 기본으로 숨긴다. 켠 상태는 브라우저에 기억한다.
   const [showOriginal, setShowOriginal] = useState(() => {
-    try { return window.localStorage.getItem("comic-translator-dialogue-original") === "1"; } catch { return false; }
+    // 원문은 기본으로 보인다. 사용자가 끈 경우만 기억한다(키를 새로 바꿔 예전 저장값은 무시).
+    try { return window.localStorage.getItem("comic-translator-dialogue-original-v2") !== "0"; } catch { return true; }
   });
   function toggleOriginal() {
     setShowOriginal((current) => {
       const next = !current;
-      try { window.localStorage.setItem("comic-translator-dialogue-original", next ? "1" : "0"); } catch { /* 저장소를 못 쓰면 이번 화면에서만 유지 */ }
+      try { window.localStorage.setItem("comic-translator-dialogue-original-v2", next ? "1" : "0"); } catch { /* 저장소를 못 쓰면 이번 화면에서만 유지 */ }
       return next;
     });
   }

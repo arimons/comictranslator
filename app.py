@@ -3882,9 +3882,15 @@ def create_app() -> FastAPI:
     def list_fonts() -> dict[str, Any]:
         fonts_dir = ROOT / "Fonts"
         fonts = sorted([*fonts_dir.glob("*.ttf"), *fonts_dir.glob("*.otf")]) if fonts_dir.exists() else []
+        # 편집기가 렌더와 같은 글꼴로 제자리 편집하도록 스타일별 실제 폰트 파일 이름도 알려 준다(/fonts/<이름>).
+        from pipeline.render_text_overlay import font_path_for_style
+
+        default_path = Path(DEFAULT_FONT)
+        style_ids = ("normal", "bold", "impact", "light", "memory_serif", "serif_bold", "handwritten", "serif_emphasis")
         return {
             "default": DEFAULT_FONT,
             "fonts": [{"name": path.stem, "path": str(path)} for path in fonts],
+            "styles": {style: font_path_for_style(style, default_path).name for style in style_ids},
         }
 
     @app.get("/manual")

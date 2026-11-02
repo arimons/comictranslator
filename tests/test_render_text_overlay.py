@@ -111,6 +111,37 @@ class RenderTextOverlayTest(unittest.TestCase):
 
         self.assertEqual(summary["regions"]["2"]["text_layout"], "편지의\n답장인가?!")
         self.assertEqual(summary["regions"]["2"]["font_size"], 24)
+        self.assertNotIn("draw", summary["regions"]["2"])
+
+        # 실제로 그린 줄 위치(draw record)가 있으면 편집기용으로 함께 기록한다.
+        record = {"line_height": 28, "lines": [{"text": "편지의", "x": 30.0, "y": 25.0, "w": 60}]}
+        with_draw = overlay_layout_summary(prepared, {3: {"region_id": 2}}, {id(prepared[0][0]): record})
+        self.assertEqual(with_draw["regions"]["2"]["draw"], record)
+
+    def test_draw_text_block_pil_records_drawn_line_positions(self) -> None:
+        from pipeline.render_text_overlay import draw_text_block_pil
+
+        layout = Layout(
+            font_size=24,
+            lines=["편지의", "답장인가"],
+            inner_rect=(10, 20, 120, 80),
+            line_height=28,
+            measured_width=96,
+            measured_height=52,
+            target_lines=2,
+        )
+        record: dict = {}
+        pil = Image.new("RGB", (160, 120), (255, 255, 255))
+        draw_text_block_pil(pil, "편지의 답장인가", [8, 18, 140, 100], Path(FONT_PATH), layout=layout, text_stroke_width=2, draw_record=record)
+
+        self.assertEqual([line["text"] for line in record["lines"]], ["편지의", "답장인가"])
+        self.assertEqual(record["line_height"], 28)
+        self.assertEqual(record["stroke_width"], 2)
+        self.assertAlmostEqual(record["lines"][1]["y"] - record["lines"][0]["y"], 28, places=1)
+        # 가운데 정렬: 줄 중심이 inner_rect 중심과 같다.
+        first = record["lines"][0]
+        self.assertAlmostEqual(first["x"] + first["w"] / 2, 10 + 120 / 2, places=1)
+        self.assertGreater(record["ascent"], 0)
 
     def test_draw_text_block_centers_visual_ink_vertically_in_inner_rect(self) -> None:
         image = np.full((120, 160, 3), 255, dtype=np.uint8)

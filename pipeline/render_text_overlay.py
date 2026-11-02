@@ -529,8 +529,16 @@ def region_id_for_cluster(cluster: dict, flood_info_by_anchor: dict[int, dict]) 
     return None
 
 
-def overlay_layout_summary(prepared: list, flood_info_by_anchor: dict[int, dict]) -> dict:
-    """실제 렌더러가 선택한 region별 기본 텍스트 배치 정보를 JSON으로 만든다."""
+def overlay_layout_summary(
+    prepared: list,
+    flood_info_by_anchor: dict[int, dict],
+    draw_records: dict[int, dict] | None = None,
+) -> dict:
+    """실제 렌더러가 선택한 region별 기본 텍스트 배치 정보를 JSON으로 만든다.
+
+    draw_records(id(cluster) → 실제로 그린 줄 위치)가 있으면 "draw"로 함께 기록한다.
+    편집기가 렌더 결과와 같은 자리에 글자를 겹쳐 편집하는 데 쓴다(출력 전용, 레이아웃에 영향 없음).
+    """
     regions: dict[str, dict] = {}
     for item in prepared:
         cluster, text, bbox, bbox_source, layout, _src_lc, cluster_font_path, *_ = item
@@ -558,6 +566,9 @@ def overlay_layout_summary(prepared: list, flood_info_by_anchor: dict[int, dict]
             "font_size": int(layout.font_size),
             "font_path": str(cluster_font_path),
         }
+        record = (draw_records or {}).get(id(cluster))
+        if record:
+            regions[key]["draw"] = record
     return {"regions": regions}
 
 
@@ -3019,6 +3030,7 @@ def draw_text_block_pil(
     rotation_deg: float = 0.0,
     font_weight: int | None = None,
     text_align: str = "center",
+    draw_record: dict | None = None,
 ) -> tuple[Image.Image, Layout]:
     """draw_text_block의 PIL(RGB) 버전. 페이지를 블록마다 numpy↔PIL로 바꾸지 않도록 PIL 이미지를 그대로 넘긴다."""
     draw = ImageDraw.Draw(pil)
@@ -3075,8 +3087,29 @@ def draw_text_block_pil(
             pil = Image.alpha_composite(pil_rgba, alpha_layer).convert("RGB")
             draw = ImageDraw.Draw(pil)
 
+    if draw_record is not None:
+        try:
+            ascent, descent = font.getmetrics()
+        except Exception:
+            ascent, descent = layout.font_size, 0
+        draw_record.update({
+            "font_size": int(layout.font_size),
+            "line_height": int(layout.line_height),
+            "ascent": int(ascent),
+            "descent": int(descent),
+            "tracking": int(tracking_for_font(font)),
+            "stroke_width": int(text_stroke_width),
+            "font_weight": font_weight,
+            "text_align": text_align,
+            "rotation_deg": float(rotation_deg or 0.0),
+            "vertical_dot_run": bool(vertical_dot_run),
+            "inner_rect": [int(v) for v in layout.inner_rect],
+            "lines": [],
+        })
     decorative_kind = decorative_line_kind(layout.lines)
     if decorative_kind:
+        if draw_record is not None:
+            draw_record["decorative"] = decorative_kind
         draw_decorative_line(draw, layout, decorative_kind, text_fill)
         if render_layer is not None and base_rgba is not None:
             cx = float(bbox[0]) + float(bbox[2]) / 2.0
@@ -3143,6 +3176,8 @@ def draw_text_block_pil(
             stroke_fill=text_stroke_fill,
             vertical_dot_run=vertical_dot_run,
         )
+        if draw_record is not None:
+            draw_record["lines"].append({"text": line, "x": round(float(x), 2), "y": round(float(line_y), 2), "w": int(line_w)})
         line_top, line_bottom = text_visual_y_bounds(
             draw,
             font,
@@ -4945,14 +4980,8 @@ def apply_text_overlay(
         overlay_guidance=overlay_guidance,
         region_info_by_ref=ref_context["region_info_by_ref"] if ref_context is not None else None,
     )
-    if overlay_layout_output is not None:
-        overlay_layout_output.parent.mkdir(parents=True, exist_ok=True)
-        overlay_layout_output.write_text(
-            json.dumps(overlay_layout_summary(prepared, flood_info), ensure_ascii=False, indent=2),
-            encoding="utf-8",
-        )
-
     rendered_count = 0
+    draw_records: dict[int, dict] = {}
     preserved_original_count = 0
     overlay_overrides = overlay_region_overrides(overlay_guidance or {})
     # 텍스트 블록은 PIL(RGB) 페이지 하나에 이어서 그린다. numpy(BGR)가 필요한 원본 복원 때만 되돌린다.
@@ -5011,10 +5040,19 @@ def apply_text_overlay(
             rotation_deg=rotation_deg,
             font_weight=font_weight,
             text_align=text_align,
+            draw_record=draw_records.setdefault(id(cluster), {}),
         )
         rendered_count += 1
     if page_pil is not None:
         image = cv2.cvtColor(np.array(page_pil), cv2.COLOR_RGB2BGR)
+
+    # 레이아웃 요약은 실제로 그린 줄 위치까지 담기 위해 그린 뒤에 쓴다.
+    if overlay_layout_output is not None:
+        overlay_layout_output.parent.mkdir(parents=True, exist_ok=True)
+        overlay_layout_output.write_text(
+            json.dumps(overlay_layout_summary(prepared, flood_info, draw_records), ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
 
     cv2.imwrite(str(output_path), image)
     if restored_untranslated:

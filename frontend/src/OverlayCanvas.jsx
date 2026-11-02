@@ -16,12 +16,73 @@ import {
   overlayItemFontSize,
   overlayWritingModeChoice,
   inferredRegionFontStyle,
+  overlayLayoutEntry,
+  defaultOverlayGuidance,
   FONT_STYLES,
 } from "./lib.js";
 import RegionTypeBadge from "./RegionTypeBadge.jsx";
 import { TEXT_BASED, regionProcessingBasis, regionTypeLabel } from "./regionTypes.js";
 import { createViewport } from "./viewportControls.js";
 import { shortcutFor } from "./keymap.js";
+
+// 제자리 편집 글꼴: 렌더가 쓰는 폰트 파일(/fonts/<이름>)을 FontFace로 한 번만 불러 둔다.
+const editorFontFaces = new Map();
+const editorFontListeners = new Set();
+let editorStyleFonts = null;
+
+function editorFontFamily(fontPath) {
+  const name = String(fontPath || "").replace(/\\/g, "/").split("/").pop();
+  if (!name || typeof FontFace === "undefined") return null;
+  let entry = editorFontFaces.get(name);
+  if (!entry) {
+    entry = { family: `overlay-edit-${editorFontFaces.size}`, ready: false };
+    editorFontFaces.set(name, entry);
+    const face = new FontFace(entry.family, `url("/fonts/${encodeURIComponent(name)}")`);
+    face.load().then((loaded) => {
+      document.fonts.add(loaded);
+      entry.ready = true;
+      editorFontListeners.forEach((fn) => fn());
+    }).catch(() => { entry.failed = true; });
+  }
+  return entry.ready ? entry.family : null;
+}
+
+function loadEditorStyleFonts() {
+  if (editorStyleFonts) return;
+  editorStyleFonts = {};
+  fetch("/api/fonts").then((res) => res.json()).then((data) => {
+    editorStyleFonts = data?.styles || {};
+    editorFontListeners.forEach((fn) => fn());
+  }).catch(() => {});
+}
+
+// 렌더에 쓰인 수동값과 지금 수동값이 같은지(= 미리보기 이미지가 현재 편집 상태를 그린 것인지).
+function overridesMatch(a, b) {
+  const norm = (value) => (value === undefined || value === null || value === "" || value === false ? null : value);
+  const keys = new Set([...Object.keys(a || {}), ...Object.keys(b || {})].filter((key) => !key.startsWith("_")));
+  for (const key of keys) {
+    const x = norm(a?.[key]);
+    const y = norm(b?.[key]);
+    if (x === y) continue;
+    if (x != null && y != null && typeof x !== "object" && Number.isFinite(Number(x)) && Number(x) === Number(y)) continue;
+    if (JSON.stringify(x) !== JSON.stringify(y)) return false;
+  }
+  return true;
+}
+
+let measureCanvas = null;
+function measureEditorText(font, letterSpacingPx, lines) {
+  measureCanvas = measureCanvas || document.createElement("canvas");
+  const ctx = measureCanvas.getContext("2d");
+  ctx.font = font;
+  try { ctx.letterSpacing = `${letterSpacingPx}px`; } catch (_e) { /* 구형 브라우저 */ }
+  const probe = ctx.measureText("가Ag");
+  return {
+    widths: lines.map((line) => ctx.measureText(line).width),
+    ascent: probe.fontBoundingBoxAscent,
+    descent: probe.fontBoundingBoxDescent,
+  };
+}
 
 // 클릭/더블클릭의 미세한 흔들림을 이동으로 저장하지 않기 위한 화면 px 기준
 const DRAG_COMMIT_THRESHOLD_PX = 3;
@@ -59,6 +120,15 @@ const OverlayCanvas = forwardRef(function OverlayCanvas({ image, overlayGuidance
   const [floatingEditor, setFloatingEditor] = useState(null);
   floatingEditorStateRef.current = floatingEditor;
   const [floatingDraft, setFloatingDraft] = useState("");
+  // 편집 중인데 미리보기 이미지가 아직 현재 편집을 반영하지 못했으면 true. 이때만 구워진 글자를 덮는다.
+  const editorPendingRef = useRef(false);
+  const [, setFontTick] = useState(0);
+  useEffect(() => {
+    const listener = () => setFontTick((tick) => tick + 1);
+    editorFontListeners.add(listener);
+    loadEditorStyleFonts();
+    return () => { editorFontListeners.delete(listener); };
+  }, []);
   const eraserActive = tool === "eraser";
   const toolRef = useRef(tool);
   toolRef.current = tool;
@@ -468,10 +538,17 @@ const OverlayCanvas = forwardRef(function OverlayCanvas({ image, overlayGuidance
 
   // 편집 중 구워진 글자를 가릴 범위: 빨간 박스와 말풍선/영역 rect를 모두 덮는다(이미지 좌표).
   function editorCoverRect(region, override, img) {
+    const entry = overlayLayoutEntry(imageRef.current, region);
+    const drawn = Array.isArray(entry?.draw?.lines) ? entry.draw.lines : [];
+    const pad = (Number(entry?.draw?.stroke_width) || 2) + 4;
+    const lineH = Number(entry?.draw?.line_height) || Number(entry?.font_size) || 0;
     const rects = [
       selectedBoxRect(region, override),
       regionDisplayRect(region),
       region?.region_outline_rect,
+      entry?.bbox,
+      // 렌더가 박스 밖까지 그린 글자도 가린다.
+      ...drawn.map((line) => [line.x - pad, line.y - pad, (Number(line.w) || 0) + pad * 2, lineH + pad * 2]),
     ].filter((rect) => Array.isArray(rect) && rect.length >= 4 && rect[2] > 0 && rect[3] > 0);
     if (!rects.length) return null;
     const x1 = Math.max(0, Math.min(...rects.map((r) => r[0])));
@@ -480,6 +557,114 @@ const OverlayCanvas = forwardRef(function OverlayCanvas({ image, overlayGuidance
     const y2 = Math.min(img.height, Math.max(...rects.map((r) => r[1] + r[3])));
     if (x2 <= x1 || y2 <= y1) return null;
     return [x1, y1, x2 - x1, y2 - y1];
+  }
+
+  // 편집 글자를 렌더가 그린 자리·글꼴·크기 그대로 놓는다. 렌더가 그린 줄 위치(overlay_layout의 draw)를 기준으로 하고,
+  // 미리보기가 현재 편집을 이미 그렸으면(pending=false) 입력 글자는 투명하게 두어 렌더 결과 자체를 보여 준다.
+  function editorTextGeometry({ image: img, rid, region, override, draft, box, innerFallback, fallbackFontImg }) {
+    const t = transformRef.current;
+    const s = t.scale || 1;
+    const entry = overlayLayoutEntry(img, region);
+    const draw = entry?.draw && Array.isArray(entry.draw.lines) && entry.draw.lines.length ? entry.draw : null;
+    const rendered = defaultOverlayGuidance(img).regions?.[String(rid)] || {};
+    const pending = !overridesMatch(rendered, override);
+    const styleFonts = editorStyleFonts || {};
+    let fontPath = entry?.font_path;
+    const customFont = override.custom_font_path || override.font_path;
+    if (customFont && customFont !== (rendered.custom_font_path || rendered.font_path)) fontPath = customFont;
+    else if (override.font_style && override.font_style !== rendered.font_style && styleFonts[override.font_style]) fontPath = styleFonts[override.font_style];
+    const family = editorFontFamily(fontPath);
+    const renderedSize = Number(draw?.font_size) || Number(entry?.font_size) || 0;
+    const fontImg = (pending ? Number(override.font_size) : 0) || renderedSize || Number(override.font_size) || fallbackFontImg || 24;
+    // 줄 간격: 렌더가 실제로 그린 줄 사이 거리(세로쓰기는 line_height보다 촘촘하다). 점(…) 줄은 따로 붙으므로 뺀다.
+    let lineImg = Math.round(fontImg * 1.14);
+    if (draw) {
+      const isDotLine = (text) => /^[.．・…·\s]+$/.test(String(text || ""));
+      const deltas = [];
+      for (let i = 1; i < draw.lines.length; i += 1) {
+        if (!isDotLine(draw.lines[i - 1].text) && !isDotLine(draw.lines[i].text)) deltas.push(draw.lines[i].y - draw.lines[i - 1].y);
+      }
+      deltas.sort((a, b) => a - b);
+      const step = deltas.length ? deltas[Math.floor(deltas.length / 2)] : Number(draw.line_height);
+      lineImg = step * (fontImg / (Number(draw.font_size) || fontImg));
+    }
+    const trackingImg = Number(draw?.tracking) || 0;
+    const strokeImg = Number.isFinite(Number(override.stroke_width)) && override.stroke_width !== "" && override.stroke_width != null
+      ? Number(override.stroke_width)
+      : (Number.isFinite(Number(draw?.stroke_width)) ? Number(draw.stroke_width) : 2);
+    const align = override.text_align || draw?.text_align || "center";
+    const weight = override.font_style === "etc" && Number(override.font_weight) ? Number(override.font_weight) : null;
+    const lines = String(draft ?? "").split("\n");
+    const n = Math.max(1, lines.length);
+    const inner = draw?.inner_rect || entry?.inner_rect || innerFallback || [0, 0, 100, 100];
+
+    const fontPx = fontImg * s;
+    const lhPx = lineImg * s;
+    const trackPx = trackingImg * s;
+    const strokePx = strokeImg * s;
+    const familyCss = family ? `"${family}", sans-serif` : "sans-serif";
+    const m = measureEditorText(`${weight || 400} ${fontPx}px ${familyCss}`, trackPx, lines);
+    const asc = Number.isFinite(m.ascent) && m.ascent > 0 ? m.ascent : fontPx * 0.9;
+    const desc = Number.isFinite(m.descent) && m.descent >= 0 ? m.descent : fontPx * 0.25;
+    const pad = Math.ceil(strokePx) + 3;
+    const maxW = Math.max(1, ...m.widths);
+
+    let left;
+    let top;
+    let width;
+    let height;
+    // 렌더러는 가로·세로 모두 줄(세로는 한 글자씩의 줄)을 위에서 아래로 쌓아 그린다. 입력창도 같은 줄을 그대로 쌓는다.
+    // 세로 위치: 렌더가 그린 첫 줄의 기준선(y + ascent)에 맞춘다. 줄 수·크기가 바뀌면 글 묶음 가운데를 유지한다.
+    let firstY;
+    let ascentImg;
+    if (draw) {
+      const rn = draw.lines.length;
+      const rSize = Number(draw.font_size) || fontImg;
+      const center = (draw.lines[0].y + draw.lines[rn - 1].y + rSize) / 2;
+      firstY = n === rn && fontImg === rSize ? draw.lines[0].y : center - ((n - 1) * lineImg + fontImg) / 2;
+      ascentImg = (Number(draw.ascent) || rSize * 0.9) * (fontImg / rSize);
+    } else {
+      firstY = inner[1] + (inner[3] - ((n - 1) * lineImg + fontImg)) / 2;
+      ascentImg = asc / s;
+    }
+    const baseline = t.y + (firstY + ascentImg) * s;
+    const textTop = baseline - ((lhPx - (asc + desc)) / 2 + asc);
+    width = maxW + pad * 2 + 2;
+    height = n * lhPx + pad * 2;
+    top = textTop - pad;
+    if (align === "left") left = t.x + inner[0] * s - pad;
+    else if (align === "right") left = t.x + (inner[0] + inner[2]) * s - width + pad;
+    else left = t.x + (inner[0] + inner[2] / 2) * s - width / 2;
+    const color = /^#[0-9a-f]{6}$/i.test(String(override.font_color || "")) ? override.font_color : "#000000";
+    const strokeColor = /^#[0-9a-f]{6}$/i.test(String(override.stroke_color || "")) ? override.stroke_color : "#ffffff";
+    return {
+      pending,
+      fontImg,
+      renderedText: typeof entry?.text_layout === "string" ? entry.text_layout : null,
+      style: {
+        position: "absolute",
+        left: left + box.offsetX - box.left,
+        top: top + box.offsetY - box.top,
+        width,
+        height,
+        padding: pad,
+        margin: 0,
+        boxSizing: "border-box",
+        fontFamily: familyCss,
+        fontSize: fontPx,
+        lineHeight: `${lhPx}px`,
+        fontWeight: weight || "normal",
+        fontVariationSettings: weight ? `"wght" ${weight}` : undefined,
+        letterSpacing: trackPx ? `${trackPx}px` : undefined,
+        textAlign: align,
+        whiteSpace: "pre",
+        overflow: "hidden",
+        // 미리보기가 현재 편집과 같으면 렌더 결과를 그대로 보여 주고 입력 글자는 투명하게(커서·선택만) 둔다.
+        color: pending ? color : "transparent",
+        WebkitTextFillColor: pending ? color : "transparent",
+        WebkitTextStroke: pending && strokePx > 0 ? `${strokePx * 2}px ${strokeColor}` : "0px transparent",
+      },
+    };
   }
 
   // 빨간 선택 박스(stage 좌표)를 그대로 텍스트 박스로 쓴다. 핸들을 잡을 수 있게 안쪽으로 살짝만 들인다.
@@ -493,6 +678,8 @@ const OverlayCanvas = forwardRef(function OverlayCanvas({ image, overlayGuidance
     const offsetX = hostBounds && wrapBounds ? hostBounds.left - wrapBounds.left - (wrap.clientLeft || 0) : 0;
     const offsetY = hostBounds && wrapBounds ? hostBounds.top - wrapBounds.top - (wrap.clientTop || 0) : 0;
     return {
+      offsetX,
+      offsetY,
       left: Math.round(stageRect.x + offsetX) + inset,
       top: Math.round(stageRect.y + offsetY) + inset,
       width: Math.max(20, Math.round(stageRect.width) - inset * 2),
@@ -671,7 +858,7 @@ const OverlayCanvas = forwardRef(function OverlayCanvas({ image, overlayGuidance
     // 제자리 편집 중에는 미리보기에 구워진 그 영역의 글자를 지운 배경(마스크 이미지)으로 덮는다.
     // 그래야 편집 박스의 글자만 보이고 이중으로 겹치지 않는다.
     const editing = floatingEditorStateRef.current;
-    if (editing?.rid) {
+    if (editing?.rid && editorPendingRef.current) {
       const editRegion = overlayControlItems(imageRef.current, overlayRef.current).find((item) => overlayItemKey(item) === String(editing.rid));
       const cover = editRegion ? editorCoverRect(editRegion, overlayRegionValue(overlayRef.current, editing.rid), img) : null;
       if (cover) {
@@ -1182,20 +1369,18 @@ const OverlayCanvas = forwardRef(function OverlayCanvas({ image, overlayGuidance
         const override = overlayRegionValue(overlayGuidance, floatingEditor.rid);
         const choice = overlayWritingModeChoice(override);
         const vertical = choice === "vertical";
-        const fontImg = Number(override.font_size) || floatingEditor.fontImg;
-        const fontPx = Math.max(9, Math.round(fontImg * transformRef.current.scale));
         const liveRect = selectedBoxRect(editorRegion, override);
         const box = focusEditorBox(liveRect ? toStageRect(liveRect) : floatingEditor.stage);
         const align = override.text_align || "center";
         const style = override.font_style || inferredRegionFontStyle(image, editorRegion);
-        const color = /^#[0-9a-f]{6}$/i.test(String(override.font_color || "")) ? override.font_color : "#000000";
-        // 렌더와 같은 줄 간격(글자 크기 x 1.14)으로, 글 묶음을 박스 가운데에 놓는다.
-        const lineHeightPx = fontPx * 1.14;
-        const lineCount = Math.max(1, String(floatingDraft || "").split("\n").length);
-        const blockExtent = lineHeightPx * (lineCount - 1) + fontPx;
-        const crossPad = Math.max(0, ((vertical ? box.width : box.height) - blockExtent) / 2);
-        const serif = /serif/.test(style);
-        const fontWeight = style === "light" ? 300 : /bold|impact|emphasis/.test(style) ? 800 : 500;
+        const geo = editorTextGeometry({ image, rid: floatingEditor.rid, region: editorRegion, override, draft: floatingDraft, box, innerFallback: liveRect, fallbackFontImg: floatingEditor.fontImg });
+        const fontImg = geo.fontImg;
+        editorPendingRef.current = geo.pending;
+        // 직접 고친 글이 없으면 입력창 내용은 렌더가 실제로 그린 줄 그대로다(가로·세로 전환 등으로 줄이 바뀌면 따라간다).
+        const renderedDraft = geo.renderedText?.trim();
+        if (!geo.pending && override.text_override == null && renderedDraft && renderedDraft !== floatingDraft) {
+          setFloatingDraft(renderedDraft);
+        }
         const patch = (value, key) => updateRegionOverride(floatingEditor.rid, value, key);
         const stop = (event) => event.stopPropagation();
         const guard = {
@@ -1260,19 +1445,8 @@ const OverlayCanvas = forwardRef(function OverlayCanvas({ image, overlayGuidance
               wrap="off"
               spellCheck={false}
               value={floatingDraft}
-              className={vertical ? "vertical" : ""}
-              style={{
-                fontSize: fontPx,
-                lineHeight: `${lineHeightPx}px`,
-                fontFamily: serif ? '"SourceHanSerifK-Bold", RIDIBatang, "Noto Serif KR", serif' : undefined,
-                fontWeight,
-                textAlign: align,
-                ...(vertical
-                  ? { paddingLeft: crossPad, paddingRight: crossPad, paddingTop: 0, paddingBottom: 0 }
-                  : { paddingTop: crossPad, paddingBottom: 0, paddingLeft: 0, paddingRight: 0 }),
-                color,
-                WebkitTextStroke: `${Math.max(0, (Number.isFinite(Number(override.stroke_width)) ? Number(override.stroke_width) : 2) * transformRef.current.scale * 2)}px ${/^#[0-9a-f]{6}$/i.test(String(override.stroke_color || "")) ? override.stroke_color : "#ffffff"}`,
-              }}
+              className={geo.pending ? "" : "in-sync"}
+              style={geo.style}
               onFocus={(event) => { const end = event.target.value.length; event.target.setSelectionRange(end, end); }}
               onChange={(event) => {
                 const value = event.target.value;
