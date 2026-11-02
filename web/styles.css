@@ -1272,7 +1272,7 @@ button.wide {
 .overlay-grid {
   min-height: 0;
   display: grid;
-  grid-template-columns: minmax(320px, 1fr) minmax(560px, 1fr);
+  grid-template-columns: minmax(260px, 0.8fr) minmax(560px, 1.2fr);
   gap: 10px;
   overflow: hidden;
 }

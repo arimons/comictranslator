@@ -3655,7 +3655,7 @@ export default function App() {
                 )}
                 {renderColorField("Text color", "font_color", "#000000", "글자색. 기본은 검정입니다")}
                 <div className="field compact-field">
-                  <label>Outline</label>
+                  <label>Outline 두께</label>
                   <input
                     type="number"
                     min="0"

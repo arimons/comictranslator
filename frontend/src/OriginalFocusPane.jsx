@@ -19,8 +19,8 @@ export default function OriginalFocusPane({ src, focusRect }) {
   let transform = null;
   if (ready) {
     const [rx, ry, rw, rh] = focusRect.map(Number);
-    // 캔버스 확대와 같은 비율(영역이 화면의 절반 안팎)로 맞춘다.
-    const scale = Math.min(size.width / Math.max(1, rw), size.height / Math.max(1, rh)) * 0.5;
+    // 캔버스 확대와 같은 비율(한쪽 축이 거의 차는 정도)로 맞춘다.
+    const scale = Math.min(size.width / Math.max(1, rw), size.height / Math.max(1, rh)) * 0.82;
     transform = {
       scale,
       x: size.width / 2 - (rx + rw / 2) * scale,

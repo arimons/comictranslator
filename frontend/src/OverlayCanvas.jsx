@@ -701,7 +701,8 @@ const OverlayCanvas = forwardRef(function OverlayCanvas({ image, overlayGuidance
     clearPreviewRect();
     selectRegionId(key);
     selectedRegionRef.current = key;
-    vpRef.current.zoomToRect(rect, 0.5);
+    // 한쪽 축이 거의 찰 만큼 확대한다. 위쪽 툴바 자리로 약간 남긴다.
+    vpRef.current.zoomToRect(rect, 0.82);
     focusOpenedAtRef.current = Date.now();
     const text = override.text_override ?? baseRegionText(imageRef.current, region);
     const fontImg = Number(override.font_size) || overlayItemFontSize(region) || 24;
