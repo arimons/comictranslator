@@ -947,10 +947,18 @@ const EditorCanvas = forwardRef(function EditorCanvas({ image, baseUrl, guidance
 
     placeCanvasLabels(labels, obstacles, imageBounds, {width, height}).forEach(label => {
       if (label.outside) {
-        const anchorX = Math.max(0, Math.min(width, imageBounds.x + imageBounds.width + 2));
-        const anchorY = Math.max(0, Math.min(height, label.rect.y + label.rect.height / 2));
-        overlay.add(new Konva.Line({points:[anchorX,anchorY,label.x-4,label.y+label.height/2],
-          stroke:label.color, strokeWidth:.8, opacity:.24, listening:false}));
+        // 상자 오른쪽 가운데에서 수평으로 가다 이미지 오른쪽 끝보다 미리 라벨 높이로 꺾고, 끝은 수평으로 들어가
+        // 라벨 앞에서 선끼리 겹치지 않게 한다. 가는 점선으로 그림을 덜 가린다.
+        const boxX = Math.max(0, Math.min(width, label.rect.x + label.rect.width));
+        const boxY = Math.max(0, Math.min(height, label.rect.y + label.rect.height / 2));
+        const labelY = label.y + label.height / 2;
+        const edgeX = Math.max(boxX, Math.min(width, imageBounds.x + imageBounds.width + 2));
+        const bendX = Math.max(boxX, edgeX - 36);
+        const lineOpacity = label.selected ? .9 : .55;
+        overlay.add(new Konva.Line({points:[boxX,boxY,bendX,boxY,edgeX,labelY,label.x-4,labelY],
+          stroke:label.color, strokeWidth:label.selected ? 1.4 : 1, dash:[4, 3], opacity:lineOpacity,
+          lineJoin:"round", listening:false}));
+        overlay.add(new Konva.Circle({x:boxX, y:boxY, radius:2.5, fill:label.color, opacity:lineOpacity, listening:false}));
         if (label.kind === "region") overlay.add(new Konva.Text({text:label.text,
           x:label.rect.x, y:Math.max(2,label.rect.y-16), fontSize:11, fontStyle:"bold",
           fill:label.color, opacity:.7, listening:false}));
