@@ -13,6 +13,10 @@ import {
   baseRegionText,
   overlayRegionValue,
   overlayEraserRects,
+  overlayItemFontSize,
+  overlayWritingModeChoice,
+  inferredRegionFontStyle,
+  FONT_STYLES,
 } from "./lib.js";
 import RegionTypeBadge from "./RegionTypeBadge.jsx";
 import { TEXT_BASED, regionProcessingBasis, regionTypeLabel } from "./regionTypes.js";
@@ -25,14 +29,21 @@ const DRAG_COMMIT_THRESHOLD_PX = 3;
 // 회전 핸들을 Shift와 함께 끌면 이 각도 단위로 맞춘다.
 const ROTATION_SNAP_DEG = 15;
 
-const OverlayCanvas = forwardRef(function OverlayCanvas({ image, overlayGuidance, setOverlayGuidance, selectedRegionId, setSelectedRegionId, extraSelectedIds = [], onToggleRegion, onSelectRegions, setStatus, onRequestApply, tool = "select", setTool }, ref) {
+const OverlayCanvas = forwardRef(function OverlayCanvas({ image, overlayGuidance, setOverlayGuidance, selectedRegionId, setSelectedRegionId, extraSelectedIds = [], onToggleRegion, onSelectRegions, onFocusRect, setStatus, onRequestApply, tool = "select", setTool }, ref) {
   const hostRef = useRef(null);
   const stageRef = useRef(null);
   const imageObjRef = useRef(null);
+  // 글자를 지운 배경(복원 패치 반영본 또는 masked.jpg). 제자리 편집 중 구워진 글자를 가리는 데 쓴다.
+  const maskImgRef = useRef(null);
   const transformRef = useRef({ scale: 1, x: 0, y: 0 });
   const dragRef = useRef(null);
   const dragSeqRef = useRef(0);
+  const [viewTick, setViewTick] = useState(0);
   const floatingEditorRef = useRef(null);
+  const floatingEditorStateRef = useRef(null);
+  const onFocusRectRef = useRef(null);
+  onFocusRectRef.current = onFocusRect;
+  const focusOpenedAtRef = useRef(0);
   const overlayLayerRef = useRef(null);
   const previewNodeRef = useRef(null);
   const imageRef = useRef(image);
@@ -46,6 +57,7 @@ const OverlayCanvas = forwardRef(function OverlayCanvas({ image, overlayGuidance
   onSelectRegionsRef.current = onSelectRegions;
   const loadedPageKeyRef = useRef("");
   const [floatingEditor, setFloatingEditor] = useState(null);
+  floatingEditorStateRef.current = floatingEditor;
   const [floatingDraft, setFloatingDraft] = useState("");
   const eraserActive = tool === "eraser";
   const toolRef = useRef(tool);
@@ -150,8 +162,9 @@ const OverlayCanvas = forwardRef(function OverlayCanvas({ image, overlayGuidance
 
   function isFloatingEditorEvent(event) {
     const node = floatingEditorRef.current;
-    const target = event?.target || event?.evt?.target || null;
-    return Boolean(node && target && node.contains(target));
+    // Konva 이벤트의 target은 DOM 노드가 아니라 Konva 노드라, 원래 DOM 이벤트(evt)의 target만 쓴다.
+    const target = event?.evt?.target ?? event?.target ?? null;
+    return Boolean(node && target instanceof Node && node.contains(target));
   }
 
   function setStageCursor(cursor) {
@@ -442,61 +455,103 @@ const OverlayCanvas = forwardRef(function OverlayCanvas({ image, overlayGuidance
     return true;
   }
 
-  function floatingEditorPositionForRect(rect) {
+  // 선택 시 빨간 박스로 그리는 rect(draw()의 editableSafeRect와 같은 규칙). 편집 박스도 이 rect를 쓴다.
+  function selectedBoxRect(region, override) {
+    if (!region) return null;
+    const regionRect = region.region_outline_rect || region.bubble_rect || region.unboxed_rect || region.source_rect;
+    const safeRect = override?.safe_text_rect || region.safe_text_rect || regionRect;
+    if (safeRect && (safeRect[2] < OVERLAY_MIN_RECT_SIZE || safeRect[3] < OVERLAY_MIN_RECT_SIZE)) {
+      return region.safe_text_rect || regionRect || safeRect;
+    }
+    return safeRect || null;
+  }
+
+  // 편집 중 구워진 글자를 가릴 범위: 빨간 박스와 말풍선/영역 rect를 모두 덮는다(이미지 좌표).
+  function editorCoverRect(region, override, img) {
+    const rects = [
+      selectedBoxRect(region, override),
+      regionDisplayRect(region),
+      region?.region_outline_rect,
+    ].filter((rect) => Array.isArray(rect) && rect.length >= 4 && rect[2] > 0 && rect[3] > 0);
+    if (!rects.length) return null;
+    const x1 = Math.max(0, Math.min(...rects.map((r) => r[0])));
+    const y1 = Math.max(0, Math.min(...rects.map((r) => r[1])));
+    const x2 = Math.min(img.width, Math.max(...rects.map((r) => r[0] + r[2])));
+    const y2 = Math.min(img.height, Math.max(...rects.map((r) => r[1] + r[3])));
+    if (x2 <= x1 || y2 <= y1) return null;
+    return [x1, y1, x2 - x1, y2 - y1];
+  }
+
+  // 빨간 선택 박스(stage 좌표)를 그대로 텍스트 박스로 쓴다. 핸들을 잡을 수 있게 안쪽으로 살짝만 들인다.
+  function focusEditorBox(stageRect) {
+    const inset = 4;
+    // 편집 박스는 wrap 기준 절대 위치라, 왼쪽 도구 막대만큼 밀린 stage host의 위치를 더한다.
     const host = hostRef.current;
-    if (!host || !rect) return { x: 16, y: 16 };
-    const stageRect = toStageRect(rect);
-    const hostW = host.clientWidth || 800;
-    const hostH = host.clientHeight || 600;
-    const popupW = 330;
-    const popupH = 300;
-    const gap = 12;
-    const candidates = [
-      { x: stageRect.x + stageRect.width + gap, y: stageRect.y },
-      { x: stageRect.x - popupW - gap, y: stageRect.y },
-      { x: stageRect.x, y: stageRect.y + stageRect.height + gap },
-      { x: stageRect.x, y: stageRect.y - popupH - gap },
-    ];
-    const fits = candidates.find((item) => (
-      item.x >= gap
-      && item.y >= gap
-      && item.x + popupW <= hostW - gap
-      && item.y + popupH <= hostH - gap
-    ));
-    const chosen = fits || candidates[0];
+    const wrap = host?.parentElement;
+    const hostBounds = host?.getBoundingClientRect();
+    const wrapBounds = wrap?.getBoundingClientRect();
+    const offsetX = hostBounds && wrapBounds ? hostBounds.left - wrapBounds.left - (wrap.clientLeft || 0) : 0;
+    const offsetY = hostBounds && wrapBounds ? hostBounds.top - wrapBounds.top - (wrap.clientTop || 0) : 0;
     return {
-      x: Math.round(Math.min(Math.max(gap, chosen.x), Math.max(gap, hostW - popupW - gap))),
-      y: Math.round(Math.min(Math.max(gap, chosen.y), Math.max(gap, hostH - popupH - gap))),
+      left: Math.round(stageRect.x + offsetX) + inset,
+      top: Math.round(stageRect.y + offsetY) + inset,
+      width: Math.max(20, Math.round(stageRect.width) - inset * 2),
+      height: Math.max(20, Math.round(stageRect.height) - inset * 2),
     };
   }
 
-  function openFloatingEditor(rid, rect) {
-    if (!rid || !rect) return;
+  // 박스를 눌렀을 때: 그 박스로 확대하고, 같은 자리·같은 글자 크기의 편집 박스를 겹쳐 띄운다.
+  function openFloatingEditor(rid) {
+    if (!rid) return;
     const key = String(rid);
+    if (floatingEditorStateRef.current?.rid === key) return;
     const region = overlayControlItems(imageRef.current, overlayRef.current).find((item) => overlayItemKey(item) === key);
-    const override = overlayRegionValue(overlayRef.current, rid);
-    const position = floatingEditorPositionForRect(rect);
+    const rect = region ? regionDisplayRect(region) : null;
+    if (!region || !rect) return;
+    const override = overlayRegionValue(overlayRef.current, key);
     suppressStagePointerUntilRef.current = Date.now() + 350;
     dragRef.current = null;
     clearPreviewRect();
     selectRegionId(key);
     selectedRegionRef.current = key;
-    setFloatingDraft(region ? (override.text_override ?? baseRegionText(imageRef.current, region)) : "");
-    setFloatingEditor({ rid: key, ...position });
+    vpRef.current.zoomToRect(rect, 0.5);
+    focusOpenedAtRef.current = Date.now();
+    const text = override.text_override ?? baseRegionText(imageRef.current, region);
+    const fontImg = Number(override.font_size) || overlayItemFontSize(region) || 24;
+    const fontPx = Math.max(9, Math.round(fontImg * transformRef.current.scale));
+    setFloatingDraft(text);
+    setFloatingEditor({ rid: key, stage: toStageRect(rect), fontPx, fontImg });
+    onFocusRectRef.current?.(rect);
   }
 
-  function closeFloatingEditor() {
+  // fit이 true면 확대를 풀고 전체 보기로 되돌린다(편집 창이 열려 있었을 때만).
+  function closeFloatingEditor({ fit = false } = {}) {
+    const wasOpen = Boolean(floatingEditorStateRef.current);
     setFloatingEditor(null);
     setFloatingDraft("");
+    if (wasOpen) onFocusRectRef.current?.(null);
+    if (fit && wasOpen) vpRef.current.fit();
   }
 
+  // 편집 내용은 입력하는 대로 이미 반영돼 있다. 닫고 전체 보기로 돌아간다.
   function applyFloatingEditor() {
     if (!floatingEditor?.rid) return false;
-    updateRegionOverride(floatingEditor.rid, { text_override: floatingDraft });
-    closeFloatingEditor();
     const region = overlayControlItems(imageRef.current, overlayRef.current).find((item) => overlayItemKey(item) === String(floatingEditor.rid));
+    closeFloatingEditor({ fit: true });
     setStatus(`${region ? overlayItemLabel(region) : floatingEditor.rid} text 적용`);
     return true;
+  }
+
+  // 박스를 눌렀을 때의 확대 편집 전환: 열려 있으면(같은 박스든 다른 박스든) 닫고 원래 배율로, 닫혀 있으면 연다.
+  function toggleFocusEditorFromClick(key) {
+    const open = floatingEditorStateRef.current;
+    if (open) {
+      // 더블클릭의 두 번째 클릭이 방금 연 편집 창을 바로 닫지 않게 한다.
+      if (open.rid === key && Date.now() - focusOpenedAtRef.current < 450) return;
+      closeFloatingEditor({ fit: true });
+      return;
+    }
+    openFloatingEditor(key);
   }
 
   function regionRectByKey(key) {
@@ -523,17 +578,18 @@ const OverlayCanvas = forwardRef(function OverlayCanvas({ image, overlayGuidance
       return rect ? vpRef.current.ensureVisible(rect) : false;
     },
     isEditorOpen: () => Boolean(floatingEditor),
+    openEditorFor: (key) => { if (key == null) return false; openFloatingEditor(String(key)); return true; },
     openEditorForSelected: () => {
       const key = selectedRegionRef.current;
       const rect = regionRectByKey(key);
       if (!rect) return false;
-      openFloatingEditor(String(key), rect);
+      openFloatingEditor(String(key));
       return true;
     },
     closeEditor: () => {
       if (!floatingEditor) return false;
-      closeFloatingEditor();
-      setStatus("대사 편집 취소");
+      closeFloatingEditor({ fit: true });
+      setStatus("대사 편집 닫기");
       return true;
     },
     commitEditor: () => {
@@ -609,7 +665,38 @@ const OverlayCanvas = forwardRef(function OverlayCanvas({ image, overlayGuidance
 
     const view = vpRef.current.ensure(width, height, img);
     transformRef.current = { scale: view.scale, x: view.x, y: view.y };
+    setViewTick((tick) => tick + 1);
     layer.add(new Konva.Image({ image: img, ...toStageRect([0, 0, img.width, img.height]) }));
+
+    // 제자리 편집 중에는 미리보기에 구워진 그 영역의 글자를 지운 배경(마스크 이미지)으로 덮는다.
+    // 그래야 편집 박스의 글자만 보이고 이중으로 겹치지 않는다.
+    const editing = floatingEditorStateRef.current;
+    if (editing?.rid) {
+      const editRegion = overlayControlItems(imageRef.current, overlayRef.current).find((item) => overlayItemKey(item) === String(editing.rid));
+      const cover = editRegion ? editorCoverRect(editRegion, overlayRegionValue(overlayRef.current, editing.rid), img) : null;
+      if (cover) {
+        const stageCover = toStageRect(cover);
+        const group = new Konva.Group({ clip: stageCover, listening: false });
+        const mask = maskImgRef.current;
+        if (mask) {
+          const sx = mask.width / img.width;
+          const sy = mask.height / img.height;
+          group.add(new Konva.Image({
+            image: mask,
+            ...stageCover,
+            crop: { x: cover[0] * sx, y: cover[1] * sy, width: cover[2] * sx, height: cover[3] * sy },
+          }));
+          // 렌더처럼 수동 지우개 rect는 흰색으로 채운다.
+          overlayEraserRects(overlayRef.current).forEach((rect) => {
+            if (Array.isArray(rect) && rect.length >= 4) group.add(new Konva.Rect({ ...toStageRect(rect), fill: "white" }));
+          });
+        } else {
+          // 마스크 이미지가 없으면 흰색으로 덮는다(말풍선 대부분이 흰 바탕).
+          group.add(new Konva.Rect({ ...stageCover, fill: "white" }));
+        }
+        layer.add(group);
+      }
+    }
 
     overlayEraserRects(overlayRef.current).forEach((rect, index) => {
       if (!Array.isArray(rect) || rect.length < 4) return;
@@ -661,7 +748,7 @@ const OverlayCanvas = forwardRef(function OverlayCanvas({ image, overlayGuidance
           });
           moveRect.on("dblclick dbltap", (event) => {
             event.cancelBubble = true;
-            openFloatingEditor(rid, editableSafeRect);
+            openFloatingEditor(rid);
           });
           moveRect.on("mouseenter", () => setStageCursor("move"));
           moveRect.on("mouseleave", () => setStageCursor("crosshair"));
@@ -692,7 +779,7 @@ const OverlayCanvas = forwardRef(function OverlayCanvas({ image, overlayGuidance
         });
         safeBorder.on("dblclick dbltap", (event) => {
           event.cancelBubble = true;
-          openFloatingEditor(rid, editableSafeRect);
+          openFloatingEditor(rid);
         });
         if (selected) {
           safeBorder.on("mouseenter", () => setStageCursor("grab"));
@@ -783,7 +870,7 @@ const OverlayCanvas = forwardRef(function OverlayCanvas({ image, overlayGuidance
         return;
       }
       const key = overlayItemKey(hit);
-      openFloatingEditor(key, regionDisplayRect(hit));
+      openFloatingEditor(key);
       dragRef.current = null;
       clearPreviewRect();
     };
@@ -823,7 +910,7 @@ const OverlayCanvas = forwardRef(function OverlayCanvas({ image, overlayGuidance
           selectRegionId(null);
           selectedRegionRef.current = null;
         }
-        closeFloatingEditor();
+        closeFloatingEditor({ fit: true });
         dragSeqRef.current += 1;
         dragRef.current = {
           id: dragSeqRef.current,
@@ -844,7 +931,7 @@ const OverlayCanvas = forwardRef(function OverlayCanvas({ image, overlayGuidance
       } else {
         selectRegionId(null);
         selectedRegionRef.current = null;
-        closeFloatingEditor();
+        closeFloatingEditor({ fit: true });
       }
       const safeRect = hit ? regionDisplayRect(hit) : selectedSafeRect();
       const rotationDeg = hit ? rotationForRegion(hitKey) : 0;
@@ -861,6 +948,7 @@ const OverlayCanvas = forwardRef(function OverlayCanvas({ image, overlayGuidance
         active: Boolean(wasSelectedHit && (rotateHit || handle || moveHit)),
         mode,
         handle,
+        hitKey,
         startRect: safeRect,
         startRotation: rotationDeg,
         lastAngle: rotationDeg,
@@ -950,6 +1038,9 @@ const OverlayCanvas = forwardRef(function OverlayCanvas({ image, overlayGuidance
             setStatus(`${keys.length}개 박스 선택`);
           }
         }
+      } else if (drag?.hitKey && !moved && (drag.mode === "select" || drag.mode === "move")) {
+        // 움직이지 않은 클릭: 박스로 확대해 편집하거나, 열려 있으면 닫고 원래 배율로 돌아간다.
+        toggleFocusEditorFromClick(String(drag.hitKey));
       } else if (drag?.mode === "rotate") {
         if (moved && drag.startRect && selectedRegionRef.current) {
           const angle = rotationAngleForPoint(end, drag.startRect, Boolean((event?.evt || event)?.shiftKey));
@@ -1045,9 +1136,27 @@ const OverlayCanvas = forwardRef(function OverlayCanvas({ image, overlayGuidance
     };
   }, [image?.final_url, image?.has_integrated_json, image?.input_url, image?.id]);
 
+  const maskUrl = image?.restore_preview_url || image?.masked_url || "";
+  useEffect(() => {
+    maskImgRef.current = null;
+    if (!maskUrl) return undefined;
+    let cancelled = false;
+    const img = new Image();
+    img.onload = () => {
+      if (cancelled) return;
+      maskImgRef.current = img;
+      if (floatingEditorStateRef.current) draw();
+    };
+    img.src = maskUrl;
+    return () => {
+      cancelled = true;
+      img.onload = null;
+    };
+  }, [maskUrl]);
+
   useEffect(() => {
     draw();
-  }, [image, overlayGuidance, selectedRegionId, extraSelectedIds, eraserActive, selectedEraser]);
+  }, [image, overlayGuidance, selectedRegionId, extraSelectedIds, eraserActive, selectedEraser, floatingEditor]);
 
   const editorRegion = floatingEditor
     ? overlayControlItems(image, overlayGuidance).find((region) => overlayItemKey(region) === String(floatingEditor.rid))
@@ -1069,49 +1178,112 @@ const OverlayCanvas = forwardRef(function OverlayCanvas({ image, overlayGuidance
         </button>
       </div>
       <div id="overlayStageHost" ref={hostRef} />
-      {floatingEditor && editorRegion ? (
-        <div
-          ref={floatingEditorRef}
-          className="floating-text-editor"
-          style={{ left: floatingEditor.x, top: floatingEditor.y }}
-          onPointerDownCapture={(event) => {
-            event.stopPropagation();
-            suppressStagePointerUntilRef.current = Date.now() + 800;
-            dragRef.current = null;
-          }}
-          onMouseDownCapture={(event) => {
-            event.stopPropagation();
-            suppressStagePointerUntilRef.current = Date.now() + 800;
-            dragRef.current = null;
-          }}
-          onMouseUpCapture={(event) => event.stopPropagation()}
-          onPointerDown={(event) => {
-            event.stopPropagation();
-            suppressStagePointerUntilRef.current = Date.now() + 800;
-          }}
-          onMouseDown={(event) => event.stopPropagation()}
-          onMouseUp={(event) => event.stopPropagation()}
-          onClick={(event) => event.stopPropagation()}
-          onDoubleClick={(event) => event.stopPropagation()}
-        >
-          <div className="floating-text-editor-head">
-            <strong>{overlayItemLabel(editorRegion)}</strong><RegionTypeBadge region={editorRegion} />
-            <button type="button" className="icon-button" onClick={closeFloatingEditor} title="닫기">×</button>
+      {floatingEditor && editorRegion ? (() => {
+        const override = overlayRegionValue(overlayGuidance, floatingEditor.rid);
+        const choice = overlayWritingModeChoice(override);
+        const vertical = choice === "vertical";
+        const fontImg = Number(override.font_size) || floatingEditor.fontImg;
+        const fontPx = Math.max(9, Math.round(fontImg * transformRef.current.scale));
+        const liveRect = selectedBoxRect(editorRegion, override);
+        const box = focusEditorBox(liveRect ? toStageRect(liveRect) : floatingEditor.stage);
+        const align = override.text_align || "center";
+        const style = override.font_style || inferredRegionFontStyle(image, editorRegion);
+        const color = /^#[0-9a-f]{6}$/i.test(String(override.font_color || "")) ? override.font_color : "#000000";
+        // 렌더와 같은 줄 간격(글자 크기 x 1.14)으로, 글 묶음을 박스 가운데에 놓는다.
+        const lineHeightPx = fontPx * 1.14;
+        const lineCount = Math.max(1, String(floatingDraft || "").split("\n").length);
+        const blockExtent = lineHeightPx * (lineCount - 1) + fontPx;
+        const crossPad = Math.max(0, ((vertical ? box.width : box.height) - blockExtent) / 2);
+        const serif = /serif/.test(style);
+        const fontWeight = style === "light" ? 300 : /bold|impact|emphasis/.test(style) ? 800 : 500;
+        const patch = (value, key) => updateRegionOverride(floatingEditor.rid, value, key);
+        const stop = (event) => event.stopPropagation();
+        const guard = {
+          onPointerDownCapture: (event) => { event.stopPropagation(); suppressStagePointerUntilRef.current = Date.now() + 800; dragRef.current = null; },
+          onMouseDownCapture: (event) => { event.stopPropagation(); suppressStagePointerUntilRef.current = Date.now() + 800; dragRef.current = null; },
+          onMouseUpCapture: stop,
+          onPointerDown: (event) => { event.stopPropagation(); suppressStagePointerUntilRef.current = Date.now() + 800; },
+          onMouseDown: stop,
+          onMouseUp: stop,
+          onClick: stop,
+          onDoubleClick: stop,
+        };
+        return (
+          <div ref={floatingEditorRef} className="inplace-editor" style={{ left: box.left, top: box.top, width: box.width, height: box.height }} {...guard}>
+            <div className="inplace-toolbar" style={{ left: -Math.min(Math.max(0, box.left + 700 - ((hostRef.current?.clientWidth || 800) - 12)), Math.max(0, box.left - 12)) }}>
+              <strong>{overlayItemLabel(editorRegion)}</strong>
+              <span className="inplace-group inplace-size" title="글자 크기">
+                <button type="button" onClick={() => patch({ font_size: Math.max(8, fontImg - 1) }, `size:${floatingEditor.rid}`)}>−</button>
+                <input
+                  type="number"
+                  min="8"
+                  max="160"
+                  key={fontImg}
+                  defaultValue={fontImg}
+                  onKeyDown={(event) => { if (event.key === "Enter") event.currentTarget.blur(); event.stopPropagation(); }}
+                  onBlur={(event) => {
+                    const value = Math.round(Number(event.target.value));
+                    if (Number.isFinite(value) && value >= 8 && value <= 160 && value !== fontImg) patch({ font_size: value }, `size:${floatingEditor.rid}`);
+                    else event.target.value = fontImg;
+                  }}
+                />
+                <button type="button" onClick={() => patch({ font_size: Math.min(160, fontImg + 1) }, `size:${floatingEditor.rid}`)}>+</button>
+              </span>
+              <span className="inplace-group" title="정렬">
+                {[["left", "좌"], ["center", "중"], ["right", "우"]].map(([id, label]) => (
+                  <button key={id} type="button" className={align === id ? "active" : ""} onClick={() => patch({ text_align: id })}>{label}</button>
+                ))}
+              </span>
+              <span className="inplace-group" title="쓰기 방향">
+                <button type="button" className={vertical ? "" : "active"} onClick={() => patch({ force_horizontal: true, force_vertical: false })}>가로</button>
+                <button type="button" className={vertical ? "active" : ""} onClick={() => patch({ force_vertical: true, force_horizontal: false })}>세로</button>
+              </span>
+              <span className="inplace-group" title="글꼴 스타일">
+                {FONT_STYLES.filter(([id]) => id !== "etc").map(([id, short, label]) => (
+                  <button key={id} type="button" className={style === id ? "active" : ""} title={label} onClick={() => patch({ font_style: id, font_path: "", custom_font_path: "", font_weight: "" })}>{short}</button>
+                ))}
+              </span>
+              <span className="inplace-group" title="글자색">
+                <button type="button" className="swatch" style={{ background: "#000000" }} onClick={() => patch({ font_color: "#000000" })} aria-label="글자 검정" />
+                <button type="button" className="swatch" style={{ background: "#ffffff" }} onClick={() => patch({ font_color: "#ffffff" })} aria-label="글자 흰색" />
+                {"EyeDropper" in window ? (
+                  <button type="button" title="캔버스에서 글자색 찍기" onClick={async () => {
+                    try { const r = await new window.EyeDropper().open(); if (r?.sRGBHex) patch({ font_color: r.sRGBHex }); } catch (_e) { /* 취소 */ }
+                  }}>스포이드</button>
+                ) : null}
+              </span>
+              <button type="button" className="icon-button" onClick={() => closeFloatingEditor({ fit: true })} title="닫고 원래 배율로 (Esc)">×</button>
+            </div>
+            {/* 입력하는 대로 바로 반영된다. Esc는 닫기, Cmd/Ctrl+Enter는 렌더 후 다음 대사로(App의 전역 디스패처). */}
+            <textarea
+              autoFocus
+              wrap="off"
+              spellCheck={false}
+              value={floatingDraft}
+              className={vertical ? "vertical" : ""}
+              style={{
+                fontSize: fontPx,
+                lineHeight: `${lineHeightPx}px`,
+                fontFamily: serif ? '"SourceHanSerifK-Bold", RIDIBatang, "Noto Serif KR", serif' : undefined,
+                fontWeight,
+                textAlign: align,
+                ...(vertical
+                  ? { paddingLeft: crossPad, paddingRight: crossPad, paddingTop: 0, paddingBottom: 0 }
+                  : { paddingTop: crossPad, paddingBottom: 0, paddingLeft: 0, paddingRight: 0 }),
+                color,
+                WebkitTextStroke: `${Math.max(0, (Number.isFinite(Number(override.stroke_width)) ? Number(override.stroke_width) : 2) * transformRef.current.scale * 2)}px ${/^#[0-9a-f]{6}$/i.test(String(override.stroke_color || "")) ? override.stroke_color : "#ffffff"}`,
+              }}
+              onFocus={(event) => { const end = event.target.value.length; event.target.setSelectionRange(end, end); }}
+              onChange={(event) => {
+                const value = event.target.value;
+                setFloatingDraft(value);
+                updateRegionOverride(floatingEditor.rid, { text_override: value }, `text:${floatingEditor.rid}`);
+              }}
+              placeholder="번역문을 입력하세요"
+            />
           </div>
-          {/* Esc(취소)와 Cmd/Ctrl+Enter(반영 후 render)는 App의 전역 디스패처가 처리한다. */}
-          <textarea
-            rows={7}
-            autoFocus
-            value={floatingDraft}
-            onChange={(event) => setFloatingDraft(event.target.value)}
-            placeholder="번역문을 입력하세요"
-          />
-          <div className="floating-text-editor-actions">
-            <button type="button" onClick={closeFloatingEditor}>Cancel</button>
-            <button type="button" className="primary" onClick={applyFloatingEditor}>Apply</button>
-          </div>
-        </div>
-      ) : null}
+        );
+      })() : null}
     </div>
   );
 });

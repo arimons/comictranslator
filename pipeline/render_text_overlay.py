@@ -441,12 +441,21 @@ def overlay_override_stroke_width(override: dict | None, default_width: int) -> 
     return max(0, min(12, width))
 
 
-def overlay_override_font_color(override: dict | None, default_color: tuple[int, int, int]) -> tuple[int, int, int]:
-    """수동 글자색(#RRGGBB)을 RGB로 바꾼다. 형식이 맞지 않으면 기본색을 쓴다."""
-    value = str((override or {}).get("font_color") or "").strip()
+def _override_hex_color(override: dict | None, key: str, default_color: tuple[int, int, int]) -> tuple[int, int, int]:
+    value = str((override or {}).get(key) or "").strip()
     if not re.fullmatch(r"#[0-9a-fA-F]{6}", value):
         return default_color
     return (int(value[1:3], 16), int(value[3:5], 16), int(value[5:7], 16))
+
+
+def overlay_override_font_color(override: dict | None, default_color: tuple[int, int, int]) -> tuple[int, int, int]:
+    """수동 글자색(#RRGGBB)을 RGB로 바꾼다. 형식이 맞지 않으면 기본색을 쓴다."""
+    return _override_hex_color(override, "font_color", default_color)
+
+
+def overlay_override_stroke_color(override: dict | None, default_color: tuple[int, int, int]) -> tuple[int, int, int]:
+    """수동 외곽선색(#RRGGBB)을 RGB로 바꾼다. 형식이 맞지 않으면 기본색을 쓴다."""
+    return _override_hex_color(override, "stroke_color", default_color)
 
 
 def overlay_override_has_manual_layout(override: dict | None) -> bool:
@@ -4989,6 +4998,7 @@ def apply_text_overlay(
             text_stroke_fill = (255, 255, 255)
         text_stroke_width = overlay_override_stroke_width(override, text_stroke_width)
         text_fill = overlay_override_font_color(override, text_fill)
+        text_stroke_fill = overlay_override_stroke_color(override, text_stroke_fill)
         rotation_deg = overlay_override_rotation_deg(override)
         font_weight = overlay_override_font_weight(override)
         text_align = overlay_override_text_align(override)

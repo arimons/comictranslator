@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import EditorCanvas from "./EditorCanvas.jsx";
 import OverlayCanvas from "./OverlayCanvas.jsx";
-import RegionTypeBadge from "./RegionTypeBadge.jsx";
+import OriginalFocusPane from "./OriginalFocusPane.jsx";
 import { TEXT_BASED, regionProcessingBasis, regionTypeLabel, regionDetectionLabel, regionBindingKey } from "./regionTypes.js";
 import ShortcutHelp from "./ShortcutHelp.jsx";
 import SourceLinks from "./SourceLinks.jsx";
@@ -41,12 +41,10 @@ import {
   canRenderOverlayImage,
   imageNeedsAnalysis,
   imageSummaryOf,
-  regionSegmentSiblingCount,
   overlayGuidancePayload,
   baseRegionText,
   regionCluster,
   inferredRegionFontStyle,
-  inferredRegionWritingMode,
   overlayWritingModeChoice,
   overlayItemFontSize,
   overlayRegionValue,
@@ -133,6 +131,7 @@ export default function App() {
   const [selectedRegionId, setSelectedRegionId] = useState(null);
   // Shift/Cmd+클릭으로 더한 추가 선택. 글꼴·크기 같은 공통 스타일만 한꺼번에 바꾼다.
   const [extraSelectedIds, setExtraSelectedIds] = useState([]);
+  const [overlayFocusRect, setOverlayFocusRect] = useState(null);
   const [guidance, setGuidance] = useState(defaultGuidance(null));
   const [overlayGuidance, setOverlayGuidance] = useState(defaultOverlayGuidance(null));
   const [layers, setLayers] = useState({ tg: true, regions: true, guidance: true });
@@ -345,6 +344,7 @@ export default function App() {
   const selectedCvGroups = imageGroups(selected).filter((group) => (selectedGuidanceRegion?.anchor_ids || [selectedTg]).map(Number).includes(tgId(group)));
   const selectedCvText = selectedCvGroups.map((group) => group.text || (group.lines || []).map((line) => line.text || (line.fragments || []).map((fragment) => fragment.text || "").join("")).filter(Boolean).join("\n")).filter(Boolean).join("\n\n");
   const selectedPageId = selected?.id || "";
+  useEffect(() => { setOverlayFocusRect(null); }, [selectedPageId, activeTab]);
 
   useEffect(() => {
     setSpeakerByTg({});
@@ -663,9 +663,9 @@ export default function App() {
       if (fontWeight) next.font_weight = fontWeight;
       else delete next.font_weight;
     }
-    if ("font_color" in next && !/^#[0-9a-fA-F]{6}$/.test(String(next.font_color || ""))) {
-      delete next.font_color;
-    }
+    ["font_color", "stroke_color"].forEach((key) => {
+      if (key in next && !/^#[0-9a-fA-F]{6}$/.test(String(next[key] || ""))) delete next[key];
+    });
     if ("stroke_width" in next) {
       const strokeWidth = normalizedStrokeWidth(next.stroke_width);
       if (strokeWidth !== null) next.stroke_width = strokeWidth;
@@ -734,13 +734,6 @@ export default function App() {
     }, { historyKey });
   }
 
-  function setOverlayRegionSegmentMode(region, mode) {
-    if (!region || !["merge", "split"].includes(mode)) return;
-    const key = overlayRegionBaseKey(region);
-    updateOverlayRegion(key, { segment_mode: mode });
-    setStatus(`R${regionId(region)} segment ${mode}`);
-  }
-
   function overlayImageBounds() {
     const allRects = overlayRegions
       .flatMap((item) => [item.safe_text_rect, item.unboxed_rect, item.bubble_rect, item.source_rect])
@@ -756,11 +749,6 @@ export default function App() {
   function regionBaseSafeRect(region) {
     if (!region) return [0, 0, OVERLAY_MIN_RECT_SIZE, OVERLAY_MIN_RECT_SIZE];
     return region.safe_text_rect || region.unboxed_rect || region.bubble_rect || region.source_rect || [0, 0, OVERLAY_MIN_RECT_SIZE, OVERLAY_MIN_RECT_SIZE];
-  }
-
-  function regionSafeRectValue(region, override = overlayRegionValue(overlayGuidance, overlayItemKey(region))) {
-    const rect = override.safe_text_rect || regionBaseSafeRect(region);
-    return rect.slice(0, 4).map((value) => Math.round(Number(value) || 0));
   }
 
   function clampOverlayRect(rect) {
@@ -783,22 +771,6 @@ export default function App() {
       width,
       height,
     ];
-  }
-
-  function updateOverlaySafeRectField(rid, region, field, value) {
-    const index = { x: 0, y: 1, w: 2, h: 3 }[field];
-    if (index == null) return;
-    const rect = regionSafeRectValue(region);
-    const parsed = Number(value);
-    if (!Number.isFinite(parsed)) return;
-    rect[index] = parsed;
-    updateOverlayRegion(rid, { safe_text_rect: clampOverlayRect(rect) }, `rect:${rid}:${field}`);
-  }
-
-  function setOverlayTextAlign(rid, region, align) {
-    if (!rid || !region || !["left", "center", "right"].includes(align)) return;
-    updateOverlayRegion(rid, { text_align: align });
-    setStatus(`${overlayItemLabel(region)} text ${align}`);
   }
 
   function bumpOverlayEditVersion() {
@@ -1123,19 +1095,6 @@ export default function App() {
     if (!size) return;
     updateOverlayStyle({ font_size: size }, "size");
     if (isGroupSelection) setStatus(`${groupKeys.length}개 font size ${size}로 통일`);
-  }
-
-  function setOverlayWritingMode(rid, mode) {
-    if (!rid) return;
-    if (mode === "horizontal") {
-      updateOverlayRegion(rid, { force_horizontal: true, force_vertical: false });
-      setStatus(`${overlayKeyLabel(rid)} 가로쓰기`);
-      return;
-    }
-    if (mode === "vertical") {
-      updateOverlayRegion(rid, { force_vertical: true, force_horizontal: false });
-      setStatus(`${overlayKeyLabel(rid)} 세로쓰기`);
-    }
   }
 
   function moveSelectedSafeRect(dx, dy) {
@@ -1639,8 +1598,9 @@ export default function App() {
     "overlay.openEditor": () => overlayCanvasRef.current?.openEditorForSelected() ?? false,
     "overlay.style": (_event, style) => {
       const rid = selectedRegionRefValue();
-      updateOverlayRegion(rid, overlayFontStylePatch(style));
-      setStatus(`${overlayKeyLabel(rid)} style ${style}`);
+      // 여러 박스를 골랐으면 모두에 적용한다.
+      updateOverlayStyle(overlayFontStylePatch(style));
+      setStatus(isGroupSelection ? `${groupKeys.length}개 style ${style}` : `${overlayKeyLabel(rid)} style ${style}`);
     },
     "overlay.fontSize": (event, sign) => {
       // 일반 키보드의 + 는 Shift+= 라 1 step, 숫자패드 +/- 는 3 step
@@ -2616,6 +2576,41 @@ export default function App() {
     );
   }
 
+  // 브라우저 스포이드로 화면의 색을 찍는다(Chromium 계열). 취소하면 아무것도 바꾸지 않는다.
+  async function pickColorFromScreen(apply) {
+    try {
+      const result = await new window.EyeDropper().open();
+      if (result?.sRGBHex) apply(result.sRGBHex);
+    } catch (_error) {
+      // 사용자가 Esc로 취소
+    }
+  }
+
+  // 색 지정(글자색·외곽선색). 여러 박스를 골랐으면 모두에 적용하고, 기본 버튼은 지정을 지워 기본색으로 되돌린다.
+  function renderColorField(label, key, defaultHex, title) {
+    const value = (isGroupSelection ? groupValue((o) => o[key] || "") : selectedOverlayOverride[key]) || defaultHex;
+    return (
+      <div className="field compact-field">
+        <label>{label}</label>
+        <div className="color-field">
+          <input
+            type="color"
+            value={value}
+            onChange={(e) => updateOverlayStyle({ [key]: e.target.value }, key)}
+            disabled={!selectedRegionRefValue()}
+            title={title}
+          />
+          <button type="button" className="swatch" style={{ background: "#000000" }} onClick={() => updateOverlayStyle({ [key]: "#000000" }, key)} disabled={!selectedRegionRefValue()} title="검정" aria-label="검정" />
+          <button type="button" className="swatch" style={{ background: "#ffffff" }} onClick={() => updateOverlayStyle({ [key]: "#ffffff" }, key)} disabled={!selectedRegionRefValue()} title="흰색" aria-label="흰색" />
+          {typeof window !== "undefined" && "EyeDropper" in window ? (
+            <button type="button" onClick={() => pickColorFromScreen((hex) => updateOverlayStyle({ [key]: hex }, key))} disabled={!selectedRegionRefValue()} title="화면(캔버스)에서 색을 찍어 지정합니다">스포이드</button>
+          ) : null}
+          <button type="button" onClick={() => updateOverlayStyle({ [key]: "" })} disabled={!selectedRegionRefValue()} title="기본색으로 되돌립니다">기본</button>
+        </div>
+      </div>
+    );
+  }
+
   // 글자 크기 조절. 텍스트 편집 영역 아래에 두며, 여러 박스를 골랐으면 모두에 적용된다.
   function renderFontSizeControl() {
     const value = isGroupSelection ? groupFontSize : selectedFontSize;
@@ -2636,124 +2631,6 @@ export default function App() {
           title="숫자를 입력하고 Enter를 누르면 이 크기로 지정합니다(여러 박스를 골랐으면 모두 같은 크기로 통일)"
         />
         <button type="button" onClick={() => adjustOverlayStyleFontSize(1)} disabled={!selectedRegionRefValue()}>+</button>
-      </div>
-    );
-  }
-
-  function renderOverlayRegionCard(region) {
-    const rid = overlayItemKey(region);
-    const override = overlayRegionValue(overlayGuidance, rid);
-    const baseRid = overlayRegionBaseKey(region);
-    const baseOverride = overlayRegionValue(overlayGuidance, baseRid);
-    const segmentMode = baseOverride.segment_mode || "auto";
-    const hasSegmentSiblings = regionSegmentSiblingCount(selected, region) > 1 || overlayRegions.filter((item) => regionId(item) === regionId(region)).length > 1 || region.source_segment_index != null;
-    const writingChoice = overlayWritingModeChoice(override);
-    const inferredWritingMode = inferredRegionWritingMode(selected, region);
-    const text = override.text_override ?? baseRegionText(selected, region);
-    const safeRectValue = regionSafeRectValue(region, override);
-    const rotationValue = Math.round(Number(override.rotation_deg || 0) || 0);
-    const textAlign = override.text_align || "center";
-    return (
-      <div key={rid} className={`region-card active`} onClick={() => setSelectedRegionTracked(rid)}>
-        <div className="region-card-head">
-          <strong>{overlayItemLabel(region)}</strong>
-          <RegionTypeBadge region={region} />
-          <div className="region-card-controls" onClick={(event) => event.stopPropagation()}>
-            {hasSegmentSiblings ? (
-              <div className="segment-mode-controls" title="같은 영역 안 segment 렌더 단위를 강제합니다">
-                <button
-                  type="button"
-                  className={segmentMode === "merge" ? "active" : ""}
-                  onClick={() => setOverlayRegionSegmentMode(region, "merge")}
-                >
-                  Merge
-                </button>
-                <button
-                  type="button"
-                  className={segmentMode === "split" ? "active" : ""}
-                  onClick={() => setOverlayRegionSegmentMode(region, "split")}
-                >
-                  Split
-                </button>
-              </div>
-            ) : null}
-            <label className="writing-toggle" title={`자동 배치${inferredWritingMode ? ` · 추정 ${inferredWritingMode === "vertical" ? "세로" : "가로"}` : ""}`}>
-              <input
-                type="radio"
-                name={`writing-mode-${rid}`}
-                value="auto"
-                checked={writingChoice === "auto"}
-                onChange={() => updateOverlayRegion(rid, { force_horizontal: false, force_vertical: false })}
-              />
-              <span>자동</span>
-            </label>
-            <label className="writing-toggle" title="가로쓰기 강제">
-              <input
-                type="radio"
-                name={`writing-mode-${rid}`}
-                value="horizontal"
-                checked={writingChoice === "horizontal"}
-                onChange={() => setOverlayWritingMode(rid, "horizontal")}
-              />
-              <span>가로</span>
-            </label>
-            <label className="writing-toggle" title="세로쓰기 강제">
-              <input
-                type="radio"
-                name={`writing-mode-${rid}`}
-                value="vertical"
-                checked={writingChoice === "vertical"}
-                onChange={() => setOverlayWritingMode(rid, "vertical")}
-              />
-              <span>세로</span>
-            </label>
-          </div>
-        </div>
-        <div className="region-editor-grid">
-          <textarea
-            value={text}
-            onClick={(event) => event.stopPropagation()}
-            onChange={(event) => updateOverlayRegion(rid, { text_override: event.target.value }, `text:${rid}`)}
-          />
-          <div className="region-text-meta">{text.split("\n").length}줄 · {text.replace(/\s/g, "").length}자 · 줄바꿈은 Enter로 직접 지정합니다</div>
-          {renderFontSizeControl()}
-          <div className="region-bbox-grid" onClick={(event) => event.stopPropagation()}>
-            <div className="text-align-controls" title="safe rect 안에서 텍스트를 좌/중/우 정렬합니다">
-              <button type="button" className={textAlign === "left" ? "active" : ""} onClick={() => setOverlayTextAlign(rid, region, "left")} title="텍스트 좌측 정렬">|←</button>
-              <button type="button" className={textAlign === "center" ? "active" : ""} onClick={() => setOverlayTextAlign(rid, region, "center")} title="텍스트 중앙 정렬">↔</button>
-              <button type="button" className={textAlign === "right" ? "active" : ""} onClick={() => setOverlayTextAlign(rid, region, "right")} title="텍스트 우측 정렬">→|</button>
-            </div>
-            {[
-              ["x", "X", safeRectValue[0]],
-              ["y", "Y", safeRectValue[1]],
-              ["w", "W", safeRectValue[2]],
-              ["h", "H", safeRectValue[3]],
-            ].map(([field, label, value]) => (
-              <label key={field}>
-                <span>{label}</span>
-                <input
-                  type="number"
-                  value={value}
-                  min={field === "w" || field === "h" ? OVERLAY_MIN_RECT_SIZE : 0}
-                  step="1"
-                  onChange={(event) => updateOverlaySafeRectField(rid, region, field, event.target.value)}
-                />
-              </label>
-            ))}
-            <label>
-              <span>°</span>
-              <input
-                type="number"
-                value={rotationValue}
-                min="-45"
-                max="45"
-                step="1"
-                title="회전 각도"
-                onChange={(event) => updateOverlayRegion(rid, { rotation_deg: event.target.value }, `rotation:${rid}`)}
-              />
-            </label>
-          </div>
-        </div>
       </div>
     );
   }
@@ -3546,7 +3423,7 @@ export default function App() {
                 </div>
               </div>
               <div className="preview-body overlay-preview-body">
-                {selected?.input_url ? <img src={selected.input_url} /> : <div className="empty">원본 이미지 없음</div>}
+                <OriginalFocusPane src={selected?.input_url} focusRect={overlayFocusRect} />
               </div>
             </section>
             <section className="viewer-card overlay-stage-card overlay-source-card">
@@ -3569,6 +3446,7 @@ export default function App() {
                     extraSelectedIds={extraSelectedIds}
                     onToggleRegion={toggleRegionInGroup}
                     onSelectRegions={selectRegionsInGroup}
+                    onFocusRect={setOverlayFocusRect}
                     setStatus={setStatus}
                     onRequestApply={() => setOverlayApplyRequest((count) => count + 1)}
                   />
@@ -3717,7 +3595,7 @@ export default function App() {
                   </div>
                   <button type="button" onClick={() => setExtraSelectedIds([])}>추가 선택 해제</button>
                 </div>
-              ) : selectedRegion ? renderOverlayRegionCard(selectedRegion) : <div className="empty compact-empty">Region을 선택하세요. Shift/Cmd+클릭으로 여러 개를 고를 수 있습니다.</div>}
+              ) : selectedRegion ? null : <div className="empty compact-empty">Region을 선택하세요. Shift/Cmd+클릭으로 여러 개를 고를 수 있습니다.</div>}
             </div>
             <div className="selected-overlay-pane overlay-style-section">
               <div className="side-section-head overlay-style-head">
@@ -3734,6 +3612,7 @@ export default function App() {
                   >
                     <span className={`font-style-sample sample-${id}`}>{sample}</span>
                     <span className="font-style-name">{label}</span>
+                    <kbd className="font-style-key">{shortcutById(`overlay.style.${id}`)}</kbd>
                   </button>
                 ))}
               </div>
@@ -3774,19 +3653,7 @@ export default function App() {
                     </select>
                   </div>
                 )}
-                <div className="field compact-field">
-                  <label>Text color</label>
-                  <div className="color-field">
-                    <input
-                      type="color"
-                      value={(isGroupSelection ? groupValue((o) => o.font_color || "") : selectedOverlayOverride.font_color) || "#000000"}
-                      onChange={(e) => updateOverlayStyle({ font_color: e.target.value }, "color")}
-                      disabled={!selectedRegionRefValue()}
-                      title="글자색. 외곽선은 그대로 흰색입니다"
-                    />
-                    <button type="button" onClick={() => updateOverlayStyle({ font_color: "" })} disabled={!selectedRegionRefValue()} title="기본 글자색(검정)으로 되돌립니다">기본</button>
-                  </div>
-                </div>
+                {renderColorField("Text color", "font_color", "#000000", "글자색. 기본은 검정입니다")}
                 <div className="field compact-field">
                   <label>Outline</label>
                   <input
@@ -3798,6 +3665,7 @@ export default function App() {
                     disabled={!selectedRegionRefValue()}
                   />
                 </div>
+                {renderColorField("Outline color", "stroke_color", "#ffffff", "외곽선색. 기본은 흰색입니다")}
               </div>
             </div>
           </div>

@@ -161,7 +161,7 @@ textarea {
 }
 
 .app.workspace-mode.overlay-mode {
-  grid-template-columns: minmax(0, 1fr) clamp(420px, 36vw, 560px);
+  grid-template-columns: minmax(0, 1fr) clamp(340px, 26vw, 420px);
 }
 
 .app.workspace-mode.overlay-mode.tools-collapsed {
@@ -1272,7 +1272,7 @@ button.wide {
 .overlay-grid {
   min-height: 0;
   display: grid;
-  grid-template-columns: minmax(320px, 0.8fr) minmax(620px, 1.2fr);
+  grid-template-columns: minmax(320px, 1fr) minmax(560px, 1fr);
   gap: 10px;
   overflow: hidden;
 }
@@ -1380,25 +1380,40 @@ button.wide {
 
 .font-style-toolbar {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 6px;
-  margin-bottom: 8px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 4px;
+  margin-bottom: 6px;
 }
 
 .font-style-toolbar button {
-  min-height: 40px;
-  padding: 5px 6px;
+  min-height: 32px;
+  padding: 3px 5px;
   display: grid;
-  grid-template-columns: 24px minmax(0, 1fr);
-  gap: 5px;
+  grid-template-columns: 22px minmax(0, 1fr) auto;
+  gap: 4px;
   align-items: center;
   text-align: left;
   font-weight: 800;
 }
 
+.font-style-key {
+  min-width: 14px;
+  padding: 0 4px;
+  border-radius: 4px;
+  background: rgba(15, 23, 42, 0.08);
+  color: var(--muted);
+  font: 800 10px/15px inherit;
+  text-align: center;
+}
+
+.font-style-toolbar button.active .font-style-key {
+  background: rgba(255, 255, 255, 0.25);
+  color: white;
+}
+
 .font-style-sample {
-  width: 24px;
-  height: 24px;
+  width: 22px;
+  height: 22px;
   display: grid;
   place-items: center;
   border-radius: 6px;
@@ -1491,11 +1506,18 @@ button.wide {
 }
 
 .overlay-style-fields {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 8px;
-  align-items: end;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 8px;
+  align-items: flex-end;
 }
+
+.overlay-style-fields .compact-field { flex: 0 0 auto; }
+.overlay-style-fields .compact-field:first-child { flex: 1 1 140px; min-width: 0; }
+.overlay-style-fields .compact-field label { margin-bottom: 2px; font-size: 11px; }
+.overlay-style-fields .compact-field select,
+.overlay-style-fields .compact-field input[type="number"] { min-height: 30px; padding: 3px 6px; font-size: 12px; }
+.overlay-style-fields .compact-field input[type="number"] { width: 62px; }
 
 .overlay-style-fields .compact-field {
   margin-top: 0;
@@ -1650,6 +1672,34 @@ button.wide {
   padding: 10px;
   line-height: 1.45;
   font-size: 15px;
+}
+
+.floating-text-editor.focus-edit {
+  min-height: 0;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+}
+
+.floating-text-editor.focus-edit textarea {
+  min-height: 0;
+  min-width: 0;
+  resize: none;
+  white-space: pre;
+  overflow: auto;
+  line-height: 1.5;
+  background: white;
+}
+
+.focus-edit-size {
+  margin-left: auto;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.focus-edit-hint {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 700;
 }
 
 .floating-text-editor-actions {
@@ -2607,6 +2657,10 @@ button.wide {
 }
 
 .region-text-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
   margin-top: -4px;
   color: var(--muted);
   font-size: 11px;
@@ -3406,6 +3460,8 @@ select.memo-key { width: 100%; padding: 2px; font-size: 12px; }
 .overlay-group-chips { display: flex; flex-wrap: wrap; gap: 4px; }
 .overlay-group-chip { padding: 1px 7px; border: 1px solid var(--blue); border-radius: 10px; color: var(--blue); }
 .group-font-size-input { width: 56px; text-align: center; }
+.region-text-preview { max-height: 5.4em; overflow: hidden; padding: 8px 10px; border: 1px solid var(--line); border-radius: 6px; background: #f8fafc; font-size: 12.5px; line-height: 1.45; white-space: pre-wrap; word-break: break-word; cursor: pointer; }
+.region-text-preview:hover { border-color: var(--blue); }
 .region-size-control { display: flex; align-items: center; gap: 6px; }
 .region-size-label { color: var(--muted); font-size: 11px; font-weight: 800; }
 .color-field { display: flex; align-items: center; gap: 6px; }
@@ -3423,3 +3479,124 @@ select.memo-key { width: 100%; padding: 2px; font-size: 12px; }
 .dialogue-original { color: var(--muted); }
 .dialogue-original-toggle { margin-left: auto; padding: 1px 8px; font-size: 11px; }
 .dialogue-row.active .dialogue-original, .dialogue-row.active .dialogue-translation { -webkit-line-clamp: unset; display: block; }
+
+/* 확대된 영역 위에 겹치는 제자리 편집 박스 */
+.inplace-editor {
+  position: absolute;
+  z-index: 20;
+}
+
+.inplace-editor textarea {
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  min-width: 0;
+  resize: none;
+  padding: 6px 10px;
+  border: 2px solid #2563eb;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.9);
+  box-shadow: 0 6px 22px rgba(17, 24, 39, 0.22);
+  white-space: pre;
+  overflow: hidden;
+  line-height: 1.3;
+}
+
+.inplace-editor textarea.vertical {
+  writing-mode: vertical-rl;
+  text-orientation: upright;
+  line-height: 1.3;
+}
+
+.inplace-toolbar {
+  position: absolute;
+  left: 0;
+  bottom: calc(100% + 6px);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 6px;
+  border: 1px solid rgba(17, 24, 39, 0.18);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.97);
+  box-shadow: 0 6px 18px rgba(17, 24, 39, 0.16);
+  white-space: nowrap;
+}
+
+.inplace-toolbar strong {
+  font-size: 12px;
+}
+
+.inplace-group {
+  display: inline-flex;
+  gap: 2px;
+}
+
+.inplace-toolbar button {
+  min-height: 24px;
+  min-width: 24px;
+  padding: 2px 6px;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.inplace-toolbar button.active {
+  background: #2563eb;
+  border-color: #2563eb;
+  color: white;
+}
+
+.color-field button.swatch, .inplace-toolbar button.swatch { width: 24px; min-width: 24px; height: 24px; min-height: 24px; padding: 0; border: 1px solid #9ca3af; border-radius: 50%; }
+.color-field button.swatch { width: 28px; min-width: 28px; height: 28px; min-height: 28px; }
+
+/* 원본 패널: 캔버스의 확대 편집과 같은 영역으로 맞춰 확대 */
+.original-focus-pane {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  display: grid;
+  align-items: center;
+}
+
+.original-focus-stage:not(.zoomed) { width: 100%; height: 100%; }
+.original-focus-stage:not(.zoomed) img { width: 100%; height: 100%; object-fit: contain; }
+.original-focus-stage.zoomed { position: absolute; left: 0; top: 0; transform-origin: 0 0; transition: transform 0.15s ease-out; }
+.original-focus-stage.zoomed img { width: 100%; height: 100%; display: block; }
+.original-focus-box { position: absolute; border: 2px solid #2563eb; box-sizing: border-box; pointer-events: none; }
+
+.region-details { margin-top: 6px; font-size: 12px; }
+.region-details summary { cursor: pointer; color: var(--muted); font-weight: 700; }
+.inplace-size input { width: 44px; min-height: 24px; padding: 0 4px; text-align: center; font-size: 12px; }
+
+/* 파워포인트 텍스트 박스처럼 영역 위에 글자를 직접 그린다: 투명 배경, 얇은 점선 테두리, 실제 외곽선 */
+.inplace-editor textarea {
+  background: transparent;
+  border: 1px dashed #2563eb;
+  border-radius: 2px;
+  box-shadow: none;
+  paint-order: stroke fill;
+  caret-color: #2563eb;
+  padding: 2px 4px;
+  outline: none;
+}
+
+.inplace-editor textarea { line-height: 1.2; }
+
+/* 빨간 선택 박스가 곧 텍스트 박스: 별도 테두리 없이 글자만 그 위에 직접 쓴다 */
+.inplace-editor { pointer-events: none; }
+.inplace-editor textarea, .inplace-toolbar { pointer-events: auto; }
+.inplace-editor textarea {
+  border: none;
+  border-radius: 0;
+  /* 투명: 그 영역의 구워진 글자는 캔버스에서 마스크 배경으로 덮는다(OverlayCanvas draw) */
+  background: transparent;
+  box-shadow: none;
+  box-sizing: border-box;
+  overflow: hidden;
+  scrollbar-width: none;
+  padding: 0;
+}
+.inplace-editor textarea:focus { outline: none; }
+
+.inplace-editor textarea::-webkit-scrollbar { display: none; }

@@ -1148,6 +1148,13 @@ class RenderTextOverlayTest(unittest.TestCase):
             self.assertEqual(overlay_override_font_color({"font_color": bad}, default), default)
         self.assertEqual(overlay_override_font_color(None, default), default)
 
+        from pipeline.render_text_overlay import overlay_override_stroke_color
+
+        white = (255, 255, 255)
+        self.assertEqual(overlay_override_stroke_color({"stroke_color": "#112233"}, white), (17, 34, 51))
+        self.assertEqual(overlay_override_stroke_color({"stroke_color": "blue"}, white), white)
+        self.assertEqual(overlay_override_stroke_color({}, white), white)
+
     def test_llm_lines_are_kept_with_smaller_font_when_nothing_fits_min_size(self) -> None:
         if not Path(FONT_PATH).exists():
             self.skipTest(f"font not found: {FONT_PATH}")
