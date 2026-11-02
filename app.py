@@ -528,7 +528,15 @@ def session_home_progress(base: Path, images: list[dict[str, Any]], updated_ts: 
     return {"analysis_count": analysis_count, "final_count": final_count, "_updated_ts": updated_ts}
 
 
-def list_recent_sessions(limit: int = 10) -> list[dict[str, Any]]:
+def list_recent_sessions(limit: int | None = 10, offset: int = 0) -> list[dict[str, Any]]:
+    return recent_sessions_page(limit, offset)[0]
+
+
+def recent_sessions_page(limit: int | None, offset: int = 0, sort: str = "recent") -> tuple[list[dict[str, Any]], int]:
+    """(해당 구간의 프로젝트 목록, 합쳐진 뒤 전체 프로젝트 수). limit=None이면 offset부터 끝까지.
+
+    sort="recent"는 최근 작업순, "name"은 프로젝트 이름(없으면 원본 폴더명) 자연순이다.
+    """
     raw_sessions: list[dict[str, Any]] = []
     for session_json in manifest_files(SESSION_ROOT):
         data = load_json(session_json, default={})
@@ -575,13 +583,16 @@ def list_recent_sessions(limit: int = 10) -> list[dict[str, Any]]:
             grouped.append(session)
 
     grouped.sort(key=lambda item: item.get("_updated_ts", 0), reverse=True)
+    if sort == "name":
+        grouped.sort(key=lambda item: natural_name_key(item.get("project_name") or item.get("source_folder_name") or item["session_id"]))
     sessions: list[dict[str, Any]] = []
-    for item in grouped[:limit]:
+    end = None if limit is None else offset + limit
+    for item in grouped[offset:end]:
         item = dict(item)
         item.pop("_updated_ts", None)
         item.pop("_image_hashes", None)
         sessions.append(item)
-    return sessions
+    return sessions, len(grouped)
 
 
 def natural_name_key(value: str) -> tuple[Any, ...]:
@@ -3473,8 +3484,11 @@ def create_app() -> FastAPI:
         return {"session": data}
 
     @app.get("/api/sessions/recent")
-    def recent_sessions() -> dict[str, Any]:
-        return {"sessions": list_recent_sessions()}
+    def recent_sessions(limit: int = 12, offset: int = 0, sort: str = "recent") -> dict[str, Any]:
+        # 홈은 먼저 limit개만 받고, 스크롤하면 offset을 늘려 이어 받는다. total은 합쳐진 뒤 전체 프로젝트 수.
+        limit, offset = max(1, min(limit, 200)), max(0, offset)
+        sessions, total = recent_sessions_page(limit, offset, "name" if sort == "name" else "recent")
+        return {"sessions": sessions, "total": total, "offset": offset, "has_more": offset + len(sessions) < total}
 
     _CODE_MTIMES.update(loaded_code_mtimes())
 

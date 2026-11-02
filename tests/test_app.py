@@ -216,6 +216,30 @@ def test_delete_session_endpoint_removes_project(tmp_path, monkeypatch):
     assert all(item["session_id"] != session_id for item in response.json()["sessions"])
 
 
+def test_recent_sessions_page_offsets_and_name_sort(tmp_path, monkeypatch):
+    import os
+
+    monkeypatch.setattr(app, "SESSION_ROOT", tmp_path / "sessions")
+    # 이름순은 자연순(권 번호 숫자 비교)이고, 최근 작업순은 수정 시각 역순이다.
+    for index, name in enumerate(["권10", "권2", "권1", "나", "가"]):
+        data = app.ensure_session(f"s{index}")
+        data["project_name"] = name
+        data["images"] = [{"id": "p", "name": "p.jpg", "input_path": str(tmp_path / f"{index}.jpg")}]
+        app.save_session(data)
+        os.utime(app.session_file(f"s{index}"), (1000 + index, 1000 + index))
+
+    first, total = app.recent_sessions_page(2, 0)
+    second, _ = app.recent_sessions_page(2, 2)
+    rest, _ = app.recent_sessions_page(None, 4)
+    assert total == 5
+    assert [item["session_id"] for item in first + second + rest] == ["s4", "s3", "s2", "s1", "s0"]
+
+    by_name, _ = app.recent_sessions_page(None, 0, sort="name")
+    assert [item["project_name"] for item in by_name] == ["가", "권1", "권2", "권10", "나"]
+    page, _ = app.recent_sessions_page(2, 2, sort="name")
+    assert [item["project_name"] for item in page] == ["권2", "권10"]
+
+
 def test_list_recent_sessions_dedupes_same_hash_and_subset_sessions(tmp_path, monkeypatch):
     monkeypatch.setattr(app, "SESSION_ROOT", tmp_path / "sessions")
     image_paths = {}

@@ -15,7 +15,7 @@ function workDate(value) {
 
 export default function StartScreen({
   images, recentSessions, projectName, onProjectNameChange, saveProjectName,
-  recentLoadState, loadRecentSessions,
+  recentLoadState, loadRecentSessions, recentSort, changeRecentSort, recentHasMore, recentLoadingMore, loadMoreRecentSessions,
   importNameFocusRequest,
   pagePreparationControl, sourceLinksControl, pagePreviewMode,
   folderPath, setFolderPath, fileRef, uploadFiles, uploadFromInput, importPath,
@@ -23,6 +23,17 @@ export default function StartScreen({
   startRegionAnalysis, splitLandscape, setSplitLandscape, removeLoadedImage, openRecentSession, openSessionForSetup, recentMenuId, setRecentMenuId,
   renameRecentSession, deleteRecentSession, status, setStatus,
 }) {
+  const recentEndRef = useRef(null);
+  useEffect(() => {
+    const node = recentEndRef.current;
+    if (!node || !recentHasMore || typeof IntersectionObserver === "undefined") return undefined;
+    const observer = new IntersectionObserver((entries) => {
+      if (entries.some((entry) => entry.isIntersecting)) loadMoreRecentSessions();
+    }, { rootMargin: "300px" });
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, [recentHasMore, recentSessions.length, loadMoreRecentSessions]);
+
   const folderRef = useRef(null);
   const [serverPickerOpen, setServerPickerOpen] = useState(false);
   const nameRef = useRef(null);
@@ -99,7 +110,7 @@ export default function StartScreen({
               </section>
 
               <section className="home-recent" aria-labelledby="recent-heading">
-                <div className="section-title-row"><h2 id="recent-heading">최근 프로젝트</h2><span className="home-hint">최근 작업순</span></div>
+                <div className="section-title-row"><h2 id="recent-heading">최근 프로젝트</h2><select className="recent-sort" value={recentSort} onChange={(event) => changeRecentSort(event.target.value)} aria-label="프로젝트 정렬"><option value="recent">최근 작업순</option><option value="name">이름순</option></select></div>
                 {recentLoadState === "loading" ? <div className="home-empty" role="status">최근 프로젝트를 불러오는 중…</div>
                   : recentLoadState === "error" ? <div className="home-empty"><strong>최근 프로젝트를 불러오지 못했습니다</strong><button onClick={loadRecentSessions}>다시 시도</button></div>
                   : recentSessions.length ? <div className="recent-project-grid">
@@ -133,6 +144,7 @@ export default function StartScreen({
                     </article>;
                   })}
                 </div> : <div className="home-empty"><FolderIcon /><strong>아직 작업한 프로젝트가 없습니다</strong><span>이미지를 불러오면 여기에서 다시 열 수 있어요.</span></div>}
+                {recentHasMore && <div ref={recentEndRef} className="recent-load-more" role="status">{recentLoadingMore ? "프로젝트를 더 불러오는 중…" : "아래로 스크롤하면 이전 프로젝트가 더 보입니다"}</div>}
                 <p className="home-hint recent-note">결과 생성 수는 저장된 결과 이미지 기준이며, 수동 검토 완료를 뜻하지 않습니다.</p>
               </section>
             </section>
