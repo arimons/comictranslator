@@ -2005,7 +2005,8 @@ button.wide {
 
 .selected-overlay-grid {
   display: grid;
-  grid-template-columns: minmax(0, 0.92fr) minmax(220px, 1.08fr);
+  /* 번역문을 직접 고치는 영역을 넓게 쓰도록 위아래로 쌓는다(글꼴·크기 스타일은 그 아래). */
+  grid-template-columns: minmax(0, 1fr);
   gap: 12px;
   align-items: start;
 }
@@ -2588,24 +2589,38 @@ button.wide {
 
 .region-editor-grid {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 84px;
+  grid-template-columns: minmax(0, 1fr);
   gap: 8px;
   align-items: stretch;
 }
 
 .region-card textarea {
-  min-height: 176px;
-  aspect-ratio: 1 / 0.42;
+  /* 글 길이에 맞춰 늘어난다(field-sizing 미지원 브라우저는 min-height로 보인다). 긴 글은 화면 절반까지. */
+  field-sizing: content;
+  min-height: 180px;
+  max-height: 60vh;
+  padding: 10px 12px;
+  font-size: 14px;
+  line-height: 1.65;
   resize: vertical;
   background: white;
 }
 
+.region-text-meta {
+  margin-top: -4px;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 700;
+}
+
 .region-bbox-grid {
   display: grid;
-  grid-template-columns: 1fr;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
   gap: 6px;
   align-content: start;
 }
+
+.region-bbox-grid .text-align-controls { grid-column: 1 / -1; }
 
 .text-align-controls {
   display: grid;
@@ -3401,4 +3416,5 @@ select.memo-key { width: 100%; padding: 2px; font-size: 12px; }
 .dialogue-status-actions button.active.ask { background: #d97706; border-color: #d97706; color: white; }
 .dialogue-original, .dialogue-translation { margin: 0; font-size: 12px; line-height: 1.45; white-space: pre-wrap; word-break: break-word; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; }
 .dialogue-original { color: var(--muted); }
+.dialogue-original-toggle { margin-left: auto; padding: 1px 8px; font-size: 11px; }
 .dialogue-row.active .dialogue-original, .dialogue-row.active .dialogue-translation { -webkit-line-clamp: unset; display: block; }

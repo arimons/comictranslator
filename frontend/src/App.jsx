@@ -2373,8 +2373,14 @@ export default function App() {
       const isCurrentImage = isCurrentSession && selectedIdRef.current === targetImage.id;
       // 현재 페이지 + 요청 시점 이후 편집이 없을 때만 overlay 상태를 교체하고 적용 version을 올린다.
       const isCurrentEdit = isCurrentImage && overlayEditVersionRef.current === version;
-      if (!isCurrentSession || (silent && isCurrentImage && !isCurrentEdit)) {
+      if (!isCurrentSession) {
         return { logs: "오래된 Overlay preview 응답 무시", version, stale: true };
+      }
+      if (silent && isCurrentImage && !isCurrentEdit) {
+        // 응답을 기다리는 사이 편집이 더 있었다. 편집 내용(overlayGuidance)과 적용 version은 건드리지 않고,
+        // 새로 그려진 이미지만 반영해 계속 편집하는 동안에도 화면이 따라오게 한다. 마지막 편집은 바로 이어서 다시 보낸다.
+        applyImageRecord(result.image);
+        return { logs: "중간 Overlay preview 반영(최신 편집은 이어서 적용)", version, stale: true };
       }
       applyImageRecord(result.image);
       if (isCurrentEdit) {
@@ -2682,6 +2688,7 @@ export default function App() {
             onClick={(event) => event.stopPropagation()}
             onChange={(event) => updateOverlayRegion(rid, { text_override: event.target.value }, `text:${rid}`)}
           />
+          <div className="region-text-meta">{text.split("\n").length}줄 · {text.replace(/\s/g, "").length}자 · 줄바꿈은 Enter로 직접 지정합니다</div>
           <div className="region-bbox-grid" onClick={(event) => event.stopPropagation()}>
             <div className="text-align-controls" title="safe rect 안에서 텍스트를 좌/중/우 정렬합니다">
               <button type="button" className={textAlign === "left" ? "active" : ""} onClick={() => setOverlayTextAlign(rid, region, "left")} title="텍스트 좌측 정렬">|←</button>

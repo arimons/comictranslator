@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import RegionTypeBadge from "./RegionTypeBadge.jsx";
 
 // 글자 입히기 탭의 대사 리스트. 읽는 순서로 고정하고 행마다 원문·번역·검수 상태·경고를 함께 보여 준다.
@@ -19,6 +19,17 @@ export function dialogueFilterMatches(row, filter) {
 
 export default function DialogueList({ rows, selectedKey, extraKeys = [], filter, onFilter, onSelect, onStatus }) {
   const activeRef = useRef(null);
+  // 원문은 번역 검수에만 쓰고 글자 입히기 편집에서는 가치가 낮아 기본으로 숨긴다. 켠 상태는 브라우저에 기억한다.
+  const [showOriginal, setShowOriginal] = useState(() => {
+    try { return window.localStorage.getItem("comic-translator-dialogue-original") === "1"; } catch { return false; }
+  });
+  function toggleOriginal() {
+    setShowOriginal((current) => {
+      const next = !current;
+      try { window.localStorage.setItem("comic-translator-dialogue-original", next ? "1" : "0"); } catch { /* 저장소를 못 쓰면 이번 화면에서만 유지 */ }
+      return next;
+    });
+  }
   const visible = rows.filter((row) => dialogueFilterMatches(row, filter));
   const okCount = rows.filter((row) => row.status === "ok").length;
   const askCount = rows.filter((row) => row.status === "ask").length;
@@ -37,6 +48,7 @@ export default function DialogueList({ rows, selectedKey, extraKeys = [], filter
             <button key={id} type="button" className={filter === id ? "active" : ""} onClick={() => onFilter(id)}>{label}</button>
           ))}
         </div>
+        <button type="button" className={`dialogue-original-toggle ${showOriginal ? "active" : ""}`} onClick={toggleOriginal} title="대사 리스트에 일본어 원문을 함께 보입니다">원문 {showOriginal ? "숨기기" : "보기"}</button>
       </div>
       {visible.length ? visible.map((row) => {
         const active = row.rid === selectedKey;
@@ -57,7 +69,7 @@ export default function DialogueList({ rows, selectedKey, extraKeys = [], filter
                 <button type="button" className={row.status === "ask" ? "active ask" : ""} onClick={() => onStatus(row.rid, "ask")} title="질문 표시 (Q)">질문</button>
               </span>
             </div>
-            <p className="dialogue-original" lang="ja">{row.original || "원문 없음"}</p>
+            {showOriginal ? <p className="dialogue-original" lang="ja">{row.original || "원문 없음"}</p> : null}
             <p className="dialogue-translation">{row.translation || "번역 없음"}</p>
           </div>
         );

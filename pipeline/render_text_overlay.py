@@ -4146,6 +4146,10 @@ def _get_split_order_for_cluster(
     return -1
 
 
+# split_cap_reference_layout 결과 캐시(키: 원문·영역·폰트 등 입력). 서버가 떠 있는 동안 재사용한다.
+_SPLIT_CAP_LAYOUT_CACHE: dict[tuple, "Layout"] = {}
+
+
 def prepare_page_layouts(
     image: np.ndarray,
     clusters: list[dict],
@@ -4252,6 +4256,7 @@ def prepare_page_layouts(
     }
     # (cluster, text, bbox, bbox_source, layout, src_lc, font_path, is_split_rect, split_order, mask_centroid)
     prepared: list[tuple[dict, str, list[int], str, Layout, int, Path, bool, int, list | None]] = []
+    deferred_cap_args: dict[int, dict] = {}
 
     for cluster in clusters:
         override = overlay_override_for_cluster(cluster, flood_info_by_anchor, overlay_overrides)
@@ -4334,7 +4339,6 @@ def prepare_page_layouts(
             font_size_override = int(override.get("font_size", 0) or 0)
         except (TypeError, ValueError):
             font_size_override = 0
-        split_cap_reference_layout = None
         if has_manual_layout_override:
             cap_text = default_text or text
             cap_is_safe_rect = "safe_text_rect" in auto_bbox_source
@@ -4344,12 +4348,12 @@ def prepare_page_layouts(
                 if cap_is_split_rect and not cap_is_safe_rect
                 else -1
             )
-            split_cap_reference_layout = choose_layout(
-                draw, cap_text, auto_bbox, (img_w, img_h), base_cluster_font_path,
-                is_unboxed=is_unboxed, src_line_count=src_lc, is_split_rect=cap_is_split_rect,
-                split_order=cap_split_order, mask_centroid=mask_centroid, round_score=round_score,
-                force_vertical_short_interjection=fvs,
-                force_vertical_title_layout=fvt,
+            # 같은 말풍선에서 갈라진 형제와 크기 상한을 맞출 때만 쓰는 기준이라, 형제 그룹에 걸릴 때까지 계산을 미룬다.
+            # 직접 고친 텍스트·크기에는 필요 없고, 긴 글은 자동 맞춤 탐색이 수 초 걸린다.
+            deferred_cap_args[len(prepared)] = dict(
+                cap_text=cap_text, auto_bbox=auto_bbox, font_path=base_cluster_font_path, is_unboxed=is_unboxed,
+                src_lc=src_lc, is_split_rect=cap_is_split_rect, split_order=cap_split_order,
+                mask_centroid=mask_centroid, round_score=round_score, fvs=fvs, fvt=fvt,
             )
         explicit_override_lines = [line.strip() for line in text.splitlines() if line.strip()]
         if font_size_override and has_text_override and len(explicit_override_lines) > 1:
@@ -4403,9 +4407,7 @@ def prepare_page_layouts(
                 )
                 if softened is not None:
                     raw = softened
-        if split_cap_reference_layout is not None:
-            split_cap_font_size = split_cap_reference_layout.font_size
-        elif (font_size_delta or font_size_override) and pre_manual_layout is not None:
+        if (font_size_delta or font_size_override) and pre_manual_layout is not None:
             split_cap_font_size = pre_manual_layout.font_size
         else:
             split_cap_font_size = raw.font_size if raw is not None else 0
@@ -4448,6 +4450,29 @@ def prepare_page_layouts(
         adjustable_indices = [idx for idx in indices if not bool(prepared[idx][15])]
         if not adjustable_indices:
             continue
+        for idx in indices:
+            args = deferred_cap_args.get(idx)
+            if not args:
+                continue
+            cap_key = (
+                args["cap_text"], tuple(args["auto_bbox"]), img_w, img_h, str(args["font_path"]), args["is_unboxed"], args["src_lc"],
+                args["is_split_rect"], args["split_order"], tuple(args["mask_centroid"]) if args["mask_centroid"] else None,
+                args["round_score"], args["fvs"], args["fvt"],
+            )
+            reference = _SPLIT_CAP_LAYOUT_CACHE.get(cap_key)
+            if reference is None:
+                reference = choose_layout(
+                    draw, args["cap_text"], args["auto_bbox"], (img_w, img_h), args["font_path"],
+                    is_unboxed=args["is_unboxed"], src_line_count=args["src_lc"], is_split_rect=args["is_split_rect"],
+                    split_order=args["split_order"], mask_centroid=args["mask_centroid"], round_score=args["round_score"],
+                    force_vertical_short_interjection=args["fvs"],
+                    force_vertical_title_layout=args["fvt"],
+                )
+                if len(_SPLIT_CAP_LAYOUT_CACHE) >= 128:
+                    _SPLIT_CAP_LAYOUT_CACHE.pop(next(iter(_SPLIT_CAP_LAYOUT_CACHE)))
+                _SPLIT_CAP_LAYOUT_CACHE[cap_key] = reference
+            prepared[idx] = (*prepared[idx][:14], reference.font_size, prepared[idx][15])
+            deferred_cap_args.pop(idx)
         min_fs = min(int(prepared[idx][14] or prepared[idx][4].font_size) for idx in indices)
         cap_fs = split_parent_font_cap(min_fs)
         for idx in adjustable_indices:
