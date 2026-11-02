@@ -663,6 +663,9 @@ export default function App() {
       if (fontWeight) next.font_weight = fontWeight;
       else delete next.font_weight;
     }
+    if ("font_color" in next && !/^#[0-9a-fA-F]{6}$/.test(String(next.font_color || ""))) {
+      delete next.font_color;
+    }
     if ("stroke_width" in next) {
       const strokeWidth = normalizedStrokeWidth(next.stroke_width);
       if (strokeWidth !== null) next.stroke_width = strokeWidth;
@@ -2613,6 +2616,30 @@ export default function App() {
     );
   }
 
+  // 글자 크기 조절. 텍스트 편집 영역 아래에 두며, 여러 박스를 골랐으면 모두에 적용된다.
+  function renderFontSizeControl() {
+    const value = isGroupSelection ? groupFontSize : selectedFontSize;
+    return (
+      <div className="font-size-control compact-font-size region-size-control" onClick={(event) => event.stopPropagation()}>
+        <span className="region-size-label">글자 크기</span>
+        <button type="button" onClick={() => adjustOverlayStyleFontSize(-1)} disabled={!selectedRegionRefValue()}>−</button>
+        <input
+          type="number"
+          className="group-font-size-input"
+          min="8"
+          max="160"
+          placeholder={isGroupSelection ? "혼합" : "자동"}
+          key={`${groupKeys.join(",") || selectedRegionRefValue()}:${value || 0}`}
+          defaultValue={value || ""}
+          onBlur={(e) => { if (e.target.value && Number(e.target.value) !== value) setOverlayStyleFontSize(e.target.value); }}
+          onKeyDown={(e) => { if (e.key === "Enter") e.currentTarget.blur(); }}
+          title="숫자를 입력하고 Enter를 누르면 이 크기로 지정합니다(여러 박스를 골랐으면 모두 같은 크기로 통일)"
+        />
+        <button type="button" onClick={() => adjustOverlayStyleFontSize(1)} disabled={!selectedRegionRefValue()}>+</button>
+      </div>
+    );
+  }
+
   function renderOverlayRegionCard(region) {
     const rid = overlayItemKey(region);
     const override = overlayRegionValue(overlayGuidance, rid);
@@ -2689,6 +2716,7 @@ export default function App() {
             onChange={(event) => updateOverlayRegion(rid, { text_override: event.target.value }, `text:${rid}`)}
           />
           <div className="region-text-meta">{text.split("\n").length}줄 · {text.replace(/\s/g, "").length}자 · 줄바꿈은 Enter로 직접 지정합니다</div>
+          {renderFontSizeControl()}
           <div className="region-bbox-grid" onClick={(event) => event.stopPropagation()}>
             <div className="text-align-controls" title="safe rect 안에서 텍스트를 좌/중/우 정렬합니다">
               <button type="button" className={textAlign === "left" ? "active" : ""} onClick={() => setOverlayTextAlign(rid, region, "left")} title="텍스트 좌측 정렬">|←</button>
@@ -3675,6 +3703,7 @@ export default function App() {
                   <div className="overlay-group-chips">
                     {groupRegions.map((region) => <span key={overlayItemKey(region)} className="overlay-group-chip">{overlayItemLabel(region)}</span>)}
                   </div>
+                  {renderFontSizeControl()}
                   <div className="text-align-controls" title="선택한 박스의 텍스트를 safe rect 안에서 좌/중/우 정렬합니다">
                     {[["left", "|←", "텍스트 좌측 정렬"], ["center", "↔", "텍스트 중앙 정렬"], ["right", "→|", "텍스트 우측 정렬"]].map(([align, label, title]) => (
                       <button
@@ -3693,24 +3722,6 @@ export default function App() {
             <div className="selected-overlay-pane overlay-style-section">
               <div className="side-section-head overlay-style-head">
                 <h2>Selected Style</h2>
-                <div className="font-size-control compact-font-size">
-                  <button onClick={() => adjustOverlayStyleFontSize(-1)} disabled={!selectedRegionRefValue()}>−</button>
-                  {isGroupSelection ? (
-                    <input
-                      type="number"
-                      className="group-font-size-input"
-                      min="8"
-                      max="160"
-                      placeholder="혼합"
-                      key={`${groupKeys.join(",")}:${groupFontSize || 0}`}
-                      defaultValue={groupFontSize || ""}
-                      onBlur={(e) => { if (e.target.value && Number(e.target.value) !== groupFontSize) setOverlayStyleFontSize(e.target.value); }}
-                      onKeyDown={(e) => { if (e.key === "Enter") e.currentTarget.blur(); }}
-                      title="숫자를 입력하고 Enter를 누르면 선택한 박스의 글자 크기를 이 값으로 통일합니다"
-                    />
-                  ) : <span>Size {selectedFontSize || "-"}</span>}
-                  <button onClick={() => adjustOverlayStyleFontSize(1)} disabled={!selectedRegionRefValue()}>+</button>
-                </div>
               </div>
               <div className="font-style-toolbar">
                 {FONT_STYLES.map(([id, _short, label, sample]) => (
@@ -3763,6 +3774,19 @@ export default function App() {
                     </select>
                   </div>
                 )}
+                <div className="field compact-field">
+                  <label>Text color</label>
+                  <div className="color-field">
+                    <input
+                      type="color"
+                      value={(isGroupSelection ? groupValue((o) => o.font_color || "") : selectedOverlayOverride.font_color) || "#000000"}
+                      onChange={(e) => updateOverlayStyle({ font_color: e.target.value }, "color")}
+                      disabled={!selectedRegionRefValue()}
+                      title="글자색. 외곽선은 그대로 흰색입니다"
+                    />
+                    <button type="button" onClick={() => updateOverlayStyle({ font_color: "" })} disabled={!selectedRegionRefValue()} title="기본 글자색(검정)으로 되돌립니다">기본</button>
+                  </div>
+                </div>
                 <div className="field compact-field">
                   <label>Outline</label>
                   <input

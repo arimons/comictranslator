@@ -1138,6 +1138,16 @@ class RenderTextOverlayTest(unittest.TestCase):
         offsets = [idx * layout.line_height for idx in range(len(layout.lines))]
         self.assertLessEqual(offsets[1] - offsets[0], layout.line_height)
 
+    def test_override_font_color_parses_hex_and_falls_back_to_default(self) -> None:
+        from pipeline.render_text_overlay import overlay_override_font_color
+
+        default = (0, 0, 0)
+        self.assertEqual(overlay_override_font_color({"font_color": "#ff8000"}, default), (255, 128, 0))
+        self.assertEqual(overlay_override_font_color({"font_color": "#FFFFFF"}, default), (255, 255, 255))
+        for bad in ("", "red", "#fff", "#gg0000", None):
+            self.assertEqual(overlay_override_font_color({"font_color": bad}, default), default)
+        self.assertEqual(overlay_override_font_color(None, default), default)
+
     def test_llm_lines_are_kept_with_smaller_font_when_nothing_fits_min_size(self) -> None:
         if not Path(FONT_PATH).exists():
             self.skipTest(f"font not found: {FONT_PATH}")
