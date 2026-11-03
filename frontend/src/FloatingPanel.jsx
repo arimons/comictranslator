@@ -20,7 +20,7 @@ function save(id, value) {
   } catch { /* 저장소를 못 쓰면 이번 화면에서만 유지 */ }
 }
 
-export default function FloatingPanel({ id, title, subtitle, top = 56, className = "", children }) {
+export default function FloatingPanel({ id, title, subtitle, top = 56, className = "", avoidRect = null, avoidKey = "", children }) {
   const ref = useRef(null);
   const dragRef = useRef(null);
   const saved = useRef(readSaved(id));
@@ -64,6 +64,37 @@ export default function FloatingPanel({ id, title, subtitle, top = 56, className
   useEffect(() => {
     if (fromRightRef.current != null) save(id, { scope: "viewport", fromRight: fromRightRef.current, y: yRef.current, collapsed });
   }, [id, collapsed]);
+
+  // 선택한 영역을 패널이 가리면 영역 왼쪽으로 비킨다. 저장 위치는 바꾸지 않는다.
+  const avoidRef = useRef(avoidRect);
+  avoidRef.current = avoidRect;
+  function dodge() {
+    const el = ref.current;
+    const target = avoidRef.current?.();
+    if (!el || !target || dragRef.current) return;
+    const box = el.getBoundingClientRect();
+    const overlap = box.left < target.right && box.right > target.left && box.top < target.bottom && box.bottom > target.top;
+    if (!overlap) return;
+    const gap = 12;
+    const leftX = target.left - el.offsetWidth - gap;
+    const rightX = target.right + gap;
+    const next = leftX >= MARGIN ? leftX : rightX + el.offsetWidth <= window.innerWidth - MARGIN ? rightX : null;
+    if (next != null) setPos((current) => clamp({ x: next, y: current?.y ?? box.top }));
+  }
+
+  useEffect(() => {
+    if (!avoidRef.current) return undefined;
+    let timer = 0;
+    const later = () => { window.clearTimeout(timer); timer = window.setTimeout(dodge, 120); };
+    later();
+    window.addEventListener("wheel", later, { passive: true });
+    window.addEventListener("pointerup", later);
+    return () => {
+      window.clearTimeout(timer);
+      window.removeEventListener("wheel", later);
+      window.removeEventListener("pointerup", later);
+    };
+  }, [avoidKey, collapsed]);
 
   function onPointerDown(event) {
     if (event.button !== 0 || event.target.closest("button")) return;

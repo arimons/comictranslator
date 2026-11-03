@@ -3213,7 +3213,7 @@ export default function App() {
           onRequestConfirm={() => setAiEraseConfirmOpen(true)}
         />
               </div>
-              {selectedGuidanceRegion || selectedTg != null ? <FloatingPanel id="guidance-inspector" title={selectedGuidanceRegion ? `R${regionId(selectedGuidanceRegion)}` : `TG${selectedTg}`} subtitle={selectedGuidanceRegion ? regionDetectionLabel(selectedGuidanceRegion) : ""} className="guidance-inspector">
+              {selectedGuidanceRegion || selectedTg != null ? <FloatingPanel id="guidance-inspector" avoidKey={`${selectedGuidanceRegion ? regionBindingKey(selectedGuidanceRegion) : `tg${selectedTg}`}`} avoidRect={() => selectedGuidanceRegion ? editorCanvasRef.current?.regionScreenRect?.(selectedGuidanceRegion) : null} title={selectedGuidanceRegion ? `R${regionId(selectedGuidanceRegion)}` : `TG${selectedTg}`} subtitle={selectedGuidanceRegion ? regionDetectionLabel(selectedGuidanceRegion) : ""} className="guidance-inspector">
                 <div className="inspector">
                   {selectedIsTextBased ? <div className="inspector-row">
                     <span className="inspector-label">지우기</span>

@@ -471,6 +471,14 @@ const EditorCanvas = forwardRef(function EditorCanvas({ image, baseUrl, guidance
     closeMaskPolygon,
     cancelMaskPolygon,
     hasMaskPolygon: () => Boolean(maskPolygonRef.current),
+    regionScreenRect: region => {
+      const rect = regionDisplayRect(region);
+      const container = stageRef.current?.container();
+      if (!rect || !container) return null;
+      const box = container.getBoundingClientRect();
+      const s = toStageRect(rect);
+      return { left: box.left + s.x, top: box.top + s.y, right: box.left + s.x + s.width, bottom: box.top + s.y + s.height };
+    },
     ensureRegionVisible: region => vpRef.current.ensureVisible(regionDisplayRect(region)),
   }));
 
