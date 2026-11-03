@@ -3195,7 +3195,6 @@ export default function App() {
                 setSelectedRegionId={setSelectedGuidanceRegionId}
                 onToolComplete={() => setTool("select")}
                 setStatus={setStatus}
-                speakerLabels={speakerLabels}
                 maskBrushWidth={maskBrushWidth}
               />
               <div className="guidance-ai-dock">

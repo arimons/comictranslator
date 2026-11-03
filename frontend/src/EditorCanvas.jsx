@@ -57,7 +57,7 @@ function pruneDeletedEdgeBoxes(guidance) {
   };
 }
 
-const EditorCanvas = forwardRef(function EditorCanvas({ image, baseUrl, guidance, setGuidance, tool, layers, selectedTg, setSelectedTg, selectedRegionId, setSelectedRegionId, onToolComplete, setStatus, speakerLabels, maskBrushWidth = 12, stale = false }, ref) {
+const EditorCanvas = forwardRef(function EditorCanvas({ image, baseUrl, guidance, setGuidance, tool, layers, selectedTg, setSelectedTg, selectedRegionId, setSelectedRegionId, onToolComplete, setStatus, maskBrushWidth = 12, stale = false }, ref) {
   const hostRef = useRef(null);
   const stageRef = useRef(null);
   const imageObjRef = useRef(null);
@@ -82,8 +82,6 @@ const EditorCanvas = forwardRef(function EditorCanvas({ image, baseUrl, guidance
   selectRegionCallbackRef.current = setSelectedRegionId;
   completeToolRef.current = onToolComplete;
   // region_id → 화자 이름. 라벨에 붙여 지정 상태를 캔버스에서 바로 본다.
-  const speakerLabelsRef = useRef(speakerLabels);
-  speakerLabelsRef.current = speakerLabels;
   const maskBrushRef = useRef(maskBrushWidth);
   maskBrushRef.current = maskBrushWidth;
   const dragPreviewRef = useRef(null);
@@ -835,8 +833,7 @@ const EditorCanvas = forwardRef(function EditorCanvas({ image, baseUrl, guidance
         }));
         const anchors = (region.anchor_ids || []).map(id => `TG${id}`);
         const id = `R${regionId(region)}`;
-        const speaker = speakerLabelsRef.current?.[regionId(region)];
-        const text = speaker ? `${id} ${speaker}` : id;
+        const text = id;
         const gutterText = anchors.length ? `${text} · ${anchors.slice(0,3).join(",")}${anchors.length > 3 ? "…" : ""}` : text;
         // 번호 글자는 그림 위에서 잘 보이게 종류별 진한 색(파랑/초록/주황)으로 따로 칠한다
         const labelColor = regionSelected ? color : usesEdgeBarrier(region) ? "#15803d" : isTextBased ? "#c2410c" : "#1d4ed8";
@@ -1303,7 +1300,7 @@ const EditorCanvas = forwardRef(function EditorCanvas({ image, baseUrl, guidance
 
   useEffect(() => {
     redraw();
-  }, [image, guidance, tool, layers, selectedTg, selectedRegionId, dragPreview, speakerLabels, maskBrushWidth, maskPolygon, stale]);
+  }, [image, guidance, tool, layers, selectedTg, selectedRegionId, dragPreview, maskBrushWidth, maskPolygon, stale]);
 
   const menuAction = action => { setContextMenu(null); action(); };
   const automaticRegion = contextMenu?.region;
