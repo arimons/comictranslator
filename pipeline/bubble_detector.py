@@ -2437,7 +2437,9 @@ def build_ocr_region_sheet(
 
                 if direct_shape_ok:
                     is_valid = True
-                    bubble_mask = candidate_mask
+                    # 3px 침식 마스크(candidate_mask)는 모양 판정용이다. 테두리 보호는 흰칠 단계의 침식
+                    # (dialogue_extractor bubble_mask_erode)이 맡으므로 영역 마스크는 침식 전 것을 쓴다(이중 침식 방지).
+                    bubble_mask = filled_mask
                     bubble_rect = [int(v) for v in candidate_rect[:4]]
                     method = "flood"
 

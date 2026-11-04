@@ -331,6 +331,8 @@ Step 3 진입점이다. `pipeline_runner`가 `python -m pipeline.dialogue_extrac
 
 말풍선 검출 코어다. 구 `floodfill_anchor_probe.py`를 Probe → Validation → Rescue → Finalize 4단계 구조로 고도화한 모듈이다(구 파일은 `pipeline/archive/`에 보존).
 
+영역 마스크 침식(2026-11-04): flood 판정은 3px 침식 마스크(`candidate_mask`)로 모양을 보지만, 확정된 영역 마스크는 침식 전 마스크(`filled_mask`)를 쓴다. 자동 Edge 구제(`run_edge_barrier_rescue`)는 3px 침식으로 새는 통로를 끊은 뒤 채운 범위 안에서 같은 만큼 되돌린다. 말풍선 테두리 보호는 흰칠 단계의 침식(`dialogue_extractor`의 `bubble_mask_erode`) 한 번이 맡는다. 예전에는 두 번 침식해 화면 윤곽이 테두리에서 약 5px 떨어졌다(합성 말풍선 기준 5.4px → 1.4px, 테두리 흰칠 0px).
+
 **공개 함수:**
 
 - `build_ocr_region_sheet()`: 표준 경로. flood 판정 + split + 흰색 마스킹 + region 메타 생성. `dialogue_extractor`와 `run_masked_vis`가 호출한다.

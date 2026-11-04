@@ -674,6 +674,11 @@ def run_edge_barrier_rescue(
         filled = _fill_mask_holes(mask)
         inner = _erode_mask(filled, pixels=0 if confine_to_walls else 3)
         inner = _connected_component_at_seed(inner, flood_seed, center_local)
+        if not confine_to_walls:
+            # 침식은 새는 가는 통로를 끊는 용도다. 끊은 뒤에는 채운 범위 안에서 같은 만큼 되돌려 경계를 테두리에 맞춘다.
+            # 테두리 보호는 흰칠 단계의 침식이 맡는다(이중 침식 방지).
+            grown = cv2.dilate(inner, np.ones((7, 7), dtype=np.uint8), iterations=1)
+            inner = np.where((grown > 0) & (filled > 0), 255, 0).astype(np.uint8)
 
         touches_clip = _touches_rect_border(inner, clip_local)
         local_rescue_rect = _mask_rect(inner)
