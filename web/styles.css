@@ -3700,3 +3700,6 @@ select.memo-key { width: 100%; padding: 2px; font-size: 12px; }
 .recent-project-route strong { color: inherit; font-weight: 600; }
 .page-counter { margin: 0 8px; font-family: "Nanum Gothic Coding", monospace; font-size: 13px; font-variant-numeric: tabular-nums; }
 .page-counter small { margin-left: 2px; color: var(--muted, #64748b); }
+
+.llm-route-badge select { border: 0; background: transparent; font: inherit; color: inherit; padding: 0 2px; cursor: pointer; max-width: 180px; }
+.llm-route-badge select:disabled { cursor: default; opacity: .7; }

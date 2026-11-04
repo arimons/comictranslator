@@ -31,3 +31,23 @@ export default function OcrBatchPrompt({ show, pending, percent, promptOff, onPr
     </div>
   );
 }
+
+// 마지막 페이지에 도착하면 남은 페이지를 모두 번역할지 묻는다. 60%·80% 알림과 달리 항상 띄운다.
+// 지금 보고 있는 마지막 페이지는 아직 편집 중일 수 있어 기본은 빼고, 원하면 포함한다.
+export function LastPagePrompt({ prompt, onTranslate, onLater }) {
+  const rest = prompt.restIds.length;
+  return (
+    <div className="ocr-batch-toast" role="alertdialog" aria-label="남은 페이지 번역">
+      <strong>마지막 페이지입니다</strong>
+      <p>
+        아직 번역하지 않은 {rest}장을 모두 번역할까요?{prompt.selfId ? " 지금 보고 있는 이 페이지는 편집이 끝났다면 함께 넣을 수 있습니다." : ""}
+        {prompt.unanalyzed ? ` 영역 분석 전인 ${prompt.unanalyzed}장은 번역할 수 없어 빠집니다.` : ""} 번역하는 동안에도 다른 페이지는 계속 편집할 수 있습니다. LLM 사용 비용이 발생합니다.
+      </p>
+      <div className="ocr-batch-actions">
+        <button onClick={onLater}>나중에</button>
+        {prompt.selfId ? <button onClick={() => onTranslate(true)}>이 페이지 포함 {rest + 1}장 번역</button> : null}
+        {rest ? <button className="primary" onClick={() => onTranslate(false)}>나머지 {rest}장 번역</button> : null}
+      </div>
+    </div>
+  );
+}

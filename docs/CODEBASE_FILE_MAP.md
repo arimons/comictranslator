@@ -169,7 +169,7 @@ guidance(수동 보정)가 있는 이미지는 `guidance_digest`(guidance 내용
 | `GET /api/ocr-models` | OCR/번역 모델 목록(`id`, `label`, `note`)과 기본값 |
 | `GET /api/glossary/{session_id}`, `POST /api/glossary/bind`, `/api/glossary/unbind`, `/api/glossary/save`, `/api/glossary/draft` | 작품 메모 연결·저장·URL 초안. 메모 참고문을 Step 4 프롬프트에 붙인다 |
 | `GET /api/namu-lookup` | 작품명으로 나무위키 문서 주소 찾기(`pipeline/work_sources.py`의 `namu_lookup`, 이동 주소만 읽음) |
-| `POST /api/session/ocr-model` | 프로젝트의 OCR·번역 모델(LLM 경로)을 `project.json`의 `ocr_model`에 저장한다(빈 값이면 기본 모델). 요청에 모델이 없으면 번역(`run_final_for_item`)과 AI 글자 지우기가 이 값을 쓰고, 최근 프로젝트 목록에도 `ocr_model`이 나간다. 화면은 프로젝트를 열 때 이 값을 쓰고, 예전에 브라우저에만 저장한 값은 한 번 서버로 옮긴다. 상단 배지(`llm-route-badge`)와 최근 프로젝트 카드(번역 경로)에 표시한다 |
+| `POST /api/session/ocr-model` | 프로젝트의 OCR·번역 모델(LLM 경로)을 `project.json`의 `ocr_model`에 저장한다(빈 값이면 기본 모델). 요청에 모델이 없으면 번역(`run_final_for_item`)과 AI 글자 지우기가 이 값을 쓰고, 최근 프로젝트 목록에도 `ocr_model`이 나간다. 화면은 프로젝트를 열 때 이 값을 쓰고, 예전에 브라우저에만 저장한 값은 한 번 서버로 옮긴다. 상단 배지(`llm-route-badge`, 선택 상자라 언제든 바꿀 수 있고 이미 번역된 페이지는 그대로 둔다)와 최근 프로젝트 카드(번역 경로)에 표시한다 |
 | `POST /api/server/restart` | 같은 명령으로 서버 프로세스를 다시 띄운다. 진행 중 작업이 있으면 409, `?force=true`면 중단하고 재시작 |
 | `POST /api/lama/release` | 프로젝트 홈으로 나갈 때 화면이 부른다. 다른 작업이 없으면 LaMa 작업 프로세스를 끝내 메모리를 돌려주고, 있으면 그대로 둔다(`released`, `busy`, `status`) |
 | `GET /api/lama/status` | LaMa 작업 프로세스 상태(`running`, `pid`, `idle_sec`, `uptime_sec`, `idle_release_sec`) |
@@ -209,7 +209,7 @@ guidance(수동 보정)가 있는 이미지는 `guidance_digest`(guidance 내용
 | `frontend/src/OverlayCanvas.jsx` | Step 5 캔버스 — 오버레이 안전 영역 이동/리사이즈/회전, eraser rect 편집. 화면 기준 3px 이상 끌었을 때만 수동 위치로 저장 |
 | `frontend/src/keymap.js` | 단축키 단일 정의(키 조합, 탭 범위, 조건, 동작 id, 설명). App 디스패처·툴바 tooltip·도움말이 읽고, `tests/test_docs_sync.py`가 `docs/editor_manual.html` 단축키 표와 대조 |
 | `frontend/src/viewportControls.js` | 두 Konva 캔버스 공용 보기 조작 — 휠=이동, 핀치·Ctrl/Cmd+휠=확대, Space·휠버튼·Hand 도구 드래그 이동, 맞춤/100%/선택 확대 |
-| `frontend/src/OcrBatchPrompt.jsx` | 확인한 페이지(영역 분석 탭에서 적용 안 한 변경 없이 넘긴 페이지, `App.jsx`가 브라우저에 세션별로 기억)의 비율이 처리 대상 페이지의 60%, 80%를 넘을 때마다 한 번씩 비차단 알림을 띄우고, 시작하면 `image_id: "batch"`로 백그라운드 OCR·번역을 돌린다. 진행 중에는 그 페이지만 편집을 잠근다 |
+| `frontend/src/OcrBatchPrompt.jsx` | 확인한 페이지(영역 분석 탭에서 적용 안 한 변경 없이 넘긴 페이지, `App.jsx`가 브라우저에 세션별로 기억)의 비율이 처리 대상 페이지의 60%, 80%를 넘을 때마다 한 번씩 비차단 알림을 띄우고, 시작하면 `image_id: "batch"`로 백그라운드 OCR·번역을 돌린다. 진행 중에는 그 페이지만 편집을 잠그고, 번역이 끝난 페이지는 묶음이 끝나기 전이라도 바로 풀린다(`bgOcr.finishedIds`). 마지막 처리 대상 페이지에 도착하면 60%·80% 설정과 상관없이 항상 `LastPagePrompt`로 남은 페이지(분석 끝, 번역 전) 전부를 번역할지 묻는다(지금 페이지 포함 선택 가능) |
 | `frontend/src/ImageGenProgress.jsx` | 편집기의 AI로 통번역·내보내기 탭 이미지 생성(`/api/export/generate-missing/stream`)의 비차단 진행 창. 모델·페이지·경과 시간과 서버 진행 메시지 마지막 4줄을 보여 준다. 생성 중에는 그 페이지만 잠그고(`App.jsx`의 `selectedInImageGen`), 이미지 생성(export) 작업은 화면 전체 잠금(`anyBusy`)에서 뺀다. 이미지 모델은 OCR·번역 모델의 제공자를 따르고(Gemini면 나노바나나), 확인 창에 따라간 모델을 적는다 |
 | `frontend/src/ShortcutHelp.jsx` | `?`로 여는 단축키 도움말. 현재 탭의 keymap 항목을 묶어 표시 |
 | `frontend/src/AiErasePanel.jsx` | 영역 분석 탭의 AI 글자 지우기. 시작은 도구 모음의 AI 지우개 버튼(`App.jsx`)이 여는 확인 창(모델·시간·비용 안내, 취소 포커스, Esc 닫기)에서 하고, 오른쪽 패널에는 진행·후보·적용됨 상태일 때만 카드가 뜬다. 후보를 비교 미리보기 "AI 지움 후보" 탭에 띄우고 적용·버리기·해제. 적용하면 이전 AI 지움 패치를 교체한다 |

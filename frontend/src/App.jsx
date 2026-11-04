@@ -8,7 +8,7 @@ import SourceLinks from "./SourceLinks.jsx";
 import StartScreen from "./StartScreen.jsx";
 import ImagePreview from "./ImagePreview.jsx";
 import GuidanceToolIcon from "./GuidanceToolIcon.jsx";
-import OcrBatchPrompt, { OCR_PROMPT_MILESTONES } from "./OcrBatchPrompt.jsx";
+import OcrBatchPrompt, { LastPagePrompt, OCR_PROMPT_MILESTONES } from "./OcrBatchPrompt.jsx";
 import ImageGenProgress from "./ImageGenProgress.jsx";
 import ImageGenerationPanel from "./ImageGenerationPanel.jsx";
 import AiErasePanel from "./AiErasePanel.jsx";
@@ -170,7 +170,7 @@ export default function App() {
   const ocrAutoStartingRef = useRef(false);
   // 대사 편집을 ⌘Enter로 확정한 영역. 반영된 새 번역문으로 확인을 다시 기록한다.
   const dialogueConfirmAfterCommitRef = useRef(null);
-  const [bgOcr, setBgOcr] = useState({ running: false, total: 0, done: 0, failed: 0, ids: [] });
+  const [bgOcr, setBgOcr] = useState({ running: false, total: 0, done: 0, failed: 0, ids: [], finishedIds: [] });
   // 이미지 생성 모델 통번역 진행(진행 창). 생성 중에도 다른 페이지는 편집할 수 있다.
   const [imageGen, setImageGen] = useState(null);
   const prevPageRef = useRef({ id: null, ready: false });
@@ -394,7 +394,8 @@ export default function App() {
   const overlayBusy = Boolean(busyTasks.overlay);
   const exportBusy = Boolean(busyTasks.export);
   // 백그라운드 번역 중에는 번역 중인 페이지만 편집을 잠근다(다른 페이지는 계속 편집할 수 있다).
-  const selectedInBackgroundOcr = bgOcr.running && bgOcr.ids.includes(selected?.id);
+  // 묶음 번역 중에도 번역이 끝난 페이지는 바로 편집할 수 있다
+  const selectedInBackgroundOcr = bgOcr.running && bgOcr.ids.includes(selected?.id) && !(bgOcr.finishedIds || []).includes(selected?.id);
   const selectedInImageGen = Boolean(imageGen?.running && imageGen.ids.includes(selected?.id));
   // 이미지 생성(export)은 서버에서 오래 돈다. 전체를 막지 않고 생성 중인 페이지만 막는다.
   const anyBusy = routeBusy || Object.entries(busyTasks).some(([kind, value]) => value && kind !== "export") || selectedInBackgroundOcr || selectedInImageGen;
@@ -440,6 +441,26 @@ export default function App() {
   const ocrReachedMilestone = Math.max(0, ...OCR_PROMPT_MILESTONES.filter((value) => ocrProgressPct >= value));
   const showOcrPrompt = !ocrPromptOff && !bgOcr.running && !ocrBusy
     && ocrReachedMilestone > ocrMilestone && ocrBatchCandidates.length > 0;
+  // 마지막 페이지에 도착하면 남은 페이지를 모두 번역할지 항상 묻는다(자동 번역·알림 끄기와 상관없이).
+  const ocrTargetLastId = ocrTargetImages.length ? ocrTargetImages[ocrTargetImages.length - 1].id : null;
+  const [lastPagePrompt, setLastPagePrompt] = useState(null);
+  const lastPagePromptForRef = useRef(null);
+  useEffect(() => {
+    if (!selected?.id || selected.id !== ocrTargetLastId) { lastPagePromptForRef.current = null; setLastPagePrompt(null); return; }
+    if (lastPagePromptForRef.current === `${sessionId}:${selected.id}` || bgOcr.running || ocrBusy) return;
+    const restIds = ocrReadyImages.filter((img) => img.id !== selected.id).map((img) => img.id);
+    const selfReady = ocrReadyImages.some((img) => img.id === selected.id);
+    if (!restIds.length && !selfReady) return;
+    lastPagePromptForRef.current = `${sessionId}:${selected.id}`;
+    setLastPagePrompt({ restIds, selfId: selfReady ? selected.id : null, unanalyzed: ocrTargetImages.filter((img) => !img.indexed_sheet_url).length });
+  }, [selected?.id, ocrTargetLastId, images, bgOcr.running, ocrBusy]);
+  function translateRemainingFromLastPage(includeSelf) {
+    const prompt = lastPagePrompt;
+    setLastPagePrompt(null);
+    if (!prompt) return;
+    const ids = [...prompt.restIds, ...(includeSelf && prompt.selfId ? [prompt.selfId] : [])];
+    if (ids.length) startBackgroundOcr(ids);
+  }
   useEffect(() => {
     if (!ocrAutoStart || !showOcrPrompt || ocrAutoStartingRef.current) return;
     ocrAutoStartingRef.current = true;
@@ -501,6 +522,15 @@ export default function App() {
   function updateExtraPrompt(value) {
     setExtraPrompt(value);
     writeSessionSettings(sessionIdRef.current, { extraPrompt: value });
+  }
+
+  // 상단 배지에서 번역 경로를 바꾼다. 이미 번역된 페이지는 건드리지 않고 앞으로 번역하는 페이지부터 적용된다.
+  function changeOcrRoute(value) {
+    if (!value || value === effectiveOcrModel) return;
+    updateOcrModel(value);
+    const label = (ocrModels.find((model) => model.id === value)?.label || value).replace(/\s*\(.*\)$/, "");
+    const translated = images.filter((img) => img.has_integrated_json).length;
+    setStatus(`번역 경로를 ${label}(으)로 바꿨습니다. 이미 번역된 ${translated}장은 그대로 두고, 앞으로 번역하는 페이지부터 이 경로로 처리합니다.`);
   }
 
   function updateOcrModel(value) {
@@ -2279,13 +2309,13 @@ export default function App() {
   }
 
   // 확인한 페이지만 모아 OCR·번역을 백그라운드로 돌린다. 작업 잠금(busyTasks)을 쓰지 않아 다른 페이지는 계속 편집할 수 있다.
-  async function startBackgroundOcr() {
-    // 지금 보고 있는 페이지는 아직 편집 중이므로 번역 대상에서 뺀다.
-    const ids = ocrBatchCandidates.map((img) => img.id);
+  async function startBackgroundOcr(idsOverride = null) {
+    // 지금 보고 있는 페이지는 아직 편집 중이므로 번역 대상에서 뺀다(마지막 페이지 알림에서 포함을 고르면 넣는다).
+    const ids = Array.isArray(idsOverride) ? idsOverride : ocrBatchCandidates.map((img) => img.id);
     if (!ids.length || bgOcr.running || ocrBusy) return;
     const requestSid = sessionId;
     markOcrMilestone(ocrReachedMilestone);
-    setBgOcr({ running: true, total: ids.length, done: 0, failed: 0, ids });
+    setBgOcr({ running: true, total: ids.length, done: 0, failed: 0, ids, finishedIds: [] });
     setImageStatuses((current) => {
       const next = { ...current };
       ids.forEach((id) => { next[id] = { phase: "ocr", status: "queued", detail: "대기" }; });
@@ -2318,7 +2348,7 @@ export default function App() {
             if (event.image) applyImageRecord(event.image);
             if (["done", "skipped", "failed"].includes(event.status) && !finished.has(event.image_id)) {
               finished.add(event.image_id);
-              setBgOcr((current) => ({ ...current, done: current.done + 1, failed: current.failed + (event.status === "failed" ? 1 : 0) }));
+              setBgOcr((current) => ({ ...current, done: current.done + 1, failed: current.failed + (event.status === "failed" ? 1 : 0), finishedIds: [...(current.finishedIds || []), event.image_id] }));
             }
           }
           if (event.type === "error") throw new Error(event.message);
@@ -2967,11 +2997,13 @@ export default function App() {
           placeholder="Untitled project"
         />
         <GlossaryPanel sessionId={sessionId} projectName={projectName} ocrBusy={ocrBusy} analysisReady={images.some((image) => image.has_analysis)} onMemoChange={setWorkMemo} />
-        <button type="button" className={`llm-route-badge ${ocrProvider}`} onClick={() => setActiveTab("ocr")}
-          title={`LLM 경로: ${effectiveOcrModel || "기본"} · 이미지 작업(AI 글자 지우기·통번역): ${(ocrProvider === "gemini" ? imageModels.gemini : imageModels.openai) || "-"}\n프로젝트에 저장되어 다른 기기에서도 같습니다. 누르면 글자인식/번역 탭에서 바꿉니다.`}>
+        <label className={`llm-route-badge ${ocrProvider}`}
+          title={`번역 경로(OCR·번역 모델): ${effectiveOcrModel || "기본"} · 이미지 작업(AI 글자 지우기·통번역): ${(ocrProvider === "gemini" ? imageModels.gemini : imageModels.openai) || "-"}\n언제든 바꿀 수 있습니다. 이미 번역된 페이지는 그대로 두고, 바꾼 뒤 번역하는 페이지부터 새 경로로 갑니다. 프로젝트에 저장되어 다른 기기에서도 같습니다.`}>
           <span>{ocrProvider === "gemini" ? "Gemini" : "OpenAI"}</span>
-          {(ocrModels.find((model) => model.id === effectiveOcrModel)?.label || effectiveOcrModel || "기본").replace(/\s*\(.*\)$/, "").replace(/^GPT-/, "").replace(/^Gemini\s+/, "")}
-        </button>
+          <select aria-label="번역 경로" value={effectiveOcrModel} onChange={(event) => changeOcrRoute(event.target.value)} disabled={!ocrModels.length || ocrBusy}>
+            {ocrModels.map((model) => <option key={model.id} value={model.id}>{(model.label || model.id).replace(/\s*\(.*\)$/, "")}</option>)}
+          </select>
+        </label>
         </div>
         <nav className="workflow-tabs top-workflow-tabs">
           {WORKFLOW_TABS.map(([id, label]) => (
@@ -3882,7 +3914,7 @@ export default function App() {
         onPick={(row) => { setSpeakerPickerOpen(false); assignSpeaker(row); }}
       />
       <OcrBatchPrompt
-        show={showOcrPrompt && !ocrAutoStart}
+        show={showOcrPrompt && !ocrAutoStart && !lastPagePrompt}
         pending={ocrBatchCandidates.length}
         percent={ocrReachedMilestone}
         promptOff={ocrPromptOff}
@@ -3896,6 +3928,7 @@ export default function App() {
         progress={bgOcr}
         selectedLocked={selectedInBackgroundOcr}
       />
+      {lastPagePrompt && !bgOcr.running ? <LastPagePrompt prompt={lastPagePrompt} onTranslate={translateRemainingFromLastPage} onLater={() => setLastPagePrompt(null)} /> : null}
       <ImageGenProgress
         job={imageGen}
         selectedLocked={selectedInImageGen}
