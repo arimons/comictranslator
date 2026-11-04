@@ -814,6 +814,40 @@ def _wall_groups_touching_rect(
     return local
 
 
+def _fill_text_notches_in_edge_mask(mask: np.ndarray, image: np.ndarray, wall_rect: List[int], max_notch_ratio: float = 0.08) -> Tuple[np.ndarray, List[int]]:
+    """TG 없는 수동 Edge 영역에서 테두리에 붙은 글자가 막아 비워 둔 자리를 메운다.
+
+    TG가 있으면 TG 범위의 경계선을 지우고 글자 획을 더하지만(_include_text_pixels_in_edge_mask), TG가 없으면
+    테두리에 닿은 글자가 테두리와 한 덩어리 장벽이 되어 채우기가 그 글자를 감싸지 못한다. 그 자리는 채운 영역의
+    볼록 껍질 안쪽에 파인 작은 자리로 남는다. 어두운 픽셀(글자)이 있는 파인 자리만 메우고, 큰 자리(말풍선 꼬리·
+    다른 그림)는 그대로 둔다. 볼록 껍질은 테두리 안쪽 선을 따라가므로 말풍선 테두리는 메우지 않는다.
+    """
+    x, y, w, h = _as_rect(wall_rect)
+    img_h, img_w = mask.shape[:2]
+    x1, y1, x2, y2 = max(0, x), max(0, y), min(img_w, x + w), min(img_h, y + h)
+    if x2 <= x1 or y2 <= y1:
+        return mask, _mask_bounding_rect(mask) or [0, 0, 0, 0]
+    roi = np.where(mask[y1:y2, x1:x2] > 0, 255, 0).astype(np.uint8)
+    area = int(np.count_nonzero(roi))
+    if area == 0:
+        return mask, [0, 0, 0, 0]
+    contours, _ = cv2.findContours(roi, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    hull = np.zeros_like(roi)
+    cv2.fillPoly(hull, [cv2.convexHull(np.vstack(contours))], 255)
+    notches = np.where((hull > 0) & (roi == 0), 255, 0).astype(np.uint8)
+    dark = cv2.cvtColor(image[y1:y2, x1:x2], cv2.COLOR_BGR2GRAY) < 128
+    count, labels, stats, _ = cv2.connectedComponentsWithStats(notches, connectivity=8)
+    filled = roi.copy()
+    for label in range(1, count):
+        part = labels == label
+        if stats[label, cv2.CC_STAT_AREA] > area * max_notch_ratio or not np.any(dark & part):
+            continue
+        filled[part] = 255
+    out = mask.copy()
+    out[y1:y2, x1:x2] = filled
+    return out, _mask_bounding_rect(out) or [0, 0, 0, 0]
+
+
 def _manual_edge_barrier_regions(
     image: np.ndarray,
     groups: List[Dict[str, Any]],
@@ -863,6 +897,8 @@ def _manual_edge_barrier_regions(
             )
             if target_groups:
                 rescue_mask, rescue_rect = _include_text_pixels_in_edge_mask(rescue_mask, rescue_rect, image, target_groups, rect)
+            else:
+                rescue_mask, rescue_rect = _fill_text_notches_in_edge_mask(rescue_mask, image, rect)
             used_box_fallback = rescue_rect[2] <= 0 or rescue_rect[3] <= 0
         else:
             rescue_mask, rescue_rect = _manual_edge_box_mask(rect, image.shape[:2])

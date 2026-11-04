@@ -1389,3 +1389,29 @@ def test_old_regions_json_instance_ref_still_matches_after_step3_gets_guide_id()
     crop_no_id = {"type": "unboxed", "source_method": "manual_ubox_guide", "anchor_ids": [4], "source_rect": [10, 10, 40, 40]}
     strong = {"instance_ref": "manual_ubox_9|tg:4", "target_key": region_binding_key(old_file_region)}
     assert _suppression_matches_region(strong, crop_no_id) is True
+
+
+def test_manual_edge_without_tg_covers_text_touching_outline():
+    # TG가 없을 때 테두리에 붙은 굵은 글자가 테두리와 한 덩어리 장벽이 돼도 그 글자 자리를 영역에 넣는다.
+    image = np.full((500, 400, 3), 255, dtype=np.uint8)
+    for k in range(-500, 900, 9):
+        cv2.line(image, (k, 0), (k + 500, 500), (0, 0, 0), 2)
+    cv2.ellipse(image, (200, 250), (70, 160), 0, 0, 360, (255, 255, 255), -1)
+    cv2.ellipse(image, (200, 250), (70, 160), 0, 0, 360, (0, 0, 0), 3)
+    # 글자 몇 개가 테두리에 닿아 있다(왼쪽 위·왼쪽 아래·위쪽 가운데). 나머지 글자는 떨어져 있다.
+    for (gx, gy) in ((134, 150), (134, 300), (178, 96), (205, 200)):
+        cv2.line(image, (gx, gy), (gx + 36, gy + 36), (0, 0, 0), 7)
+        cv2.line(image, (gx + 36, gy), (gx, gy + 36), (0, 0, 0), 7)
+    inside = np.zeros(image.shape[:2], np.uint8)
+    cv2.ellipse(inside, (200, 250), (66, 156), 0, 0, 360, 255, -1)
+    x, y, w, h = 128, 95, 144, 330
+    inside[:, :x] = 0
+    inside[:, x + w:] = 0
+    inside[:y] = 0
+    inside[y + h:] = 0
+
+    regions = _manual_edge_barrier_regions(image, [], _box_walls(x, y, w, h))
+
+    mask = regions[0]["mask"] > 0
+    assert np.count_nonzero(mask & (inside > 0)) / np.count_nonzero(inside) > 0.95
+    assert np.count_nonzero(mask & (inside == 0)) / np.count_nonzero(inside) < 0.01  # 테두리·빗금은 넣지 않는다
