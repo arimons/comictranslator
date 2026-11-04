@@ -772,7 +772,7 @@ const EditorCanvas = forwardRef(function EditorCanvas({ image, baseUrl, guidance
     if (polygon.points.length < 3) { setStatus("다각형은 꼭짓점이 3개 이상이어야 합니다"); return true; }
     maskPolygonRef.current = null;
     setMaskPolygon(null);
-    if (addCustomMaskShape({ polygon: polygon.points }, null)) completeTool();
+    addCustomMaskShape({ polygon: polygon.points }, null);
     return true;
   }
 
@@ -1261,12 +1261,11 @@ const EditorCanvas = forwardRef(function EditorCanvas({ image, baseUrl, guidance
         dragRef.current = null;
         setDragPreview({ tool: "mask-cursor", end });
         skipClickRef.current = true; setTimeout(() => { skipClickRef.current = false; }, 0);
-        // 거의 움직이지 않은 누름은 다각형 꼭짓점, 끈 것은 붓 획(또는 Shift 사각형)이다.
-        // 다른 가이드 도구처럼 칠하기가 실제로 더해지면 선택 도구로 돌아간다. 다각형은 꼭짓점을 찍는 동안 유지하고 닫을 때 돌아간다.
+        // 거의 움직이지 않은 누름은 다각형 꼭짓점, 끈 것은 붓 획(또는 Shift 사각형)이다. 칠한 뒤에도 도구를 유지한다.
         const now = stage.getPointerPosition();
         const moved = now && drag.startStage ? Math.hypot(now.x - drag.startStage.x, now.y - drag.startStage.y) : 0;
         if (drag.polygonOnly || (!drag.rect && moved < MASK_CLICK_PX)) addMaskPolygonPoint(drag.start);
-        else if (addCustomMaskShape(drag, end)) completeTool();
+        else addCustomMaskShape(drag, end);
         return;
       }
       const end = pointerToImage(stage);

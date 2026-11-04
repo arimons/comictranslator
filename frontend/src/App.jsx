@@ -2096,6 +2096,8 @@ export default function App() {
         currentGuidanceRef.current = next;
         setGuidance(next);
         resetGuidanceHistory();
+        // 지우기 보정(M)은 여러 번 칠할 수 있게 유지하다가, 적용으로 마스크 영역을 확정하면 선택 도구로 돌아간다.
+        setTool((current) => (current === "mask" ? "select" : current));
       }
       const notices = guidanceEdgeNotices(result.image?.guidance_report || refreshedImage.guidance_report);
       if (notices.length) setGuidanceNotice({ title: "Edge Guidance", notices });
