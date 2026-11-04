@@ -3000,6 +3000,9 @@ export default function App() {
         <label className={`llm-route-badge ${ocrProvider}`}
           title={`번역 경로(OCR·번역 모델): ${effectiveOcrModel || "기본"} · 이미지 작업(AI 글자 지우기·통번역): ${(ocrProvider === "gemini" ? imageModels.gemini : imageModels.openai) || "-"}\n언제든 바꿀 수 있습니다. 이미 번역된 페이지는 그대로 두고, 바꾼 뒤 번역하는 페이지부터 새 경로로 갑니다. 프로젝트에 저장되어 다른 기기에서도 같습니다.`}>
           <span>{ocrProvider === "gemini" ? "Gemini" : "OpenAI"}</span>
+          {(ocrModels.find((model) => model.id === effectiveOcrModel)?.label || effectiveOcrModel || "기본").replace(/\s*\(.*\)$/, "").replace(/^GPT-/, "").replace(/^Gemini\s+/, "")}
+          <i aria-hidden="true">▾</i>
+          {/* 배지 전체를 덮는 투명한 선택 상자: 배지 어디를 눌러도 드롭다운이 열린다 */}
           <select aria-label="번역 경로" value={effectiveOcrModel} onChange={(event) => changeOcrRoute(event.target.value)} disabled={!ocrModels.length || ocrBusy}>
             {ocrModels.map((model) => <option key={model.id} value={model.id}>{(model.label || model.id).replace(/\s*\(.*\)$/, "")}</option>)}
           </select>
