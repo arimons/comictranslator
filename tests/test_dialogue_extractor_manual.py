@@ -1044,8 +1044,9 @@ def test_manual_split_guide_splits_geometry_even_with_single_anchor_region():
 
     split = _split_manual_seed_regions(regions, groups, split_guides, image_shape=(1200, 1200))
 
-    assert len(split) == 1
-    assert sorted([tuple(item["anchor_ids"]) for item in split]) == [(5,)]
+    # 사용자가 그은 선은 TG가 하나뿐이어도 그대로 가르고, TG 없는 조각도 남긴다(필요 없으면 사용자가 지운다)
+    assert len(split) == 2
+    assert sorted([tuple(item["anchor_ids"]) for item in split]) == [(), (5,)]
     assert all(item["split_parent_rect"] == [768, 135, 290, 365] for item in split)
 
 
@@ -1415,3 +1416,27 @@ def test_manual_edge_without_tg_covers_text_touching_outline():
     mask = regions[0]["mask"] > 0
     assert np.count_nonzero(mask & (inside > 0)) / np.count_nonzero(inside) > 0.95
     assert np.count_nonzero(mask & (inside == 0)) / np.count_nonzero(inside) < 0.01  # 테두리·빗금은 넣지 않는다
+
+
+def test_manual_split_keeps_piece_without_tg_on_masked_region():
+    # 말풍선 두 개가 한 영역으로 잡혔고 TG는 한쪽에만 있다. 분할선을 그으면 두 조각이 모두 남아야 한다.
+    mask = np.zeros((300, 200), dtype=np.uint8)
+    cv2.ellipse(mask, (100, 80), (60, 70), 0, 0, 360, 255, -1)
+    cv2.ellipse(mask, (100, 220), (50, 70), 0, 0, 360, 255, -1)
+    regions = [{
+        "is_valid": True,
+        "method": "flood",
+        "anchor_ids": [3],
+        "bubble_rect": [40, 10, 120, 280],
+        "mask": mask,
+        "quality_flags": [],
+    }]
+    groups = [{"text_group_id": 3, "fallback_rect": [85, 180, 30, 80]}]
+    split_guides = [{"line": [[20, 150], [180, 150]]}]
+
+    split = _split_manual_seed_regions(regions, groups, split_guides)
+
+    assert len(split) == 2
+    assert sorted(tuple(item["anchor_ids"]) for item in split) == [(), (3,)]
+    upper = next(item for item in split if not item["anchor_ids"])
+    assert upper["bubble_rect"][1] < 150 and upper["bubble_rect"][1] + upper["bubble_rect"][3] <= 152

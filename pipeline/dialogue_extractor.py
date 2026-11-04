@@ -1613,6 +1613,15 @@ def _split_mask_by_projection_neck(
     return result
 
 
+def _is_split_sliver(sub: Dict[str, Any], child_rect: List[int], parent_rect: List[int]) -> bool:
+    """분할 조각이 실수로 생긴 자투리인지. 짧은 변 6px 미만이거나 부모 넓이의 1.5% 미만이면 자투리로 본다."""
+    _, _, cw, ch = _as_rect(child_rect)
+    _, _, pw, ph = _as_rect(parent_rect)
+    sub_mask = sub.get("sub_mask")
+    area = int(np.count_nonzero(sub_mask)) if isinstance(sub_mask, np.ndarray) else cw * ch
+    return min(cw, ch) < 6 or area < 0.015 * max(1, pw * ph)
+
+
 def _split_region_variants(
     region: Dict[str, Any],
     groups_by_id: Dict[int, Dict[str, Any]],
@@ -1648,8 +1657,8 @@ def _split_region_variants(
 
     split_result = None
     split_source = None
-    # TG가 하나도 없는 영역(예: TG 없이 seed만 찍은 말풍선)은 사용자가 그은 선을 그대로 따른다.
-    # TG가 있으면 기존 규칙대로 TG가 있는 조각만 남긴다(1개면 선 밖을 다듬고, 2개 이상이면 양쪽에 나뉠 때 자른다).
+    # 사용자가 그은 분할선은 TG와 상관없이 그대로 가르고 모든 조각을 남긴다. TG는 놓인 쪽 조각에 붙는다.
+    # (예전에는 TG가 있으면 TG가 있는 조각만 남겨, TG가 하나면 선 너머 조각이 사라졌다. 필요 없는 조각은 사용자가 지운다.)
     follow_line_only = False
     for guide in split_guides or []:
         points = _line_points(guide)
@@ -1659,7 +1668,7 @@ def _split_region_variants(
         if not _line_touches_rect(p1, p2, parent_rect):
             continue
         guide_anchor_ids = _augment_manual_split_anchors(anchor_ids, groups_by_id, parent_rect)
-        follow_line_only = not guide_anchor_ids
+        follow_line_only = True
         guide_anchor_rects = [_group_rect(groups_by_id[aid]) for aid in guide_anchor_ids if aid in groups_by_id]
         guide_anchor_centers = [
             (rect[0] + rect[2] // 2, rect[1] + rect[3] // 2)
@@ -1711,6 +1720,9 @@ def _split_region_variants(
         child_rect = [int(v) for v in _as_rect(sub.get("bubble_rect", parent_rect))]
         child_anchor_ids = [int(aid) for aid in sub.get("anchor_ids", [])]
         if not child_anchor_ids and not follow_line_only:
+            continue
+        if not child_anchor_ids and _is_split_sliver(sub, child_rect, parent_rect):
+            # 선을 영역 가장자리에 걸쳐 그어 생긴 얇은 자투리는 남기지 않는다
             continue
         child_anchor_rects = [_group_rect(groups_by_id[aid]) for aid in child_anchor_ids if aid in groups_by_id]
         child = {
