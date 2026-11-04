@@ -42,7 +42,7 @@ NEW_COMIC_TRANSLATOR/
 │       ├── viewportControls.js   # 두 캔버스 공용 확대/이동/맞춤
 │       ├── OcrBatchPrompt.jsx    # 수동 작업 60%·80% 진행 시 백그라운드 번역을 묻는 알림·진행 표시
 │       ├── ImageGenProgress.jsx  # AI로 통번역(이미지 생성) 진행 창: 모델·경과 시간·진행 메시지, 완료 뒤 결과 보기
-│       │       ├── ShortcutHelp.jsx      # ? 단축키 도움말
+│       ├── ShortcutHelp.jsx      # ? 단축키 도움말
 │       ├── regionTypes.js        # 경계 기반/텍스트 기반 용어 및 과거 타입 호환
 │       ├── RegionTypeBadge.jsx   # 공통 처리 기준 배지
 │       └── lib.js                # 공용 순수 헬퍼 함수 + 상수
