@@ -102,3 +102,42 @@ export function pruneDeletedManualGuides(guidance) {
     count: removeGuides.size,
   };
 }
+
+// 예전에는 수동 텍스트 기반 R의 크기를 바꿀 때 그 R을 만든 가이드를 못 찾으면 새 가이드를 더 만들었다.
+// 새 가이드의 resize_source_key는 "수동 영역"의 키(방법 이름이 manual_로 시작)라, 그 키의 사각형과 겹치는 더 오래된
+// 텍스트 기반 가이드가 대체된 옛 가이드다. 옛 가이드를 지우고, 새 가이드는 옛 가이드의 원래 자동 영역 키를 물려받는다.
+export function pruneSupersededResizeGuides(guidance) {
+  const guides = guidance?.manual_regions || [];
+  if (guides.length < 2) return null;
+  const stamp = (id) => { const m = String(id || "").match(/(\d{10,})/); return m ? Number(m[1]) : NaN; };
+  const rectOf = (item) => item.unboxed_rect || item.rect || null;
+  const textBased = (item) => ["unboxed", "text_based"].includes(String(item.type || item.processing_basis || ""));
+  const iou = (a, b) => {
+    const w = Math.min(a[0] + a[2], b[0] + b[2]) - Math.max(a[0], b[0]);
+    const h = Math.min(a[1] + a[3], b[1] + b[3]) - Math.max(a[1], b[1]);
+    if (w <= 0 || h <= 0) return 0;
+    return (w * h) / (a[2] * a[3] + b[2] * b[3] - w * h);
+  };
+  const removed = new Set();
+  const updated = new Map();
+  [...guides].sort((a, b) => stamp(a.id) - stamp(b.id)).forEach((guide) => {
+    if (!guide.resize_source_key || !textBased(guide)) return;
+    let parsed;
+    try { parsed = JSON.parse(guide.resize_source_key); } catch { return; }
+    const [, method, keyRect] = Array.isArray(parsed) ? parsed : [];
+    if (!String(method || "").startsWith("manual_") || !Array.isArray(keyRect) || keyRect.length < 4) return;
+    const old = guides.find((item) => item !== guide && !removed.has(item) && textBased(item)
+      && stamp(item.id) < stamp(guide.id) && Array.isArray(rectOf(item)) && iou(rectOf(item), keyRect) >= 0.5);
+    if (!old) return;
+    removed.add(old);
+    const inherited = updated.get(old)?.resize_source_key ?? old.resize_source_key;
+    const next = { ...(updated.get(guide) || guide) };
+    if (inherited) next.resize_source_key = inherited; else delete next.resize_source_key;
+    updated.set(guide, next);
+  });
+  if (!removed.size) return null;
+  return {
+    next: { ...guidance, manual_regions: guides.filter((item) => !removed.has(item)).map((item) => updated.get(item) || item) },
+    count: removed.size,
+  };
+}

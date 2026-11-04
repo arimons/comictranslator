@@ -4,7 +4,7 @@ import { createPortal } from "react-dom";
 import { rectOf, tgId, imageGroups, defaultGuidance, regionId, imageRegions, regionDisplayRect, overlayRegionColor } from "./lib.js";
 import { createViewport } from "./viewportControls.js";
 import { placeCanvasLabels, promotedTgIds } from "./canvasLabels.js";
-import { instanceRefIsWeak, pruneDeletedManualGuides, recordTargetsRegion, regionIsExcluded, tgIsExcluded } from "./regionExclusion.js";
+import { instanceRefIsWeak, pruneDeletedManualGuides, pruneSupersededResizeGuides, recordTargetsRegion, regionIsExcluded, tgIsExcluded } from "./regionExclusion.js";
 import { TEXT_BASED, regionProcessingBasis, regionTypeLabel, regionBindingKey, usesEdgeBarrier } from "./regionTypes.js";
 
 const SELECTED_REGION_COLOR = "#e11d48";
@@ -131,11 +131,13 @@ const EditorCanvas = forwardRef(function EditorCanvas({ image, baseUrl, guidance
     if (!image || image.processing_excluded || !guidance) return;
     const edge = pruneDeletedEdgeBoxes(guidance);
     const manual = pruneDeletedManualGuides(edge ? edge.next : guidance);
-    if (!edge && !manual) return;
-    const next = manual ? manual.next : edge.next;
+    const resized = pruneSupersededResizeGuides(manual ? manual.next : edge ? edge.next : guidance);
+    if (!edge && !manual && !resized) return;
+    const next = resized ? resized.next : manual ? manual.next : edge.next;
     guidanceRef.current = next;
     setGuidance(next);
-    const parts = [edge ? `Edge의 남은 벽 ${edge.count}개` : "", manual ? `지운 R의 남은 가이드 ${manual.count}개` : ""].filter(Boolean);
+    const parts = [edge ? `Edge의 남은 벽 ${edge.count}개` : "", manual ? `지운 R의 남은 가이드 ${manual.count}개` : "",
+      resized ? `크기 조절로 겹쳐 쌓인 옛 가이드 ${resized.count}개` : ""].filter(Boolean);
     setStatus(`삭제한 ${parts.join(", ")} 정리 · 변경사항 적용 시 반영`);
   }, [image?.id, guidance]);
 
@@ -1036,6 +1038,10 @@ const EditorCanvas = forwardRef(function EditorCanvas({ image, baseUrl, guidance
   // 선택한 텍스트 기반 영역(R)에 크기 조절 손잡이를 단다. 크기를 바꾸면 같은 자리의 수동 텍스트 영역 가이드로
   // 저장하고(이미 있으면 그 가이드를 고친다), 변경사항 적용 때 수동 영역이 같은 TG의 자동 영역을 대신한다.
   function manualResizeIndex(currentGuidance, region, key) {
+    // 수동 가이드가 만든 R이면 그 가이드를 고친다. 사각형 비교만으로는 분석 뒤 R 사각형이 조금 달라지면
+    // 못 찾아 새 가이드가 하나씩 쌓였다(옛 가이드가 흔적으로 남음).
+    const guide = manualGuideForRegion(currentGuidance, region);
+    if (guide) return (currentGuidance.manual_regions || []).indexOf(guide);
     const rect = region.unboxed_rect || region.erase_rect || [];
     return (currentGuidance.manual_regions || []).findIndex((item) => {
       if (regionProcessingBasis(item) !== TEXT_BASED) return false;
