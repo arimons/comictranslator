@@ -404,7 +404,9 @@ const EditorCanvas = forwardRef(function EditorCanvas({ image, baseUrl, guidance
       anchor_ids: region.anchor_ids || [],
       rect,
     };
-    const next = { ...latest, suppressed_regions: [...(latest.suppressed_regions || []), nextItem] };
+    // 크기를 바꿔 둔 뒤 적용 전에 자동 R을 지우면, 그 크기 조절 가이드도 함께 지운다(남으면 가이드 박스가 흔적으로 보인다).
+    const manual_regions = (latest.manual_regions || []).filter((item) => !(targetKey && item.resize_source_key === targetKey));
+    const next = { ...latest, manual_regions, suppressed_regions: [...(latest.suppressed_regions || []), nextItem] };
     setGuidanceWithRightClickUndo(next, `R${regionId(region)} 처리 영역 제외`);
     chooseRegion(null);
     return true;
@@ -1267,10 +1269,12 @@ const EditorCanvas = forwardRef(function EditorCanvas({ image, baseUrl, guidance
         dragRef.current = null;
         setDragPreview({ tool: "mask-cursor", end });
         skipClickRef.current = true; setTimeout(() => { skipClickRef.current = false; }, 0);
-        // 거의 움직이지 않은 누름은 다각형 꼭짓점, 끈 것은 붓 획(또는 Shift 사각형)이다. 칠한 뒤에도 도구를 유지한다.
+        // 클릭은 붓 굵기의 점, Shift+클릭은 다각형 꼭짓점(찍는 중에는 클릭마다 꼭짓점), 드래그는 붓 획, Shift+드래그는 사각형.
+        // 칠한 뒤에도 도구를 유지한다(변경사항 적용 때 선택 도구로 돌아간다).
         const now = stage.getPointerPosition();
         const moved = now && drag.startStage ? Math.hypot(now.x - drag.startStage.x, now.y - drag.startStage.y) : 0;
-        if (drag.polygonOnly || (!drag.rect && moved < MASK_CLICK_PX)) addMaskPolygonPoint(drag.start);
+        if (drag.polygonOnly || (drag.rect && moved < MASK_CLICK_PX)) addMaskPolygonPoint(drag.start);
+        else if (moved < MASK_CLICK_PX) addCustomMaskShape({ ...drag, rect: false, points: [[drag.start.x, drag.start.y]] }, end);
         else addCustomMaskShape(drag, end);
         return;
       }

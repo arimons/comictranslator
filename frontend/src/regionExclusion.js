@@ -63,10 +63,14 @@ export function pruneDeletedManualGuides(guidance) {
     const method = String(item.source_method || "");
     return method.startsWith("manual_") && !method.startsWith("manual_edge");
   });
-  if (!dead.length || !guides.length) return null;
   const guideRect = (item) => item.unboxed_rect || item.bubble_rect || item.rect || null;
   const removeGuides = new Set();
   const usedSuppress = new Set();
+  // 크기 조절 가이드의 원래 자동 영역이 제외돼 있으면, 그 가이드는 적용 전에 R을 지워 남은 것이다(제외 기록은 둔다).
+  const suppressedKeys = new Set(suppressed.map((item) => item.target_key).filter(Boolean));
+  guides.forEach((guide) => { if (guide.resize_source_key && suppressedKeys.has(guide.resize_source_key)) removeGuides.add(guide); });
+  if (!dead.length && !removeGuides.size) return null;
+  if (!guides.length) return null;
   dead.forEach((record) => {
     const origin = String(record.instance_ref || "").split("|")[0];
     let guide = origin ? guides.find((item) => item.id && String(item.id) === origin) : null;
