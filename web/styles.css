@@ -3351,6 +3351,12 @@ select.memo-key { width: 100%; padding: 2px; font-size: 12px; }
 .ocr-batch-toast.running { display: grid; gap: 4px; padding: 10px 14px; }
 .ocr-batch-toast.running small { color: var(--muted, #64748b); }
 .ocr-batch-failed { color: #b91c1c; }
+/* 이미지 통번역 진행 창: OCR 진행 표시와 겹치지 않게 그 위에 둔다 */
+.image-gen-toast { bottom: 150px; display: grid; gap: 4px; padding: 10px 14px; }
+.image-gen-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.image-gen-meta { color: var(--muted, #64748b); font-family: "Nanum Gothic Coding", monospace; }
+.image-gen-log { margin: 4px 0; padding: 0 0 0 16px; max-height: 84px; overflow: hidden; color: var(--muted, #64748b); font-size: 12px; line-height: 1.5; }
+.image-gen-toast small { color: var(--muted, #64748b); }
 .ocr-batch-actions { display: flex; justify-content: flex-end; gap: 8px; }
 .ocr-batch-size { display: flex; align-items: center; gap: 8px; margin-top: 10px; color: var(--muted, #64748b); font-size: 12px; }
 .ocr-batch-size span { white-space: nowrap; }

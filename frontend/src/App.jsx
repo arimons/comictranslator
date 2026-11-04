@@ -9,6 +9,7 @@ import StartScreen from "./StartScreen.jsx";
 import ImagePreview from "./ImagePreview.jsx";
 import GuidanceToolIcon from "./GuidanceToolIcon.jsx";
 import OcrBatchPrompt, { OCR_PROMPT_MILESTONES } from "./OcrBatchPrompt.jsx";
+import ImageGenProgress from "./ImageGenProgress.jsx";
 import ImageGenerationPanel from "./ImageGenerationPanel.jsx";
 import AiErasePanel from "./AiErasePanel.jsx";
 import ServerStatus from "./ServerStatus.jsx";
@@ -169,6 +170,8 @@ export default function App() {
   // 대사 편집을 ⌘Enter로 확정한 영역. 반영된 새 번역문으로 확인을 다시 기록한다.
   const dialogueConfirmAfterCommitRef = useRef(null);
   const [bgOcr, setBgOcr] = useState({ running: false, total: 0, done: 0, failed: 0, ids: [] });
+  // 이미지 생성 모델 통번역 진행(진행 창). 생성 중에도 다른 페이지는 편집할 수 있다.
+  const [imageGen, setImageGen] = useState(null);
   const prevPageRef = useRef({ id: null, ready: false });
   const [autoOverlayPreview, setAutoOverlayPreview] = useState(true);
   const [exportImageModel, setExportImageModel] = useState("gpt-image-2.5-sunburst");
@@ -391,7 +394,9 @@ export default function App() {
   const exportBusy = Boolean(busyTasks.export);
   // 백그라운드 번역 중에는 번역 중인 페이지만 편집을 잠근다(다른 페이지는 계속 편집할 수 있다).
   const selectedInBackgroundOcr = bgOcr.running && bgOcr.ids.includes(selected?.id);
-  const anyBusy = routeBusy || Object.values(busyTasks).some(Boolean) || selectedInBackgroundOcr;
+  const selectedInImageGen = Boolean(imageGen?.running && imageGen.ids.includes(selected?.id));
+  // 이미지 생성(export)은 서버에서 오래 돈다. 전체를 막지 않고 생성 중인 페이지만 막는다.
+  const anyBusy = routeBusy || Object.entries(busyTasks).some(([kind, value]) => value && kind !== "export") || selectedInBackgroundOcr || selectedInImageGen;
   const currentIndex = selected ? Math.max(0, images.findIndex((img) => img.id === selected.id)) : -1;
   const needsAttentionImages = images.filter((img) => {
     // 분석 전·대상 아님은 할 일이 남은 것이지 문제가 아니다. 실제로 실패한 페이지만 센다.
@@ -1380,7 +1385,7 @@ export default function App() {
   // 보던 페이지 뒤부터 끝까지, 이어서 앞쪽 순서로 돈다. 번역(OCR)은 네트워크 작업이라 함께 돌아도 막지 않는다.
   useEffect(() => {
     if (!workspaceStarted || generationReviewMode || !sessionId || !selected || prefetchPromiseRef.current) return;
-    if (routeBusy || Object.values(busyTasks).some(Boolean)) return;
+    if (routeBusy || Object.entries(busyTasks).some(([kind, value]) => value && kind !== "export")) return;
     // 보는 페이지 분석을 아직 시도하지 않았으면 그쪽이 먼저다. 시도했다가 실패했으면 멈추지 않고 이어간다.
     // 생성 권장 페이지는 자동 분석하지 않으므로 기다리지 않는다.
     const selectedSkipsAuto = selected.analysis_route !== "standard" && selected.image_generation_recommendation?.priority === "recommended";
@@ -2429,8 +2434,17 @@ export default function App() {
       setExportLog("이미지 생성 후보를 먼저 선택하세요.");
       return;
     }
+    if (taskLocksRef.current.has("export")) {
+      setStatus("이미지 생성이 진행 중입니다. 끝난 뒤 다시 시도하세요.");
+      return;
+    }
     setExportLog(`선택된 후보 ${targetIds.length}개 이미지 생성 요청 준비${force ? " (retry)" : ""}`);
     const requestSid = sessionId;
+    const genModel = exportImageModel || "gpt-image-2.5-sunburst";
+    const genNames = targetIds.map((id) => images.find((img) => img.id === id)?.name || id);
+    setImageGen({ running: true, ids: targetIds, names: genNames, model: genModel, logs: ["요청 보냄 · 모델 응답 대기"], startedAt: Date.now(), finishedAt: null, generated: 0, failed: 0 });
+    const genLog = (line) => setImageGen((current) => current ? { ...current, logs: [...current.logs, line].slice(-20) } : current);
+    try {
     await runTask("export", "Missing final 이미지 생성", async () => {
       let latestImages = images;
       let generatedCount = 0;
@@ -2458,12 +2472,14 @@ export default function App() {
       }, (event) => {
         if (event.type === "log") {
           appendLog(event.message);
+          if (event.message) genLog(event.message);
           setStatus(event.message || "이미지 생성 진행 중");
           return;
         }
         if (event.type === "error") {
           failedCount += 1;
           appendLog(`ERROR ${event.message || "이미지 생성 실패"}`);
+          genLog(`실패: ${event.message || "이미지 생성 실패"}`);
           setStatus(event.message || "이미지 생성 실패");
           return;
         }
@@ -2479,8 +2495,12 @@ export default function App() {
         setImages(latestImages || []);
         setExportGenerateIds([]);
       }
+      setImageGen((current) => current ? { ...current, generated: generatedCount, failed: failedCount } : current);
       return { logs: `이미지 생성 완료. 생성 ${generatedCount}개, 실패 ${failedCount}개` };
     });
+    } finally {
+      setImageGen((current) => current ? { ...current, running: false, finishedAt: Date.now() } : current);
+    }
   }
 
   // 편집기에서 이 페이지 하나만 이미지 생성 모델로 통번역한다. 설정(모델·품질 등)은 내보내기 탭의 이미지 생성 설정을 따른다.
@@ -2488,7 +2508,9 @@ export default function App() {
     if (!selected || selected.processing_excluded) return;
     const model = exportImageModel || "gpt-image-2.5-sunburst";
     const replace = Boolean(selected.final_url);
-    if (!window.confirm(`${selected.name}을(를) ${model}로 통번역합니다.${replace ? " 지금 최종 출력을 새 생성 결과로 바꿉니다." : ""} 이미지 생성 비용이 발생합니다. 진행할까요?`)) return;
+    // 이미지 모델은 OCR·번역 모델의 제공자를 따라간다(Gemini면 나노바나나). 어느 설정을 따랐는지 함께 보여 준다.
+    const basis = `OCR·번역 모델 ${effectiveOcrModel || "기본"}(${ocrProvider === "gemini" ? "Gemini" : "OpenAI"})을 따름`;
+    if (!window.confirm(`${selected.name}을(를) ${model}로 통번역합니다(${basis}).${replace ? " 지금 최종 출력을 새 생성 결과로 바꿉니다." : ""} 이미지 생성 비용이 발생합니다. 생성하는 동안 다른 페이지는 계속 편집할 수 있습니다. 진행할까요?`)) return;
     setGuidanceMenu(null);
     await generateMissingFinals({ imageIds: [selected.id], force: replace });
   }
@@ -3845,6 +3867,12 @@ export default function App() {
         running={bgOcr.running}
         progress={bgOcr}
         selectedLocked={selectedInBackgroundOcr}
+      />
+      <ImageGenProgress
+        job={imageGen}
+        selectedLocked={selectedInImageGen}
+        onShow={() => { const id = imageGen?.ids?.[imageGen.ids.length - 1]; const img = images.find((item) => item.id === id); if (img) selectImage(img); setImageGen(null); }}
+        onClose={() => setImageGen(null)}
       />
       <ShortcutHelp open={helpOpen} activeTab={activeTab} onClose={() => setHelpOpen(false)} />
       {guidanceNotice ? (
