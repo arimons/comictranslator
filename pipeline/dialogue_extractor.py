@@ -847,24 +847,23 @@ def _manual_edge_barrier_regions(
         rescue_mask: np.ndarray
         rescue_rect: List[int]
         used_box_fallback = True
-        if target_groups:
-            rescue = run_edge_barrier_rescue_auto(
-                image,
-                target_groups,
+        # TG가 없어도 박스 안에서 경계까지 채운다. 박스 사각형 그대로 쓰는 것은 채우기가 실패했을 때뿐이다
+        rescue = run_edge_barrier_rescue_auto(
+            image,
+            target_groups,
+            rect,
+            virtual_walls=walls,
+        )
+        raw_rescue_mask = rescue.get("mask")
+        if rescue.get("success") and isinstance(raw_rescue_mask, np.ndarray):
+            rescue_mask, rescue_rect = _clip_manual_edge_rescue_to_wall_rect(
+                raw_rescue_mask,
                 rect,
-                virtual_walls=walls,
+                image.shape[:2],
             )
-            raw_rescue_mask = rescue.get("mask")
-            if rescue.get("success") and isinstance(raw_rescue_mask, np.ndarray):
-                rescue_mask, rescue_rect = _clip_manual_edge_rescue_to_wall_rect(
-                    raw_rescue_mask,
-                    rect,
-                    image.shape[:2],
-                )
+            if target_groups:
                 rescue_mask, rescue_rect = _include_text_pixels_in_edge_mask(rescue_mask, rescue_rect, image, target_groups, rect)
-                used_box_fallback = rescue_rect[2] <= 0 or rescue_rect[3] <= 0
-            else:
-                rescue_mask, rescue_rect = _manual_edge_box_mask(rect, image.shape[:2])
+            used_box_fallback = rescue_rect[2] <= 0 or rescue_rect[3] <= 0
         else:
             rescue_mask, rescue_rect = _manual_edge_box_mask(rect, image.shape[:2])
         if used_box_fallback:

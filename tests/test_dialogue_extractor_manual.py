@@ -122,25 +122,49 @@ def test_manual_edge_region_uses_box_when_rescue_fails(monkeypatch):
     }]
 
 
-def test_manual_edge_region_uses_box_without_matching_tg():
+def _box_walls(x, y, w, h):
+    return [
+        {"box_id": "edge_box_1", "line": [[x, y], [x + w, y]]},
+        {"box_id": "edge_box_1", "line": [[x + w, y], [x + w, y + h]]},
+        {"box_id": "edge_box_1", "line": [[x + w, y + h], [x, y + h]]},
+        {"box_id": "edge_box_1", "line": [[x, y + h], [x, y]]},
+    ]
+
+
+def test_manual_edge_region_fills_box_without_matching_tg():
+    # TG가 없어도 박스 안을 채운다. 막힌 곳이 없는 평평한 바탕이면 박스 전체가 된다.
     image = np.full((120, 180, 3), 245, dtype=np.uint8)
     groups = [{"text_group_id": 2, "fallback_rect": [130, 10, 20, 20], "text": "別"}]
     diagnostics = []
-    walls = [
-        {"box_id": "edge_box_1", "line": [[50, 25], [100, 25]]},
-        {"box_id": "edge_box_1", "line": [[100, 25], [100, 95]]},
-        {"box_id": "edge_box_1", "line": [[100, 95], [50, 95]]},
-        {"box_id": "edge_box_1", "line": [[50, 95], [50, 25]]},
-    ]
 
-    regions = _manual_edge_barrier_regions(image, groups, walls, diagnostics=diagnostics)
+    regions = _manual_edge_barrier_regions(image, groups, _box_walls(50, 25, 50, 70), diagnostics=diagnostics)
 
     assert len(regions) == 1
-    assert regions[0]["bubble_rect"] == [50, 25, 50, 70]
+    bx, by, bw, bh = regions[0]["bubble_rect"]
+    assert bx >= 50 and by >= 25 and bx + bw <= 100 and by + bh <= 95 and bw >= 44 and bh >= 64  # 벽 두께만큼만 안쪽
     assert regions[0]["anchor_ids"] == []
-    assert "manual_edge_box_fallback=no_target_group" in regions[0]["quality_flags"]
-    assert diagnostics[0]["reason"] == "no_target_group"
-    assert diagnostics[0]["used_box_fallback"] is True
+    assert diagnostics[0]["used_box_fallback"] is False
+    assert not any(flag.startswith("manual_edge_box_fallback") for flag in regions[0]["quality_flags"])
+
+
+def test_manual_edge_without_tg_follows_bubble_outline_on_hatching():
+    # 빗금 바탕 위 타원 말풍선을 TG 없이 박스로만 감싸도 박스 사각형이 아니라 말풍선 모양을 찾는다.
+    image = np.full((240, 240, 3), 255, dtype=np.uint8)
+    for k in range(-240, 480, 8):
+        cv2.line(image, (k, 0), (k + 240, 240), (0, 0, 0), 2)
+    cv2.ellipse(image, (120, 120), (60, 90), 0, 0, 360, (255, 255, 255), -1)
+    cv2.ellipse(image, (120, 120), (60, 90), 0, 0, 360, (0, 0, 0), 3)
+    cv2.putText(image, "AB", (95, 125), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 0, 0), 3)
+    diagnostics = []
+
+    regions = _manual_edge_barrier_regions(image, [], _box_walls(50, 20, 140, 200), diagnostics=diagnostics)
+
+    assert diagnostics[0]["used_box_fallback"] is False
+    mask = regions[0]["mask"]
+    assert mask[120, 120] > 0 and mask[125, 110] > 0  # 말풍선 가운데와 글자 자리
+    assert mask[25, 55] == 0 and mask[215, 185] == 0  # 박스 모서리의 빗금은 들어가지 않는다
+    box_area = 140 * 200
+    assert 0.5 < np.count_nonzero(mask) / box_area < 0.65  # 타원 넓이 비율(약 0.6)
 
 
 def test_non_overlapping_manual_edge_boxes_are_reported_independently(monkeypatch):

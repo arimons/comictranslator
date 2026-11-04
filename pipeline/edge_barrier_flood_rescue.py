@@ -495,10 +495,11 @@ def _barrier_edges(gray: np.ndarray, anchor_rect: List[int], cfg: Dict[str, Any]
     edges = cv2.Canny(blurred, cfg["canny_lo"], cfg["canny_hi"])
 
     x, y, w, h = _as_rect(anchor_rect)
-    pad = int(cfg.get("clear_anchor_pad", 5))
-    x1, y1 = max(0, x - pad), max(0, y - pad)
-    x2, y2 = min(gray.shape[1], x + w + pad), min(gray.shape[0], y + h + pad)
-    edges[y1:y2, x1:x2] = 0
+    if w > 0 and h > 0:  # TG 없는 수동 Edge box는 지울 글자 범위가 없다
+        pad = int(cfg.get("clear_anchor_pad", 5))
+        x1, y1 = max(0, x - pad), max(0, y - pad)
+        x2, y2 = min(gray.shape[1], x + w + pad), min(gray.shape[0], y + h + pad)
+        edges[y1:y2, x1:x2] = 0
 
     dilate_px = int(cfg.get("dilate_px", 1))
     if dilate_px > 0:
@@ -606,8 +607,13 @@ def run_edge_barrier_rescue(
         if 0 <= sx < cw and 0 <= sy < ch:
             seed_local = (sx, sy)
             break
+    has_anchor = _rect_area(anchor_rect) > 0
     if seed_local is None:
-        seed_local = _seed_for_rect(roi_img, roi_gray, anchor_local)
+        if confine_to_walls and not has_anchor:
+            # TG가 없어도 박스가 한계선이다. 박스 가운데서 출발해 가까운 밝은 비장벽 픽셀로 옮긴다
+            seed_local = _bbox_center(to_local(wall_rect))
+        else:
+            seed_local = _seed_for_rect(roi_img, roi_gray, anchor_local)
     if seed_local is None:
         return {"success": False, "reason": "no_seed", "anchor_rect": anchor_rect, "source_region_rect": source_region_rect}
     seed_full = (seed_local[0] + cx, seed_local[1] + cy)
@@ -621,7 +627,7 @@ def run_edge_barrier_rescue(
             "clip_rect": clip_rect,
             "seed": list(seed_full),
         }
-    center_local = _bbox_center(anchor_local)
+    center_local = _bbox_center(anchor_local if has_anchor else (to_local(wall_rect) if confine_to_walls else clip_local))
 
     configs = [
         {"label": "soft", "canny_lo": 30, "canny_hi": 100, "dilate_px": 2, "clear_anchor_pad": 5},
@@ -683,7 +689,11 @@ def run_edge_barrier_rescue(
             touches_clip=touches_clip,
             rect=local_rescue_rect,
         )
-        if manual_guided:
+        if confine_to_walls:
+            # 수동 Edge box는 사용자가 그은 한계선이다. 박스가 범위를 막으므로 TG를 덮는지·페이지 비율은 따지지 않는다
+            # (TG를 지우고 경계 채우기로만 쓰는 경우)
+            ok = int(score.get("mask_area", 0.0)) > 64
+        elif manual_guided:
             ok = (
                 int(score.get("mask_area", 0.0)) > 64
                 and float(score.get("anchor_coverage", 0.0)) >= 0.20

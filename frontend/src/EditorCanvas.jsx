@@ -314,6 +314,26 @@ const EditorCanvas = forwardRef(function EditorCanvas({ image, baseUrl, guidance
     setStatus(statusText);
   }
 
+  // 수동 가이드가 만든 영역이면 그 가이드. Step 3가 영역에 남기는 가이드 id(region_origin·guide_id)로 찾고,
+  // id가 없는 예전 결과는 텍스트 기반 박스의 사각형이 같을 때만 같은 가이드로 본다.
+  function manualGuideForRegion(currentGuidance, region) {
+    const method = String(region?.source_method || region?.method || "");
+    if (!method.startsWith("manual_") || method.startsWith("manual_edge")) return null;
+    const guides = currentGuidance.manual_regions || [];
+    const guideId = region.guide_id || region.region_origin;
+    if (guideId && guideId !== "auto") {
+      const byId = guides.find((item) => item.id && String(item.id) === String(guideId));
+      if (byId) return byId;
+    }
+    if (regionProcessingBasis(region) !== TEXT_BASED) return null;
+    const rect = region.unboxed_rect || region.erase_rect || [];
+    return guides.find((item) => {
+      if (regionProcessingBasis(item) !== TEXT_BASED) return false;
+      const itemRect = item.unboxed_rect || item.rect || [];
+      return itemRect.length >= 4 && rect.length >= 4 && itemRect.slice(0, 4).every((value, index) => Math.abs(value - rect[index]) <= 1);
+    }) || null;
+  }
+
   function suppressRegion(region) {
     const rect = regionDisplayRect(region);
     if (!region || !rect) {
@@ -330,6 +350,28 @@ const EditorCanvas = forwardRef(function EditorCanvas({ image, baseUrl, guidance
         chooseRegion(null);
         return true;
       }
+    }
+    // 수동 가이드(텍스트 기반 박스·말풍선 박스)가 만든 영역도 같다. 가이드를 지워야 캔버스의 가이드 박스가 사라진다.
+    const guide = manualGuideForRegion(latest, region);
+    if (guide) {
+      const manual_regions = (latest.manual_regions || []).filter((item) => item !== guide);
+      let next = { ...latest, manual_regions };
+      // 자동 영역 크기를 바꿔 생긴 가이드면, 가이드만 지우면 원래 자동 영역이 되살아난다. 그 자동 영역은 제외로 막는다.
+      if (guide.resize_source_key && !(latest.suppressed_regions || []).some((item) => item.target_key === guide.resize_source_key)) {
+        next = { ...next, suppressed_regions: [...(latest.suppressed_regions || []), {
+          id: `suppress_${Date.now()}`,
+          target_key: guide.resize_source_key,
+          type: "region_suppress",
+          display_region_id: region.region_id,
+          source_method: "resize_source",
+          source_region_type: "unboxed",
+          anchor_ids: region.anchor_ids || [],
+          rect,
+        }] };
+      }
+      setGuidanceWithRightClickUndo(next, `R${regionId(region)} ${regionTypeLabel(guide)} 가이드 삭제`);
+      chooseRegion(null);
+      return true;
     }
     const targetKey = regionBindingKey(region);
     const sourceRegionId = region.source_order ?? region.source_region_id ?? region.region_id;
