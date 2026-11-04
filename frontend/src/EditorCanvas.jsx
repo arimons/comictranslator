@@ -4,7 +4,7 @@ import { createPortal } from "react-dom";
 import { rectOf, tgId, imageGroups, defaultGuidance, regionId, imageRegions, regionDisplayRect, overlayRegionColor } from "./lib.js";
 import { createViewport } from "./viewportControls.js";
 import { placeCanvasLabels, promotedTgIds } from "./canvasLabels.js";
-import { instanceRefIsWeak, recordTargetsRegion, regionIsExcluded, tgIsExcluded } from "./regionExclusion.js";
+import { instanceRefIsWeak, pruneDeletedManualGuides, recordTargetsRegion, regionIsExcluded, tgIsExcluded } from "./regionExclusion.js";
 import { TEXT_BASED, regionProcessingBasis, regionTypeLabel, regionBindingKey, usesEdgeBarrier } from "./regionTypes.js";
 
 const SELECTED_REGION_COLOR = "#e11d48";
@@ -129,11 +129,14 @@ const EditorCanvas = forwardRef(function EditorCanvas({ image, baseUrl, guidance
 
   useEffect(() => {
     if (!image || image.processing_excluded || !guidance) return;
-    const pruned = pruneDeletedEdgeBoxes(guidance);
-    if (!pruned) return;
-    guidanceRef.current = pruned.next;
-    setGuidance(pruned.next);
-    setStatus(`삭제한 Edge의 남은 벽 ${pruned.count}개 정리 · 변경사항 적용 시 반영`);
+    const edge = pruneDeletedEdgeBoxes(guidance);
+    const manual = pruneDeletedManualGuides(edge ? edge.next : guidance);
+    if (!edge && !manual) return;
+    const next = manual ? manual.next : edge.next;
+    guidanceRef.current = next;
+    setGuidance(next);
+    const parts = [edge ? `Edge의 남은 벽 ${edge.count}개` : "", manual ? `지운 R의 남은 가이드 ${manual.count}개` : ""].filter(Boolean);
+    setStatus(`삭제한 ${parts.join(", ")} 정리 · 변경사항 적용 시 반영`);
   }, [image?.id, guidance]);
 
   // 페이지가 바뀌면 찍던 다각형을 버린다.

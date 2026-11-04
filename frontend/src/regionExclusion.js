@@ -51,3 +51,54 @@ export function regionIsExcluded(region, guidance) {
     return rectCovered(bounds, r);
   });
 }
+
+// 예전에는 수동 가이드(텍스트 기반 박스·말풍선 박스)가 만든 R을 지워도 제외 기록만 남고 가이드는 그대로 남아,
+// 영역은 숨겨진 채 가이드 박스만 캔버스에 보였다(R이 숨어 있어 선택해 지울 수도 없다). 그런 가이드를 열 때
+// 지운 R을 만든 가이드와 쓸모없어진 제외 기록을 함께 정리한다. 크기 조절로 생긴 가이드는 원래 자동 영역을 제외로 남긴다.
+export function pruneDeletedManualGuides(guidance) {
+  const suppressed = guidance?.suppressed_regions || [];
+  const guides = guidance?.manual_regions || [];
+  const stamp = (id) => { const m = String(id || "").match(/(\d{10,})/); return m ? Number(m[1]) : NaN; };
+  const dead = suppressed.filter((item) => {
+    const method = String(item.source_method || "");
+    return method.startsWith("manual_") && !method.startsWith("manual_edge");
+  });
+  if (!dead.length || !guides.length) return null;
+  const guideRect = (item) => item.unboxed_rect || item.bubble_rect || item.rect || null;
+  const removeGuides = new Set();
+  const usedSuppress = new Set();
+  dead.forEach((record) => {
+    const origin = String(record.instance_ref || "").split("|")[0];
+    let guide = origin ? guides.find((item) => item.id && String(item.id) === origin) : null;
+    if (!guide && Array.isArray(record.rect)) {
+      const [rx, ry, rw, rh] = record.rect;
+      guide = guides.find((item) => {
+        const box = guideRect(item);
+        if (!Array.isArray(box) || box.length < 4 || removeGuides.has(item)) return false;
+        const w = Math.min(box[0] + box[2], rx + rw) - Math.max(box[0], rx);
+        const h = Math.min(box[1] + box[3], ry + rh) - Math.max(box[1], ry);
+        return w > 0 && h > 0 && (w * h) / Math.max(1, rw * rh) >= 0.5 && stamp(item.id) < stamp(record.id);
+      }) || null;
+    }
+    if (!guide) return;
+    removeGuides.add(guide);
+    usedSuppress.add(record);
+  });
+  if (!removeGuides.size) return null;
+  const kept = suppressed.filter((item) => !usedSuppress.has(item));
+  const revived = [...removeGuides]
+    .filter((guide) => guide.resize_source_key && !kept.some((item) => item.target_key === guide.resize_source_key))
+    .map((guide, index) => ({
+      id: `suppress_${Date.now()}_${index}`,
+      target_key: guide.resize_source_key,
+      type: "region_suppress",
+      source_method: "resize_source",
+      source_region_type: "unboxed",
+      anchor_ids: [],
+      rect: guideRect(guide),
+    }));
+  return {
+    next: { ...guidance, manual_regions: guides.filter((item) => !removeGuides.has(item)), suppressed_regions: [...kept, ...revived] },
+    count: removeGuides.size,
+  };
+}
