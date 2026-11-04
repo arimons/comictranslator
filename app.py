@@ -280,6 +280,11 @@ class SessionMetaRequest(BaseModel):
     project_name: str = ""
 
 
+class SessionOcrModelRequest(BaseModel):
+    session_id: str
+    ocr_model: str = ""  # 빈 값이면 서버 기본 모델
+
+
 class GlossaryBindRequest(BaseModel):
     session_id: str
     work_id: str | None = None
@@ -532,6 +537,15 @@ def list_recent_sessions(limit: int | None = 10, offset: int = 0) -> list[dict[s
     return recent_sessions_page(limit, offset)[0]
 
 
+def project_ocr_model(session_id: str) -> str | None:
+    """프로젝트에 저장된 OCR·번역 모델. 요청에 모델이 없으면 이것을 쓴다(기기마다 경로가 달라지지 않게)."""
+    try:
+        value = load_json(session_file(session_id), default={}).get("ocr_model")
+    except Exception:  # noqa: BLE001 - 읽기 실패는 기본 모델로
+        return None
+    return value if isinstance(value, str) and value else None
+
+
 def recent_sessions_page(limit: int | None, offset: int = 0, sort: str = "recent") -> tuple[list[dict[str, Any]], int]:
     """(해당 구간의 프로젝트 목록, 합쳐진 뒤 전체 프로젝트 수). limit=None이면 offset부터 끝까지.
 
@@ -551,6 +565,7 @@ def recent_sessions_page(limit: int | None, offset: int = 0, sort: str = "recent
         raw_sessions.append({
             "session_id": data.get("session_id") or session_json.parent.name,
             "project_name": data.get("project_name", ""),
+            "ocr_model": data.get("ocr_model", ""),
             "source_folder_name": data.get("source_folder_name", ""),
             "created_at": data.get("created_at", ""),
             "updated_at": dt.datetime.fromtimestamp(mtime).isoformat(timespec="seconds"),
@@ -2392,6 +2407,7 @@ def run_final_for_item(
 ) -> dict[str, Any]:
     if page_processing_excluded(session_id, item["id"]):
         return page_record(session_id, item["id"])
+    ocr_model = ocr_model or project_ocr_model(session_id)
     context = glossary_context if glossary_context is not None else session_glossary_snapshot(session_id)
     record = image_record(session_id, Path(item["input_path"]), item.get("image_sha256"))
     stored_speakers = load_json(speakers_path(session_id, record["id"]), default={})
@@ -2995,7 +3011,7 @@ def submit_ai_erase_job(req: AiEraseRequest) -> dict[str, Any]:
 
     from pipeline.gemini_image import image_model_for, is_gemini_model
 
-    model = image_model_for(req.ocr_model, IMAGE_MODEL)
+    model = image_model_for(req.ocr_model or project_ocr_model(req.session_id), IMAGE_MODEL)
     quality = req.quality or ("low" if is_gemini_model(model) else "medium")
     if quality not in {"low", "medium", "high"}:
         raise HTTPException(status_code=400, detail="quality는 low, medium, high 중 하나여야 합니다")
@@ -3585,6 +3601,21 @@ def create_app() -> FastAPI:
     def update_session_meta(req: SessionMetaRequest) -> dict[str, Any]:
         data = ensure_session(req.session_id)
         data["project_name"] = req.project_name.strip()[:120]
+        save_session(data)
+        return {"session": data}
+
+    @app.post("/api/session/ocr-model")
+    def update_session_ocr_model(req: SessionOcrModelRequest) -> dict[str, Any]:
+        from pipeline.gemini_ocr_translate_v5 import SUPPORTED_OCR_MODELS
+
+        value = (req.ocr_model or "").strip()
+        if value and value not in {item["id"] for item in SUPPORTED_OCR_MODELS}:
+            raise HTTPException(status_code=400, detail=f"지원하지 않는 OCR·번역 모델입니다: {value}")
+        data = ensure_session(req.session_id)
+        if value:
+            data["ocr_model"] = value
+        else:
+            data.pop("ocr_model", None)
         save_session(data)
         return {"session": data}
 

@@ -3690,3 +3690,13 @@ select.memo-key { width: 100%; padding: 2px; font-size: 12px; }
 .inplace-toolbar .wm-icon { flex: none; }
 .inplace-toolbar-dock .inplace-close { margin-left: 0; }
 .inplace-toolbar .color-popover { left: auto; right: -40px; }
+
+/* 프로젝트 LLM 경로 표시(상단·최근 프로젝트 카드)와 페이지 진행 수 */
+.llm-route-badge { display: inline-flex; flex: none; align-items: center; gap: 5px; margin-left: 6px; padding: 2px 8px; border: 1px solid var(--line, #d7dce3); border-radius: 999px; background: var(--panel, #fff); font-size: 12px; white-space: nowrap; cursor: pointer; }
+.llm-route-badge span { padding: 1px 6px; border-radius: 999px; background: #e0e7ff; color: #1e3a8a; font-weight: 700; font-size: 11px; }
+.llm-route-badge.gemini span { background: #dcfce7; color: #14532d; }
+.llm-route-badge small { color: var(--muted, #64748b); }
+.recent-project-route { color: var(--muted, #64748b); font-size: 12px; }
+.recent-project-route strong { color: inherit; font-weight: 600; }
+.page-counter { margin: 0 8px; font-family: "Nanum Gothic Coding", monospace; font-size: 13px; font-variant-numeric: tabular-nums; }
+.page-counter small { margin-left: 2px; color: var(--muted, #64748b); }

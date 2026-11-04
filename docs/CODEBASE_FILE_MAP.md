@@ -169,6 +169,7 @@ guidance(수동 보정)가 있는 이미지는 `guidance_digest`(guidance 내용
 | `GET /api/ocr-models` | OCR/번역 모델 목록(`id`, `label`, `note`)과 기본값 |
 | `GET /api/glossary/{session_id}`, `POST /api/glossary/bind`, `/api/glossary/unbind`, `/api/glossary/save`, `/api/glossary/draft` | 작품 메모 연결·저장·URL 초안. 메모 참고문을 Step 4 프롬프트에 붙인다 |
 | `GET /api/namu-lookup` | 작품명으로 나무위키 문서 주소 찾기(`pipeline/work_sources.py`의 `namu_lookup`, 이동 주소만 읽음) |
+| `POST /api/session/ocr-model` | 프로젝트의 OCR·번역 모델(LLM 경로)을 `project.json`의 `ocr_model`에 저장한다(빈 값이면 기본 모델). 요청에 모델이 없으면 번역(`run_final_for_item`)과 AI 글자 지우기가 이 값을 쓰고, 최근 프로젝트 목록에도 `ocr_model`이 나간다. 화면은 프로젝트를 열 때 이 값을 쓰고, 예전에 브라우저에만 저장한 값은 한 번 서버로 옮긴다. 상단 배지(`llm-route-badge`)와 최근 프로젝트 카드(번역 경로)에 표시한다 |
 | `POST /api/server/restart` | 같은 명령으로 서버 프로세스를 다시 띄운다. 진행 중 작업이 있으면 409, `?force=true`면 중단하고 재시작 |
 | `POST /api/lama/release` | 프로젝트 홈으로 나갈 때 화면이 부른다. 다른 작업이 없으면 LaMa 작업 프로세스를 끝내 메모리를 돌려주고, 있으면 그대로 둔다(`released`, `busy`, `status`) |
 | `GET /api/lama/status` | LaMa 작업 프로세스 상태(`running`, `pid`, `idle_sec`, `uptime_sec`, `idle_release_sec`) |

@@ -21,7 +21,7 @@ export default function StartScreen({
   folderPath, setFolderPath, fileRef, uploadFiles, uploadFromInput, importPath,
   inputBusy, analyzeBusy, analyzeWorkers, setAnalyzeWorkers, analysisPolicy, setAnalysisPolicy,
   startRegionAnalysis, splitLandscape, setSplitLandscape, removeLoadedImage, openRecentSession, openSessionForSetup, recentMenuId, setRecentMenuId,
-  renameRecentSession, deleteRecentSession, status, setStatus,
+  renameRecentSession, deleteRecentSession, status, setStatus, ocrModelLabel,
 }) {
   const recentEndRef = useRef(null);
   useEffect(() => {
@@ -128,6 +128,9 @@ export default function StartScreen({
                           <time dateTime={date} title="프로젝트와 저장된 작업 파일의 마지막 변경 시각">{workDate(date)}</time>
                           <span className="recent-project-progress">결과 생성 <strong>{recent.final_count ?? 0} / {recent.image_count}장</strong></span>
                           <span className="recent-project-analysis">분석 {recent.analysis_count ?? 0} / {recent.image_count}장</span>
+                          <span className="recent-project-route" title="이 프로젝트의 OCR·번역 모델(LLM 경로). 이미지 작업도 이 제공자를 따라갑니다.">
+                            번역 경로 <strong>{ocrModelLabel ? ocrModelLabel(recent.ocr_model) : (recent.ocr_model || "기본")}</strong>
+                          </span>
                         </div>
                       </button>
                       <button className="recent-session-menu-button" type="button" disabled={busy}

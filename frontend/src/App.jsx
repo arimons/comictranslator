@@ -142,6 +142,7 @@ export default function App() {
   const [ocrDefaultModel, setOcrDefaultModel] = useState("");
   const [imageModels, setImageModels] = useState({ openai: "gpt-image-2.5-sunburst" });
   const [ocrModel, setOcrModel] = useState("");
+  const ocrModelMigratedRef = useRef(new Set());
   const [fonts, setFonts] = useState([]);
   const [fontPath, setFontPath] = useState("");
   const [analyzeWorkers, setAnalyzeWorkers] = useState(4);
@@ -505,6 +506,10 @@ export default function App() {
   function updateOcrModel(value) {
     setOcrModel(value);
     writeSessionSettings(sessionIdRef.current, { ocrModel: value });
+    // 다른 기기·일괄 스크립트도 같은 경로를 타도록 프로젝트에 저장한다(기본 모델이면 비운다)
+    const sid = sessionIdRef.current;
+    if (sid) api("/api/session/ocr-model", { method: "POST", body: JSON.stringify({ session_id: sid, ocr_model: value === ocrDefaultModel ? "" : value }) })
+      .catch((err) => setStatus(`OCR·번역 모델 저장 실패: ${String(err.message || err)}`));
   }
 
   // 서버 기본값과 같으면 null을 보내 백엔드 기본 동작(--model 생략)을 유지한다.
@@ -1139,6 +1144,16 @@ export default function App() {
     if (sid !== sessionIdRef.current) return;
     if (!projectNameDirtyRef.current) {
       setProjectName(data.session?.project_name || "");
+    }
+    // OCR·번역 모델(LLM 경로)은 프로젝트에 저장한다. 예전에 이 브라우저에만 저장한 값은 한 번 서버로 옮긴다.
+    const serverOcrModel = data.session?.ocr_model || "";
+    if (serverOcrModel) {
+      setOcrModel(serverOcrModel);
+      writeSessionSettings(sid, { ocrModel: serverOcrModel });
+    } else if (!ocrModelMigratedRef.current.has(sid)) {
+      ocrModelMigratedRef.current.add(sid);
+      const localModel = readSessionSettings(sid).ocrModel;
+      if (localModel) api("/api/session/ocr-model", { method: "POST", body: JSON.stringify({ session_id: sid, ocr_model: localModel }) }).catch(() => {});
     }
     const nextImages = data.images || [];
     hydrationPendingRef.current = Boolean(data.hydration_pending);
@@ -2911,6 +2926,11 @@ export default function App() {
   if (!workspaceStarted) {
     return <StartScreen
       images={images} recentSessions={recentSessions} projectName={projectName}
+      ocrModelLabel={(id) => {
+        const model = ocrModels.find((item) => item.id === (id || ocrDefaultModel));
+        const name = model?.label?.replace(/\s*\(.*\)$/, "") || id || ocrDefaultModel || "기본";
+        return `${model?.provider === "gemini" ? "Gemini" : "OpenAI"} · ${name}${id ? "" : " (기본)"}`;
+      }}
       recentLoadState={recentLoadState} loadRecentSessions={loadRecentSessions}
       recentSort={recentSort} changeRecentSort={changeRecentSort} recentHasMore={recentHasMore} recentLoadingMore={recentLoadingMore} loadMoreRecentSessions={loadMoreRecentSessions}
       importNameFocusRequest={importNameFocusRequest}
@@ -2947,6 +2967,11 @@ export default function App() {
           placeholder="Untitled project"
         />
         <GlossaryPanel sessionId={sessionId} projectName={projectName} ocrBusy={ocrBusy} analysisReady={images.some((image) => image.has_analysis)} onMemoChange={setWorkMemo} />
+        <button type="button" className={`llm-route-badge ${ocrProvider}`} onClick={() => setActiveTab("ocr")}
+          title={`LLM 경로: ${effectiveOcrModel || "기본"} · 이미지 작업(AI 글자 지우기·통번역): ${(ocrProvider === "gemini" ? imageModels.gemini : imageModels.openai) || "-"}\n프로젝트에 저장되어 다른 기기에서도 같습니다. 누르면 글자인식/번역 탭에서 바꿉니다.`}>
+          <span>{ocrProvider === "gemini" ? "Gemini" : "OpenAI"}</span>
+          {(ocrModels.find((model) => model.id === effectiveOcrModel)?.label || effectiveOcrModel || "기본").replace(/\s*\(.*\)$/, "").replace(/^GPT-/, "").replace(/^Gemini\s+/, "")}
+        </button>
         </div>
         <nav className="workflow-tabs top-workflow-tabs">
           {WORKFLOW_TABS.map(([id, label]) => (
@@ -3110,6 +3135,9 @@ export default function App() {
               <div className="card-head editor-head">
                 <div className="editor-title">
                   <span>Analysis Workspace</span>
+                  {images.length ? <span className="page-counter" title="현재 페이지 / 전체 페이지. 괄호는 결과 이미지가 생성된 페이지 수(수동 검토 완료를 뜻하지 않음)">
+                    {currentIndex + 1}<small>({images.filter((img) => img.final_url).length})</small> / {images.length}
+                  </span> : null}
                   <strong>{selectedGuidanceRegionId != null ? `R${selectedGuidanceRegionId}` : selectedTg ? `TG${selectedTg}` : selectedToolLabel}</strong>
                 </div>
                 <div className="guidance-topbar" ref={guidanceMenuRef}>
