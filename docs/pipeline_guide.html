@@ -5,135 +5,176 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Comic Translator Pipeline 해설서</title>
 <style>
+  @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+KR:wght@400;500;600;700&family=Nanum+Gothic+Coding:wght@400;700&display=swap');
+
+  /* ─── 토큰: 라이트 기본, 다크는 기기 설정을 따르는 무채색 그레이 ───────── */
   :root {
-    --bg: #0f1117;
-    --surface: #181c25;
-    --surface2: #1f2433;
-    --border: #2a3040;
-    --accent1: #4e9eff;
-    --accent2: #7c3aed;
-    --accent3: #10b981;
-    --accent4: #f59e0b;
-    --accent5: #ef4444;
-    --text: #e2e8f0;
-    --text-dim: #94a3b8;
-    --code-bg: #12161f;
+    --bg: #FFFFFF;  --surface: #FFFFFF;  --surface-2: #F7F9FC;
+    --ink: #333333;  --ink-soft: #5A6472;  --head: #001C58;
+    --line: #E6EAF0;  --accent: #1F5795;  --accent-soft: #F7FBFF;
+    --amber: #B07C00;  --amber-soft: #FFF4D6;
+    --th-bg: #001C58;  --th-ink: #FFFFFF;
+    /* 단계 구분색(Step 1〜5)과 코드 색 */
+    --c1: #1F5795;  --c2: #6B46A8;  --c3: #1B7A55;  --c4: #A86A00;  --c5: #B3382C;
+    --code-ink: #8A5A00;
+    --syn-kw: #B3261E;  --syn-fn: #7A3FB5;  --syn-st: #0B5C99;  --syn-cm: #6A737D;  --syn-num: #1F5795;
+
+    --font-sans: "IBM Plex Sans KR", "Apple SD Gothic Neo", "Malgun Gothic", sans-serif;
+    --font-mono: "Nanum Gothic Coding", "D2Coding", monospace;
+
+    /* 예전 변수 이름 호환(본문 인라인 스타일이 쓴다). 값은 위 토큰을 따라간다 */
+    --text: var(--ink);  --text-dim: var(--ink-soft);  --border: var(--line);
+    --surface2: var(--surface-2);  --code-bg: var(--surface-2);
+    --accent1: var(--c1);  --accent2: var(--c2);  --accent3: var(--c3);  --accent4: var(--c4);  --accent5: var(--c5);
   }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #161618;  --surface: #1E1E21;  --surface-2: #252529;
+      --ink: #E8E8EA;  --ink-soft: #A6A6AD;  --head: #F0F0F2;
+      --line: #34343A;  --accent: #82AEDE;  --accent-soft: #212831;
+      --amber: #D9B15C;  --amber-soft: #2E2817;
+      --th-bg: #26262B;  --th-ink: #E8E8EA;
+      --c1: #82AEDE;  --c2: #B79CE8;  --c3: #5FC49A;  --c4: #E0B25E;  --c5: #F0857A;
+      --code-ink: #F1C15A;
+      --syn-kw: #FF8A80;  --syn-fn: #D2A8FF;  --syn-st: #A5D6FF;  --syn-cm: #8B949E;  --syn-num: #79C0FF;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #161618;  --surface: #1E1E21;  --surface-2: #252529;
+    --ink: #E8E8EA;  --ink-soft: #A6A6AD;  --head: #F0F0F2;
+    --line: #34343A;  --accent: #82AEDE;  --accent-soft: #212831;
+    --amber: #D9B15C;  --amber-soft: #2E2817;
+    --th-bg: #26262B;  --th-ink: #E8E8EA;
+    --c1: #82AEDE;  --c2: #B79CE8;  --c3: #5FC49A;  --c4: #E0B25E;  --c5: #F0857A;
+    --code-ink: #F1C15A;
+    --syn-kw: #FF8A80;  --syn-fn: #D2A8FF;  --syn-st: #A5D6FF;  --syn-cm: #8B949E;  --syn-num: #79C0FF;
+  }
+
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body {
-    font-family: 'Pretendard', 'Noto Sans KR', system-ui, sans-serif;
+    font-family: var(--font-sans);
     background: var(--bg);
-    color: var(--text);
-    line-height: 1.65;
-    font-size: 15px;
+    color: var(--ink);
+    line-height: 1.75;
+    font-size: 17px;
+    -webkit-font-smoothing: antialiased;
   }
-  a { color: var(--accent1); text-decoration: none; }
+  a { color: var(--accent); text-decoration: none; }
   a:hover { text-decoration: underline; }
+  :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
-  /* ─── Layout ─────────────────────────────────── */
+  /* ─── 레이아웃 ───────────────────────────────── */
   .sidebar {
     position: fixed; top: 0; left: 0;
     width: 240px; height: 100vh;
     background: var(--surface);
-    border-right: 1px solid var(--border);
+    border-right: 1px solid var(--line);
     overflow-y: auto;
     padding: 24px 0;
     z-index: 100;
   }
   .sidebar h2 {
-    font-size: 11px; font-weight: 700; letter-spacing: 0.12em;
-    text-transform: uppercase; color: var(--text-dim);
-    padding: 0 20px 10px;
+    font-family: var(--font-mono);
+    font-size: 12px; font-weight: 700; letter-spacing: 0.12em;
+    text-transform: uppercase; color: var(--accent);
+    padding: 0 20px 10px; margin: 0; border: 0;
   }
   .sidebar ul { list-style: none; }
   .sidebar li a {
     display: block; padding: 6px 20px;
-    font-size: 13px; color: var(--text-dim);
+    font-size: 14px; line-height: 1.5; color: var(--ink-soft);
     border-left: 3px solid transparent;
-    transition: all 0.15s;
   }
   .sidebar li a:hover, .sidebar li a.active {
-    color: var(--accent1);
-    border-left-color: var(--accent1);
-    background: rgba(78,158,255,0.07);
+    color: var(--accent);
+    border-left-color: var(--accent);
+    background: var(--accent-soft);
     text-decoration: none;
   }
   .sidebar .section-title {
-    font-size: 11px; font-weight: 600; color: var(--text-dim);
-    padding: 16px 20px 4px; letter-spacing: 0.05em;
+    font-family: var(--font-mono);
+    font-size: 11px; font-weight: 700; color: var(--ink-soft);
+    padding: 16px 20px 4px; letter-spacing: 0.08em;
     text-transform: uppercase;
   }
 
   main {
     margin-left: 240px;
-    max-width: 960px;
-    padding: 48px 56px 96px;
+    max-width: 1000px;
+    padding: 56px 48px 96px;
   }
 
-  /* ─── Typography ──────────────────────────────── */
+  /* ─── 타이포그래피 ───────────────────────────── */
+  h1, h2, h3, h4 { word-break: keep-all; overflow-wrap: break-word; }
   h1 {
-    font-size: 2rem; font-weight: 800;
-    background: linear-gradient(135deg, var(--accent1), var(--accent2));
-    -webkit-background-clip: text; -webkit-text-fill-color: transparent;
-    background-clip: text;
-    margin-bottom: 8px;
+    font-size: clamp(28px, 4vw, 38px); font-weight: 700; letter-spacing: -0.02em;
+    line-height: 1.3; color: var(--head);
+    margin-bottom: 8px; text-wrap: balance;
   }
   h2 {
-    font-size: 1.4rem; font-weight: 700;
-    color: var(--text);
-    margin: 52px 0 16px;
+    font-size: 24px; font-weight: 700; letter-spacing: -0.02em; line-height: 1.4;
+    color: var(--head);
+    margin: 56px 0 16px;
     padding-bottom: 8px;
-    border-bottom: 1px solid var(--border);
+    border-bottom: 1px solid var(--line);
+    text-wrap: balance;
   }
   h3 {
-    font-size: 1.05rem; font-weight: 700;
-    color: var(--accent1);
-    margin: 28px 0 10px;
+    font-size: 17px; font-weight: 600; letter-spacing: -0.01em;
+    color: var(--head);
+    margin: 28px 0 8px;
   }
   h4 {
-    font-size: 0.9rem; font-weight: 600;
-    color: var(--accent3);
+    font-size: 15px; font-weight: 600;
+    color: var(--accent);
     margin: 18px 0 8px;
   }
-  p { margin: 8px 0; color: var(--text); }
-  ul, ol { padding-left: 20px; margin: 8px 0; }
+  p { margin: 8px 0 12px; max-width: 44em; }
+  ul, ol { padding-left: 22px; margin: 8px 0 14px; max-width: 44em; }
   li { margin: 4px 0; }
+  li::marker { color: var(--accent); }
+  td p, td ul, .io-box ul, .info-box p, .sub-step-body p, .hero p { max-width: none; }
 
-  /* ─── Code ────────────────────────────────────── */
+  /* ─── 코드 ───────────────────────────────────── */
   code {
-    font-family: 'JetBrains Mono', 'Fira Code', 'Cascadia Code', monospace;
-    font-size: 0.82em;
-    background: var(--code-bg);
-    border: 1px solid var(--border);
+    font-family: var(--font-mono);
+    font-size: 0.85em;
+    letter-spacing: normal;
+    background: var(--surface-2);
+    border: 1px solid var(--line);
     border-radius: 4px;
     padding: 1px 6px;
-    color: #f1c15a;
+    color: var(--code-ink);
+    overflow-wrap: anywhere;
   }
   pre {
-    background: var(--code-bg);
-    border: 1px solid var(--border);
-    border-radius: 8px;
+    background: var(--surface-2);
+    border: 1px solid var(--line);
+    border-radius: 6px;
     padding: 16px 20px;
     overflow-x: auto;
     margin: 12px 0;
-    font-size: 0.82em;
-    line-height: 1.55;
+    font-size: 14px;
+    line-height: 1.6;
   }
   pre code {
     background: none; border: none; padding: 0;
-    color: #c9d1d9;
+    color: var(--ink);
+    font-size: 1em;
+    overflow-wrap: normal;
   }
-  .kw  { color: #ff7b72; }
-  .fn  { color: #d2a8ff; }
-  .st  { color: #a5d6ff; }
-  .cm  { color: #8b949e; font-style: italic; }
-  .num { color: #79c0ff; }
+  .kw  { color: var(--syn-kw); }
+  .fn  { color: var(--syn-fn); }
+  .st  { color: var(--syn-st); }
+  .cm  { color: var(--syn-cm); font-style: italic; }
+  .num { color: var(--syn-num); }
+  kbd, samp { font-family: var(--font-mono); letter-spacing: normal; }
 
-  /* ─── Step Card ───────────────────────────────── */
+  /* ─── 단계 카드 ──────────────────────────────── */
   .step-card {
     background: var(--surface);
-    border: 1px solid var(--border);
-    border-radius: 12px;
+    border: 1px solid var(--line);
+    border-radius: 6px;
     padding: 24px 28px;
     margin: 20px 0;
     position: relative;
@@ -143,234 +184,262 @@
     content: '';
     position: absolute; top: 0; left: 0; right: 0; height: 3px;
   }
-  .step-1::before { background: var(--accent1); }
-  .step-2::before { background: var(--accent2); }
-  .step-3::before { background: var(--accent3); }
-  .step-4::before { background: var(--accent4); }
-  .step-5::before { background: var(--accent5); }
+  .step-1::before { background: var(--c1); }
+  .step-2::before { background: var(--c2); }
+  .step-3::before { background: var(--c3); }
+  .step-4::before { background: var(--c4); }
+  .step-5::before { background: var(--c5); }
 
   .step-badge {
     display: inline-flex; align-items: center; gap: 8px;
-    font-size: 11px; font-weight: 700; letter-spacing: 0.1em;
+    font-family: var(--font-mono);
+    font-size: 12px; font-weight: 700; letter-spacing: 0.1em;
     text-transform: uppercase;
-    background: var(--surface2);
-    border-radius: 6px;
+    background: var(--surface-2);
+    border-radius: 4px;
     padding: 3px 10px;
     margin-bottom: 12px;
   }
-  .badge-1 { color: var(--accent1); border: 1px solid var(--accent1); }
-  .badge-2 { color: var(--accent2); border: 1px solid var(--accent2); }
-  .badge-3 { color: var(--accent3); border: 1px solid var(--accent3); }
-  .badge-4 { color: var(--accent4); border: 1px solid var(--accent4); }
-  .badge-5 { color: var(--accent5); border: 1px solid var(--accent5); }
+  .badge-1 { color: var(--c1); border: 1px solid var(--c1); }
+  .badge-2 { color: var(--c2); border: 1px solid var(--c2); }
+  .badge-3 { color: var(--c3); border: 1px solid var(--c3); }
+  .badge-4 { color: var(--c4); border: 1px solid var(--c4); }
+  .badge-5 { color: var(--c5); border: 1px solid var(--c5); }
 
-  .step-title { font-size: 1.1rem; font-weight: 700; margin-bottom: 10px; }
+  .step-title { font-size: 19px; font-weight: 700; margin-bottom: 10px; color: var(--head); }
 
-  /* ─── Flow Diagram ────────────────────────────── */
+  /* ─── 흐름도 ─────────────────────────────────── */
   .flow {
     display: flex; align-items: center;
     flex-wrap: wrap; gap: 0;
     margin: 24px 0;
-    background: var(--surface2);
-    border: 1px solid var(--border);
-    border-radius: 10px;
+    background: var(--surface-2);
+    border: 1px solid var(--line);
+    border-radius: 6px;
     padding: 20px;
   }
   .flow-item {
     text-align: center;
     padding: 10px 14px;
-    border-radius: 8px;
+    border-radius: 6px;
     background: var(--surface);
-    border: 1px solid var(--border);
+    border: 1px solid var(--line);
     min-width: 110px;
   }
   .flow-item .label {
-    font-size: 10px; font-weight: 700; letter-spacing: 0.08em;
-    text-transform: uppercase; color: var(--text-dim);
+    font-family: var(--font-mono);
+    font-size: 11px; font-weight: 700; letter-spacing: 0.08em;
+    text-transform: uppercase; color: var(--ink-soft);
     margin-bottom: 4px;
   }
-  .flow-item .name {
-    font-size: 13px; font-weight: 600; color: var(--text);
-  }
-  .flow-item .file {
-    font-size: 10px; color: var(--text-dim);
-    margin-top: 4px;
-  }
-  .flow-arrow {
-    font-size: 20px; color: var(--border);
-    padding: 0 6px;
-    flex-shrink: 0;
-  }
+  .flow-item .name { font-size: 14px; font-weight: 600; color: var(--ink); }
+  .flow-item .file { font-family: var(--font-mono); font-size: 11px; color: var(--ink-soft); margin-top: 4px; }
+  .flow-arrow { font-size: 20px; color: var(--ink-soft); padding: 0 6px; flex-shrink: 0; }
 
-  /* ─── Module Relation ─────────────────────────── */
+  /* ─── 모듈 관계 ──────────────────────────────── */
   .module-box {
-    background: var(--surface2);
-    border: 1px solid var(--border);
-    border-radius: 10px;
+    background: var(--surface-2);
+    border: 1px solid var(--line);
+    border-radius: 6px;
     padding: 16px 20px;
     margin: 8px 0;
   }
   .module-box .mod-name {
-    font-size: 13px; font-weight: 700;
-    font-family: 'JetBrains Mono', monospace;
-    color: var(--accent1);
+    font-size: 14px; font-weight: 700;
+    font-family: var(--font-mono);
+    color: var(--accent);
     margin-bottom: 6px;
   }
-  .module-box .mod-desc {
-    font-size: 13px; color: var(--text-dim);
-  }
+  .module-box .mod-desc { font-size: 14.5px; color: var(--ink-soft); }
   .module-box .mod-calls {
-    font-size: 12px; color: var(--text-dim);
+    font-size: 14px; color: var(--ink-soft);
     margin-top: 8px;
     padding-top: 8px;
-    border-top: 1px solid var(--border);
+    border-top: 1px solid var(--line);
   }
-  .module-box .mod-calls span { color: var(--accent4); font-weight: 600; }
-  .indent { padding-left: 24px; border-left: 2px solid var(--border); margin-left: 20px; }
+  .module-box .mod-calls span { color: var(--c4); font-weight: 600; }
+  .indent { padding-left: 24px; border-left: 2px solid var(--line); margin-left: 20px; }
 
-  /* ─── IO Table ────────────────────────────────── */
+  /* ─── 입출력 ─────────────────────────────────── */
   .io-grid {
     display: grid; grid-template-columns: 1fr 1fr;
     gap: 12px; margin: 12px 0;
   }
   .io-box {
-    background: var(--surface2);
-    border: 1px solid var(--border);
-    border-radius: 8px;
+    background: var(--surface-2);
+    border: 1px solid var(--line);
+    border-radius: 6px;
     padding: 14px 16px;
   }
   .io-box .io-label {
-    font-size: 10px; font-weight: 700; letter-spacing: 0.1em;
+    font-family: var(--font-mono);
+    font-size: 11px; font-weight: 700; letter-spacing: 0.1em;
     text-transform: uppercase;
     margin-bottom: 8px;
   }
-  .io-in  .io-label { color: var(--accent1); }
-  .io-out .io-label { color: var(--accent3); }
-  .io-box ul { padding-left: 14px; }
-  .io-box li { font-size: 13px; color: var(--text-dim); margin: 3px 0; }
-  .io-box li code { font-size: 0.78em; }
+  .io-in  .io-label { color: var(--c1); }
+  .io-out .io-label { color: var(--c3); }
+  .io-box ul { padding-left: 16px; }
+  .io-box li { font-size: 14.5px; color: var(--ink-soft); margin: 3px 0; }
+  .io-box li code { font-size: 0.8em; }
 
-  /* ─── Info Box ────────────────────────────────── */
+  /* ─── 콜아웃 ─────────────────────────────────── */
   .info-box {
-    border-radius: 8px;
+    border-radius: 0 6px 6px 0;
     padding: 14px 18px;
     margin: 14px 0;
-    font-size: 13.5px;
-    border-left: 4px solid;
+    font-size: 15px;
+    line-height: 1.7;
+    border-left: 3px solid;
   }
-  .info-note { background: rgba(78,158,255,0.07);  border-color: var(--accent1); }
-  .info-warn { background: rgba(245,158,11,0.07);  border-color: var(--accent4); }
-  .info-tip  { background: rgba(16,185,129,0.07);  border-color: var(--accent3); }
-  .info-box strong { display: block; margin-bottom: 4px; font-weight: 700; }
+  .info-note { background: var(--accent-soft); border-color: var(--accent); }
+  .info-warn { background: var(--amber-soft);  border-color: var(--amber); }
+  .info-tip  { background: color-mix(in srgb, var(--c3) 9%, var(--surface)); border-color: var(--c3); }
+  .info-box strong { display: block; margin-bottom: 4px; font-weight: 700; color: var(--head); }
 
-  /* ─── Sub-step ────────────────────────────────── */
+  /* ─── 하위 단계 ──────────────────────────────── */
   .sub-steps { margin: 14px 0; }
-  .sub-step {
-    display: flex; gap: 14px;
-    margin-bottom: 14px;
-  }
+  .sub-step { display: flex; gap: 14px; margin-bottom: 14px; }
   .sub-step-num {
     flex-shrink: 0;
-    width: 26px; height: 26px;
-    background: var(--surface2);
-    border: 1px solid var(--border);
+    width: 28px; height: 28px;
+    background: var(--surface-2);
+    border: 1px solid var(--line);
     border-radius: 50%;
     display: flex; align-items: center; justify-content: center;
-    font-size: 12px; font-weight: 700; color: var(--text-dim);
+    font-family: var(--font-mono);
+    font-size: 13px; font-weight: 700; color: var(--accent);
     margin-top: 1px;
   }
-  .sub-step-body { flex: 1; }
-  .sub-step-body strong { color: var(--text); }
-  .sub-step-body p { color: var(--text-dim); font-size: 13.5px; }
+  .sub-step-body { flex: 1; min-width: 0; }
+  .sub-step-body strong { color: var(--head); }
+  .sub-step-body p { color: var(--ink-soft); font-size: 15px; }
 
-  /* ─── Table ───────────────────────────────────── */
+  /* ─── 표 ─────────────────────────────────────── */
+  .tbl-wrap { overflow-x: auto; margin: 16px 0; border: 1px solid var(--line); border-radius: 6px; }
   table {
     width: 100%; border-collapse: collapse;
-    margin: 14px 0; font-size: 13px;
+    min-width: 520px; font-size: 14.5px;
+    background: var(--surface);
   }
   th {
-    background: var(--surface2);
-    padding: 9px 14px; text-align: left;
-    font-size: 11px; font-weight: 700;
-    letter-spacing: 0.07em; text-transform: uppercase;
-    color: var(--text-dim);
-    border-bottom: 1px solid var(--border);
+    background: var(--th-bg);
+    padding: 10px 14px; text-align: left;
+    font-family: var(--font-mono);
+    font-size: 12px; font-weight: 500;
+    letter-spacing: 0.06em;
+    color: var(--th-ink);
+    border-bottom: 1px solid var(--line);
+    word-break: keep-all;
   }
   td {
-    padding: 8px 14px;
-    border-bottom: 1px solid var(--border);
-    color: var(--text-dim);
+    padding: 10px 14px;
+    border-bottom: 1px solid var(--line);
+    color: var(--ink-soft);
     vertical-align: top;
+    line-height: 1.65;
+    word-break: keep-all; overflow-wrap: break-word;
   }
   tr:last-child td { border-bottom: none; }
-  td:first-child { color: var(--text); }
+  td:first-child { color: var(--ink); }
 
-  /* ─── Hero ────────────────────────────────────── */
+  /* ─── 히어로 ─────────────────────────────────── */
   .hero {
-    background: linear-gradient(135deg, rgba(78,158,255,0.08), rgba(124,58,237,0.08));
-    border: 1px solid var(--border);
-    border-radius: 14px;
+    background: var(--surface-2);
+    border: 1px solid var(--line);
+    border-radius: 6px;
     padding: 32px 36px;
     margin-bottom: 40px;
   }
-  .hero p { font-size: 1rem; color: var(--text-dim); margin-top: 10px; max-width: 640px; }
-  .hero-meta {
-    display: flex; gap: 24px; margin-top: 18px;
-    flex-wrap: wrap;
-  }
-  .hero-meta-item { font-size: 13px; color: var(--text-dim); }
-  .hero-meta-item strong { color: var(--text); }
+  .hero p { font-size: 17px; color: var(--ink-soft); margin-top: 10px; max-width: 40em; }
+  .hero-meta { display: flex; gap: 8px 28px; margin-top: 18px; flex-wrap: wrap; }
+  .hero-meta-item { font-size: 14.5px; color: var(--ink-soft); }
+  .hero-meta-item strong { color: var(--head); }
 
-  /* ─── Dir Tree ────────────────────────────────── */
+  /* ─── 디렉터리 트리 ──────────────────────────── */
   .dir-tree {
-    font-family: 'JetBrains Mono', monospace;
-    font-size: 13px;
-    background: var(--code-bg);
-    border: 1px solid var(--border);
-    border-radius: 8px;
+    font-family: var(--font-mono);
+    font-size: 14px;
+    background: var(--surface-2);
+    border: 1px solid var(--line);
+    border-radius: 6px;
     padding: 16px 20px;
     line-height: 1.8;
-    color: var(--text-dim);
+    color: var(--ink-soft);
+    overflow-x: auto;
+    letter-spacing: normal;
   }
-  .dir-tree .dir  { color: #79c0ff; }
-  .dir-tree .file { color: var(--text); }
-  .dir-tree .note { color: #8b949e; font-style: italic; }
+  .dir-tree .dir  { color: var(--syn-num); }
+  .dir-tree .file { color: var(--ink); }
+  .dir-tree .note { color: var(--syn-cm); font-style: italic; }
 
-  /* ─── Pass badges ─────────────────────────────── */
+  /* ─── 배지·태그 ──────────────────────────────── */
   .pass-label {
     display: inline-block;
-    font-size: 10px; font-weight: 700; letter-spacing: 0.08em;
-    padding: 2px 8px; border-radius: 4px;
+    font-family: var(--font-mono);
+    font-size: 11px; font-weight: 700; letter-spacing: 0.08em;
+    padding: 2px 8px; border-radius: 3px;
     margin-right: 6px;
     text-transform: uppercase;
   }
-  .pass-1  { background: rgba(78,158,255,0.15);  color: var(--accent1); }
-  .pass-15 { background: rgba(16,185,129,0.15);  color: var(--accent3); }
-  .pass-2  { background: rgba(124,58,237,0.15);  color: #a78bfa; }
-  .pass-3  { background: rgba(245,158,11,0.15);  color: var(--accent4); }
+  .pass-1  { background: color-mix(in srgb, var(--c1) 14%, transparent); color: var(--c1); }
+  .pass-15 { background: color-mix(in srgb, var(--c3) 14%, transparent); color: var(--c3); }
+  .pass-2  { background: color-mix(in srgb, var(--c2) 14%, transparent); color: var(--c2); }
+  .pass-3  { background: color-mix(in srgb, var(--c4) 14%, transparent); color: var(--c4); }
 
   .tag {
     display: inline-block;
-    font-size: 11px; font-weight: 600;
-    padding: 1px 7px; border-radius: 4px;
+    font-size: 12px; font-weight: 600;
+    padding: 1px 7px; border-radius: 3px;
     margin: 1px 2px;
   }
-  .tag-blue   { background: rgba(78,158,255,0.13);  color: var(--accent1); }
-  .tag-green  { background: rgba(16,185,129,0.13);  color: var(--accent3); }
-  .tag-orange { background: rgba(245,158,11,0.13);  color: var(--accent4); }
-  .tag-purple { background: rgba(124,58,237,0.13);  color: #a78bfa; }
-  .tag-red    { background: rgba(239,68,68,0.13);   color: var(--accent5); }
+  .tag-blue   { background: color-mix(in srgb, var(--c1) 13%, transparent); color: var(--c1); }
+  .tag-green  { background: color-mix(in srgb, var(--c3) 13%, transparent); color: var(--c3); }
+  .tag-orange { background: color-mix(in srgb, var(--c4) 13%, transparent); color: var(--c4); }
+  .tag-purple { background: color-mix(in srgb, var(--c2) 13%, transparent); color: var(--c2); }
+  .tag-red    { background: color-mix(in srgb, var(--c5) 13%, transparent); color: var(--c5); }
 
-  /* ─── Separator ───────────────────────────────── */
-  .sep { border: none; border-top: 1px solid var(--border); margin: 40px 0; }
+  .sep { border: none; border-top: 1px solid var(--line); margin: 48px 0; }
 
-  /* ─── Scrollbar ───────────────────────────────── */
-  ::-webkit-scrollbar { width: 6px; }
+  /* ─── 테마 토글 ──────────────────────────────── */
+  .theme-dock { position: fixed; top: 14px; right: 18px; z-index: 200; }
+  #theme-toggle {
+    display: inline-flex; align-items: center; gap: 7px;
+    font-family: var(--font-mono); font-size: 11px; letter-spacing: 0.08em;
+    color: var(--ink-soft); background: var(--surface);
+    border: 1px solid var(--line); border-radius: 999px;
+    padding: 5px 12px; cursor: pointer; line-height: 1.6;
+    transition: border-color .15s ease, color .15s ease;
+  }
+  #theme-toggle:hover { border-color: var(--accent); color: var(--accent); }
+  #theme-toggle .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--accent); flex: none; }
+
+  /* ─── 스크롤바 ───────────────────────────────── */
+  ::-webkit-scrollbar { width: 8px; height: 8px; }
   ::-webkit-scrollbar-track { background: var(--bg); }
-  ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+  ::-webkit-scrollbar-thumb { background: var(--line); border-radius: 4px; }
+
+  /* ─── 좁은 화면·인쇄 ─────────────────────────── */
+  @media (max-width: 900px) {
+    .sidebar { position: static; width: auto; height: auto; border-right: 0; border-bottom: 1px solid var(--line); padding: 16px 0; }
+    main { margin-left: 0; padding: 32px 16px 72px; }
+    .io-grid { grid-template-columns: 1fr; }
+    .hero { padding: 24px 20px; }
+    body { font-size: 15px; }
+    p, ul, ol { max-width: none; }
+  }
+  @media print {
+    body { background: #FFFFFF; color: #333333; }
+    .sidebar, .theme-dock { display: none; }
+    main { margin-left: 0; max-width: none; padding: 0; }
+  }
 </style>
 </head>
 <body>
+
+<div class="theme-dock">
+  <button id="theme-toggle" type="button" aria-live="polite"><span class="dot" aria-hidden="true"></span><span id="theme-label">시스템</span></button>
+</div>
 
 <!-- ─── Sidebar ────────────────────────────────── -->
 <nav class="sidebar">
@@ -772,7 +841,7 @@ python3 run_pipeline.py \
 
   <div class="sub-steps">
     <div class="sub-step">
-      <div class="sub-step-num" style="background:rgba(78,158,255,0.15);color:var(--accent1);border-color:var(--accent1)">P</div>
+      <div class="sub-step-num" style="background:color-mix(in srgb, var(--accent1) 15%, transparent);color:var(--accent1);border-color:var(--accent1)">P</div>
       <div class="sub-step-body">
         <strong>Probe — TG를 anchor 삼아 FloodFill 시드 탐색</strong>
         <p>각 TG의 <code>fallback_rect</code>(또는 <code>tight_rect</code>)를 anchor로 삼아, bbox 주변에서 흰 픽셀(임계값 248→242→235→225 순차 완화)을 시드로 찾아 magic-wand 방식으로 연결 영역을 채웁니다.
@@ -780,7 +849,7 @@ python3 run_pipeline.py \
       </div>
     </div>
     <div class="sub-step">
-      <div class="sub-step-num" style="background:rgba(16,185,129,0.15);color:var(--accent3);border-color:var(--accent3)">V</div>
+      <div class="sub-step-num" style="background:color-mix(in srgb, var(--accent3) 15%, transparent);color:var(--accent3);border-color:var(--accent3)">V</div>
       <div class="sub-step-body">
         <strong>Validation — 검출 후보 검증</strong>
         <p>검출기 내부의 <code>bubble_candidate</code>를 검증해 <code>bubble_region</code>으로 승격합니다. 이 호환 이름은 최종 처리 기준과 구분합니다.</p>
@@ -793,7 +862,7 @@ python3 run_pipeline.py \
       </div>
     </div>
     <div class="sub-step">
-      <div class="sub-step-num" style="background:rgba(124,58,237,0.15);color:#a78bfa;border-color:#a78bfa">R</div>
+      <div class="sub-step-num" style="background:color-mix(in srgb, var(--accent2) 15%, transparent);color:var(--accent2);border-color:var(--accent2)">R</div>
       <div class="sub-step-body">
         <strong>Rescue — 탈락 후보 구제</strong>
         <p>여러 구제 경로로 재판정합니다.</p>
@@ -805,7 +874,7 @@ python3 run_pipeline.py \
       </div>
     </div>
     <div class="sub-step">
-      <div class="sub-step-num" style="background:rgba(245,158,11,0.15);color:var(--accent4);border-color:var(--accent4)">F</div>
+      <div class="sub-step-num" style="background:color-mix(in srgb, var(--accent4) 15%, transparent);color:var(--accent4);border-color:var(--accent4)">F</div>
       <div class="sub-step-body">
         <strong>Finalize — 검출기 내부 후보 분류 부여</strong>
         <p><code>is_valid = True</code> 확정 이후에만 <code>region_type</code>을 매겨 노이즈 오분류를 방지합니다.
@@ -943,14 +1012,14 @@ python3 run_pipeline.py \
 
   <p>각 region에 대해 추출하는 필드:</p>
 
-  <table>
+  <div class="tbl-wrap"><table>
     <tr><th>필드</th><th>설명</th><th>값 예시</th></tr>
     <tr><td><code>ocr_text</code></td><td>일본어 원문 (줄바꿈 \n 유지)</td><td>"行くぞ！"</td></tr>
     <tr><td><code>text_translated</code></td><td>한국어 번역 (가로쓰기)</td><td>"가자!"</td></tr>
     <tr><td><code>orientation</code></td><td>원문 쓰기 방향</td><td>vertical / horizontal</td></tr>
     <tr><td><code>render_hint</code></td><td>글자 형태 기반 약한 렌더링 힌트 (후처리에서 CV로 보정)</td><td>normal / semibold / bold / impact / serif_emphasis</td></tr>
     <tr><td><code>segments</code></td><td>같은 영역 내 시각적으로 분리된 텍스트 블록 (선택)</td><td>matched_tg_ids, ocr_text, text_translated …</td></tr>
-  </table>
+  </table></div>
 
   <div class="info-box info-note">
     <strong>render_hint는 약한 힌트</strong>
@@ -993,14 +1062,14 @@ python3 run_pipeline.py \
       <div class="sub-step-body">
         <strong>render_hint 최종 판정 (_final_render_hint)</strong>
         <p>weight_ratio · line_stroke_rel · line_width_rel · char_count 조합으로 5종 중 하나 결정.</p>
-        <table>
+        <div class="tbl-wrap"><table>
           <tr><th>판정</th><th>주요 조건</th></tr>
           <tr><td><code>serif_emphasis</code></td><td>line_width_rel ≥ 1.65 + line_complexity_rel ≥ 1.35 + char_count ≤ 6</td></tr>
           <tr><td><code>impact</code></td><td>weight_ratio ≥ 0.18 + line_density_rel ≥ 1.35</td></tr>
           <tr><td><code>bold</code></td><td>weight_ratio ≥ 0.125</td></tr>
           <tr><td><code>semibold</code></td><td>weight_ratio ≥ 0.105</td></tr>
           <tr><td><code>normal</code></td><td>그 외</td></tr>
-        </table>
+        </table></div>
       </div>
     </div>
   </div>
@@ -1149,14 +1218,14 @@ python3 run_pipeline.py \
   </div>
 
   <h4>폰트 선택 로직 (render_hint_final 기준)</h4>
-  <table>
+  <div class="tbl-wrap"><table>
     <tr><th>render_hint_final</th><th>사용 폰트</th></tr>
     <tr><td><code>normal</code></td><td><code>Freesentation-5Medium.ttf</code> (기본 대화)</td></tr>
     <tr><td><code>semibold</code></td><td><code>Freesentation-6SemiBold.ttf</code></td></tr>
     <tr><td><code>bold</code></td><td><code>Freesentation-7Bold.ttf</code></td></tr>
     <tr><td><code>impact</code></td><td><code>Pretendard-Black.otf</code></td></tr>
     <tr><td><code>serif_emphasis</code></td><td><code>a트랙터.ttf</code> (serif 강조체)</td></tr>
-  </table>
+  </table></div>
 
   <h4>dash 선과 점 run 그리기</h4>
   <p>대사 앞이나 뒤에 붙은 dash run(단일 <code>-</code> 포함)은 글리프 대신 최소 0.9em 길이의 가로선으로 그립니다.
@@ -1178,7 +1247,7 @@ python3 run_pipeline.py \
   <p><strong>미번역 region 복원</strong>: <code>restore_untranslated_regions()</code>으로 integrated.json에서 누락된 region을 원본 이미지로 복원해 마스킹 흰 박스가 남지 않도록 합니다. 단 사용자가 직접 입력한 글자(<code>text_override</code>)가 있는 영역은 번역 조각이 없어도 복원하지 않고, 빈 <code>text_override</code>는 렌더와 복원을 모두 끕니다.</p>
 
   <h4>기타 주요 헬퍼 함수 (render_text_overlay.py)</h4>
-  <table>
+  <div class="tbl-wrap"><table>
     <tr><th>함수</th><th>역할</th></tr>
     <tr><td><code>should_force_serif_for_large_title_style(cluster, features)</code></td><td>large/xlarge 텍스트 + render_hint=impact/serif_emphasis + 가로로 넓은 경계 기반 영역 → 세리프 강조체 강제 사용 여부 판정</td></tr>
     <tr><td><code>should_try_vertical_title_layout(cluster, inner_rect)</code></td><td>원본 1줄 세로 + 충분히 좁고 긴 버블이면 세로쓰기 타이틀 레이아웃 시도 여부 판정</td></tr>
@@ -1187,11 +1256,11 @@ python3 run_pipeline.py \
     <tr><td><code>prepare_page_layouts(…)</code></td><td>페이지 전체 cluster 레이아웃 사전 계산. cluster·text·bbox·layout 등과 round_score, <code>font_size_delta</code>, <code>split_cap_font_size</code>, <code>has_manual_layout_override</code>를 담은 16-tuple 목록을 반환.</td></tr>
     <tr><td><code>_compute_safe_text_rect(mask)</code></td><td>flood mask에서 3단계 침식(5.5%→3.5%→0%)으로 안전 내부 영역 계산. 최대 내접 직사각형 + centroid 재중심화.</td></tr>
     <tr><td><code>_compute_mask_centroid(mask)</code></td><td><code>cv2.moments()</code>로 flood mask 픽셀 무게중심 [cx, cy] 계산.</td></tr>
-  </table>
+  </table></div>
 
   <h3 id="overlay-overrides">박스별 수동값, 외곽선과 자간, draw 기록</h3>
   <p>편집기의 수동값은 <code>*_overlay_guidance.json</code>(<code>key_scheme: "region_ref_v1"</code>이면 <code>regions_by_ref</code>, 구형은 <code>regions</code>)에 영역별로 저장되고, 렌더러는 아래 키를 읽습니다.</p>
-  <table>
+  <div class="tbl-wrap"><table>
     <tr><th>키</th><th>의미</th></tr>
     <tr><td><code>text_override</code></td><td>직접 고친 번역문. 빈 문자열이면 그 영역을 렌더·복원에서 모두 끕니다.</td></tr>
     <tr><td><code>font_size</code>, <code>font_size_delta</code></td><td>글자 크기 지정과 자동 크기에 더하는 보정.</td></tr>
@@ -1199,7 +1268,7 @@ python3 run_pipeline.py \
     <tr><td><code>font_color</code>, <code>stroke_color</code>, <code>stroke_width</code></td><td>글자색·외곽선색(<code>#RRGGBB</code>)과 외곽선 두께(0〜12). 기본은 검정 글자, 흰 외곽선, 두께 1입니다.</td></tr>
     <tr><td><code>text_align</code>, <code>rotation_deg</code>(±45), <code>force_horizontal</code>, <code>force_vertical</code></td><td>정렬, 회전, 쓰기 방향 지정.</td></tr>
     <tr><td><code>safe_text_rect</code>, <code>segment_mode</code></td><td>글자 영역 직접 지정, 세그먼트 합치기·나누기.</td></tr>
-  </table>
+  </table></div>
   <p><strong>자동 배치는 처음 한 번.</strong> <code>font_size</code>와 <code>text_override</code>가 모두 있고 줄이 둘 이상이면(한 줄이어도 세로쓰기 지정이 아니면) 줄바꿈과 크기를 다시 계산하지 않고 <code>layout_from_manual_lines_with_font_size()</code>로 그대로 씁니다. 편집기는 박스를 처음 손댈 때 현재 렌더 값을 이 두 값에 채워 고정합니다.</p>
   <p><strong>외곽선과 자간.</strong> 외곽선 기본 두께는 <code>TEXT_STROKE_WIDTH = 1</code>, <code>DARK_TEXT_STROKE_WIDTH = 1</code>입니다. 두께가 2 이상이면 이웃 글자의 외곽선이 붙어 겹쳐 보이므로, 박스별 두께가 1을 넘으면 자간을 <code>두께 − 1</code>px 넓힙니다. <code>set_stroke_tracking()</code>이 <code>tracking_for_font()</code>의 추가 값을 정하며, 박스마다 레이아웃 계산 전과 그리기 직전에 호출해서 측정과 그리기가 같은 자간을 씁니다. 두께 1이면 추가 자간이 0이라 결과가 달라지지 않습니다.</p>
   <p><strong>draw 기록.</strong> <code>draw_text_block_pil(draw_record=…)</code>가 실제로 그린 줄 위치와 <code>font_size</code>, <code>line_height</code>, <code>ascent</code>, <code>descent</code>, <code>tracking</code>, <code>stroke_width</code>, <code>text_align</code>, <code>inner_rect</code>, <code>block_y</code> 등을 채우고, 렌더가 끝난 뒤 <code>*_overlay_layout.json</code>의 영역별 <code>draw</code>로 저장합니다. 편집기의 제자리 편집이 렌더와 같은 글자 위치를 그리는 데 쓰입니다.</p>
@@ -1207,7 +1276,7 @@ python3 run_pipeline.py \
   <hr class="sep">
 
   <!-- ─── FontStyleAnalyzer ────────────────────── -->
-  <h2 id="module-fsa">FontStyleAnalyzer <small style="font-size:0.7em;font-weight:400;color:var(--text-muted)">pipeline/font_style_analyzer.py</small></h2>
+  <h2 id="module-fsa">FontStyleAnalyzer <small style="font-size:0.7em;font-weight:400;color:var(--text-dim)">pipeline/font_style_analyzer.py</small></h2>
 
   <p>CV 기반 획두께 분석으로 OpenAI의 render_hint를 보정하고 <code>integrated.json</code>에 기록하는 독립 모듈입니다.
   <code>gemini_ocr_translate_v5</code>에서 import되어 OCR 직후 실행되며, 단독 CLI로도 실행 가능합니다.</p>
@@ -1220,7 +1289,7 @@ python3 run_pipeline.py \
 
   <h3>핵심 함수</h3>
 
-  <table>
+  <div class="tbl-wrap"><table>
     <tr><th>함수</th><th>역할</th></tr>
     <tr><td><code>_measure_style_features_for_crop(crop)</code></td><td>단일 crop의 획두께(distanceTransform 70 percentile), ink_density, shape_complexity 반환</td></tr>
     <tr><td><code>_aggregate_line_style_features(line_features, …)</code></td><td>TG line 단위 특징 집계 → weight_ratio(stroke/font_size), font_size_estimate 계산</td></tr>
@@ -1232,7 +1301,7 @@ python3 run_pipeline.py \
     <tr><td><code>_compact_style_features(features)</code></td><td>integrated.json 저장용: line_features 상세 배열 제거한 경량 버전</td></tr>
     <tr><td><code>update_integrated_render_hints(integrated, sheet_img, regions, cv_clusters)</code></td><td>integrated.json 전체 cluster를 순회해 render_hint_raw/final/style_features/render_hint_score 갱신. 변경 수 반환.</td></tr>
     <tr><td><code>_should_preserve_original_by_style(features)</code></td><td>style_features 기반 원본 보존 판정. <code>line_count=1 + char_count≤3 + line_width_rel≥3.0 + weight_ratio≤0.055 + ink_density≤0.65</code> — 단독 알파벳 라벨·기호 등 번역이 불필요한 경우 True 반환.</td></tr>
-  </table>
+  </table></div>
 
   <div class="info-box info-note">
     <strong>단독 CLI 실행</strong>
@@ -1297,13 +1366,13 @@ python3 run_pipeline.py \
 
   <h3 id="region-ref">영역 참조 (region_ref)</h3>
   <p>R 번호는 Step 3를 돌릴 때마다 읽기 순서로 다시 매겨집니다. 그래서 번역, Overlay 수동값, 화자, 메모는 번호 대신 영역 참조(<code>region_ref</code>)로 붙입니다. 체계 이름은 <code>region_ref_v1</code>입니다.</p>
-  <table>
+  <div class="tbl-wrap"><table>
     <tr><th>형식</th><th>의미</th></tr>
     <tr><td><code>tg:3</code>, <code>tg:10,13</code></td><td>그 TG(들)로 이루어진 영역</td></tr>
     <tr><td><code>tg:10,13/s2</code></td><td>TG 없이 분할된 자식 조각</td></tr>
     <tr><td><code>guide:&lt;가이드 id&gt;</code></td><td>TG가 없는 수동 영역(분할 자식이면 <code>/s&lt;n&gt;</code>)</td></tr>
     <tr><td><code>geo:&lt;b|t&gt;:&lt;cx&gt;,&lt;cy&gt;</code></td><td>마지막 수단. 좌표 허용오차로 맞춤</td></tr>
-  </table>
+  </table></div>
   <p>충돌하면 <code>@&lt;접미&gt;</code>를 붙이고, 인스턴스 참조는 <code>&lt;origin&gt;|&lt;region_ref&gt;</code>입니다. Overlay 세그먼트 키는 <code>&lt;region_ref&gt;#&lt;source_segment_index&gt;</code>입니다. 짝을 못 찾은 값은 다른 번호로 옮기지 않고 보관합니다(번호 fallback 금지). 상세 설계는 <code>docs/REGION_REF_DESIGN_AND_REVIEW.md</code>를 보세요.</p>
 
   <hr class="sep">
@@ -1311,7 +1380,7 @@ python3 run_pipeline.py \
   <!-- ─── 용어 사전 ──────────────────────────── -->
   <h2 id="glossary">용어 사전</h2>
 
-  <table>
+  <div class="tbl-wrap"><table>
     <tr><th>용어</th><th>의미</th></tr>
     <tr><td><strong>TG</strong><br><small>Text Group</small></td><td>Cloud Vision bbox를 BFS 클러스터링한 단위. 말풍선 하나에 대응. <code>*_text_groups.json</code>의 각 항목.</td></tr>
     <tr><td><strong>anchor</strong></td><td>FloodFill에서만 사용하는 개념. TG의 <code>fallback_rect</code>(또는 <code>tight_rect</code>)가 FloodFill 시드 탐색의 출발점 역할을 할 때 이를 anchor라 부름.</td></tr>
@@ -1339,7 +1408,7 @@ python3 run_pipeline.py \
     <tr><td><strong>split_order</strong></td><td>split region의 순서 인덱스. 0=우측 조각, ≥1=좌측 조각. inner_rect에 ±8% 수평 bias를 적용해 인접 split region 텍스트 오버랩 방지.</td></tr>
     <tr><td><strong>safe_text_rect</strong></td><td>경계 기반 영역 내부에서 확보한 안전한 텍스트 배치 영역. overlay_bbox_for_cluster에서 단일 TG 케이스 시 TG center로 조정해 사용.</td></tr>
     <tr><td><strong>dark_flood</strong></td><td>어두운 배경 위에 밝은 텍스트가 있는 말풍선 유형. overlay에서 검은 배경 + 흰 글씨로 렌더링.</td></tr>
-  </table>
+  </table></div>
 
   <hr class="sep">
 
@@ -1348,17 +1417,17 @@ python3 run_pipeline.py \
   <p>2026-08-14 재검증 기준. 2026-05 보고의 10건 중 6건은 이미 정리 완료됐고, 나머지는 아래와 같다. 정리 전 반드시 영향 범위를 확인하십시오.</p>
 
   <h3>삭제 안전 (Dead Code)</h3>
-  <table>
+  <div class="tbl-wrap"><table>
     <tr><th>위치</th><th>대상</th><th>상태</th></tr>
     <tr><td><code>difficulty_scorer.py</code></td><td>모듈 전체</td><td>✅ 2026-08-14 <code>pipeline/archive/</code>로 이전 완료</td></tr>
     <tr><td><code>main.py</code></td><td>Gradio UI 전체</td><td>✅ 2026-08-14 <code>archive/retired_gradio_ui/</code>로 폐기. <code>app.py</code>가 표준 진입점</td></tr>
     <tr><td><code>gemini_image_redraw.py</code></td><td>모듈 전체</td><td>✅ main.py 전용이었으므로 함께 폐기. 현재 이미지 작업은 <code>openai_image_redraw</code>와 <code>gemini_image.py</code>·<code>ai_text_erase.py</code>가 맡고, OCR 모델이 gemini면 Gemini 이미지 경로를 따릅니다(vertex는 OpenAI 이미지 모델)</td></tr>
     <tr><td><code>gemini_ocr_translate_v5.py</code></td><td><code>_process_single_ocr()</code></td><td>⚠️ 기본 경로는 OCR sheet이지만 <code>process_ocr_and_translation</code>과 병렬 처리 함수가 호출합니다. CLI 호환용 경로로 보존 중</td></tr>
     <tr><td colspan="3">아래 6건은 이미 제거 완료: <code>apply_floodfill_white_mask()</code>, <code>create_packed_ocr_sheet()</code>, <code>RegionSheetConfig</code>, <code>detect_text_cv()</code>, <code>extract_text_erasure_candidate</code> alias, <code>write_text_erasure_debug</code> alias</td></tr>
-    </table>
+    </table></div>
 
   <h3>중복 정의</h3>
-  <table>
+  <div class="tbl-wrap"><table>
     <tr><th>대상</th><th>중복 위치</th><th>권장 처리</th></tr>
     <tr>
       <td><code>text_group_builder.py</code> ↔ <code>text_group_builder_v2.py</code></td>
@@ -1375,7 +1444,7 @@ python3 run_pipeline.py \
       <td>동일 로직이 두 이름으로 존재.</td>
       <td>하나로 통일.</td>
     </tr>
-  </table>
+  </table></div>
 
   <div class="info-box info-warn">
     <strong>보존 필요 파일</strong>
@@ -1388,6 +1457,36 @@ python3 run_pipeline.py \
 <section id="manual-region-exclusion"><h2>수동 Region 제외와 fallback</h2><p>자동 Region의 suppressed_regions 기록은 경계 검출뿐 아니라 원본 anchor_ids와 좌표에 대응하는 텍스트 기반 fallback 후보도 제외합니다. 모든 TG가 제외되면 OCR Region 0개와 원본 마스킹 이미지를 저장합니다. 새 산출물과 guidance 결과 캐시의 region_suppression_version은 1이며, 제외 기록이 있는 옛 결과 캐시는 재사용하지 않습니다. 수동 가이드는 별도 삭제합니다.</p></section>
 </main>
 
+<script>
+(function () {
+  var KEY = 'ap-doc-theme';
+  var ORDER = ['system', 'light', 'dark'];
+  var LABEL = { system: '시스템', light: '라이트', dark: '다크' };
+  var root = document.documentElement;
+  var btn = document.getElementById('theme-toggle');
+  var label = document.getElementById('theme-label');
+
+  function read() {
+    try { var v = localStorage.getItem(KEY); return ORDER.indexOf(v) > -1 ? v : 'system'; }
+    catch (e) { return 'system'; }
+  }
+  function apply(mode) {
+    if (mode === 'system') root.removeAttribute('data-theme');
+    else root.setAttribute('data-theme', mode);
+    label.textContent = LABEL[mode];
+    btn.setAttribute('aria-label', '테마 — 현재 ' + LABEL[mode] + '. 눌러서 전환');
+  }
+
+  var current = read();
+  apply(current);
+
+  btn.addEventListener('click', function () {
+    current = ORDER[(ORDER.indexOf(current) + 1) % ORDER.length];
+    apply(current);
+    try { localStorage.setItem(KEY, current); } catch (e) {}
+  });
+})();
+</script>
 <script>
   const links = document.querySelectorAll('.sidebar a');
   const targets = Array.from(links).map(l => {
