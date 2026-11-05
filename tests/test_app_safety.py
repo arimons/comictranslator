@@ -182,3 +182,26 @@ def test_inflight_counter_counts_streaming_until_last_chunk():
     before = app._INFLIGHT["count"]
     asyncio.run(app.InflightCounter(mock_app)({"type": "http", "path": "/api/run-final-stream"}, None, send))
     assert seen == [before + 1, before] and app._INFLIGHT["count"] == before
+
+
+def test_rerender_final_after_analysis_only_when_final_exists(tmp_path, monkeypatch):
+    final = tmp_path / "final.jpg"
+    integrated = tmp_path / "integrated.json"
+    record = {"final_jpg": str(final), "integrated_json": str(integrated)}
+    monkeypatch.setattr(app, "image_record", lambda *a, **k: record)
+    monkeypatch.setattr(app, "page_record", lambda sid, iid: {"id": iid})
+    calls = []
+    monkeypatch.setattr(app, "render_overlay_for_record", lambda rec, font, *a, **k: calls.append(rec))
+    source = {"input_path": str(tmp_path / "in.png")}
+
+    assert app.rerender_final_after_analysis("s", "i", source) is None  # final 없음: 새로 만들지 않는다
+    final.write_bytes(b"x")
+    integrated.write_text("{}", encoding="utf-8")
+    assert app.rerender_final_after_analysis("s", "i", source) == {"id": "i"}
+    assert calls == [record]
+
+    def boom(*a, **k):
+        raise RuntimeError("render failed")
+
+    monkeypatch.setattr(app, "render_overlay_for_record", boom)
+    assert app.rerender_final_after_analysis("s", "i", source) is None  # 실패해도 분석 적용은 유지

@@ -2259,6 +2259,22 @@ def render_overlay_for_record(record: dict[str, Any], font_path: str | None, tra
     clear_export_recovery_metadata(record)
 
 
+def rerender_final_after_analysis(session_id: str, image_id: str, source: dict[str, Any]) -> dict[str, Any] | None:
+    """영역 분석을 다시 적용하면 masked만 바뀌고 이미 만들어 둔 final은 옛 마스크 기준으로 남는다.
+
+    final이 있던 페이지는 새 masked 위에 글자를 다시 입혀 Overlay 탭이 옛 원문 잔여물을 보이지 않게 한다. API 호출은 없다.
+    OCR 결과가 없거나 렌더에 실패하면 조용히 넘어간다(분석 적용 자체는 성공으로 둔다).
+    """
+    try:
+        record = image_record(session_id, Path(source["input_path"]), source.get("image_sha256"), source, probe_image=False, include_detail=False)
+        if not Path(record["final_jpg"]).exists() or not Path(record["integrated_json"]).exists():
+            return None
+        render_overlay_for_record(record, None)
+        return page_record(session_id, image_id)
+    except Exception:
+        return None
+
+
 def merge_overlay_guidance(existing: dict[str, Any], incoming: dict[str, Any]) -> dict[str, Any]:
     merged = {**(existing or {}), **(incoming or {})}
     existing_regions = existing.get("regions", {}) if isinstance(existing, dict) else {}
@@ -3769,6 +3785,7 @@ def create_app() -> FastAPI:
         image_hash = source.get("image_sha256") or ensure_record_hash(source)
         store_guidance_cache(refreshed, image_hash)
         store_guidance_output_cache(refreshed, image_hash, req.guidance)
+        refreshed = rerender_final_after_analysis(req.session_id, req.image_id, source) or refreshed
         return {"ok": True, "image": refreshed}
 
     @app.post("/api/guidance/clear")

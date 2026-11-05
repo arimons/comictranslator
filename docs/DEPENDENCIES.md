@@ -97,3 +97,5 @@ projects 아래 폴더 ID는 기존 timestamp ID를 유지한다. project.json�
 <!-- 2026-11-02 review: 편집기 EditorCanvas 미적용 변경 표시(이전 분석 영역을 점선·옅게). 이 문서 내용 영향 없음 -->
 
 <!-- 2026-11-01 review: 서버의 LaMa 호출을 작업 프로세스(pipeline/lama_worker.py)로 옮김. 표준 라이브러리만 쓰고 새 의존성 없음, 이 문서 내용 영향 없음 -->
+
+<!-- 2026-11-05 review: app.py 영역 분석 적용 뒤 final이 있던 페이지는 Overlay를 새 masked로 다시 렌더. 이 문서 내용 영향 없음 -->
