@@ -570,3 +570,5 @@ OCR·번역 모델로 Gemini를 고른 세션의 이미지 작업(글자 지우�
 <!-- 2026-10-31 review: pipeline_runner.py stop_after="text_groups"·app.py /api/analyze stop_after 추가를 반영 -->
 
 <!-- 2026-11-05 review: app.py 영역 분석 적용 뒤 final이 있던 페이지는 Overlay를 새 masked로 다시 렌더(rerender_final_after_analysis). 이 문서 내용 영향 없음 -->
+
+<!-- 2026-11-05 review: render_text_overlay.py 글자를 직접 입력한 영역은 번역 조각이 없어도 원본 복원을 건너뜀. 이 문서 내용 영향 없음 -->

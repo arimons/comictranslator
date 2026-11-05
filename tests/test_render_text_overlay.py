@@ -3092,6 +3092,25 @@ class RenderTextOverlayTest(unittest.TestCase):
             self.assertEqual(restored, 0)
             self.assertEqual(int(image.sum()), 0)
 
+    def test_manual_text_override_prevents_untranslated_region_restore(self) -> None:
+        from pipeline.render_text_overlay import overlay_manual_text_keys, restore_untranslated_regions
+
+        guidance = {"regions": {"7": {"text_override": "직접 입력"}, "8": {"text_override": " "}}}
+        self.assertEqual(overlay_manual_text_keys(guidance), {"7"})
+        with tempfile.TemporaryDirectory() as tmp:
+            regions_json = Path(tmp) / "regions.json"
+            regions_json.write_text(
+                json.dumps({"regions": [{"region_id": 7, "anchor_ids": [1], "bubble_rect": [10, 10, 40, 40]}]}),
+                encoding="utf-8",
+            )
+            image = np.zeros((80, 80, 3), dtype=np.uint8)
+            original = np.full((80, 80, 3), 255, dtype=np.uint8)
+
+            restored = restore_untranslated_regions(image, original, regions_json, [], manual_text_keys={"7"})
+
+            self.assertEqual(restored, 0)
+            self.assertEqual(int(image.sum()), 0)
+
     def test_partial_anchor_overlap_prevents_untranslated_region_restore(self) -> None:
         from pipeline.render_text_overlay import restore_untranslated_regions
 

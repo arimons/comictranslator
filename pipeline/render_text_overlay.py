@@ -230,6 +230,16 @@ def overlay_suppressed_refs(overlay_guidance: dict | None) -> set[str]:
     return suppressed
 
 
+def overlay_manual_text_keys(overlay_guidance: dict | None) -> set[str]:
+    """사용자가 직접 글자(text_override)를 입력한 영역 키(참조 또는 번호). 번역 조각이 없어도 원본을 복원하지 않는다."""
+    keys: set[str] = set()
+    for key, value in overlay_region_overrides(overlay_guidance or {}).items():
+        text = value.get("text_override")
+        if isinstance(text, str) and text.strip():
+            keys.add(str(key).split("#", 1)[0])
+    return keys
+
+
 def build_region_info_by_id_from_regions_json(regions_json_path: Path | None) -> dict[int, dict]:
     """regions.json에서 overlay 수동 렌더 fallback용 region 정보를 만든다."""
     if regions_json_path is None or not regions_json_path.exists():
@@ -4616,8 +4626,11 @@ def restore_untranslated_regions(
     suppressed_region_ids: set[int] | None = None,
     suppressed_refs: set[str] | None = None,
     manual_guidance: dict | None = None,
+    manual_text_keys: set[str] | None = None,
 ) -> int:
     """OCR/integrated에서 빠진 masked region은 빈칸 방지용으로 원본을 복원한다.
+
+    사용자가 글자를 직접 입력한 영역(manual_text_keys)은 그 글자를 그리므로 복원하지 않는다.
 
     clusters가 영역 참조 방식(overlay_ref_mode)이면 번호가 아니라 영역 참조로 번역 여부·억제를 판단한다.
     """
@@ -4658,7 +4671,11 @@ def restore_untranslated_regions(
         if ref_mode:
             if region.get("region_ref") in (suppressed_refs or set()):
                 continue
+            if region.get("region_ref") in (manual_text_keys or set()):
+                continue
         elif region_id in suppressed_region_ids:
+            continue
+        elif str(region_id) in (manual_text_keys or set()):
             continue
         anchor_ids = set()
         for anchor_id in region.get("anchor_ids") or []:
@@ -4998,6 +5015,7 @@ def apply_text_overlay(
         overlay_suppressed_region_ids(overlay_guidance),
         suppressed_refs=ref_context["suppressed_refs"] if ref_context is not None else None,
         manual_guidance=manual_guidance,
+        manual_text_keys=overlay_manual_text_keys(overlay_guidance),
     )
     # 배경 복원 탭에서 확정한 패치(PNG)를 마스크 내부에만 합성한다. masked.jpg를 다시 저장하지 않는다.
     apply_restore_patches(image, restore_state_path)
