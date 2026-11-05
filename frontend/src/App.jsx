@@ -513,7 +513,8 @@ export default function App() {
   const forceDropLabel = ocrBusy ? "OCR 실행 중에는 드롭할 수 없습니다." : "여기로 드롭하면 해당 파일만 강제 재실행합니다.";
 
   // 비동기 응답이 어느 세션 것인지 판별하려면 세션 id를 ref에도 즉시 반영해야 한다.
-  function setSessionTracked(nextSessionId) {
+  // inheritLastRoute: 방금 만든 새 프로젝트만 마지막으로 고른 AI 경로로 시작한다(기존 프로젝트를 열 때는 저장된 값만 쓴다).
+  function setSessionTracked(nextSessionId, { inheritLastRoute = false } = {}) {
     const sid = nextSessionId || "";
     sessionIdRef.current = sid;
     setSessionId(sid);
@@ -521,8 +522,13 @@ export default function App() {
     setPageDetail(null);
     const saved = readSessionSettings(sid);
     setExtraPrompt(typeof saved.extraPrompt === "string" ? saved.extraPrompt : "");
-    // 프로젝트에 저장된 AI 경로가 없으면 마지막으로 고른 경로를 새 프로젝트 기본값으로 쓴다
-    setOcrModel(typeof saved.ocrModel === "string" && saved.ocrModel ? saved.ocrModel : readLastOcrModel());
+    let route = typeof saved.ocrModel === "string" ? saved.ocrModel : "";
+    if (!route && inheritLastRoute) {
+      // 새 프로젝트: 홈에서 고른 경로를 프로젝트에 남긴다(세션 상세를 처음 읽을 때 서버로 한 번 저장된다)
+      route = readLastOcrModel();
+      if (route) writeSessionSettings(sid, { ocrModel: route });
+    }
+    setOcrModel(route);
   }
 
   function updateExtraPrompt(value) {
@@ -1797,7 +1803,7 @@ export default function App() {
   // 세션 id가 아직 없을 때 서버가 새 세션을 만들었다면 그 세션을 현재 세션으로 채택한다.
   async function adoptCreatedSession(requestSid, resultSid) {
     if (!requestSid && resultSid && resultSid !== sessionIdRef.current) {
-      setSessionTracked(resultSid);
+      setSessionTracked(resultSid, { inheritLastRoute: true });
       const pendingName = projectName.trim();
       if (projectNameDirtyRef.current && pendingName) {
         await api("/api/session/meta", { method: "POST", body: JSON.stringify({ session_id: resultSid, project_name: pendingName }) })

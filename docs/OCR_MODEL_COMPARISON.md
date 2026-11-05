@@ -120,7 +120,7 @@ OCR·번역 모델은 세 경로 중 하나로 보낸다. 모델 id가 경로를
 | Gemini API | `gemini-3.8-flash` | AI Studio 선결제 | 2026-03-02 이후 만든 계정은 체험판 크레딧을 쓸 수 없다 |
 | Vertex | `vertex:gemini-3.8-flash` | Cloud 청구 | 같은 SDK를 `vertexai=True`로 쓴다. `vertex:` 접두사는 호출 전에 뗀다 |
 
-- 홈 화면 ‘작업 준비’의 ‘AI 경로’에서 고르고, 편집기의 OCR/Translation Model 드롭다운에서도 바꾼다. 선택은 프로젝트별로 브라우저에 저장하고, 새 프로젝트는 마지막으로 고른 경로로 시작한다.
+- 홈 화면 ‘작업 준비’의 ‘AI 경로’에서 고르고, 편집기의 OCR/Translation Model 드롭다운에서도 바꾼다. 선택은 프로젝트 파일(`/api/session/ocr-model`)에 저장한다. 기본 모델을 고르면 저장값을 비운다. 새 프로젝트는 마지막으로 고른 경로(브라우저 기억값)로 시작하고, 프로젝트가 만들어질 때 그 값을 프로젝트에 한 번 저장한다.
 - 경로별 키가 서버에 있는지는 `/api/ocr-models`의 `key_ready`로 알린다(값은 보내지 않는다). 홈 화면은 키가 없으면 ‘키 없음’을 보인다.
 - Vertex를 고르면 글자 지우기·통번역 이미지 작업은 Vertex를 쓰지 않고 OpenAI 이미지 모델로 간다(`is_gemini_model`이 `vertex:`를 Gemini로 보지 않는다).
 - 확인한 것: Vertex 호출이 REST로 200을 돌려줌(2026-11-04). 앱 파이프라인 전체(이미지 시트, JSON 응답)와 체험판 크레딧 차감은 아직 확인하지 못했다.

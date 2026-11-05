@@ -71,7 +71,7 @@ export const KEYMAP = [
 
   // 편집
   { id: "edit.escape.guidance", context: "guidance", group: "편집", label: "단계별 해제: 찍던 다각형 취소 → 선택 해제 → Select 도구", kind: "key", keys: [["Esc"]], match: { code: "Escape", shift: "any" }, action: "escape" },
-  { id: "edit.escape.overlay", context: "overlay", group: "편집", label: "단계별 해제: 대사 편집 닫기 → 선택 해제 → Select 도구", kind: "key", keys: [["Esc"]], match: { code: "Escape", shift: "any" }, action: "escape" },
+  { id: "edit.escape.overlay", context: "overlay", group: "편집", label: "단계별 해제: 대사 편집 끝내기 → 박스 확대 닫기 → 선택 해제 → Select 도구", kind: "key", keys: [["Esc"]], match: { code: "Escape", shift: "any" }, action: "escape" },
   { id: "edit.undo", context: CANVAS, group: "편집", label: "실행 취소", kind: "key", keys: [["Ctrl", "Z"]], match: { code: "KeyZ", mod: true }, action: "undo" },
   { id: "edit.redo", context: CANVAS, group: "편집", label: "다시 실행", kind: "key", keys: [["Ctrl", "Shift", "Z"]], match: { code: "KeyZ", mod: true, shift: true }, action: "redo" },
   { id: "edit.redo.y", context: CANVAS, group: "편집", label: "다시 실행 (Windows·Linux)", kind: "key", platform: "nonMac", keys: [["Ctrl", "Y"]], match: { code: "KeyY", mod: true }, action: "redo" },
@@ -91,10 +91,10 @@ export const KEYMAP = [
   { id: "overlay.dialogue.prev", context: "overlay", group: "편집", label: "이전 대사", kind: "key", keys: [["K"]], match: { code: "KeyK" }, action: "overlay.dialogue", arg: -1 },
   { id: "overlay.dialogue.confirm", context: "overlay", group: "편집", label: "대사를 확인으로 표시하고 다음 대사로", kind: "key", when: ["regionSelected"], keys: [["Y"]], match: { code: "KeyY" }, action: "overlay.dialogue.confirm" },
   { id: "overlay.dialogue.ask", context: "overlay", group: "편집", label: "대사를 질문으로 표시 (다시 누르면 해제)", kind: "key", when: ["regionSelected"], keys: [["Q"]], match: { code: "KeyQ" }, action: "overlay.dialogue.ask" },
-  { id: "overlay.openEditor", context: "overlay", group: "편집", label: "선택한 region의 대사 편집 열기", kind: "key", when: ["regionSelected"], keys: [["Enter"]], match: { code: ["Enter", "NumpadEnter"] }, action: "overlay.openEditor" },
+  { id: "overlay.openEditor", context: "overlay", group: "편집", label: "선택한 region의 글 편집 시작", kind: "key", when: ["regionSelected"], keys: [["Enter"]], match: { code: ["Enter", "NumpadEnter"] }, action: "overlay.openEditor" },
   { id: "overlay.delete", context: "overlay", group: "편집", label: "선택한 지우개 영역 삭제. 없으면 선택 region의 위치·크기·회전 수동값 초기화 (대사·스타일은 유지)", kind: "key", keys: [["Delete"], ["Backspace"]], match: { code: ["Delete", "Backspace"] }, action: "delete" },
   { id: "overlay.rotateSnap", context: "overlay", group: "편집", label: "회전 핸들 드래그 중 15° 단위로 맞춤", kind: "pointer", keys: [["Shift", "회전 드래그"]] },
-  { id: "overlay.editor.dblclick", context: "overlay", group: "편집", label: "region 더블클릭: 대사 편집 열기", kind: "pointer", keys: [["region 더블클릭"]] },
+  { id: "overlay.editor.dblclick", context: "overlay", group: "편집", label: "region 더블클릭: 글 편집 시작 (한 번 클릭은 확대와 툴바만)", kind: "pointer", keys: [["region 더블클릭"]] },
 
   // 스타일 (글자 입히기)
   { id: "overlay.style.normal", context: "overlay", group: "스타일", label: "Normal 스타일", kind: "key", when: ["regionSelected"], keys: [["1"]], match: { code: DIGIT_CODES(1) }, action: "overlay.style", arg: "normal" },
@@ -116,7 +116,7 @@ export const KEYMAP = [
 
   // 대사 편집 팝업
   { id: "editor.commit", context: "floatingEditor", group: "대사 편집", label: "대사 반영 후 overlay render, 확인으로 표시하고 다음 대사로", kind: "key", keys: [["Ctrl", "Enter"]], allowInInput: true, when: ["inFloatingEditor"], match: { code: ["Enter", "NumpadEnter"], mod: true }, action: "editor.commit" },
-  { id: "editor.cancel", context: "floatingEditor", group: "대사 편집", label: "편집 취소 (초안 버림)", kind: "key", keys: [["Esc"]], allowInInput: true, match: { code: "Escape", shift: "any" }, action: "editor.cancel" },
+  { id: "editor.cancel", context: "floatingEditor", group: "대사 편집", label: "편집 끝내기 (입력은 이미 반영됨, 확대는 유지. 한 번 더 누르면 확대 닫기)", kind: "key", keys: [["Esc"]], allowInInput: true, match: { code: "Escape", shift: "any" }, action: "editor.cancel" },
 
   // 도움말
   { id: "help.toggle", context: "global", group: "도움말", label: "단축키 도움말 열기/닫기", kind: "key", keys: [["?"]], match: [{ code: "Slash", shift: true }, { key: "?", shift: "any" }], action: "help.toggle" },

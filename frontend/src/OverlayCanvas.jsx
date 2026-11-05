@@ -21,7 +21,7 @@ import {
   FONT_STYLES,
 } from "./lib.js";
 import RegionTypeBadge from "./RegionTypeBadge.jsx";
-import { TEXT_BASED, regionProcessingBasis, regionTypeLabel } from "./regionTypes.js";
+import { TEXT_BASED, regionProcessingBasis } from "./regionTypes.js";
 import { createViewport } from "./viewportControls.js";
 import { shortcutFor } from "./keymap.js";
 
@@ -1235,15 +1235,12 @@ const OverlayCanvas = forwardRef(function OverlayCanvas({ image, overlayGuidance
         const labelStageRect = toStageRect(labelRect);
         const lx = labelStageRect.x;
         const ly = labelStageRect.y;
-        const label = new Konva.Label({ x: lx, y: Math.max(0, ly - 18) });
+        // 오버레이에는 R 번호만 둔다. 처리 기준 배지(경계 기반·텍스트 기반)는 다른 박스 선택을 가려서 뺀다.
+        const label = new Konva.Label({ x: lx, y: Math.max(0, ly - 18), listening: false });
         label.opacity(selected ? 0.95 : 0.55);
         label.add(new Konva.Tag({ fill: selected ? "#ef4444" : regionColor }));
         label.add(new Konva.Text({ text: labelText, fill: "white", padding: 3, fontSize: 11, fontStyle: "bold" }));
         layer.add(label);
-        const badge = new Konva.Label({ x: lx + label.width() + 3, y: Math.max(0, ly - 18), listening: false });
-        badge.add(new Konva.Tag({ fill: regionColor, cornerRadius: 3 }));
-        badge.add(new Konva.Text({ text: regionTypeLabel(region), fill: "white", padding: 3, fontSize: 11 }));
-        layer.add(badge);
       }
     });
 

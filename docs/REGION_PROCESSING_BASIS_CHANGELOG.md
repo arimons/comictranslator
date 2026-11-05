@@ -17,7 +17,7 @@
 ## 화면과 변수명
 
 - 분석 탭 이름은 **영역 분석**이다.
-- 분석·Overlay 캔버스는 공통 R 번호 옆에 **경계 기반 / 텍스트 기반** 배지를 표시한다. Overlay의 Selected Region, Region List, 대사 편집 팝업에도 배지를 표시한다.
+- 분석 캔버스는 공통 R 번호 옆에 **경계 기반 / 텍스트 기반** 배지를 표시한다(Overlay 캔버스는 2026-11-05부터 R 번호만 표시한다. 배지가 다른 박스 선택을 가려서다). Overlay의 Selected Region, Region List, 대사 편집 팝업에도 배지를 표시한다.
 - B 도구 이름은 **경계 기반 seed**, U 도구 이름은 **텍스트 기반 영역**이다. 기존 B/U 단축키와 내부 도구 ID `bubble`/`ubox`는 그대로다.
 - `regionProcessingBasis()` / `region_processing_basis()`가 처리 기준을 해석한다. 타입을 구분하려고 `source_method` 문자열을 임의로 검색하지 않는다.
 - `regionTypeLabel()` / `region_type_label()`이 표시 이름을 반환한다. 해석할 수 없는 값은 미분류로 표시한다.
