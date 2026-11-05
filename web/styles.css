@@ -404,6 +404,8 @@ textarea {
 .policy-option input { margin: 3px 0 0; accent-color: #0b57d0; width: 15px; height: 15px; flex-shrink: 0; }
 .policy-option strong { font-size: 13px; font-weight: 600; }
 .policy-option small { display: block; margin-top: 5px; color: var(--muted); font-size: 12px; line-height: 1.6; }
+.ai-route select { width: 100%; margin-top: 2px; }
+.ai-route .route-warn { display: inline-block; margin: 0 0 0 8px; padding: 1px 7px; border-radius: 999px; background: #fdecea; color: #b3261e; font-size: 11px; font-weight: 600; }
 .policy-option em { display: block; font-style: normal; color: #9a5b0a; margin-top: 3px; }
 .home-advanced { margin-top: 18px; }
 .home-advanced .field { margin-top: 12px; }
@@ -1324,6 +1326,27 @@ button.wide {
   gap: 5px;
   backdrop-filter: blur(8px);
 }
+
+.overlay-canvas-wrap .focus-on-click {
+  position: absolute;
+  left: 8px;
+  bottom: 10px;
+  z-index: 5;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 9px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.96);
+  box-shadow: var(--shadow);
+  font-size: 12px;
+  white-space: nowrap;
+  cursor: pointer;
+  user-select: none;
+}
+
+.overlay-canvas-wrap .focus-on-click input { margin: 0; accent-color: var(--blue); }
 
 .overlay-local-toolbar button {
   width: 24px;
@@ -3695,6 +3718,7 @@ select.memo-key { width: 100%; padding: 2px; font-size: 12px; }
 .llm-route-badge { display: inline-flex; flex: none; align-items: center; gap: 5px; margin-left: 6px; padding: 2px 8px; border: 1px solid var(--line, #d7dce3); border-radius: 999px; background: var(--panel, #fff); font-size: 12px; white-space: nowrap; cursor: pointer; }
 .llm-route-badge span { padding: 1px 6px; border-radius: 999px; background: #e0e7ff; color: #1e3a8a; font-weight: 700; font-size: 11px; }
 .llm-route-badge.gemini span { background: #dcfce7; color: #14532d; }
+.llm-route-badge.vertex span { background: #fef3c7; color: #78350f; }
 .llm-route-badge small { color: var(--muted, #64748b); }
 .recent-project-route { color: var(--muted, #64748b); font-size: 12px; }
 .recent-project-route strong { color: inherit; font-weight: 600; }

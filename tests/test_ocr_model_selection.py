@@ -16,6 +16,11 @@ def test_resolve_provider_maps_gemini(model_name):
     assert ocr.resolve_provider(model_name) == "gemini"
 
 
+@pytest.mark.parametrize("model_name", ["vertex:gemini-3.8-flash", "vertex:gemini-3.5-flash-lite"])
+def test_resolve_provider_maps_vertex(model_name):
+    assert ocr.resolve_provider(model_name) == "vertex"
+
+
 @pytest.mark.parametrize("model_name", ["claude-opus-5", ""])
 def test_resolve_provider_rejects_unknown(model_name):
     with pytest.raises(ValueError): ocr.resolve_provider(model_name)
@@ -23,7 +28,7 @@ def test_resolve_provider_rejects_unknown(model_name):
 
 def test_supported_models_use_confirmed_api_ids():
     ids = [m["id"] for m in ocr.SUPPORTED_OCR_MODELS]
-    assert ids == ["gpt-6.1-terra", "gpt-6.1-sol", "gpt-6-luna", "gemini-3.8-flash", "gemini-3.5-flash-lite"]
+    assert ids == ["gpt-6.1-terra", "gpt-6.1-sol", "gpt-6-luna", "gemini-3.8-flash", "gemini-3.5-flash-lite", "vertex:gemini-3.8-flash", "vertex:gemini-3.5-flash-lite"]
     assert ocr.MODEL_NAME == "gpt-6.1-terra"
     assert all(ocr.resolve_provider(m["id"]) == m["provider"] for m in ocr.SUPPORTED_OCR_MODELS)
 
@@ -51,6 +56,10 @@ def test_require_api_key_per_provider(monkeypatch):
     with pytest.raises(ValueError): ocr._require_api_key("anthropic")
     monkeypatch.setattr(ocr, "GEMINI_API_KEY", "fixture-key")
     assert ocr._require_api_key("gemini") == "fixture-key"
+    monkeypatch.setattr(ocr, "VERTEX_API_KEY", None)
+    with pytest.raises(RuntimeError, match="VERTEX_API_KEY"): ocr._require_api_key("vertex")
+    monkeypatch.setattr(ocr, "VERTEX_API_KEY", "vertex-fixture")
+    assert ocr._require_api_key("vertex") == "vertex-fixture"
 
 
 def test_gemini_request_shape_without_network(monkeypatch, tmp_path):
@@ -136,3 +145,24 @@ def test_app_forwards_ocr_model_to_step4() -> None:
     assert '"--model", ocr_model' in source, "Step 4 호출에 --model 전달이 없습니다"
     assert "ocr_model" in inspect.signature(app.run_final_for_item).parameters
     assert "ocr_model" in app.RunFinalRequest.model_fields
+
+
+def test_vertex_model_uses_vertex_client_and_strips_prefix(monkeypatch, tmp_path):
+    """vertex: 접두사는 SDK에 보내기 전에 떼고, Vertex 키로 vertexai 클라이언트를 만든다."""
+    pytest.importorskip("google.genai")
+    from types import SimpleNamespace
+    sheet = tmp_path / "sheet.jpg"; sheet.write_bytes(b"jpeg-bytes")
+    calls, clients = [], []
+    class FakeModels:
+        def generate_content(self, **kw):
+            calls.append(kw); return SimpleNamespace(text='{"regions": []}')
+    monkeypatch.setattr(ocr, "VERTEX_API_KEY", "vertex-fixture")
+    monkeypatch.setattr(ocr, "GEMINI_API_KEY", "gemini-fixture")
+    from google import genai
+    def fake_client(**kw):
+        clients.append(kw); return SimpleNamespace(models=FakeModels())
+    monkeypatch.setattr(genai, "Client", fake_client)
+    result, _ = ocr._run_gemini_json(str(sheet), "prompt", 0.2, "vertex:gemini-3.8-flash")
+    assert result == {"regions": []}
+    assert clients == [{"vertexai": True, "api_key": "vertex-fixture"}]
+    assert calls[0]["model"] == "gemini-3.8-flash"

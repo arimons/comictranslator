@@ -6,6 +6,13 @@ function FolderIcon() {
   return <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h5l2 2h7a2 2 0 0 1 2 2v10H3Z" /><path d="M3 10h18" /></svg>;
 }
 
+// OCR·번역에 쓸 AI 경로. 키는 서버 .env에 두고, 여기서는 경로와 모델만 고른다.
+const AI_ROUTES = [
+  { id: "openai", name: "OpenAI", note: "기본 경로. OPENAI_API_KEY를 씁니다." },
+  { id: "gemini", name: "Gemini API", note: "AI Studio 경로. GEMINI_API_KEY를 쓰며 선결제 잔액이 필요할 수 있습니다." },
+  { id: "vertex", name: "Vertex", note: "Cloud 청구 경로. VERTEX_API_KEY를 쓰며 체험판 크레딧을 쓸 수 있습니다." },
+];
+
 function workDate(value) {
   const date = new Date(value);
   return Number.isNaN(date.getTime()) ? "작업일 정보 없음" : new Intl.DateTimeFormat("ko-KR", {
@@ -22,6 +29,7 @@ export default function StartScreen({
   inputBusy, analyzeBusy, analyzeWorkers, setAnalyzeWorkers, analysisPolicy, setAnalysisPolicy,
   startRegionAnalysis, splitLandscape, setSplitLandscape, removeLoadedImage, openRecentSession, openSessionForSetup, recentMenuId, setRecentMenuId,
   renameRecentSession, deleteRecentSession, status, setStatus, ocrModelLabel,
+  ocrModels = [], ocrModel = "", ocrDefaultModel = "", ocrKeyReady = {}, onOcrModelChange,
 }) {
   const recentEndRef = useRef(null);
   useEffect(() => {
@@ -161,6 +169,28 @@ export default function StartScreen({
                   onKeyDown={(event) => { if (event.key === "Enter") event.currentTarget.blur(); }} />
                 <p className="home-hint">파일명 또는 폴더명이 자동으로 채워집니다. 원하는 작품명으로 바꿔주세요.</p>
               </div>
+              {ocrModels.length > 0 && (() => {
+                const current = ocrModels.find((model) => model.id === ocrModel);
+                const provider = current?.provider || "openai";
+                const pick = (route) => {
+                  const group = ocrModels.filter((model) => model.provider === route);
+                  onOcrModelChange?.((group.find((model) => model.id === ocrDefaultModel) || group[0]).id);
+                };
+                return <fieldset className="analysis-policy ai-route" disabled={busy}>
+                  <legend>AI 경로 <span className="home-optional">OCR·번역</span></legend>
+                  {AI_ROUTES.filter((route) => ocrModels.some((model) => model.provider === route.id)).map((route) =>
+                    <label key={route.id} className={`policy-option${provider === route.id ? " selected" : ""}`}>
+                      <input type="radio" name="ai-route" value={route.id} checked={provider === route.id} onChange={() => pick(route.id)} />
+                      <span><strong>{route.name}{ocrKeyReady[route.id] === false && <em className="route-warn">키 없음</em>}</strong><small>{route.note}</small></span>
+                    </label>)}
+                  <select aria-label="AI 모델" value={ocrModel} onChange={(event) => onOcrModelChange?.(event.target.value)}
+                    title={current?.note || undefined}>
+                    {ocrModels.filter((model) => model.provider === provider).map((model) =>
+                      <option key={model.id} value={model.id}>{model.label || model.id}</option>)}
+                  </select>
+                  <p className="home-hint">프로젝트에 저장되며 편집기에서도 바꿀 수 있습니다. 새 프로젝트는 마지막으로 고른 경로로 시작합니다.{provider === "vertex" && " 글자 지우기·통번역 이미지 작업은 Vertex를 쓰지 않고 OpenAI 이미지 모델을 씁니다."}</p>
+                </fieldset>;
+              })()}
               <fieldset className="analysis-policy" disabled={busy}>
                 <legend>분석 방법</legend>
                 <label className={`policy-option${analysisPolicy === "reuse" ? " selected" : ""}`}>

@@ -154,6 +154,8 @@ const DRAG_COMMIT_THRESHOLD_PX = 3;
 // 회전 핸들을 Shift와 함께 끌면 이 각도 단위로 맞춘다.
 const ROTATION_SNAP_DEG = 15;
 
+const FOCUS_ON_CLICK_KEY = "comic-translator-overlay-focus-on-click";
+
 const OverlayCanvas = forwardRef(function OverlayCanvas({ image, overlayGuidance, setOverlayGuidance, selectedRegionId, setSelectedRegionId, extraSelectedIds = [], onToggleRegion, onSelectRegions, onFocusRect, setStatus, onRequestApply, tool = "select", setTool }, ref) {
   const hostRef = useRef(null);
   const stageRef = useRef(null);
@@ -170,6 +172,12 @@ const OverlayCanvas = forwardRef(function OverlayCanvas({ image, overlayGuidance
   const onFocusRectRef = useRef(null);
   onFocusRectRef.current = onFocusRect;
   const focusOpenedAtRef = useRef(0);
+  // 박스를 한 번 누르면 그 박스로 확대한다(기본 켬). 끄면 선택만 한다. 글 편집은 더블클릭이나 Enter.
+  const [focusOnClick, setFocusOnClick] = useState(() => {
+    try { return window.localStorage.getItem(FOCUS_ON_CLICK_KEY) !== "0"; } catch { return true; }
+  });
+  const focusOnClickRef = useRef(focusOnClick);
+  focusOnClickRef.current = focusOnClick;
   const overlayLayerRef = useRef(null);
   const previewNodeRef = useRef(null);
   const imageRef = useRef(image);
@@ -626,7 +634,7 @@ const OverlayCanvas = forwardRef(function OverlayCanvas({ image, overlayGuidance
   function editorCoverRect(region, override, img) {
     const entry = overlayLayoutEntry(imageRef.current, region);
     const drawn = Array.isArray(entry?.draw?.lines) ? entry.draw.lines : [];
-    const pad = (Number(entry?.draw?.stroke_width) || 2) + 4;
+    const pad = (Number(entry?.draw?.stroke_width) || 1) + 4;
     const lineH = Number(entry?.draw?.line_height) || Number(entry?.font_size) || 0;
     const rects = [
       selectedBoxRect(region, override),
@@ -705,7 +713,7 @@ const OverlayCanvas = forwardRef(function OverlayCanvas({ image, overlayGuidance
     const trackingImg = Number(draw?.tracking) || 0;
     const strokeImg = Number.isFinite(Number(override.stroke_width)) && override.stroke_width !== "" && override.stroke_width != null
       ? Number(override.stroke_width)
-      : (Number.isFinite(Number(draw?.stroke_width)) ? Number(draw.stroke_width) : 2);
+      : (Number.isFinite(Number(draw?.stroke_width)) ? Number(draw.stroke_width) : 1);
     const align = override.text_align || draw?.text_align || "center";
     const weight = override.font_style === "etc" && Number(override.font_weight) ? Number(override.font_weight) : null;
     const lines = String(draft ?? "").split("\n");
@@ -829,10 +837,15 @@ const OverlayCanvas = forwardRef(function OverlayCanvas({ image, overlayGuidance
   }
 
   // 박스를 눌렀을 때: 그 박스로 확대하고, 같은 자리·같은 글자 크기의 편집 박스를 겹쳐 띄운다.
-  function openFloatingEditor(rid) {
+  // edit가 false면 확대와 툴바만 띄우고 글 편집(입력창)은 켜지 않는다. 더블클릭·Enter가 edit를 켠다.
+  function openFloatingEditor(rid, edit = false) {
     if (!rid) return;
     const key = String(rid);
-    if (floatingEditorStateRef.current?.rid === key) return;
+    const already = floatingEditorStateRef.current;
+    if (already?.rid === key) {
+      if (edit && !already.editing) startEditing();
+      return;
+    }
     const region = overlayControlItems(imageRef.current, overlayRef.current).find((item) => overlayItemKey(item) === key);
     const rect = region ? regionDisplayRect(region) : null;
     if (!region || !rect) return;
@@ -851,8 +864,28 @@ const OverlayCanvas = forwardRef(function OverlayCanvas({ image, overlayGuidance
     editorSnapshotRef.current = editorSnapshotFrom(imageRef.current, region, key);
     editorPendingTextRef.current = null;
     setFloatingDraft(text);
-    setFloatingEditor({ rid: key, stage: toStageRect(rect), fontPx, fontImg });
+    setFloatingEditor({ rid: key, stage: toStageRect(rect), fontPx, fontImg, editing: Boolean(edit) });
     onFocusRectRef.current?.(rect);
+  }
+
+  // 확대만 된 박스에서 글 편집을 시작한다. 지금 렌더를 기준으로 입력창 내용과 배치를 다시 잡는다.
+  function startEditing() {
+    const open = floatingEditorStateRef.current;
+    if (!open || open.editing) return;
+    const region = overlayControlItems(imageRef.current, overlayRef.current).find((item) => overlayItemKey(item) === String(open.rid));
+    if (!region) return;
+    const override = overlayRegionValue(overlayRef.current, open.rid);
+    editorSnapshotRef.current = editorSnapshotFrom(imageRef.current, region, open.rid);
+    editorPendingTextRef.current = null;
+    setFloatingDraft(override.text_override ?? baseRegionText(imageRef.current, region));
+    setFloatingEditor({ ...open, editing: true });
+  }
+
+  // 편집만 끝내고 확대·툴바는 그대로 둔다.
+  function stopEditing() {
+    commitEditorText();
+    editorComposingRef.current = false;
+    setFloatingEditor((current) => (current ? { ...current, editing: false } : current));
   }
 
   // fit이 true면 확대를 풀고 전체 보기로 되돌린다(편집 창이 열려 있었을 때만).
@@ -901,15 +934,16 @@ const OverlayCanvas = forwardRef(function OverlayCanvas({ image, overlayGuidance
   }
 
   // 박스를 눌렀을 때의 확대 편집 전환: 열려 있으면(같은 박스든 다른 박스든) 닫고 원래 배율로, 닫혀 있으면 연다.
+  // 박스를 한 번 눌렀을 때: 확대 옵션이 켜져 있으면 그 박스로 확대(다른 박스가 열려 있으면 그쪽으로 옮김),
+  // 이미 그 박스에 있으면 그대로 둔다. 옵션이 꺼져 있으면 선택만 하고 열린 확대는 닫는다.
   function toggleFocusEditorFromClick(key) {
     const open = floatingEditorStateRef.current;
-    if (open) {
-      // 더블클릭의 두 번째 클릭이 방금 연 편집 창을 바로 닫지 않게 한다.
-      if (open.rid === key && Date.now() - focusOpenedAtRef.current < 450) return;
-      closeFloatingEditor({ fit: true });
+    if (!focusOnClickRef.current) {
+      if (open && open.rid !== key) closeFloatingEditor({ fit: true });
       return;
     }
-    openFloatingEditor(key);
+    if (open?.rid === key) return;
+    openFloatingEditor(key, false);
   }
 
   function regionRectByKey(key) {
@@ -936,18 +970,24 @@ const OverlayCanvas = forwardRef(function OverlayCanvas({ image, overlayGuidance
       return rect ? vpRef.current.ensureVisible(rect) : false;
     },
     isEditorOpen: () => Boolean(floatingEditor),
-    openEditorFor: (key) => { if (key == null) return false; openFloatingEditor(String(key)); return true; },
+    openEditorFor: (key) => { if (key == null) return false; openFloatingEditor(String(key), true); return true; },
     openEditorForSelected: () => {
       const key = selectedRegionRef.current;
       const rect = regionRectByKey(key);
       if (!rect) return false;
-      openFloatingEditor(String(key));
+      openFloatingEditor(String(key), true);
       return true;
     },
     closeEditor: () => {
       if (!floatingEditor) return false;
+      // 글 편집 중이면 편집만 끝내고 확대는 둔다. 한 번 더 누르면 닫고 전체 보기로 돌아간다.
+      if (floatingEditor.editing) {
+        stopEditing();
+        setStatus("대사 편집 종료");
+        return true;
+      }
       closeFloatingEditor({ fit: true });
-      setStatus("대사 편집 닫기");
+      setStatus("박스 확대 닫기");
       return true;
     },
     commitEditor: () => {
@@ -1029,7 +1069,7 @@ const OverlayCanvas = forwardRef(function OverlayCanvas({ image, overlayGuidance
     // 제자리 편집 중에는 미리보기에 구워진 그 영역의 글자를 지운 배경(마스크 이미지)으로 덮는다.
     // 그래야 편집 박스의 글자만 보이고 이중으로 겹치지 않는다.
     const editing = floatingEditorStateRef.current;
-    if (editing?.rid) {
+    if (editing?.rid && editing.editing) {
       const editRegion = overlayControlItems(imageRef.current, overlayRef.current).find((item) => overlayItemKey(item) === String(editing.rid));
       const cover = editRegion ? editorCoverRect(editRegion, overlayRegionValue(overlayRef.current, editing.rid), img) : null;
       if (cover) {
@@ -1106,7 +1146,7 @@ const OverlayCanvas = forwardRef(function OverlayCanvas({ image, overlayGuidance
           });
           moveRect.on("dblclick dbltap", (event) => {
             event.cancelBubble = true;
-            openFloatingEditor(rid);
+            openFloatingEditor(rid, true);
           });
           moveRect.on("mouseenter", () => setStageCursor("move"));
           moveRect.on("mouseleave", () => setStageCursor("crosshair"));
@@ -1137,7 +1177,7 @@ const OverlayCanvas = forwardRef(function OverlayCanvas({ image, overlayGuidance
         });
         safeBorder.on("dblclick dbltap", (event) => {
           event.cancelBubble = true;
-          openFloatingEditor(rid);
+          openFloatingEditor(rid, true);
         });
         if (selected) {
           safeBorder.on("mouseenter", () => setStageCursor("grab"));
@@ -1220,6 +1260,14 @@ const OverlayCanvas = forwardRef(function OverlayCanvas({ image, overlayGuidance
     vp.attach();
     const onDoubleClick = (event) => {
       if (isFloatingEditorEvent(event)) return;
+      // 첫 클릭이 방금 확대했으면 화면이 움직인 뒤라 두 번째 클릭 자리가 다른 박스일 수 있다. 확대한 박스를 편집한다.
+      const justFocused = floatingEditorStateRef.current;
+      if (justFocused && Date.now() - focusOpenedAtRef.current < 600) {
+        openFloatingEditor(justFocused.rid, true);
+        dragRef.current = null;
+        clearPreviewRect();
+        return;
+      }
       const point = pointerToImage(stage);
       const hit = findRegionAt(point);
       if (!hit) {
@@ -1228,7 +1276,7 @@ const OverlayCanvas = forwardRef(function OverlayCanvas({ image, overlayGuidance
         return;
       }
       const key = overlayItemKey(hit);
-      openFloatingEditor(key);
+      openFloatingEditor(key, true);
       dragRef.current = null;
       clearPreviewRect();
     };
@@ -1504,7 +1552,7 @@ const OverlayCanvas = forwardRef(function OverlayCanvas({ image, overlayGuidance
     img.onload = () => {
       if (cancelled) return;
       maskImgRef.current = img;
-      if (floatingEditorStateRef.current) draw();
+      if (floatingEditorStateRef.current?.editing) draw();
     };
     img.src = maskUrl;
     return () => {
@@ -1549,6 +1597,19 @@ const OverlayCanvas = forwardRef(function OverlayCanvas({ image, overlayGuidance
         </button>
       </div>
       <div id="overlayStageHost" ref={hostRef} />
+      <label className="focus-on-click" title="켜면 박스를 한 번 눌렀을 때 그 박스로 확대합니다. 끄면 선택만 합니다. 글 편집은 더블클릭이나 Enter입니다.">
+        <input
+          type="checkbox"
+          checked={focusOnClick}
+          onChange={(event) => {
+            const next = event.target.checked;
+            setFocusOnClick(next);
+            try { window.localStorage.setItem(FOCUS_ON_CLICK_KEY, next ? "1" : "0"); } catch { /* 저장 실패는 무시 */ }
+            if (!next && floatingEditorStateRef.current && !floatingEditorStateRef.current.editing) closeFloatingEditor({ fit: true });
+          }}
+        />
+        클릭 시 박스 확대
+      </label>
       {floatingEditor && editorRegion ? (() => {
         const override = overlayRegionValue(overlayGuidance, floatingEditor.rid);
         const choice = overlayWritingModeChoice(override);
@@ -1581,7 +1642,7 @@ const OverlayCanvas = forwardRef(function OverlayCanvas({ image, overlayGuidance
         const outlineColor = hexOr(override.stroke_color, "#ffffff");
         const strokeNow = Number.isFinite(Number(override.stroke_width)) && override.stroke_width !== "" && override.stroke_width != null
           ? Number(override.stroke_width)
-          : (Number.isFinite(Number(editorSnapshotRef.current?.draw?.stroke_width)) ? Number(editorSnapshotRef.current.draw.stroke_width) : 2);
+          : (Number.isFinite(Number(editorSnapshotRef.current?.draw?.stroke_width)) ? Number(editorSnapshotRef.current.draw.stroke_width) : 1);
         const syncCaret = (el, focused = document.activeElement === el) => {
           setEditorCaret((current) => (
             current.start === el.selectionStart && current.end === el.selectionEnd && current.focused === focused
@@ -1699,7 +1760,7 @@ const OverlayCanvas = forwardRef(function OverlayCanvas({ image, overlayGuidance
               </div>
             </div>
           </div>
-          <div ref={floatingEditorRef} className="inplace-editor" style={{ left: box.left, top: box.top, width: box.width, height: box.height }} {...guard}>
+          {floatingEditor.editing ? <div ref={floatingEditorRef} className="inplace-editor" style={{ left: box.left, top: box.top, width: box.width, height: box.height }} {...guard}>
             {/* 입력하는 대로 바로 반영된다. Esc는 닫기, Cmd/Ctrl+Enter는 렌더 후 다음 대사로(App의 전역 디스패처). */}
             <textarea
               ref={editorTextareaRef}
@@ -1741,7 +1802,7 @@ const OverlayCanvas = forwardRef(function OverlayCanvas({ image, overlayGuidance
                 style={{ left: Math.round(caret.left) - 2, top: caret.top, height: caret.height }}
               />
             ) : null}
-          </div>
+          </div> : null}
           </>
         );
       })() : null}

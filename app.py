@@ -3906,7 +3906,10 @@ def create_app() -> FastAPI:
         from pipeline.gemini_ocr_translate_v5 import MODEL_NAME, SUPPORTED_OCR_MODELS
 
         # 이미지 작업(글자 지우기·통번역 재생성)은 OCR·번역 모델의 제공자를 따라간다
-        return {"default": MODEL_NAME, "models": SUPPORTED_OCR_MODELS,
+        # 경로별 키가 .env에 있는지만 알려 준다(값은 보내지 않는다). 서버 재시작 때 읽은 값 기준이다.
+        key_ready = {name: bool(os.getenv(env)) for name, env in
+                     (("openai", "OPENAI_API_KEY"), ("gemini", "GEMINI_API_KEY"), ("vertex", "VERTEX_API_KEY"))}
+        return {"default": MODEL_NAME, "models": SUPPORTED_OCR_MODELS, "key_ready": key_ready,
                 "image_models": {"openai": IMAGE_MODEL, "gemini": GEMINI_IMAGE_MODEL}}
 
     @app.get("/api/fonts")

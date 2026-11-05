@@ -62,6 +62,9 @@ except ImportError:
 load_dotenv()
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+# Vertex(Agent Platform) 경로 키. Cloud 청구라 체험판 크레딧을 쓸 수 있고, Gemini API(AI Studio) 키와 따로 둔다.
+VERTEX_API_KEY = os.getenv("VERTEX_API_KEY")
+VERTEX_PREFIX = "vertex:"
 
 # Step 4 기본 모델. --model 인자로 교체할 수 있다.
 MODEL_NAME = "gpt-6.1-terra"
@@ -88,10 +91,14 @@ SUPPORTED_OCR_MODELS = [
     {"id": "gpt-6-luna", "provider": "openai", "label": "GPT-6 Luna (수동 선택)", "note": "저비용 모델. OCR·번역 품질은 페이지별 확인 필요"},
     {"id": "gemini-3.8-flash", "provider": "gemini", "label": "Gemini 3.8 Flash (수동 선택)", "note": "GEMINI_API_KEY 필요. thinking low. 페이지별 확인 필요"},
     {"id": "gemini-3.5-flash-lite", "provider": "gemini", "label": "Gemini 3.5 Flash-Lite (수동 선택)", "note": "GEMINI_API_KEY 필요. 저비용. thinking low. 페이지별 확인 필요"},
+    {"id": "vertex:gemini-3.8-flash", "provider": "vertex", "label": "Gemini 3.8 Flash · Vertex", "note": "VERTEX_API_KEY 필요. Cloud 청구(체험판 크레딧 사용 가능). thinking low"},
+    {"id": "vertex:gemini-3.5-flash-lite", "provider": "vertex", "label": "Gemini 3.5 Flash-Lite · Vertex", "note": "VERTEX_API_KEY 필요. Cloud 청구. 저비용. thinking low"},
 ]
 
 
 def resolve_provider(model_name: str) -> str:
+    if model_name.startswith(VERTEX_PREFIX):
+        return "vertex"
     if model_name.startswith("gpt-"):
         return "openai"
     if model_name.startswith("gemini-"):
@@ -108,6 +115,10 @@ def _require_api_key(provider: str) -> str:
         if not GEMINI_API_KEY:
             raise RuntimeError("GEMINI_API_KEY 환경 변수가 설정되어 있지 않습니다")
         return GEMINI_API_KEY
+    if provider == "vertex":
+        if not VERTEX_API_KEY:
+            raise RuntimeError("VERTEX_API_KEY 환경 변수가 설정되어 있지 않습니다")
+        return VERTEX_API_KEY
     raise ValueError(f"지원하지 않는 제공자입니다: {provider}")
 
 
@@ -349,7 +360,12 @@ def _run_gemini_json(
     from google import genai
     from google.genai import types
 
-    client = genai.Client(api_key=_require_api_key("gemini"))
+    if model_name.startswith(VERTEX_PREFIX):
+        # Vertex(Agent Platform) 경로: 같은 SDK로 aiplatform 주소를 쓴다
+        model_name = model_name[len(VERTEX_PREFIX):]
+        client = genai.Client(vertexai=True, api_key=_require_api_key("vertex"))
+    else:
+        client = genai.Client(api_key=_require_api_key("gemini"))
     image_paths = image_path if isinstance(image_path, list) else [image_path]
 
     parts: list[Any] = [types.Part(text=prompt)]
@@ -403,7 +419,7 @@ def _run_model_json(
     """모델명에 맞는 provider로 분기해 JSON 응답을 받는다."""
     model = model_name or MODEL_NAME
     provider = resolve_provider(model)
-    runner = _run_gemini_json if provider == "gemini" else _run_openai_json
+    runner = _run_gemini_json if provider in ("gemini", "vertex") else _run_openai_json
     return runner(image_path, prompt, temperature, model, max_retries)
 
 

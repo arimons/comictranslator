@@ -51,6 +51,8 @@ import {
   overlayRegionValue,
   overlayRegionBaseKey,
   readSessionSettings,
+  readLastOcrModel,
+  writeLastOcrModel,
   writeSessionSettings,
   removeSessionSettings,
   imageRegions,
@@ -62,6 +64,8 @@ import { recordTargetsRegion, regionIsExcluded } from "./regionExclusion.js";
 const OVERLAY_HISTORY_LIMIT = 100;
 const OVERLAY_HISTORY_MERGE_MS = 1500;
 
+// OCR·번역 AI 경로 이름(홈 화면·편집기 공용)
+const ROUTE_NAMES = { openai: "OpenAI", gemini: "Gemini API", vertex: "Vertex" };
 const ENGINE_NAMES = { lama: "LaMa", telea: "Telea" };
 // 그리기 도구를 고르면 캔버스 아래에 띄우는 안내. 도구를 한 번 쓰면 선택 도구로 돌아가며 함께 사라진다.
 const TOOL_HINTS = {
@@ -140,6 +144,7 @@ export default function App() {
   const [extraPrompt, setExtraPrompt] = useState("");
   const [ocrModels, setOcrModels] = useState([]);
   const [ocrDefaultModel, setOcrDefaultModel] = useState("");
+  const [ocrKeyReady, setOcrKeyReady] = useState({});
   const [imageModels, setImageModels] = useState({ openai: "gpt-image-2.5-sunburst" });
   const [ocrModel, setOcrModel] = useState("");
   const ocrModelMigratedRef = useRef(new Set());
@@ -373,7 +378,7 @@ export default function App() {
   const selectedFontSize = Number(selectedOverlayOverride.font_size || selectedBaseFontSize || 0);
   const selectedStrokeWidth = Number.isFinite(Number(selectedOverlayOverride.stroke_width))
     ? Number(selectedOverlayOverride.stroke_width)
-    : 2;
+    : 1;
   // 여러 Region 선택: 존재하는 Region만 남기고 기본 선택을 맨 앞에 둔다.
   const groupKeys = selectedRegion
     ? [overlayItemKey(selectedRegion), ...extraSelectedIds.filter((id) => overlayRegions.some((region) => overlayItemKey(region) === id))]
@@ -516,7 +521,8 @@ export default function App() {
     setPageDetail(null);
     const saved = readSessionSettings(sid);
     setExtraPrompt(typeof saved.extraPrompt === "string" ? saved.extraPrompt : "");
-    setOcrModel(typeof saved.ocrModel === "string" ? saved.ocrModel : "");
+    // 프로젝트에 저장된 AI 경로가 없으면 마지막으로 고른 경로를 새 프로젝트 기본값으로 쓴다
+    setOcrModel(typeof saved.ocrModel === "string" && saved.ocrModel ? saved.ocrModel : readLastOcrModel());
   }
 
   function updateExtraPrompt(value) {
@@ -540,6 +546,7 @@ export default function App() {
     const sid = sessionIdRef.current;
     if (sid) api("/api/session/ocr-model", { method: "POST", body: JSON.stringify({ session_id: sid, ocr_model: value === ocrDefaultModel ? "" : value }) })
       .catch((err) => setStatus(`OCR·번역 모델 저장 실패: ${String(err.message || err)}`));
+    writeLastOcrModel(value);
   }
 
   // 서버 기본값과 같으면 null을 보내 백엔드 기본 동작(--model 생략)을 유지한다.
@@ -1324,6 +1331,7 @@ export default function App() {
     api("/api/ocr-models").then((data) => {
       setOcrModels(Array.isArray(data.models) ? data.models : []);
       setOcrDefaultModel(data.default || "");
+      setOcrKeyReady(data.key_ready || {});
       if (data.image_models) setImageModels(data.image_models);
     }).catch(() => {});
   }, []);
@@ -2554,7 +2562,7 @@ export default function App() {
     const model = exportImageModel || "gpt-image-2.5-sunburst";
     const replace = Boolean(selected.final_url);
     // 이미지 모델은 OCR·번역 모델의 제공자를 따라간다(Gemini면 나노바나나). 어느 설정을 따랐는지 함께 보여 준다.
-    const basis = `OCR·번역 모델 ${effectiveOcrModel || "기본"}(${ocrProvider === "gemini" ? "Gemini" : "OpenAI"})을 따름`;
+    const basis = `OCR·번역 모델 ${effectiveOcrModel || "기본"}(${ROUTE_NAMES[ocrProvider] || "OpenAI"})을 따름`;
     if (!window.confirm(`${selected.name}을(를) ${model}로 통번역합니다(${basis}).${replace ? " 지금 최종 출력을 새 생성 결과로 바꿉니다." : ""} 이미지 생성 비용이 발생합니다. 생성하는 동안 다른 페이지는 계속 편집할 수 있습니다. 진행할까요?`)) return;
     setGuidanceMenu(null);
     await generateMissingFinals({ imageIds: [selected.id], force: replace });
@@ -2959,7 +2967,7 @@ export default function App() {
       ocrModelLabel={(id) => {
         const model = ocrModels.find((item) => item.id === (id || ocrDefaultModel));
         const name = model?.label?.replace(/\s*\(.*\)$/, "") || id || ocrDefaultModel || "기본";
-        return `${model?.provider === "gemini" ? "Gemini" : "OpenAI"} · ${name}${id ? "" : " (기본)"}`;
+        return `${ROUTE_NAMES[model?.provider] || "OpenAI"} · ${name}${id ? "" : " (기본)"}`;
       }}
       recentLoadState={recentLoadState} loadRecentSessions={loadRecentSessions}
       recentSort={recentSort} changeRecentSort={changeRecentSort} recentHasMore={recentHasMore} recentLoadingMore={recentLoadingMore} loadMoreRecentSessions={loadMoreRecentSessions}
@@ -2974,6 +2982,8 @@ export default function App() {
       removeLoadedImage={removeLoadedImage} openRecentSession={openRecentSession} openSessionForSetup={openSessionForSetup}
       recentMenuId={recentMenuId} setRecentMenuId={setRecentMenuId}
       renameRecentSession={renameRecentSession} deleteRecentSession={deleteRecentSession}
+      ocrModels={ocrModels} ocrModel={effectiveOcrModel} ocrDefaultModel={ocrDefaultModel} ocrKeyReady={ocrKeyReady}
+      onOcrModelChange={changeOcrRoute}
       status={status} setStatus={setStatus}
     />;
   }
@@ -2999,7 +3009,7 @@ export default function App() {
         <GlossaryPanel sessionId={sessionId} projectName={projectName} ocrBusy={ocrBusy} analysisReady={images.some((image) => image.has_analysis)} onMemoChange={setWorkMemo} />
         <label className={`llm-route-badge ${ocrProvider}`}
           title={`번역 경로(OCR·번역 모델): ${effectiveOcrModel || "기본"} · 이미지 작업(AI 글자 지우기·통번역): ${(ocrProvider === "gemini" ? imageModels.gemini : imageModels.openai) || "-"}\n언제든 바꿀 수 있습니다. 이미 번역된 페이지는 그대로 두고, 바꾼 뒤 번역하는 페이지부터 새 경로로 갑니다. 프로젝트에 저장되어 다른 기기에서도 같습니다.`}>
-          <span>{ocrProvider === "gemini" ? "Gemini" : "OpenAI"}</span>
+          <span>{ROUTE_NAMES[ocrProvider] || "OpenAI"}</span>
           {(ocrModels.find((model) => model.id === effectiveOcrModel)?.label || effectiveOcrModel || "기본").replace(/\s*\(.*\)$/, "").replace(/^GPT-/, "").replace(/^Gemini\s+/, "")}
           <i aria-hidden="true">▾</i>
           {/* 배지 전체를 덮는 투명한 선택 상자: 배지 어디를 눌러도 드롭다운이 열린다 */}
@@ -3426,11 +3436,16 @@ export default function App() {
                       disabled={ocrBusy || !ocrModels.length}
                       title={ocrModels.find((model) => model.id === effectiveOcrModel)?.note || undefined}
                     >
-                      {ocrModels.map((model) => (
-                        <option key={model.id} value={model.id} title={model.note || undefined}>
-                          {model.label || model.id}
-                        </option>
-                      ))}
+                      {["openai", "gemini", "vertex"].map((provider) => {
+                        const group = ocrModels.filter((model) => model.provider === provider);
+                        return group.length ? <optgroup key={provider} label={`${ROUTE_NAMES[provider]}${ocrKeyReady[provider] === false ? " · 키 없음" : ""}`}>
+                          {group.map((model) => (
+                            <option key={model.id} value={model.id} title={model.note || undefined}>
+                              {model.label || model.id}
+                            </option>
+                          ))}
+                        </optgroup> : null;
+                      })}
                     </select>
                   </label>
                   <label>Additional Translation Prompt</label>
@@ -3747,7 +3762,7 @@ export default function App() {
                     type="number"
                     min="0"
                     max="12"
-                    value={isGroupSelection ? (groupValue((o) => (Number.isFinite(Number(o.stroke_width)) ? Number(o.stroke_width) : 2)) ?? "") : selectedStrokeWidth}
+                    value={isGroupSelection ? (groupValue((o) => (Number.isFinite(Number(o.stroke_width)) ? Number(o.stroke_width) : 1)) ?? "") : selectedStrokeWidth}
                     onChange={(e) => updateOverlayStyle({ stroke_width: e.target.value }, "stroke")}
                     disabled={!selectedRegionRefValue()}
                   />

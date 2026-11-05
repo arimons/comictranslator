@@ -60,6 +60,8 @@ CLOUD_VISION_API_KEY=your_cloud_vision_api_key
 OPENAI_API_KEY=your_openai_api_key
 # 선택: Gemini 모델로 인식·번역할 때만 필요합니다
 # GEMINI_API_KEY=your_gemini_api_key
+# 선택: Vertex 경로(Cloud 청구)로 인식·번역할 때만 필요합니다
+# VERTEX_API_KEY=your_vertex_api_key
 # 선택: 작업 데이터 위치. 기본값은 ~/ComicTranslator
 # COMIC_TRANSLATOR_HOME=/path/to/ComicTranslator
 ```

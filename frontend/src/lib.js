@@ -125,6 +125,15 @@ export function writeSessionSettings(sessionId, patch) {
   }
 }
 
+// 새 프로젝트의 AI 경로 기본값: 마지막으로 고른 모델 id
+const LAST_OCR_MODEL_KEY = "comic-translator-last-ocr-model";
+export function readLastOcrModel() {
+  try { return window.localStorage.getItem(LAST_OCR_MODEL_KEY) || ""; } catch { return ""; }
+}
+export function writeLastOcrModel(value) {
+  try { window.localStorage.setItem(LAST_OCR_MODEL_KEY, value || ""); } catch { /* 저장 실패는 무시 */ }
+}
+
 export function removeSessionSettings(sessionId) {
   if (!sessionId) return;
   try {

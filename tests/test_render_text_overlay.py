@@ -118,6 +118,30 @@ class RenderTextOverlayTest(unittest.TestCase):
         with_draw = overlay_layout_summary(prepared, {3: {"region_id": 2}}, {id(prepared[0][0]): record})
         self.assertEqual(with_draw["regions"]["2"]["draw"], record)
 
+    def test_stroke_tracking_widens_text_only_above_stroke_one(self) -> None:
+        """외곽선 두께가 1을 넘으면 그만큼 자간이 늘고, 1이면 기존과 같다."""
+        from pipeline import render_text_overlay as renderer
+
+        font = load_font(FONT_PATH, 28, 700)
+        draw = ImageDraw.Draw(Image.new("RGB", (10, 10)))
+        try:
+            renderer.set_stroke_tracking(1)
+            base_tracking = renderer.tracking_for_font(font)
+            base_width = renderer.text_size(draw, font, "가나다라")[0]
+            renderer.set_stroke_tracking(3)
+            self.assertEqual(renderer.tracking_for_font(font) - base_tracking, 2)
+            self.assertEqual(renderer.text_size(draw, font, "가나다라")[0] - base_width, 2 * 3)
+            renderer.set_stroke_tracking(0)
+            self.assertEqual(renderer.tracking_for_font(font), base_tracking)
+        finally:
+            renderer.set_stroke_tracking(0)
+
+    def test_default_stroke_width_is_one(self) -> None:
+        from pipeline import render_text_overlay as renderer
+
+        self.assertEqual(renderer.TEXT_STROKE_WIDTH, 1)
+        self.assertEqual(renderer.DARK_TEXT_STROKE_WIDTH, 1)
+
     def test_draw_text_block_pil_records_drawn_line_positions(self) -> None:
         from pipeline.render_text_overlay import draw_text_block_pil
 

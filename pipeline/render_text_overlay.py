@@ -82,6 +82,9 @@ _FONT_TRACKING: dict[str, int] = {
 }
 
 _GLOBAL_TRACKING_OFFSET: int = 0
+# 외곽선이 두꺼운 박스는 이웃 글자의 외곽선이 붙지 않게 자간을 (두께 - 1)px 넓힌다. 박스마다 레이아웃 계산과
+# 그리기 직전에 set_stroke_tracking으로 맞추며, 기본 두께 1이면 0이라 기존 렌더와 같다.
+_STROKE_TRACKING_EXTRA: int = 0
 
 UNBOXED_MAX_FONT_SIZE = 38
 UNBOXED_BG_ALPHA = 38          # 15% — LaMa 적용 unboxed (배경 이미 inpainting 완료)
@@ -90,8 +93,9 @@ UNBOXED_DARK_BG_ALPHA = 0      # 외곽선으로 가독성 확보, 배경 박스
 UNBOXED_TG_FALLBACK_FONT_SCALE = 0.90
 SPLIT_PARENT_FONT_CAP_RATIO = 1.20
 BUBBLE_BG_ALPHA = 0
-TEXT_STROKE_WIDTH = 2
-DARK_TEXT_STROKE_WIDTH = 3
+# 외곽선 기본 두께. 2 이상이면 이웃 글자의 외곽선이 붙어 겹쳐 보여 1로 둔다(박스별로 바꿀 수 있다).
+TEXT_STROKE_WIDTH = 1
+DARK_TEXT_STROKE_WIDTH = 1
 
 
 @dataclass
@@ -1471,12 +1475,27 @@ def _font_tracking_base(font_path: str) -> int:
     return _FONT_TRACKING.get(Path(font_path).stem, 0)  # 예: 'Freesentation-5Medium'
 
 
+def stroke_tracking_extra(stroke_width: int | float | None) -> int:
+    """외곽선 두께에 따른 추가 자간(px). 두께 1까지는 0이다."""
+    try:
+        return max(0, int(stroke_width) - 1)
+    except (TypeError, ValueError):
+        return 0
+
+
+def set_stroke_tracking(stroke_width: int | float | None) -> int:
+    """이후 측정·그리기에 쓸 외곽선 자간 보정을 정한다."""
+    global _STROKE_TRACKING_EXTRA
+    _STROKE_TRACKING_EXTRA = stroke_tracking_extra(stroke_width)
+    return _STROKE_TRACKING_EXTRA
+
+
 def tracking_for_font(font: ImageFont.FreeTypeFont) -> int:
     """폰트 이름에서 stem을 추출해 tracking 오프셋(px) 반환."""
     try:
-        return _font_tracking_base(font.path) + _GLOBAL_TRACKING_OFFSET
+        return _font_tracking_base(font.path) + _GLOBAL_TRACKING_OFFSET + _STROKE_TRACKING_EXTRA
     except Exception:
-        return _GLOBAL_TRACKING_OFFSET
+        return _GLOBAL_TRACKING_OFFSET + _STROKE_TRACKING_EXTRA
 
 
 def synthetic_dot_radius_for_font(font: ImageFont.FreeTypeFont | None = None, font_size: int | None = None) -> int:
@@ -4316,6 +4335,7 @@ def prepare_page_layouts(
 
     for cluster in clusters:
         override = overlay_override_for_cluster(cluster, flood_info_by_anchor, overlay_overrides)
+        set_stroke_tracking(overlay_override_stroke_width(override, TEXT_STROKE_WIDTH))
         default_text = str(cluster.get("text_translated") or "").strip()
         has_text_override = isinstance(override.get("text_override"), str)
         if has_text_override:
@@ -4522,6 +4542,8 @@ def prepare_page_layouts(
             )
             reference = _SPLIT_CAP_LAYOUT_CACHE.get(cap_key)
             if reference is None:
+                set_stroke_tracking(overlay_override_stroke_width(
+                    overlay_override_for_cluster(prepared[idx][0], flood_info_by_anchor, overlay_overrides), TEXT_STROKE_WIDTH))
                 reference = choose_layout(
                     draw, args["cap_text"], args["auto_bbox"], (img_w, img_h), args["font_path"],
                     is_unboxed=args["is_unboxed"], src_line_count=args["src_lc"], is_split_rect=args["is_split_rect"],
@@ -4546,6 +4568,8 @@ def prepare_page_layouts(
                 continue
             if layout_i.font_size <= cap_fs:
                 continue
+            set_stroke_tracking(overlay_override_stroke_width(
+                overlay_override_for_cluster(c_i, flood_info_by_anchor, overlay_overrides), TEXT_STROKE_WIDTH))
             new_layout = choose_layout(
                 draw, text_i, bbox_i, (img_w, img_h), fp_i,
                 max_font_size=cap_fs,
@@ -4565,6 +4589,7 @@ def prepare_page_layouts(
                                  src_lc_i, fp_i, is_split_i, so_i, mc_i, rs_i, fvs_i, fvt_i,
                                  font_size_delta_i, split_cap_font_size_i, manual_layout_override_i)
 
+    set_stroke_tracking(0)
     return prepared
 
 
@@ -5035,6 +5060,7 @@ def apply_text_overlay(
             text_stroke_width = TEXT_STROKE_WIDTH
             text_stroke_fill = (255, 255, 255)
         text_stroke_width = overlay_override_stroke_width(override, text_stroke_width)
+        set_stroke_tracking(text_stroke_width)
         text_fill = overlay_override_font_color(override, text_fill)
         text_stroke_fill = overlay_override_stroke_color(override, text_stroke_fill)
         rotation_deg = overlay_override_rotation_deg(override)
@@ -5052,6 +5078,7 @@ def apply_text_overlay(
             draw_record=draw_records.setdefault(id(cluster), {}),
         )
         rendered_count += 1
+    set_stroke_tracking(0)
     if page_pil is not None:
         image = cv2.cvtColor(np.array(page_pil), cv2.COLOR_RGB2BGR)
 
