@@ -123,3 +123,5 @@ MCP는 UI 서버 없이 등록된 원본 또는 해시가 맞는 대체 사본�
 <!-- 변경 검토(2026-10-30): 지우기 보정(custom_masks) 가이드 키 추가, 이 문서 내용 영향 없음 -->
 
 <!-- 2026-10-29 review: region_refs.py·app.py·render_text_overlay.py TG digest를 원본 TG 기준으로 변경. 이 문서 내용 영향 없음 -->
+
+<!-- 2026-11-05 review: StartScreen.jsx 작업 준비에 AI 경로(OpenAI·Gemini API·Vertex) 선택을 추가. 원본 직접 참조·입력 연결 내용에는 영향 없음 -->
