@@ -138,3 +138,5 @@ UI 검증은 별도 headless Chromium에서 실행한다. `proof/src/run_headles
 <!-- 2026-10-29 review: region_refs.py·app.py·render_text_overlay.py TG digest를 원본 TG 기준으로 변경. 이 문서 내용 영향 없음 -->
 
 <!-- 2026-11-01 review: 서버의 LaMa를 작업 프로세스(pipeline/lama_worker.py)로 옮김. 프로젝트 홈으로 나가거나 1시간 쓰지 않으면 끝내 메모리를 돌려줌. 화면 조작과 결과 변화 없음, 이 문서 내용 영향 없음 -->
+
+<!-- 2026-11-05 review: app.py 영역 분석 적용 뒤 final이 있던 페이지는 Overlay를 새 masked로 다시 렌더(rerender_final_after_analysis). 이 문서 내용 영향 없음 -->

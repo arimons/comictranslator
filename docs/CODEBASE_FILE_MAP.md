@@ -568,3 +568,5 @@ OCR·번역 모델로 Gemini를 고른 세션의 이미지 작업(글자 지우�
 <!-- 변경 검토(2026-10-30): region_refs.py POLICY에 custom_mask 소비처와 resolve_instance_record 추가 -->
 
 <!-- 2026-10-31 review: pipeline_runner.py stop_after="text_groups"·app.py /api/analyze stop_after 추가를 반영 -->
+
+<!-- 2026-11-05 review: app.py 영역 분석 적용 뒤 final이 있던 페이지는 Overlay를 새 masked로 다시 렌더(rerender_final_after_analysis). 이 문서 내용 영향 없음 -->
