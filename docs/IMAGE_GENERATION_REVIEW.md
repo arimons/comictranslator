@@ -140,3 +140,5 @@ UI 검증은 별도 headless Chromium에서 실행한다. `proof/src/run_headles
 <!-- 2026-11-01 review: 서버의 LaMa를 작업 프로세스(pipeline/lama_worker.py)로 옮김. 프로젝트 홈으로 나가거나 1시간 쓰지 않으면 끝내 메모리를 돌려줌. 화면 조작과 결과 변화 없음, 이 문서 내용 영향 없음 -->
 
 <!-- 2026-11-05 review: app.py 영역 분석 적용 뒤 final이 있던 페이지는 Overlay를 새 masked로 다시 렌더(rerender_final_after_analysis). 이 문서 내용 영향 없음 -->
+
+<!-- 2026-11-08 app.py(AI 지우기 영역 모드: 선택한 영역 크롭만 지우고 같은 영역 패치만 교체, 분석 재적용 때 사라진 영역 패치만 정리) 변경 검토: 이 문서의 통번역 생성 요청·후보 등록 흐름에는 영향 없음 -->
