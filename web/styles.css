@@ -3731,8 +3731,6 @@ select.memo-key { width: 100%; padding: 2px; font-size: 12px; }
 .llm-route-badge select { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; cursor: pointer; font: inherit; }
 .llm-route-badge select:disabled { cursor: default; }
 .llm-route-badge:hover { border-color: #94a3b8; }
-.ai-erase-page-start { display: block; margin-top: 6px; padding: 5px 9px; font-size: 12px; border: 1px solid var(--border, #cbd5e1); border-radius: 7px; background: #fff; color: #7c3aed; cursor: pointer; }
-.ai-erase-page-start:disabled { opacity: .5; cursor: default; }
 .ai-erase-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .ai-erase-head h2 { margin: 0; }
 .ai-erase-close { font-size: 18px; line-height: 1; padding: 2px 8px; }

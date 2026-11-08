@@ -179,10 +179,6 @@ export default function AiErasePanel({ sessionId, page, region, disabled, onCand
           {error ? <div className="restore-error">{error}</div> : null}
         </div>
       ) : null}
-      {!region && !running ? (
-        <button className="ai-erase-page-start" onClick={() => onRequestConfirm?.()} disabled={disabled || busy}
-          title="페이지 전체의 글자를 이미지 모델로 지웁니다(확인 후 실행, 비용 발생). 영역(R)을 선택하면 그 영역만 지울 수 있습니다.">쪽 전체 AI 지우기…</button>
-      ) : null}
       {confirmOpen ? (
         <div className="ai-erase-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) onConfirmClose?.(); }}>
           <div className="ai-erase-dialog" role="dialog" aria-modal="true" aria-labelledby="ai-erase-title">

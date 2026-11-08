@@ -172,6 +172,8 @@ export default function App() {
   const [guidanceCompareMode, setGuidanceCompareMode] = useState("auto");
   const [aiEraseCandidateUrl, setAiEraseCandidateUrl] = useState(null);
   const [aiEraseConfirmOpen, setAiEraseConfirmOpen] = useState(false);
+  // 확인 창이 지우는 대상: 선택한 영역만(region) 또는 쪽 전체(page). 연 곳에 따라 정해진다.
+  const [aiEraseTarget, setAiEraseTarget] = useState("region");
   // 불러온 가로 이미지를 분석 시작 때 나눌지(기본 켜짐). 표지처럼 가운데 한 장인 이미지는 가운데만 남긴다.
   const [splitLandscape, setSplitLandscape] = useState(() => readStored("ct.splitLandscape", true, (v) => typeof v === "boolean"));
   // 확인한 페이지(영역 분석 탭에서 보고 넘어간 페이지)가 쌓이면 번역을 백그라운드로 돌릴지 묻는다.
@@ -2916,6 +2918,7 @@ export default function App() {
   // 지우기 줄에서 AI 외의 방식을 고르면, 이 영역에 적용된 AI 지움을 먼저 해제한다(AI 패치가 위에 얹혀 있으면 다른 방식이 보이지 않는다).
   async function chooseRegionErase(value) {
     if (value === "ai") {
+      setAiEraseTarget("region");
       setAiEraseConfirmOpen(true);
       return;
     }
@@ -3268,6 +3271,9 @@ export default function App() {
                       <button type="button" className={selected?.processing_excluded ? "page-excluded-control" : ""} disabled={!selected || anyBusy} onClick={togglePageProcessing} title={selected?.processing_excluded ? "현재 페이지는 원본 그대로 출력합니다. 클릭하면 처리 대상으로 복원합니다." : "이 페이지를 처리에서 제외하고 원본 그대로 출력합니다."}>{selected?.processing_excluded ? "처리 대상으로 복원" : "페이지 처리 제외"}</button>
                       <button type="button" disabled={!selected || anyBusy || selected.processing_excluded} onClick={translatePageWithImageModel}
                         title={selected?.processing_excluded ? "처리 대상으로 복원한 뒤 쓸 수 있습니다" : "이미지 생성 모델로 이 페이지 전체를 한국어로 다시 그려 최종 출력으로 씁니다. 이미지 생성 비용이 발생합니다."}>AI로 통번역</button>
+                      <button type="button" disabled={!selected?.detail_loaded || anyBusy || selected?.processing_excluded}
+                        onClick={() => { setAiEraseTarget("page"); setAiEraseConfirmOpen(true); setGuidanceMenu(null); }}
+                        title={selected?.processing_excluded ? "처리 대상으로 복원한 뒤 쓸 수 있습니다" : "이미지 모델로 이 페이지의 글자를 지웁니다. 대화 영역만 지울지 쪽 전체 글자를 지울지 확인 창에서 고릅니다. 비용이 발생합니다."}>AI로 쪽 전체 지우기</button>
                       <details className="guidance-disclosure">
                         <summary>표시 설정{Object.values(layers).some((visible) => !visible) ? <span>일부 숨김</span> : null}</summary>
           <p className="hint">겹친 표시를 확인할 때만 끕니다. 분석·출력 결과는 바뀌지 않습니다.</p>
@@ -3332,7 +3338,7 @@ export default function App() {
         <AiErasePanel
           sessionId={sessionId}
           page={selected?.detail_loaded ? selected : null}
-          region={selectedGuidanceRegion ? { id: regionId(selectedGuidanceRegion) } : null}
+          region={aiEraseTarget === "region" && selectedGuidanceRegion ? { id: regionId(selectedGuidanceRegion) } : null}
           disabled={anyBusy || selected?.processing_excluded}
           onCandidate={handleAiEraseCandidate}
           onApplied={reloadSelectedPage}
