@@ -103,3 +103,5 @@ projects 아래 폴더 ID는 기존 timestamp ID를 유지한다. project.json�
 <!-- 2026-11-05 review: render_text_overlay.py 글자를 직접 입력한 영역은 번역 조각이 없어도 원본 복원을 건너뜀. 이 문서 내용 영향 없음 -->
 
 <!-- 2026-11-08 review: OverlayCanvas.jsx 제자리 편집기 쓰기 방향에 자동 버튼 추가, 선택 상태 표시 수정. 이 문서 내용 영향 없음 -->
+
+<!-- 2026-11-08 review: 쓰기 방향 자동 옵션 제거, layout writing_mode 기록과 첫 편집 때 방향 저장. 이 문서 내용 영향 없음 -->

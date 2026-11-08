@@ -240,6 +240,19 @@ def overlay_manual_text_keys(overlay_guidance: dict | None) -> set[str]:
     return keys
 
 
+def layout_writing_mode(lines: list[str] | None) -> str:
+    """배치된 줄로 쓰기 방향을 판정한다. 한 글자씩 쌓은 줄이 대부분이면 세로, 아니면 가로.
+
+    자동 판정은 상자 모양과 글 길이에 따라 렌더가 고르므로, 결과를 layout에 적어 두어 편집기가
+    "자동"이라는 모호한 상태 대신 확정된 방향을 보여 주고 첫 편집 때 저장하게 한다.
+    """
+    rows = [str(line).strip() for line in (lines or []) if str(line).strip()]
+    if len(rows) < 2:
+        return "horizontal"
+    single = sum(1 for row in rows if len(row) <= 1)
+    return "vertical" if single / len(rows) >= 0.6 else "horizontal"
+
+
 def build_region_info_by_id_from_regions_json(regions_json_path: Path | None) -> dict[int, dict]:
     """regions.json에서 overlay 수동 렌더 fallback용 region 정보를 만든다."""
     if regions_json_path is None or not regions_json_path.exists():
@@ -574,6 +587,7 @@ def overlay_layout_summary(
             "text_source": text,
             "text_layout": "\n".join(layout.lines),
             "lines": layout.lines,
+            "writing_mode": layout_writing_mode(layout.lines),
             "bbox": [int(v) for v in bbox[:4]],
             "bbox_source": bbox_source,
             "inner_rect": [int(v) for v in layout.inner_rect],

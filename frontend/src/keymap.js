@@ -108,7 +108,7 @@ export const KEYMAP = [
   { id: "overlay.style.etc", context: "overlay", group: "스타일", label: "Etc 스타일", kind: "key", when: ["regionSelected"], keys: [["9"]], match: { code: DIGIT_CODES(9) }, action: "overlay.style", arg: "etc" },
   { id: "overlay.fontBigger", context: "overlay", group: "스타일", label: "글자 크기 +3 (Shift는 +1)", kind: "key", when: ["regionSelected"], keys: [["="], ["Shift", "="]], match: { code: ["Equal", "NumpadAdd"], shift: "any" }, action: "overlay.fontSize", arg: 1 },
   { id: "overlay.fontSmaller", context: "overlay", group: "스타일", label: "글자 크기 -3 (Shift는 -1)", kind: "key", when: ["regionSelected"], keys: [["-"], ["Shift", "-"]], match: { code: ["Minus", "NumpadSubtract"], shift: "any" }, action: "overlay.fontSize", arg: -1 },
-  { id: "overlay.orientation", context: "overlay", group: "스타일", label: "쓰기 방향 순환: 자동 → 가로 → 세로", kind: "key", when: ["regionSelected"], keys: [["O"]], match: { code: "KeyO" }, action: "overlay.orientation" },
+  { id: "overlay.orientation", context: "overlay", group: "스타일", label: "쓰기 방향 전환: 가로 ↔ 세로", kind: "key", when: ["regionSelected"], keys: [["O"]], match: { code: "KeyO" }, action: "overlay.orientation" },
 
   // 적용
   { id: "guidance.apply", context: "guidance", group: "적용", label: "변경사항 적용 (그어 둔 가이드로 영역 다시 계산)", kind: "key", keys: [["Ctrl", "Enter"]], allowInInput: true, match: { code: ["Enter", "NumpadEnter"], mod: true }, action: "apply" },

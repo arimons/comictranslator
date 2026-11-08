@@ -47,6 +47,7 @@ import {
   regionCluster,
   inferredRegionFontStyle,
   overlayWritingModeChoice,
+  overlayLayoutEntry,
   overlayItemFontSize,
   overlayRegionValue,
   overlayRegionBaseKey,
@@ -902,17 +903,16 @@ export default function App() {
     shortcutToastTimerRef.current = window.setTimeout(() => setShortcutToast(null), 1600);
   }
 
-  const WRITING_MODE_LABELS = { auto: "자동", horizontal: "가로", vertical: "세로" };
+  const WRITING_MODE_LABELS = { horizontal: "가로", vertical: "세로" };
 
-  // O 키: 자동 → 가로 → 세로 → 자동
+  // O 키: 가로 ↔ 세로
   function cycleOverlayWritingMode(rid) {
     if (!rid) return;
     const region = overlayRegions.find((item) => overlayItemKey(item) === String(rid));
-    const choice = overlayWritingModeChoice(overlayRegionValue(overlayGuidance, rid));
-    const next = { auto: "horizontal", horizontal: "vertical", vertical: "auto" }[choice] || "auto";
+    const choice = overlayWritingModeChoice(overlayRegionValue(overlayGuidance, rid), region ? overlayLayoutEntry(selected, region) : null);
+    const next = choice === "vertical" ? "horizontal" : "vertical";
     if (next === "horizontal") updateOverlayRegion(rid, { force_horizontal: true, force_vertical: false });
-    else if (next === "vertical") updateOverlayRegion(rid, { force_vertical: true, force_horizontal: false });
-    else updateOverlayRegion(rid, { force_horizontal: false, force_vertical: false });
+    else updateOverlayRegion(rid, { force_vertical: true, force_horizontal: false });
     showShortcutToast(`${region ? overlayItemLabel(region) : overlayKeyLabel(rid)} 쓰기 방향: ${WRITING_MODE_LABELS[next]}`);
   }
 

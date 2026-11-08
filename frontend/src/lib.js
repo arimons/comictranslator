@@ -588,10 +588,11 @@ export function inferredRegionWritingMode(image, region) {
   return "";
 }
 
-export function overlayWritingModeChoice(override) {
+// 쓰기 방향은 가로/세로 둘 중 하나로만 보여 준다. 저장된 값이 없으면 렌더가 정해 layout에 적은 방향(writing_mode)을 쓴다.
+export function overlayWritingModeChoice(override, layoutEntry = null) {
   if (override?.force_horizontal) return "horizontal";
   if (override?.force_vertical) return "vertical";
-  return "auto";
+  return layoutEntry?.writing_mode === "vertical" ? "vertical" : "horizontal";
 }
 
 export function overlayItemFontSize(item) {
@@ -659,12 +660,18 @@ export function pinAutoLayoutOnFirstEdit(previous, next, image) {
       return;
     }
     if (diff.every((field) => AUTO_LAYOUT_PIN_EXEMPT_KEYS.has(field))) return;
+    items = items || overlayControlItems(image, next);
+    const modeItem = items.find((candidate) => overlayItemKey(candidate) === String(key));
+    const modeEntry = modeItem ? overlayLayoutEntry(image, modeItem) : null;
+    // 쓰기 방향은 "자동"으로 두지 않는다. 처음 배치 때 렌더가 정한 방향을 첫 편집과 함께 저장해, 상자를 키워도 바뀌지 않게 한다.
+    const modePatch = !region.force_vertical && !region.force_horizontal && modeEntry?.writing_mode
+      ? (modeEntry.writing_mode === "vertical" ? { force_vertical: true, force_horizontal: false } : { force_horizontal: true, force_vertical: false })
+      : null;
+    if (modePatch) { regions[key] = { ...region, ...modePatch }; changed = true; }
     const hasSize = Number(region.font_size) > 0;
     const hasText = typeof region.text_override === "string";
     if (hasSize && hasText) return;
-    items = items || overlayControlItems(image, next);
-    const item = items.find((candidate) => overlayItemKey(candidate) === String(key));
-    const entry = item ? overlayLayoutEntry(image, item) : null;
+    const entry = modeEntry;
     if (!entry) return;
     const patch = {};
     // 사용자가 이번에 크기를 직접 바꾼 경우에는 그 값을 쓴다.
@@ -672,7 +679,7 @@ export function pinAutoLayoutOnFirstEdit(previous, next, image) {
     if (!hasSize && !sizeEdited && Number(entry.font_size) > 0) patch.font_size = Math.round(Number(entry.font_size));
     if (!hasText && typeof entry.text_layout === "string" && entry.text_layout.trim()) patch.text_override = entry.text_layout.trim();
     if (!Object.keys(patch).length) return;
-    regions[key] = { ...region, ...patch };
+    regions[key] = { ...regions[key], ...patch };
     changed = true;
   });
   return changed ? { ...next, regions } : next;

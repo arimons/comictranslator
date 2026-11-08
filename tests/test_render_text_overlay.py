@@ -3251,3 +3251,12 @@ class RenderTextOverlayTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def test_layout_writing_mode_from_lines():
+    from pipeline.render_text_overlay import layout_writing_mode
+
+    assert layout_writing_mode(["무", "엇", "을", "위", "해", "?"]) == "vertical"
+    assert layout_writing_mode(["아무래도", "뭔가", "이상해…"]) == "horizontal"
+    assert layout_writing_mode(["한 줄"]) == "horizontal"
+    assert layout_writing_mode([]) == "horizontal"
