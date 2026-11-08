@@ -22,12 +22,15 @@ function fmtUsage(meta) {
   return [sec != null ? `${Number(sec).toFixed(0)}초` : null, cost != null ? `약 $${Number(cost).toFixed(3)}` : null].filter(Boolean).join(" · ");
 }
 
-export default function AiErasePanel({ sessionId, page, region, disabled, onCandidate, onApplied, setStatus, ocrModel, imageModel, confirmOpen, onConfirmClose, onRequestConfirm }) {
+export default function AiErasePanel({ sessionId, page, region, disabled, onCandidate, onApplied, onPatches, setStatus, ocrModel, imageModel, confirmOpen, onConfirmClose, onRequestConfirm }) {
   const [job, setJob] = useState(null);
   const [applied, setApplied] = useState([]);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const pageKey = page ? `${sessionId}:${page.id}` : "";
+
+  // 적용된 AI 지움 목록을 화면의 영역 정보 패널이 볼 수 있게 알린다(영역 옵션의 "AI" 선택 상태 표시용).
+  useEffect(() => { onPatches?.(applied); }, [applied]);
 
   // 페이지가 바뀌면 후보를 비우고, 이미 적용된 AI 지움 패치가 있는지 확인한다.
   useEffect(() => {
@@ -165,6 +168,10 @@ export default function AiErasePanel({ sessionId, page, region, disabled, onCand
           ) : null}
           {error ? <div className="restore-error">{error}</div> : null}
         </div>
+      ) : null}
+      {!region && !running ? (
+        <button className="ai-erase-page-start" onClick={() => onRequestConfirm?.()} disabled={disabled || busy}
+          title="페이지 전체의 글자를 이미지 모델로 지웁니다(확인 후 실행, 비용 발생). 영역(R)을 선택하면 그 영역만 지울 수 있습니다.">쪽 전체 AI 지우기…</button>
       ) : null}
       {confirmOpen ? (
         <div className="ai-erase-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) onConfirmClose?.(); }}>

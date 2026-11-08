@@ -454,6 +454,23 @@ export function rectsApproximatelyEqual(a, b, tolerance = 3) {
   return a.slice(0, 4).every((value, index) => Math.abs(Number(value) - Number(b[index])) <= tolerance);
 }
 
+// 영역 모드 AI 지우기 패치가 이 영역 것인지. 영역 참조가 같거나, 패치 대상 사각형이 영역과 절반 이상 겹치면 같은 영역으로 본다.
+export function patchTargetsRegion(patch, region) {
+  if (!patch || !region) return false;
+  const ref = region.region_instance_ref || region.region_ref;
+  if (patch.region_ref && ref && patch.region_ref === ref) return true;
+  const target = patch.region_rect;
+  if (!Array.isArray(target) || target.length < 4) return false;
+  return [region.unboxed_rect, region.erase_rect, region.bubble_rect].some((rect) => {
+    if (!Array.isArray(rect) || rect.length < 4) return false;
+    const x1 = Math.max(target[0], rect[0]);
+    const y1 = Math.max(target[1], rect[1]);
+    const x2 = Math.min(target[0] + target[2], rect[0] + rect[2]);
+    const y2 = Math.min(target[1] + target[3], rect[1] + rect[3]);
+    return Math.max(0, x2 - x1) * Math.max(0, y2 - y1) / Math.max(1, target[2] * target[3]) >= 0.5;
+  });
+}
+
 export function regionDisplayRect(region) {
   return region?.bubble_rect || region?.unboxed_rect || region?.source_rect || region?.safe_text_rect || null;
 }

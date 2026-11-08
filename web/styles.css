@@ -3179,8 +3179,11 @@ button.wide {
 .project-identity .project-name-input { flex: 0 1 220px; width: 220px; min-width: 120px; }
 .workspace-global-topbar .top-workflow-tabs { width: 100%; min-width: 0; }
 .workspace-global-topbar .top-workflow-tabs button { min-width: 0; flex: 1 0 auto; padding: 0 6px; font-size: 12px; }
-/* 자식 6개: 원본 연결 · ‹ · 파일 선택 · › · × · ?  (열 수가 자식 수와 다르면 버튼이 한 칸씩 밀린다) */
-.workspace-global-topbar .file-navigator.top-file-nav { grid-template-columns: minmax(72px, 96px) 26px minmax(70px, 1fr) 26px 26px 26px; width: 100%; max-width: 100%; gap: 4px; }
+/* 자식 7개: 쪽 이동 · ‹ · 파일 선택 · › · × · ? · 원본 연결  (열 수가 자식 수와 다르면 버튼이 한 칸씩 밀린다) */
+.workspace-global-topbar .file-navigator.top-file-nav { grid-template-columns: minmax(78px, 92px) 26px minmax(70px, 1fr) 26px 26px 26px minmax(54px, 74px); width: 100%; max-width: 100%; gap: 4px; }
+.page-jump { display: flex; align-items: center; gap: 4px; font-size: 12px; color: var(--muted, #475569); white-space: nowrap; min-width: 0; }
+.page-jump input { width: 38px; min-width: 0; height: 30px; box-sizing: border-box; padding: 0 4px; text-align: center; font-variant-numeric: tabular-nums; border: 1px solid var(--border, #cbd5e1); border-radius: 7px; }
+.workspace-global-topbar .top-file-nav .source-link-control > summary { font-size: 11px; }
 .workspace-global-topbar .top-file-nav .source-link-control { min-width: 0; }
 .workspace-global-topbar .top-file-nav .source-link-control > summary { overflow: hidden; text-overflow: ellipsis; padding: 6px 8px; min-height: 30px; box-sizing: border-box; display: flex; align-items: center; }
 @media (max-width: 1280px) {
@@ -3346,7 +3349,6 @@ select.memo-key { width: 100%; padding: 2px; font-size: 12px; }
 }
 
 /* AI 지우개: 도구 모음 버튼 + 비용 확인 창. 설명은 확인 창에서만 보여 준다. */
-.floating-toolbox .ai-erase-tool em { font-style: normal; font-weight: 700; color: #7c3aed; }
 .ai-erase-backdrop { position: fixed; inset: 0; z-index: 190; background: #0f172a70; display: grid; place-items: center; padding: 16px; }
 .ai-erase-dialog { width: min(440px, 100%); background: var(--panel, #fff); border: 1px solid var(--line, #d7dce3); border-radius: 12px; padding: 20px 22px; box-shadow: 0 18px 50px #0f172a40; }
 .ai-erase-dialog h2 { margin: 0 0 10px; font-size: 17px; }
@@ -3362,7 +3364,6 @@ select.memo-key { width: 100%; padding: 2px; font-size: 12px; }
 .ai-erase-applied > span { flex: 1 1 auto; font-size: 12px; }
 
 /* 텍스트 기반 영역의 지우기 엔진 표시와 LaMa 고정 버튼 */
-.floating-toolbox .lama-tool em { font-style: normal; font-weight: 700; color: #0f766e; font-size: 9px; }
 .inpaint-engine-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin: 6px 0 10px; font-size: 12px; }
 .inpaint-engine-row strong { font-weight: 700; }
 .inpaint-engine-row button { font-size: 12px; padding: 4px 8px; white-space: nowrap; }
@@ -3730,3 +3731,5 @@ select.memo-key { width: 100%; padding: 2px; font-size: 12px; }
 .llm-route-badge select { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; cursor: pointer; font: inherit; }
 .llm-route-badge select:disabled { cursor: default; }
 .llm-route-badge:hover { border-color: #94a3b8; }
+.ai-erase-page-start { display: block; margin-top: 6px; padding: 5px 9px; font-size: 12px; border: 1px solid var(--border, #cbd5e1); border-radius: 7px; background: #fff; color: #7c3aed; cursor: pointer; }
+.ai-erase-page-start:disabled { opacity: .5; cursor: default; }

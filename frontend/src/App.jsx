@@ -5,6 +5,7 @@ import OriginalFocusPane from "./OriginalFocusPane.jsx";
 import { TEXT_BASED, regionProcessingBasis, regionTypeLabel, regionDetectionLabel, regionBindingKey } from "./regionTypes.js";
 import ShortcutHelp from "./ShortcutHelp.jsx";
 import SourceLinks from "./SourceLinks.jsx";
+import PageJump from "./PageJump.jsx";
 import StartScreen from "./StartScreen.jsx";
 import ImagePreview from "./ImagePreview.jsx";
 import GuidanceToolIcon from "./GuidanceToolIcon.jsx";
@@ -58,6 +59,7 @@ import {
   removeSessionSettings,
   imageRegions,
   pinAutoLayoutOnFirstEdit,
+  patchTargetsRegion,
 } from "./lib.js";
 import { recordTargetsRegion, regionIsExcluded } from "./regionExclusion.js";
 
@@ -68,6 +70,14 @@ const OVERLAY_HISTORY_MERGE_MS = 1500;
 // OCR·번역 AI 경로 이름(홈 화면·편집기 공용)
 const ROUTE_NAMES = { openai: "OpenAI", gemini: "Gemini API", vertex: "Vertex" };
 const ENGINE_NAMES = { lama: "LaMa", telea: "Telea", stripe: "줄무늬" };
+// 텍스트 기반 영역의 지우기 방식. 앞의 넷은 변경사항 적용 때 로컬에서 지우고, AI는 확인 후 외부 이미지 모델로 지워 바로 저장한다.
+const ERASE_OPTIONS = [
+  { value: null, label: "자동", hint: "배경을 보고 Telea·LaMa를 자동으로 고릅니다." },
+  { value: "lama", label: "LaMa", hint: "질감이 불규칙한 배경(풀, 하늘, 그림자)에 맞습니다. 변경사항 적용 시 반영됩니다." },
+  { value: "telea", label: "Telea", hint: "단순하고 조용한 배경에 맞습니다. 변경사항 적용 시 반영됩니다." },
+  { value: "stripe", label: "줄무늬", hint: "집중선·줄 톤 같은 규칙적인 평행선 배경을 줄 방향으로 이어 채웁니다. 변경사항 적용 시 반영됩니다." },
+  { value: "ai", label: "AI", hint: "위 방식으로 안 될 때(점 톤, 그라데이션 위의 선, 인물 위에 얹힌 글자) 이 영역만 이미지 모델로 지웁니다. 확인 후 실행되며 영역당 약 2센트가 듭니다." },
+];
 // 그리기 도구를 고르면 캔버스 아래에 띄우는 안내. 도구를 한 번 쓰면 선택 도구로 돌아가며 함께 사라진다.
 const TOOL_HINTS = {
   "tg-split": "나눌 TG 위로 선을 그으세요",
@@ -347,8 +357,10 @@ export default function App() {
   const engineOverrideOf = (source) => (source?.inpaint_engine_overrides || []).find((item) => selectedGuidanceRegion && recordTargetsRegion(item, selectedGuidanceRegion))?.engine || null;
   const enginePending = selectedIsTextBased ? engineOverrideOf(guidance) : null;
   const engineSaved = selectedIsTextBased ? engineOverrideOf(selected?.guidance) : null;
-  const lamaForcedPending = enginePending === "lama";
-  // 자동일 때 마지막 분석에서 실제로 쓰인 엔진을 함께 보여 준다.
+  // 이 영역에 적용된 AI 지움 패치(영역 모드). 있으면 지우기 줄의 "AI"가 선택된 상태다.
+  const [aiPatches, setAiPatches] = useState([]);
+  const regionAiPatch = selectedIsTextBased ? aiPatches.find((patch) => patchTargetsRegion(patch, selectedGuidanceRegion)) || null : null;
+  // 자동 칸의 풍선 도움말에만 마지막 분석에서 실제로 쓰인 엔진을 적는다. 선택할 때 알 필요는 없다.
   const autoEngineUsed = selectedIsTextBased && selectedGuidanceRegion.inpaint_engine_source !== "forced"
     ? ENGINE_NAMES[selectedGuidanceRegion.inpaint_engine_used] || ""
     : "";
@@ -2901,9 +2913,23 @@ export default function App() {
     }
   }
 
-  // 도구 모음의 LaMa 버튼: LaMa 고정을 켜고 끈다.
-  function toggleSelectedRegionLama() {
-    setSelectedRegionEngine(lamaForcedPending ? null : "lama");
+  // 지우기 줄에서 AI 외의 방식을 고르면, 이 영역에 적용된 AI 지움을 먼저 해제한다(AI 패치가 위에 얹혀 있으면 다른 방식이 보이지 않는다).
+  async function chooseRegionErase(value) {
+    if (value === "ai") {
+      setAiEraseConfirmOpen(true);
+      return;
+    }
+    if (regionAiPatch) {
+      try {
+        await api("/api/restore/patch/remove", { method: "POST", body: JSON.stringify({ session_id: sessionId, image_id: selected.id, patch_id: regionAiPatch.id }) });
+        await reloadSelectedPage();
+        setStatus(`R${regionId(selectedGuidanceRegion)}의 AI 지움을 해제했습니다.`);
+      } catch (err) {
+        setStatus(`AI 지움 해제 실패: ${err.message}`);
+        return;
+      }
+    }
+    setSelectedRegionEngine(value);
   }
 
   function removeGuidanceHistoryItem(historyItem, options = {}) {
@@ -3032,7 +3058,7 @@ export default function App() {
           ))}
         </nav>
         <div className="file-navigator top-file-nav">
-          {sourceLinksControl}
+          <PageJump key={selected?.id || "none"} current={currentIndex + 1} total={images.length} disabled={!images.length} onGo={(number) => selectImageByIndex(number - 1)} />
           <button onClick={() => selectImageByIndex(currentIndex - 1)} disabled={currentIndex <= 0}>‹</button>
           <select value={selected?.id || ""} onChange={(event) => selectImage(images.find((img) => img.id === event.target.value))}>
             {images.map((img, index) => <option key={img.id} value={img.id}>{`${index + 1}. ${img.name || img.id}`}</option>)}
@@ -3048,6 +3074,7 @@ export default function App() {
             ×
           </button>
           <button className="shortcut-help-button" type="button" onClick={() => setHelpOpen((open) => !open)} title={`단축키 도움말 (${shortcutById("help.toggle")})`}>?</button>
+          {sourceLinksControl}
         </div>
       </header>
       <aside className={`sidebar ${sidebarOpen ? "open" : "collapsed"}`}>
@@ -3308,6 +3335,7 @@ export default function App() {
           disabled={anyBusy || selected?.processing_excluded}
           onCandidate={handleAiEraseCandidate}
           onApplied={reloadSelectedPage}
+          onPatches={setAiPatches}
           setStatus={setStatus}
           ocrModel={effectiveOcrModel}
           imageModel={ocrProvider === "gemini" ? imageModels.gemini : imageModels.openai}
@@ -3321,12 +3349,16 @@ export default function App() {
                   {selectedIsTextBased ? <div className="inspector-row">
                     <span className="inspector-label">지우기</span>
                     <div className="segmented" role="radiogroup" aria-label="지우기 방식">
-                      {[[null, autoEngineUsed ? `자동 · ${autoEngineUsed}` : "자동"], ["lama", "LaMa"], ["telea", "Telea"], ["stripe", "줄무늬"]].map(([value, label]) => (
-                        <button key={label} role="radio" aria-checked={enginePending === value} className={enginePending === value ? "active" : ""} disabled={anyBusy} onClick={() => setSelectedRegionEngine(value)}
-                          title={value === "stripe" ? "가로·세로 줄무늬(집중선, 줄 톤) 배경을 줄 방향으로 이어 채웁니다 (변경사항 적용 시 반영)" : value ? `${label}로 고정 (변경사항 적용 시 반영)` : "배경을 보고 Telea·LaMa를 자동으로 고릅니다"}>{label}</button>
-                      ))}
+                      {ERASE_OPTIONS.map(({ value, label, hint }) => {
+                        const active = value === "ai" ? Boolean(regionAiPatch) : !regionAiPatch && enginePending === value;
+                        return (
+                          <button key={label} role="radio" aria-checked={active} className={active ? "active" : ""} disabled={anyBusy} onClick={() => chooseRegionErase(value)}
+                            title={value === null && autoEngineUsed ? `${hint}\n마지막 분석에서는 ${autoEngineUsed}로 지웠습니다.` : hint}>{label}</button>
+                        );
+                      })}
                     </div>
-                    {enginePending !== engineSaved ? <small className="inspector-pending">변경사항 적용 시 반영</small> : null}
+                    {regionAiPatch ? <small className="inspector-pending">AI로 지운 배경 적용됨 · 다른 방식을 고르면 해제됩니다</small>
+                      : enginePending !== engineSaved ? <small className="inspector-pending">변경사항 적용 시 반영</small> : null}
                   </div> : null}
                   <div className="inspector-row">
                     <span className="inspector-label">원문 <small>CV</small></span>
@@ -3379,31 +3411,6 @@ export default function App() {
                     <em>{(id === "tg-delete" ? shortcutById("guidance.tg.delete") : shortcutFor("guidance", "tool", id))}</em>
                   </button>
                 ))}
-                <button
-                  className="tool-group-start lama-tool"
-                  onClick={toggleSelectedRegionLama}
-                  disabled={anyBusy || !selectedIsTextBased}
-                  aria-pressed={lamaForcedPending}
-                  aria-label="LaMa로 다시 지우기"
-                  title={selectedIsTextBased
-                    ? `선택한 텍스트 기반 영역을 LaMa로 ${lamaForcedPending ? "고정 해제" : "다시 지우기"} (변경사항 적용 시 반영)`
-                    : "텍스트 기반 영역(R)을 선택하면 LaMa로 다시 지울 수 있습니다"}
-                >
-                  <span><GuidanceToolIcon tool="lama" /></span>
-                  <em>LaMa</em>
-                </button>
-                <button
-                  className="ai-erase-tool"
-                  onClick={() => setAiEraseConfirmOpen(true)}
-                  disabled={anyBusy || !selected?.detail_loaded || selected?.processing_excluded}
-                  aria-label="AI 지우개"
-                  title={selectedGuidanceRegion
-                    ? `AI 지우개: 선택한 R${regionId(selectedGuidanceRegion)} 영역만 이미지 모델로 지웁니다 (확인 후 실행, 비용 발생)`
-                    : "AI 지우개: 이 페이지의 글자를 이미지 모델로 지웁니다. 영역(R)을 선택하면 그 영역만 지웁니다 (확인 후 실행, 비용 발생)"}
-                >
-                  <span><GuidanceToolIcon tool="ai-eraser" /></span>
-                  <em>AI</em>
-                </button>
               </div>
             </section>
           </div>

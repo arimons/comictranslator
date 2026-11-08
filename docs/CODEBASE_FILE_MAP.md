@@ -37,7 +37,8 @@ NEW_COMIC_TRANSLATOR/
 │       ├── EditorCanvas.jsx      # Step 3 영역 분석 캔버스 (Konva)
 │       ├── OverlayCanvas.jsx     # Step 5 텍스트 오버레이 편집 캔버스 (Konva)
 │       ├── DialogueList.jsx      # 글자 입히기 탭 대사 리스트 (원문·번역·검수 상태·필터)
-│       ├── AiErasePanel.jsx      # AI 글자 지우기: 도구 모음 AI 지우개 확인 창 + 진행·후보·적용 카드 (이미지 편집 모델, 페이지 전체 패치)
+│       ├── AiErasePanel.jsx      # AI 글자 지우기: 확인 창 + 진행·후보·적용 카드 (이미지 편집 모델, 영역 모드와 쪽 전체 모드)
+│       ├── PageJump.jsx          # 상단의 [쪽 번호] / 전체 쪽수 입력 이동
 │       ├── keymap.js             # 키보드·마우스 단축키 단일 정의
 │       ├── viewportControls.js   # 두 캔버스 공용 확대/이동/맞춤
 │       ├── OcrBatchPrompt.jsx    # 수동 작업 60%·80% 진행 시 백그라운드 번역을 묻는 알림·진행 표시
@@ -213,7 +214,8 @@ guidance(수동 보정)가 있는 이미지는 `guidance_digest`(guidance 내용
 | `frontend/src/OcrBatchPrompt.jsx` | 확인한 페이지(영역 분석 탭에서 적용 안 한 변경 없이 넘긴 페이지, `App.jsx`가 브라우저에 세션별로 기억)의 비율이 처리 대상 페이지의 60%, 80%를 넘을 때마다 한 번씩 비차단 알림을 띄우고, 시작하면 `image_id: "batch"`로 백그라운드 OCR·번역을 돌린다. 진행 중에는 그 페이지만 편집을 잠그고, 번역이 끝난 페이지는 묶음이 끝나기 전이라도 바로 풀린다(`bgOcr.finishedIds`). 마지막 처리 대상 페이지에 도착하면 60%·80% 설정과 상관없이 항상 `LastPagePrompt`로 남은 페이지(분석 끝, 번역 전) 전부를 번역할지 묻는다(지금 페이지 포함 선택 가능) |
 | `frontend/src/ImageGenProgress.jsx` | 편집기의 AI로 통번역·내보내기 탭 이미지 생성(`/api/export/generate-missing/stream`)의 비차단 진행 창. 모델·페이지·경과 시간과 서버 진행 메시지 마지막 4줄을 보여 준다. 생성 중에는 그 페이지만 잠그고(`App.jsx`의 `selectedInImageGen`), 이미지 생성(export) 작업은 화면 전체 잠금(`anyBusy`)에서 뺀다. 이미지 모델은 OCR·번역 모델의 제공자를 따르고(Gemini면 나노바나나), 확인 창에 따라간 모델을 적는다 |
 | `frontend/src/ShortcutHelp.jsx` | `?`로 여는 단축키 도움말. 현재 탭의 keymap 항목을 묶어 표시 |
-| `frontend/src/AiErasePanel.jsx` | 영역 분석 탭의 AI 글자 지우기. 시작은 도구 모음의 AI 지우개 버튼(`App.jsx`)이 여는 확인 창(모델·시간·비용 안내, 취소 포커스, Esc 닫기)에서 하고, 오른쪽 패널에는 진행·후보·적용됨 상태일 때만 카드가 뜬다. 후보를 비교 미리보기 "AI 지움 후보" 탭에 띄우고 적용·버리기·해제. 적용하면 이전 AI 지움 패치를 교체한다 |
+| `frontend/src/AiErasePanel.jsx` | 영역 분석 탭의 AI 글자 지우기. 텍스트 기반 영역의 "지우기" 줄 `AI` 칸(`App.jsx`)이 여는 확인 창(경로·시간·비용 안내, 취소 포커스, Esc 닫기)에서 시작한다. 영역을 선택하지 않으면 `쪽 전체 AI 지우기…` 버튼으로 쪽 전체를 지운다. 오른쪽 패널에는 진행·후보·적용됨 상태일 때만 카드가 뜨고, 후보는 비교 미리보기 "AI 지움 후보" 탭에 띄워 적용·버리기·해제한다. 영역 모드 결과는 같은 영역 패치만, 쪽 전체 결과는 이전 쪽 전체 패치만 교체한다. 적용된 패치 목록은 `onPatches`로 `App.jsx`에 알려 `AI` 칸의 선택 표시에 쓴다 |
+| `frontend/src/PageJump.jsx` | 상단 파일 이동의 `[쪽 번호] / 전체 쪽수` 입력. Enter나 포커스 이탈 때 이동하고, 범위 밖 번호는 가까운 쪽으로 맞춘다 |
 | `frontend/src/DialogueList.jsx` | 글자 입히기 탭 오른쪽 패널의 대사 리스트 — 읽는 순서, 원문·번역, 확인/질문 상태, 빈 번역 경고, 필터. Shift/Cmd+클릭으로 여러 박스를 고르면 `extraKeys`에 든 행을 `grouped`로 강조하고, 클릭 이벤트를 `onSelect(rid, event)`로 넘긴다. 상태 계산과 J/K/Y/Q 동작, 다중 선택 처리는 `App.jsx`가 맡는다 |
 | `frontend/src/App.jsx` | 세션 관리, 이미지 목록, 워크플로우 탭(분석/OCR/오버레이/내보내기) 전체 상태. Action History의 텍스트 기반 줄에서 LaMa 강제 토글(`manual_regions[].inpaint_engine = "lama"`). 선택한 텍스트 기반 영역(자동·수동 모두)은 도구 모음 LaMa 버튼·오른쪽 패널로 영역 키에 고정하며(`guidance.inpaint_engine_overrides = [{target_key, engine: "lama"}]`), 분석 적용 때 Step 3가 반영한다 |
 | `frontend/src/main.jsx` | React 엔트리포인트 |
