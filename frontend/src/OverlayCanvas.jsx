@@ -15,6 +15,7 @@ import {
   overlayEraserRects,
   overlayItemFontSize,
   overlayWritingModeChoice,
+  inferredRegionWritingMode,
   inferredRegionFontStyle,
   overlayLayoutEntry,
   defaultOverlayGuidance,
@@ -1610,7 +1611,6 @@ const OverlayCanvas = forwardRef(function OverlayCanvas({ image, overlayGuidance
       {floatingEditor && editorRegion ? (() => {
         const override = overlayRegionValue(overlayGuidance, floatingEditor.rid);
         const choice = overlayWritingModeChoice(override);
-        const vertical = choice === "vertical";
         const liveRect = selectedBoxRect(editorRegion, override);
         const box = focusEditorBox(liveRect ? toStageRect(liveRect) : floatingEditor.stage);
         const align = override.text_align || "center";
@@ -1696,8 +1696,10 @@ const OverlayCanvas = forwardRef(function OverlayCanvas({ image, overlayGuidance
                 </span>
                 <span className="inplace-sep" />
                 <span className="inplace-group" role="group" aria-label="쓰기 방향">
-                  <button type="button" className={vertical ? "" : "active"} title="가로쓰기" onClick={() => patch({ force_horizontal: true, force_vertical: false })}><WritingIcon />가로쓰기</button>
-                  <button type="button" className={vertical ? "active" : ""} title="세로쓰기" onClick={() => patch({ force_vertical: true, force_horizontal: false })}><WritingIcon vertical />세로쓰기</button>
+                  {/* 자동일 때 가로쓰기가 눌린 것처럼 보이지 않게, 자동을 따로 두고 실제 선택(choice)만 강조한다 */}
+                  <button type="button" className={choice === "auto" ? "active" : ""} title={`자동 판정${inferredRegionWritingMode(image, editorRegion) ? ` (현재 ${inferredRegionWritingMode(image, editorRegion) === "vertical" ? "세로" : "가로"})` : ""}`} onClick={() => patch({ force_horizontal: false, force_vertical: false })}>자동</button>
+                  <button type="button" className={choice === "horizontal" ? "active" : ""} title="가로쓰기" onClick={() => patch({ force_horizontal: true, force_vertical: false })}><WritingIcon />가로쓰기</button>
+                  <button type="button" className={choice === "vertical" ? "active" : ""} title="세로쓰기" onClick={() => patch({ force_vertical: true, force_horizontal: false })}><WritingIcon vertical />세로쓰기</button>
                 </span>
                 <span className="inplace-sep" />
                 <span className="inplace-group inplace-popover-anchor">
