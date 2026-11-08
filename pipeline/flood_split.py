@@ -643,6 +643,18 @@ def _split_binary_by_geometry_components(
     return result
 
 
+def _segment_crosses_any_rect(p1: Point, p2: Point, rects: Optional[List[List[int]]]) -> bool:
+    """분할선(p1-p2)이 글자 영역 중 하나라도 지나가면 True. 글자를 자르는 분할을 막는 데 쓴다."""
+    for rect in rects or []:
+        x, y, w, h = (int(v) for v in rect[:4])
+        if w <= 0 or h <= 0:
+            continue
+        inside, _a, _b = cv2.clipLine((x, y, w, h), (int(p1[0]), int(p1[1])), (int(p2[0]), int(p2[1])))
+        if inside:
+            return True
+    return False
+
+
 def collect_geometry_split_candidates(
     mask: np.ndarray,
     anchor_ids: List[int],
@@ -650,10 +662,12 @@ def collect_geometry_split_candidates(
     min_defect_depth: float = 15.0,
     max_pair_points: int = _MAX_DEFECT_PAIR_POINTS,
     image_area: Optional[int] = None,
+    anchor_rects: Optional[List[List[int]]] = None,
 ) -> Dict[str, Any]:
     """anchor-aware split 실패 후 사용하는 geometry-only split 후보를 수집한다.
 
     image_area: 최소 분할 면적 기준이 되는 페이지 면적. 잘라낸 mask를 넘길 때 원래 페이지 면적을 준다.
+    anchor_rects: 글자 묶음의 영역. 분할선이 이 영역을 지나면 글자가 잘리므로 후보에서 뺀다.
     """
     binary = np.where(mask > 0, 255, 0).astype(np.uint8)
     contours, _ = cv2.findContours(binary, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
@@ -701,6 +715,8 @@ def collect_geometry_split_candidates(
     pair_points = defect_points[:max_pair_points]
     for i, (idx1, depth1, p1, turn1) in enumerate(pair_points):
         for idx2, depth2, p2, turn2 in pair_points[i + 1:]:
+            if _segment_crosses_any_rect(p1, p2, anchor_rects):
+                continue
             split_result = _split_binary_by_geometry_components(
                 binary,
                 p1,
@@ -759,6 +775,7 @@ def _split_mask_by_geometry_fallback(
     anchor_centers: List[Point],
     min_defect_depth: float,
     image_area: Optional[int] = None,
+    anchor_rects: Optional[List[List[int]]] = None,
 ) -> Optional[List[Dict[str, Any]]]:
     candidate_info = collect_geometry_split_candidates(
         binary,
@@ -766,6 +783,7 @@ def _split_mask_by_geometry_fallback(
         anchor_centers,
         min_defect_depth=min_defect_depth,
         image_area=image_area,
+        anchor_rects=anchor_rects,
     )
     selected = candidate_info.get("selected")
     if selected is None:
@@ -1105,6 +1123,7 @@ def _split_mask_by_inflection_line_core(
                 anchor_centers,
                 min_defect_depth,
                 image_area=image_area,
+                anchor_rects=anchor_rects,
             )
         if result is None:
             return None
