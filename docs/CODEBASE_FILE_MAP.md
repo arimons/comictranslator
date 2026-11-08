@@ -90,6 +90,7 @@ NEW_COMIC_TRANSLATOR/
     ├── lama_worker.py          # 상주 서버용 LaMa 작업 프로세스(프로젝트 홈 이동·1시간 유휴 시 종료해 메모리 반환)
     ├── background_restore.py   # 배경 복원 엔진 (문맥 영역·마스크 분리, LaMa, 확정 패치 합성). 편집기 탭은 제거됐고 AI 글자 지우기가 쓴다
     ├── ai_text_erase.py        # 이미지 편집 모델로 페이지 글자 지우기 (16배수 덧대기·잘라내기, gemini-*는 gemini_image로)
+    ├── ai_erase_region.py      # AI 지우기 영역 모드의 순수 계산(크롭 사각형·합성 마스크·사라진 영역 패치 판정)
     ├── gemini_image.py         # Gemini 이미지 모델(Nano Banana 2.1) 편집. 비율 프리셋 덧대기·축소·잘라내기
     ├── openai_image_redraw.py  # 렌더 생략 페이지 이미지 재생성 (app export, OpenAI·Gemini 분기)
     ├── vis/                    # pipeline 진단 시각화 도구
@@ -180,7 +181,7 @@ guidance(수동 보정)가 있는 이미지는 `guidance_digest`(guidance 내용
 | `GET /api/session/{id}/export`, `POST /api/export/generate-missing` | 결과 ZIP 내보내기, 실패 이미지 OpenAI 이미지 생성 fallback |
 | `GET /api/file` | 세션·입력 캐시·분석 캐시 폴더 아래 이미지 파일 서빙 |
 | `/api/restore/*` | 배경 복원 엔진 API: 상태·자동 마스크·마스크 저장·LaMa 작업 실행/조회·확정·패치 제거. 배경 복원 탭이 제거돼 현재 화면에서는 `ai-erase`·`info`·`job`·`accept`·`patch/remove`만 쓴다 (`pipeline/background_restore.py`) |
-| `POST /api/restore/ai-erase` | 원본 페이지를 이미지 편집 모델로 보내 글자를 지운 후보를 만드는 작업. 조회·확정·제거는 위 `/api/restore/job`·`accept`·`patch/remove`를 그대로 쓴다. 확정하면 페이지 전체 패치(engine `ai-erase`). 요청의 `ocr_model`이 `gemini-*`이면 Gemini 이미지 모델로 지운다. quality를 비우면 gpt-image는 medium, Gemini는 low(1K) (`pipeline/ai_text_erase.py`) |
+| `POST /api/restore/ai-erase` | 원본 페이지를 이미지 편집 모델로 보내 글자를 지운 후보를 만드는 작업. 조회·확정·제거는 위 `/api/restore/job`·`accept`·`patch/remove`를 그대로 쓴다. 확정하면 페이지 전체 패치(engine `ai-erase`). 요청의 `ocr_model`이 `gemini-*`이면 Gemini 이미지 모델로 지운다(`vertex:` 모델은 OpenAI 이미지로 간다). `region_id`를 주면 그 영역 크롭만 보내 그 영역만 지우는 영역 모드(`pipeline/ai_erase_region.py`). quality를 비우면 gpt-image는 medium, Gemini는 low(1K) (`pipeline/ai_text_erase.py`) |
 | `GET /manual` | 사용자 매뉴얼 `docs/editor_manual.html`을 그대로 제공. 시작 화면과 `?` 도움말에서 링크 |
 
 **동작 메모**
@@ -483,6 +484,15 @@ LaMa·Telea 지우기 결과가 아쉬운 페이지를 이미지 편집 모델(`
 - 결과는 배경 복원 작업과 같은 형식(`crop_after.png`, 전부 255인 `crop_mask.png`, `context_rect`=페이지 전체)으로 남겨 기존 확정 흐름이 페이지 전체 패치로 저장한다. Step 3를 다시 돌려도 패치는 유지되고, 영역·OCR 시트는 원본에서 만든 기존 것을 쓴다.
 - 실측(2026-10-20·21, medium): 1350×1920 약 24초·2.7센트, 960×1080 약 20〜23초·2.1센트. 메타에 토큰 수와 추정 비용(입력 $8, 출력 $30 / 100만 토큰)을 남긴다.
 - `model`이 `gemini-*`이면 `gemini_image.edit_image()`로 보낸다. 앱은 세션의 OCR·번역 모델 제공자를 따라 모델을 고른다(`gemini_image.image_model_for`).
+
+### `pipeline/ai_erase_region.py`
+
+AI 지우기를 쪽 전체가 아니라 영역 하나에만 쓰는 영역 모드의 계산부다(`POST /api/restore/ai-erase`의 `region_id`).
+
+- 선택한 영역을 감싸되 모델 최소 크기(약 70만 화소)와 비율 한도(2.8)를 맞춘 크롭만 보낸다(`context_rect`). 받은 결과는 영역 사각형 안의 글자 획 주변에만 합성한다(`region_patch_mask`). 평평한 배경에서 지운 사각형의 색 차이가 비치지 않게 하려는 것이다.
+- 확정한 패치에는 `region_id`, `region_ref`, `region_rect`를 남긴다. 같은 `region_ref`를 다시 지워 확정하면 그 영역의 이전 패치만 교체한다(`accept_restore_job`).
+- 분석을 다시 적용할 때 AI를 부르지 않고, 패치의 `region_rect`가 현재 어느 영역과도 30% 이상 겹치지 않을 때만 그 패치를 정리한다(`stale_patch_ids`, `prune_stale_region_ai_patches`).
+- 실측(2026-11-08, gpt-image medium): 크롭 825×875 약 17초·2.0센트, 802×944 약 19초·1.8센트.
 
 ### `pipeline/gemini_image.py`
 

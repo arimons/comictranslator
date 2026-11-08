@@ -429,6 +429,7 @@ class AiEraseRequest(BaseModel):
     image_id: str
     quality: str | None = None  # 비우면 모델별 기본값: gpt-image medium, Gemini low(1K가 반투명 말풍선을 주변 색에 더 잘 맞춤)
     ocr_model: str | None = None  # 세션의 OCR·번역 모델. gemini-*이면 Gemini 이미지 모델로 지운다
+    region_id: int | None = None  # 주면 그 영역(R 번호)의 크롭만 보내 그 영역만 지운다. 비우면 쪽 전체
 
 
 class RestorePatchRemoveRequest(BaseModel):
@@ -2205,6 +2206,10 @@ def run_step3_with_effective_text_groups(session_id: str, image_id: str, guidanc
     if isinstance(sheet_result, dict) and isinstance(sheet_result.get("manual_guidance_report"), dict):
         report["manual_guidance"] = sheet_result["manual_guidance_report"]
         write_json(record["guidance_report_json"], report)
+    removed_patches = prune_stale_region_ai_patches(record)
+    if removed_patches:
+        report["removed_ai_patches"] = removed_patches
+        write_json(record["guidance_report_json"], report)
     sync_overlay_guidance_for_record(record)
     refreshed = image_record(session_id, Path(record["input_path"]))
     refreshed["guidance_report"] = report
@@ -3034,6 +3039,21 @@ def submit_ai_erase_job(req: AiEraseRequest) -> dict[str, Any]:
     record = _restore_record(req.session_id, req.image_id)
     page = _read_bgr(record["input_path"])  # 이전 지우기 결과가 아니라 원본에서 지운다
     h, w = page.shape[:2]
+    region_info: dict[str, Any] | None = None
+    if req.region_id is not None:
+        from pipeline.ai_erase_region import context_rect, region_erase_rect
+
+        regions = (load_json(record["regions_json"], default={}) or {}).get("regions", [])
+        region = next((r for r in regions if int(r.get("region_id", -1)) == int(req.region_id)), None)
+        rect = region_erase_rect(region) if region else None
+        if rect is None:
+            raise HTTPException(status_code=404, detail=f"R{req.region_id} 영역을 찾을 수 없습니다. 영역 분석을 먼저 적용하세요.")
+        region_info = {
+            "region_id": int(req.region_id),
+            "region_ref": region.get("region_instance_ref") or region.get("region_ref"),
+            "region_rect": rect,
+            "context_rect": context_rect(rect, w, h),
+        }
     job_id = f"{dt.datetime.now().strftime('%H%M%S')}_{AI_ERASE_ENGINE}_{hashlib.sha1(str(time.time_ns()).encode()).hexdigest()[:6]}"
     job_dir = Path(record["restore_dir"]) / "jobs" / job_id
     job: dict[str, Any] = {
@@ -3057,20 +3077,43 @@ def submit_ai_erase_job(req: AiEraseRequest) -> dict[str, Any]:
         job["started_at"] = time.time()
         try:
             job_dir.mkdir(parents=True, exist_ok=True)
-            erased, meta = erase_page_text(page, job_dir, model=model, quality=quality)
-            # 배경 복원 확정 흐름이 그대로 쓰도록 같은 파일 이름으로 남긴다(페이지 전체 = rect, 마스크 전부 255)
-            cv2.imwrite(str(job_dir / "crop_before.png"), page)
-            cv2.imwrite(str(job_dir / "crop_after.png"), erased)
-            cv2.imwrite(str(job_dir / "crop_mask.png"), np.full((h, w), 255, dtype=np.uint8))
+            if region_info is None:
+                erased, meta = erase_page_text(page, job_dir, model=model, quality=quality)
+                # 배경 복원 확정 흐름이 그대로 쓰도록 같은 파일 이름으로 남긴다(페이지 전체 = rect, 마스크 전부 255)
+                cv2.imwrite(str(job_dir / "crop_before.png"), page)
+                cv2.imwrite(str(job_dir / "crop_after.png"), erased)
+                cv2.imwrite(str(job_dir / "crop_mask.png"), np.full((h, w), 255, dtype=np.uint8))
+                context = [0, 0, w, h]
+                preview_url = file_url(job_dir / "crop_after.png")
+            else:
+                from pipeline.ai_erase_region import ERASE_PROMPT, region_patch_mask
+
+                context = region_info["context_rect"]
+                cx, cy, cw, ch = context
+                crop = page[cy:cy + ch, cx:cx + cw].copy()
+                erased, meta = erase_page_text(crop, job_dir, model=model, quality=quality, prompt=ERASE_PROMPT)
+                mask = region_patch_mask(page, region_info["region_rect"], context)
+                cv2.imwrite(str(job_dir / "crop_before.png"), crop)
+                cv2.imwrite(str(job_dir / "crop_after.png"), erased)
+                cv2.imwrite(str(job_dir / "crop_mask.png"), mask)
+                # 미리보기는 쪽 크기 이미지여야 다른 탭과 나란히 비교된다. 지금 지우기 결과 위에 이 영역만 얹어 보여 준다.
+                base_path = Path(record["masked_jpg"])
+                base = _read_bgr(str(base_path)) if base_path.exists() else page.copy()
+                preview = base.copy()
+                region_view = preview[cy:cy + ch, cx:cx + cw]
+                region_view[mask > 0] = erased[mask > 0]
+                cv2.imwrite(str(job_dir / "candidate_page.png"), preview)
+                preview_url = file_url(job_dir / "candidate_page.png")
             job["meta"] = {
-                "context_rect": [0, 0, w, h],
+                "context_rect": context,
                 "params": {"engine": AI_ERASE_ENGINE, "model": meta["model"], "quality": meta["quality"]},
                 "timing": {"total_sec": meta["elapsed_sec"]},
                 "usage": {k: meta[k] for k in ("input_tokens", "output_tokens", "estimated_cost_usd", "request_size")},
+                **({k: region_info[k] for k in ("region_id", "region_ref", "region_rect")} if region_info else {}),
             }
             job["result"] = {
                 "crop_before_url": file_url(job_dir / "crop_before.png"),
-                "crop_after_url": file_url(job_dir / "crop_after.png"),
+                "crop_after_url": preview_url,
             }
             job["status"] = "done"
         except Exception as exc:  # noqa: BLE001 - 실패는 작업 상태로 돌려주고 기존 결과는 건드리지 않는다
@@ -3109,13 +3152,36 @@ def accept_restore_job(req: RestoreAcceptRequest) -> dict[str, Any]:
         "usage": meta.get("usage"),
         "source": job.get("source"),
         "accepted_at": dt.datetime.now().isoformat(timespec="seconds"),
+        # 영역 모드로 만든 패치는 어느 영역 것인지 남겨 두 가지에 쓴다: 같은 영역을 다시 지울 때 교체, 영역이 지워지면 정리
+        **{k: meta[k] for k in ("region_id", "region_ref", "region_rect") if meta.get(k) is not None},
     }
     with _RESTORE_STATE_LOCK:
         state = _restore_state(record)
-        state["patches"] = [p for p in state.get("patches", []) if p.get("id") != patch_id] + [patch]
+        # 같은 영역을 다시 지운 결과는 그 영역의 이전 패치만 교체한다. 다른 영역·쪽 전체 패치는 그대로 둔다.
+        same_region = lambda p: bool(patch.get("region_ref")) and p.get("region_ref") == patch["region_ref"] and p.get("engine") == patch["engine"]  # noqa: E731
+        state["patches"] = [p for p in state.get("patches", []) if p.get("id") != patch_id and not same_region(p)] + [patch]
         write_json(record["restore_state_json"], state)
     write_restore_preview(record)
     return restore_info(record)
+
+
+def prune_stale_region_ai_patches(record: dict[str, Any]) -> list[str]:
+    """영역 모드 AI 지우기 패치 중 대상 영역이 사라진 것을 정리한다. 영역이 남아 있거나 모양만 바뀐 패치는 그대로 둔다.
+
+    다시 분석할 때 AI를 다시 부르지 않는다. 이미 확정한 패치가 아직 쓸모 있는지만 현재 영역 목록과 견주어 본다."""
+    from pipeline.ai_erase_region import region_erase_rect, stale_patch_ids
+
+    regions = (load_json(record["regions_json"], default={}) or {}).get("regions", [])
+    rects = [rect for rect in (region_erase_rect(r) for r in regions) if rect]
+    with _RESTORE_STATE_LOCK:
+        state = _restore_state(record)
+        stale = stale_patch_ids(state.get("patches", []), rects)
+        if stale:
+            state["patches"] = [p for p in state.get("patches", []) if p.get("id") not in stale]
+            write_json(record["restore_state_json"], state)
+    if stale:
+        write_restore_preview(record)
+    return stale
 
 
 def remove_restore_patch(req: RestorePatchRemoveRequest) -> dict[str, Any]:

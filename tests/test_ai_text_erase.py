@@ -118,3 +118,100 @@ def test_ai_erase_rejects_unknown_quality(tmp_path, monkeypatch):
     client = TestClient(app.create_app())
     res = client.post("/api/restore/ai-erase", json={"session_id": "s1", "image_id": "p1", "quality": "ultra"})
     assert res.status_code == 400
+
+
+# ── 영역 모드(선택한 영역만 AI로 지우기) ─────────────────────────────────────
+
+def test_region_context_rect_meets_model_minimum_and_stays_inside_page():
+    from pipeline.ai_erase_region import ERASE_MIN_PIXELS, context_rect
+
+    x, y, w, h = context_rect([1449, 1013, 251, 408], 1920, 2160)
+    assert w * h >= ERASE_MIN_PIXELS
+    assert x >= 0 and y >= 0 and x + w <= 1920 and y + h <= 2160
+    # 좁고 긴 영역도 비율 한도(2.8)를 넘지 않게 넓힌다
+    cx, cy, cw, ch = context_rect([100, 100, 40, 700], 1920, 2160)
+    assert ch <= cw * 2.8 + 1
+
+
+def test_region_patch_mask_covers_only_strokes_inside_region_rect():
+    from pipeline.ai_erase_region import region_patch_mask
+
+    page = np.full((300, 300, 3), 255, np.uint8)
+    page[100:140, 100:112] = 0   # 영역 안 글자 획
+    page[200:240, 200:212] = 0   # 영역 밖 글자 획(다른 영역)
+    mask = region_patch_mask(page, [80, 80, 100, 100], [0, 0, 300, 300])
+    assert mask[100:140, 100:112].min() == 255
+    assert mask[200:240, 200:212].max() == 0
+
+
+def test_stale_patch_ids_only_flags_patches_whose_region_is_gone():
+    from pipeline.ai_erase_region import stale_patch_ids
+
+    patches = [
+        {"id": "a", "engine": "ai-erase", "region_rect": [100, 100, 50, 80]},
+        {"id": "b", "engine": "ai-erase", "region_rect": [400, 400, 50, 80]},
+        {"id": "page", "engine": "ai-erase"},                    # 쪽 전체 패치는 대상 아님
+        {"id": "lama", "engine": "lama", "region_rect": [400, 400, 50, 80]},
+    ]
+    # a의 영역은 모양만 조금 바뀌어 남아 있고, b의 영역은 사라졌다
+    assert stale_patch_ids(patches, [[110, 105, 60, 90]]) == ["b"]
+
+
+def _fake_erase_factory():
+    def fake_erase(image, work_dir, *, quality="medium", **_kw):
+        out = image.copy()
+        out[:] = 90
+        return out, {"model": ate.ERASE_MODEL, "quality": quality, "request_size": [160, 208], "elapsed_sec": 1.0,
+                     "input_tokens": 10, "output_tokens": 20, "estimated_cost_usd": 0.01}
+    return fake_erase
+
+
+def _write_regions(record, regions):
+    from pathlib import Path
+    import json
+    Path(record["regions_json"]).parent.mkdir(parents=True, exist_ok=True)
+    Path(record["regions_json"]).write_text(json.dumps({"regions": regions}), encoding="utf-8")
+
+
+def test_region_ai_erase_replaces_only_same_region_patch_and_prunes_deleted_regions(tmp_path, monkeypatch):
+    img_path = _session_with_image(tmp_path, monkeypatch)
+    page = np.full((200, 160, 3), 255, np.uint8)
+    page[40:70, 30:40] = 0
+    page[120:150, 100:110] = 0
+    cv2.imwrite(str(img_path), page)
+    client = TestClient(app.create_app())
+    monkeypatch.setattr(ate, "erase_page_text", _fake_erase_factory())
+    record = app._restore_record("s1", "p1")
+    _write_regions(record, [
+        {"region_id": 1, "region_instance_ref": "auto|tg:1", "unboxed_rect": [20, 30, 40, 50]},
+        {"region_id": 2, "region_instance_ref": "auto|tg:2", "unboxed_rect": [90, 110, 40, 50]},
+    ])
+
+    def erase_region(region_id):
+        started = client.post("/api/restore/ai-erase", json={"session_id": "s1", "image_id": "p1", "region_id": region_id})
+        assert started.status_code == 200, started.text
+        job = _wait_job(client, started.json()["job_id"])
+        assert job["status"] == "done", job
+        assert job["meta"]["region_id"] == region_id and job["meta"]["region_ref"] == f"auto|tg:{region_id}"
+        info = client.post("/api/restore/accept", json={"session_id": "s1", "image_id": "p1", "job_id": job["job_id"]}).json()
+        return info["patches"]
+
+    assert len(erase_region(1)) == 1
+    assert len(erase_region(2)) == 2
+    patches = erase_region(1)  # 같은 영역을 다시 지우면 그 영역 패치만 바뀐다
+    assert sorted(p["region_ref"] for p in patches) == ["auto|tg:1", "auto|tg:2"]
+
+    # 영역 2가 지워진 뒤 재분석: 영역 2의 패치만 정리되고 AI는 다시 부르지 않는다
+    _write_regions(record, [{"region_id": 1, "region_instance_ref": "auto|tg:1", "unboxed_rect": [20, 30, 40, 50]}])
+    removed = app.prune_stale_region_ai_patches(record)
+    assert len(removed) == 1
+    left = app._restore_state(record)["patches"]
+    assert [p["region_ref"] for p in left] == ["auto|tg:1"]
+
+
+def test_region_ai_erase_unknown_region_is_404(tmp_path, monkeypatch):
+    _session_with_image(tmp_path, monkeypatch)
+    client = TestClient(app.create_app())
+    _write_regions(app._restore_record("s1", "p1"), [])
+    res = client.post("/api/restore/ai-erase", json={"session_id": "s1", "image_id": "p1", "region_id": 9})
+    assert res.status_code == 404

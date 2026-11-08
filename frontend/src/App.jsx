@@ -3304,6 +3304,7 @@ export default function App() {
         <AiErasePanel
           sessionId={sessionId}
           page={selected?.detail_loaded ? selected : null}
+          region={selectedGuidanceRegion ? { id: regionId(selectedGuidanceRegion) } : null}
           disabled={anyBusy || selected?.processing_excluded}
           onCandidate={handleAiEraseCandidate}
           onApplied={reloadSelectedPage}
@@ -3396,7 +3397,9 @@ export default function App() {
                   onClick={() => setAiEraseConfirmOpen(true)}
                   disabled={anyBusy || !selected?.detail_loaded || selected?.processing_excluded}
                   aria-label="AI 지우개"
-                  title="AI 지우개: 이 페이지의 글자를 이미지 모델로 지웁니다 (확인 후 실행, 비용 발생)"
+                  title={selectedGuidanceRegion
+                    ? `AI 지우개: 선택한 R${regionId(selectedGuidanceRegion)} 영역만 이미지 모델로 지웁니다 (확인 후 실행, 비용 발생)`
+                    : "AI 지우개: 이 페이지의 글자를 이미지 모델로 지웁니다. 영역(R)을 선택하면 그 영역만 지웁니다 (확인 후 실행, 비용 발생)"}
                 >
                   <span><GuidanceToolIcon tool="ai-eraser" /></span>
                   <em>AI</em>

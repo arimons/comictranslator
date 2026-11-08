@@ -1,9 +1,19 @@
 import { useEffect, useRef, useState } from "react";
 import { api } from "./lib.js";
 
-// 분석 탭: LaMa·Telea 지우기 결과가 아쉬운 페이지를 이미지 편집 모델로 통째로 다시 지운다.
-// 결과는 후보로 미리보기에 띄우고, 적용하면 페이지 전체 배경 복원 패치로 저장된다(영역·OCR은 그대로).
+// 분석 탭: LaMa·Telea 지우기 결과가 아쉬운 곳을 이미지 편집 모델로 다시 지운다.
+// 영역(R)을 선택해 두었으면 그 영역 둘레만 보내 그 영역만 지우고(영역 모드), 아니면 페이지 전체를 보낸다.
+// 결과는 후보로 미리보기에 띄우고, 적용하면 배경 복원 패치로 저장된다(영역·OCR은 그대로).
 const AI_ERASE_ENGINE = "ai-erase";
+
+// 이미지 모델 이름으로 어느 회사 API로 나가는지 알려 준다. 번역 경로(예: Vertex)와 달라질 수 있어 화면에 밝혀 둔다.
+function providerOf(imageModel) {
+  return String(imageModel || "").startsWith("gemini") ? "Google Gemini" : "OpenAI";
+}
+
+function patchLabel(patch) {
+  return patch.region_id != null ? `영역 R${patch.region_id}` : "쪽 전체";
+}
 
 function fmtUsage(meta) {
   const usage = meta?.usage || {};
@@ -12,7 +22,7 @@ function fmtUsage(meta) {
   return [sec != null ? `${Number(sec).toFixed(0)}초` : null, cost != null ? `약 $${Number(cost).toFixed(3)}` : null].filter(Boolean).join(" · ");
 }
 
-export default function AiErasePanel({ sessionId, page, disabled, onCandidate, onApplied, setStatus, ocrModel, imageModel, confirmOpen, onConfirmClose, onRequestConfirm }) {
+export default function AiErasePanel({ sessionId, page, region, disabled, onCandidate, onApplied, setStatus, ocrModel, imageModel, confirmOpen, onConfirmClose, onRequestConfirm }) {
   const [job, setJob] = useState(null);
   const [applied, setApplied] = useState([]);
   const [error, setError] = useState("");
@@ -59,10 +69,11 @@ export default function AiErasePanel({ sessionId, page, disabled, onCandidate, o
   async function start() {
     setError("");
     try {
-      const started = await api("/api/restore/ai-erase", { method: "POST", body: JSON.stringify({ session_id: sessionId, image_id: page.id, ocr_model: ocrModel || null }) });
+      const regionId = region?.id ?? null;
+      const started = await api("/api/restore/ai-erase", { method: "POST", body: JSON.stringify({ session_id: sessionId, image_id: page.id, ocr_model: ocrModel || null, region_id: regionId }) });
       setJob(started);
       onCandidate?.(null);
-      setStatus?.("AI 글자 지우기를 시작했습니다. 20초 안팎 걸립니다.");
+      setStatus?.(regionId != null ? `R${regionId} 영역만 AI로 지웁니다. 20초 안팎 걸립니다.` : "AI 글자 지우기를 시작했습니다. 20초 안팎 걸립니다.");
     } catch (exc) {
       setError(String(exc.message || exc));
     }
@@ -73,14 +84,17 @@ export default function AiErasePanel({ sessionId, page, disabled, onCandidate, o
     setBusy(true);
     try {
       let info = await api("/api/restore/accept", { method: "POST", body: JSON.stringify({ session_id: sessionId, image_id: page.id, job_id: job.job_id }) });
-      // 페이지 전체 패치는 하나만 둔다. 이전 AI 지움 패치는 새 결과로 교체한다.
-      for (const old of (info.patches || []).filter((p) => p.engine === AI_ERASE_ENGINE && p.id !== job.job_id)) {
-        info = await api("/api/restore/patch/remove", { method: "POST", body: JSON.stringify({ session_id: sessionId, image_id: page.id, patch_id: old.id }) });
+      // 쪽 전체 패치는 하나만 둔다. 쪽 전체 결과를 적용할 때만 이전 쪽 전체 패치를 교체한다.
+      // 영역 패치는 서버가 같은 영역 것만 교체하므로 다른 영역·쪽 전체 패치는 건드리지 않는다.
+      if (job.meta?.region_id == null) {
+        for (const old of (info.patches || []).filter((p) => p.engine === AI_ERASE_ENGINE && p.id !== job.job_id && p.region_id == null)) {
+          info = await api("/api/restore/patch/remove", { method: "POST", body: JSON.stringify({ session_id: sessionId, image_id: page.id, patch_id: old.id }) });
+        }
       }
       setApplied((info.patches || []).filter((p) => p.engine === AI_ERASE_ENGINE));
       setJob(null);
       onCandidate?.(null);
-      setStatus?.("AI로 지운 배경을 적용했습니다. 글자 입히기 렌더에 반영됩니다.");
+      setStatus?.(job.meta?.region_id != null ? `R${job.meta.region_id} 영역의 AI 지움을 적용했습니다. 글자 입히기 렌더에 반영됩니다.` : "AI로 지운 배경을 적용했습니다. 글자 입히기 렌더에 반영됩니다.");
       onApplied?.();
     } catch (exc) {
       setError(String(exc.message || exc));
@@ -134,13 +148,12 @@ export default function AiErasePanel({ sessionId, page, disabled, onCandidate, o
         <div className="section compact-section ai-erase-section">
           <h2>AI 글자 지우기</h2>
           {running ? <p className="hint">지우는 중… 20초 안팎 걸립니다.</p> : null}
-          {applied.length ? (
-            <div className="ai-erase-applied">
-              <span>적용됨{applied[0].accepted_at ? ` · ${applied[0].accepted_at.replace("T", " ").slice(5, 16)}` : ""}</span>
-              <button onClick={() => onRequestConfirm?.()} disabled={disabled || busy || running}>다시 지우기</button>
-              <button className="danger" onClick={() => remove(applied[0].id)} disabled={busy || running}>해제</button>
+          {applied.map((patch) => (
+            <div className="ai-erase-applied" key={patch.id}>
+              <span>{patchLabel(patch)} 적용됨{patch.accepted_at ? ` · ${patch.accepted_at.replace("T", " ").slice(5, 16)}` : ""}</span>
+              <button className="danger" onClick={() => remove(patch.id)} disabled={busy || running}>해제</button>
             </div>
-          ) : null}
+          ))}
           {done ? (
             <>
               <p className="hint">후보: {fmtUsage(job.meta)} · 미리보기의 "AI 지움 후보" 탭에서 확인하세요.</p>
@@ -156,17 +169,19 @@ export default function AiErasePanel({ sessionId, page, disabled, onCandidate, o
       {confirmOpen ? (
         <div className="ai-erase-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) onConfirmClose?.(); }}>
           <div className="ai-erase-dialog" role="dialog" aria-modal="true" aria-labelledby="ai-erase-title">
-            <h2 id="ai-erase-title">AI로 글자를 지울까요?</h2>
-            <p>마스크 결과가 아쉬운 페이지에만 쓰세요. 원본 페이지를 이미지 모델로 보내 글자를 지운 배경을 받습니다. 영역과 OCR은 그대로이고, 번역은 글자 입히기에서 얹습니다.</p>
+            <h2 id="ai-erase-title">{region ? `R${region.id} 영역을 AI로 지울까요?` : "AI로 글자를 지울까요?"}</h2>
+            <p>{region
+              ? "마스크 결과가 아쉬운 영역에만 쓰세요. 선택한 영역 둘레만 이미지 모델로 보내 글자를 지운 배경을 받고, 글자 획 주변에만 합성합니다. 다른 영역은 다시 보내거나 바꾸지 않습니다."
+              : "마스크 결과가 아쉬운 페이지에만 쓰세요. 원본 페이지를 이미지 모델로 보내 글자를 지운 배경을 받습니다. 영역과 OCR은 그대로이고, 번역은 글자 입히기에서 얹습니다."}</p>
             <dl className="ai-erase-facts">
-              <div><dt>모델</dt><dd>{imageModel || "-"}<small> OCR·번역 모델 제공자를 따릅니다</small></dd></div>
+              <div><dt>경로</dt><dd>{providerOf(imageModel)}<small> {imageModel || "-"} · 번역 경로와 따로 정해집니다</small></dd></div>
               <div><dt>시간</dt><dd>20초 안팎</dd></div>
-              <div><dt>비용</dt><dd>한 장에 약 3~5센트 (외부 API 요금이 발생합니다)</dd></div>
+              <div><dt>비용</dt><dd>{region ? "한 영역에 약 2센트" : "한 장에 약 3~5센트"} (외부 API 요금이 발생합니다)</dd></div>
             </dl>
-            {applied.length ? <p className="ai-erase-note">이미 적용된 AI 지움이 있습니다. 새 결과를 적용하면 교체됩니다.</p> : null}
+            {applied.some((p) => region ? p.region_id === region.id : p.region_id == null) ? <p className="ai-erase-note">{region ? "이 영역에 이미 적용된 AI 지움이 있습니다. 새 결과를 적용하면 교체됩니다." : "이미 적용된 쪽 전체 AI 지움이 있습니다. 새 결과를 적용하면 교체됩니다."}</p> : null}
             <div className="ai-erase-actions">
               <button ref={cancelRef} onClick={() => onConfirmClose?.()}>취소</button>
-              <button className="primary" onClick={confirmStart} disabled={disabled || running || busy}>AI로 글자 지우기</button>
+              <button className="primary" onClick={confirmStart} disabled={disabled || running || busy}>{region ? `R${region.id}만 AI로 지우기` : "AI로 글자 지우기"}</button>
             </div>
           </div>
         </div>
