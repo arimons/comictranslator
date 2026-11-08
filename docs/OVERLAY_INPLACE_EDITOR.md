@@ -69,3 +69,5 @@
 <!-- 2026-11-08 review: OverlayCanvas.jsx 제자리 편집기 쓰기 방향에 자동 버튼 추가, 선택 상태 표시 수정. 이 문서 내용 영향 없음 -->
 
 <!-- 2026-11-08 review: 쓰기 방향 자동 옵션 제거, layout writing_mode 기록과 첫 편집 때 방향 저장. 이 문서 내용 영향 없음 -->
+
+<!-- 2026-11-09 frontend/src/lib.js(AI 지우기 영역 패치 판정 patchTargetsRegion 추가) 변경 검토: 오버레이 편집기 내용에는 영향 없음 -->

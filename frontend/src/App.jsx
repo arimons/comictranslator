@@ -70,9 +70,10 @@ const OVERLAY_HISTORY_MERGE_MS = 1500;
 // OCR·번역 AI 경로 이름(홈 화면·편집기 공용)
 const ROUTE_NAMES = { openai: "OpenAI", gemini: "Gemini API", vertex: "Vertex" };
 const ENGINE_NAMES = { lama: "LaMa", telea: "Telea", stripe: "줄무늬" };
-// 텍스트 기반 영역의 지우기 방식. 앞의 넷은 변경사항 적용 때 로컬에서 지우고, AI는 확인 후 외부 이미지 모델로 지워 바로 저장한다.
+// 텍스트 기반 영역의 지우기 방식. 처음 분석이 고른 방식이 미리 선택돼 있고, 마음에 안 들 때 다른 칸을 눌러 바꾼다.
+// 앞의 셋은 변경사항 적용 때 로컬에서 지우고, AI는 확인 후 외부 이미지 모델로 지워 바로 저장한다.
+const DEFAULT_ERASE_ENGINE = "lama";
 const ERASE_OPTIONS = [
-  { value: null, label: "자동", hint: "배경을 보고 Telea·LaMa를 자동으로 고릅니다." },
   { value: "lama", label: "LaMa", hint: "질감이 불규칙한 배경(풀, 하늘, 그림자)에 맞습니다. 변경사항 적용 시 반영됩니다." },
   { value: "telea", label: "Telea", hint: "단순하고 조용한 배경에 맞습니다. 변경사항 적용 시 반영됩니다." },
   { value: "stripe", label: "줄무늬", hint: "집중선·줄 톤 같은 규칙적인 평행선 배경을 줄 방향으로 이어 채웁니다. 변경사항 적용 시 반영됩니다." },
@@ -360,10 +361,9 @@ export default function App() {
   // 이 영역에 적용된 AI 지움 패치(영역 모드). 있으면 지우기 줄의 "AI"가 선택된 상태다.
   const [aiPatches, setAiPatches] = useState([]);
   const regionAiPatch = selectedIsTextBased ? aiPatches.find((patch) => patchTargetsRegion(patch, selectedGuidanceRegion)) || null : null;
-  // 자동 칸의 풍선 도움말에만 마지막 분석에서 실제로 쓰인 엔진을 적는다. 선택할 때 알 필요는 없다.
-  const autoEngineUsed = selectedIsTextBased && selectedGuidanceRegion.inpaint_engine_source !== "forced"
-    ? ENGINE_NAMES[selectedGuidanceRegion.inpaint_engine_used] || ""
-    : "";
+  // 고정한 방식이 없으면 분석이 자동으로 고른(실제로 쓴) 엔진이 선택된 칸이다. 자동 칸은 따로 두지 않는다.
+  const autoEngine = selectedIsTextBased && ENGINE_NAMES[selectedGuidanceRegion.inpaint_engine_used] ? selectedGuidanceRegion.inpaint_engine_used : DEFAULT_ERASE_ENGINE;
+  const effectiveEngine = enginePending || autoEngine;
   const selectedCvGroups = imageGroups(selected).filter((group) => (selectedGuidanceRegion?.anchor_ids || [selectedTg]).map(Number).includes(tgId(group)));
   const selectedCvText = selectedCvGroups.map((group) => group.text || (group.lines || []).map((line) => line.text || (line.fragments || []).map((fragment) => fragment.text || "").join("")).filter(Boolean).join("\n")).filter(Boolean).join("\n\n");
   const selectedPageId = selected?.id || "";
@@ -2929,6 +2929,7 @@ export default function App() {
         return;
       }
     }
+    if (!enginePending && value === autoEngine) return; // 이미 선택된 칸이면 고정을 새로 만들지 않는다
     setSelectedRegionEngine(value);
   }
 
@@ -3350,10 +3351,10 @@ export default function App() {
                     <span className="inspector-label">지우기</span>
                     <div className="segmented" role="radiogroup" aria-label="지우기 방식">
                       {ERASE_OPTIONS.map(({ value, label, hint }) => {
-                        const active = value === "ai" ? Boolean(regionAiPatch) : !regionAiPatch && enginePending === value;
+                        const active = value === "ai" ? Boolean(regionAiPatch) : !regionAiPatch && effectiveEngine === value;
                         return (
                           <button key={label} role="radio" aria-checked={active} className={active ? "active" : ""} disabled={anyBusy} onClick={() => chooseRegionErase(value)}
-                            title={value === null && autoEngineUsed ? `${hint}\n마지막 분석에서는 ${autoEngineUsed}로 지웠습니다.` : hint}>{label}</button>
+                            title={hint}>{label}</button>
                         );
                       })}
                     </div>
