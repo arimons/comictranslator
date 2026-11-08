@@ -66,6 +66,22 @@ def region_patch_mask(page: np.ndarray, rect: list[int], crop: list[int]) -> np.
     return cv2.bitwise_and(stroke, inside)[cy:cy + ch, cx:cx + cw]
 
 
+def all_regions_patch_mask(page: np.ndarray, regions: list[dict]) -> np.ndarray:
+    """쪽 크기 합성 마스크: 모든 영역(R) 사각형 안의 글자 획 주변만 255. 영역 밖 글자는 건드리지 않는다."""
+    from pipeline.background_restore import MaskParams, build_text_stroke_mask
+
+    page_h, page_w = page.shape[:2]
+    seeds = [{"rect": rect, "fragments": []} for rect in (region_erase_rect(r) for r in regions) if rect]
+    if not seeds:
+        return np.zeros((page_h, page_w), dtype=np.uint8)
+    stroke = build_text_stroke_mask(page, seeds, MaskParams(dilate_px=STROKE_DILATE))
+    inside = np.zeros((page_h, page_w), dtype=np.uint8)
+    for seed in seeds:
+        x, y, w, h = seed["rect"]
+        inside[max(0, y):y + h, max(0, x):x + w] = 255
+    return cv2.bitwise_and(stroke, inside)
+
+
 def overlap_ratio(rect: list[int], other: list[int]) -> float:
     """rect 면적 대비 other와 겹치는 면적 비율."""
     x1, y1 = max(rect[0], other[0]), max(rect[1], other[1])

@@ -3733,3 +3733,10 @@ select.memo-key { width: 100%; padding: 2px; font-size: 12px; }
 .llm-route-badge:hover { border-color: #94a3b8; }
 .ai-erase-page-start { display: block; margin-top: 6px; padding: 5px 9px; font-size: 12px; border: 1px solid var(--border, #cbd5e1); border-radius: 7px; background: #fff; color: #7c3aed; cursor: pointer; }
 .ai-erase-page-start:disabled { opacity: .5; cursor: default; }
+.ai-erase-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.ai-erase-head h2 { margin: 0; }
+.ai-erase-close { font-size: 18px; line-height: 1; padding: 2px 8px; }
+.ai-erase-scope { margin: 10px 0 0; padding: 8px 10px; border: 1px solid var(--line, #dbe2eb); border-radius: 8px; }
+.ai-erase-scope legend { font-size: 12px; padding: 0 4px; color: var(--muted, #475569); }
+.ai-erase-scope label { display: block; margin: 4px 0; font-size: 13px; cursor: pointer; }
+.ai-erase-scope small { display: block; margin-left: 22px; color: var(--muted, #64748b); font-size: 11px; line-height: 1.4; }

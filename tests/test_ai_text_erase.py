@@ -215,3 +215,32 @@ def test_region_ai_erase_unknown_region_is_404(tmp_path, monkeypatch):
     _write_regions(app._restore_record("s1", "p1"), [])
     res = client.post("/api/restore/ai-erase", json={"session_id": "s1", "image_id": "p1", "region_id": 9})
     assert res.status_code == 404
+
+
+def test_page_ai_erase_regions_scope_only_replaces_strokes_inside_regions(tmp_path, monkeypatch):
+    from pathlib import Path
+    from pipeline.background_restore import apply_restore_patches
+
+    img_path = _session_with_image(tmp_path, monkeypatch)
+    page = np.full((200, 160, 3), 255, np.uint8)
+    page[40:70, 30:40] = 0       # 영역 안 대사 글자
+    page[140:170, 100:110] = 0   # 영역 밖 효과음 글자
+    cv2.imwrite(str(img_path), page)
+    client = TestClient(app.create_app())
+    monkeypatch.setattr(ate, "erase_page_text", _fake_erase_factory())
+    record = app._restore_record("s1", "p1")
+    _write_regions(record, [{"region_id": 1, "region_instance_ref": "auto|tg:1", "unboxed_rect": [20, 30, 40, 50]}])
+
+    bad = client.post("/api/restore/ai-erase", json={"session_id": "s1", "image_id": "p1", "scope": "everything"})
+    assert bad.status_code == 400
+    started = client.post("/api/restore/ai-erase", json={"session_id": "s1", "image_id": "p1", "scope": "regions"}).json()
+    job = _wait_job(client, started["job_id"])
+    assert job["status"] == "done" and job["meta"]["scope"] == "regions"
+    info = client.post("/api/restore/accept", json={"session_id": "s1", "image_id": "p1", "job_id": job["job_id"]}).json()
+    assert info["patches"][0]["scope"] == "regions" and info["patches"][0].get("region_id") is None
+
+    out = page.copy()
+    assert apply_restore_patches(out, Path(record["restore_state_json"])) == 1
+    assert (out[40:70, 30:40] == 90).all()      # 영역 안 글자 자리는 지워진 배경
+    assert (out[140:170, 100:110] == 0).all()   # 영역 밖 효과음은 원본 그대로
+    assert (out[0:10, 0:10] == 255).all()        # 글자 없는 곳도 그대로

@@ -182,7 +182,7 @@ guidance(수동 보정)가 있는 이미지는 `guidance_digest`(guidance 내용
 | `GET /api/session/{id}/export`, `POST /api/export/generate-missing` | 결과 ZIP 내보내기, 실패 이미지 OpenAI 이미지 생성 fallback |
 | `GET /api/file` | 세션·입력 캐시·분석 캐시 폴더 아래 이미지 파일 서빙 |
 | `/api/restore/*` | 배경 복원 엔진 API: 상태·자동 마스크·마스크 저장·LaMa 작업 실행/조회·확정·패치 제거. 배경 복원 탭이 제거돼 현재 화면에서는 `ai-erase`·`info`·`job`·`accept`·`patch/remove`만 쓴다 (`pipeline/background_restore.py`) |
-| `POST /api/restore/ai-erase` | 원본 페이지를 이미지 편집 모델로 보내 글자를 지운 후보를 만드는 작업. 조회·확정·제거는 위 `/api/restore/job`·`accept`·`patch/remove`를 그대로 쓴다. 확정하면 페이지 전체 패치(engine `ai-erase`). 요청의 `ocr_model`이 `gemini-*`이면 Gemini 이미지 모델로 지운다(`vertex:` 모델은 OpenAI 이미지로 간다). `region_id`를 주면 그 영역 크롭만 보내 그 영역만 지우는 영역 모드(`pipeline/ai_erase_region.py`). quality를 비우면 gpt-image는 medium, Gemini는 low(1K) (`pipeline/ai_text_erase.py`) |
+| `POST /api/restore/ai-erase` | 원본 페이지를 이미지 편집 모델로 보내 글자를 지운 후보를 만드는 작업. 조회·확정·제거는 위 `/api/restore/job`·`accept`·`patch/remove`를 그대로 쓴다. 확정하면 페이지 전체 패치(engine `ai-erase`). 요청의 `ocr_model`이 `gemini-*`이면 Gemini 이미지 모델로 지운다(`vertex:` 모델은 OpenAI 이미지로 간다). `region_id`를 주면 그 영역 크롭만 보내 그 영역만 지우는 영역 모드(`pipeline/ai_erase_region.py`). 쪽 전체 모드는 `scope`로 범위를 고른다: `regions`(기본 화면 선택)는 영역(R) 안의 글자 획 주변만 합성해 영역 밖 효과음은 원본을 유지하고(`all_regions_patch_mask`), `page`는 쪽 전체를 바꾼다. quality를 비우면 gpt-image는 medium, Gemini는 low(1K) (`pipeline/ai_text_erase.py`) |
 | `GET /manual` | 사용자 매뉴얼 `docs/editor_manual.html`을 그대로 제공. 시작 화면과 `?` 도움말에서 링크 |
 
 **동작 메모**

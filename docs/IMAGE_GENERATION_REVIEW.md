@@ -142,3 +142,5 @@ UI 검증은 별도 headless Chromium에서 실행한다. `proof/src/run_headles
 <!-- 2026-11-05 review: app.py 영역 분석 적용 뒤 final이 있던 페이지는 Overlay를 새 masked로 다시 렌더(rerender_final_after_analysis). 이 문서 내용 영향 없음 -->
 
 <!-- 2026-11-08 app.py(AI 지우기 영역 모드: 선택한 영역 크롭만 지우고 같은 영역 패치만 교체, 분석 재적용 때 사라진 영역 패치만 정리) 변경 검토: 이 문서의 통번역 생성 요청·후보 등록 흐름에는 영향 없음 -->
+
+<!-- 2026-11-09 app.py(쪽 전체 AI 지우기의 범위 scope=regions|page 추가: 영역 안 글자만 합성) 변경 검토: 이 문서의 통번역 생성 요청·후보 등록 흐름에는 영향 없음 -->

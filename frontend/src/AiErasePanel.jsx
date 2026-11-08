@@ -12,7 +12,8 @@ function providerOf(imageModel) {
 }
 
 function patchLabel(patch) {
-  return patch.region_id != null ? `영역 R${patch.region_id}` : "쪽 전체";
+  if (patch.region_id != null) return `영역 R${patch.region_id}`;
+  return patch.scope === "regions" ? "쪽 전체 · 대화 영역만" : "쪽 전체 · 모든 글자";
 }
 
 function fmtUsage(meta) {
@@ -27,10 +28,14 @@ export default function AiErasePanel({ sessionId, page, region, disabled, onCand
   const [applied, setApplied] = useState([]);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  // 카드의 X로 닫아 둔 상태. 새 작업이 시작되거나 적용된 목록이 바뀌면 다시 보인다.
+  const [dismissed, setDismissed] = useState(false);
+  // 쪽 전체 모드에서 지울 범위: regions=영역(R) 안의 글자만(효과음 등은 원본 유지), page=쪽 전체 글자
+  const [scope, setScope] = useState("regions");
   const pageKey = page ? `${sessionId}:${page.id}` : "";
 
   // 적용된 AI 지움 목록을 화면의 영역 정보 패널이 볼 수 있게 알린다(영역 옵션의 "AI" 선택 상태 표시용).
-  useEffect(() => { onPatches?.(applied); }, [applied]);
+  useEffect(() => { onPatches?.(applied); setDismissed(false); }, [applied]);
 
   // 페이지가 바뀌면 후보를 비우고, 이미 적용된 AI 지움 패치가 있는지 확인한다.
   useEffect(() => {
@@ -73,8 +78,9 @@ export default function AiErasePanel({ sessionId, page, region, disabled, onCand
     setError("");
     try {
       const regionId = region?.id ?? null;
-      const started = await api("/api/restore/ai-erase", { method: "POST", body: JSON.stringify({ session_id: sessionId, image_id: page.id, ocr_model: ocrModel || null, region_id: regionId }) });
+      const started = await api("/api/restore/ai-erase", { method: "POST", body: JSON.stringify({ session_id: sessionId, image_id: page.id, ocr_model: ocrModel || null, region_id: regionId, scope: regionId == null ? scope : "page" }) });
       setJob(started);
+      setDismissed(false);
       onCandidate?.(null);
       setStatus?.(regionId != null ? `R${regionId} 영역만 AI로 지웁니다. 20초 안팎 걸립니다.` : "AI 글자 지우기를 시작했습니다. 20초 안팎 걸립니다.");
     } catch (exc) {
@@ -117,7 +123,7 @@ export default function AiErasePanel({ sessionId, page, region, disabled, onCand
     try {
       const info = await api("/api/restore/patch/remove", { method: "POST", body: JSON.stringify({ session_id: sessionId, image_id: page.id, patch_id: patchId }) });
       setApplied((info.patches || []).filter((p) => p.engine === AI_ERASE_ENGINE));
-      setStatus?.("AI 지움을 해제했습니다. 기본 지우기 결과로 돌아갑니다.");
+      setStatus?.("AI 지움을 되돌렸습니다. 기본 지우기 결과로 돌아갑니다.");
       onApplied?.();
     } catch (exc) {
       setError(String(exc.message || exc));
@@ -144,17 +150,21 @@ export default function AiErasePanel({ sessionId, page, region, disabled, onCand
   if (!page) return null;
   const done = job?.status === "done";
   // 대기 상태에서는 아무것도 그리지 않는다. 시작은 도구 모음의 AI 지우개에서 한다.
-  const showCard = Boolean(running || done || applied.length || error);
+  const showCard = Boolean(running || done || error || (applied.length && !dismissed));
   return (
     <>
       {showCard ? (
         <div className="section compact-section ai-erase-section">
-          <h2>AI 글자 지우기</h2>
+          <div className="ai-erase-head">
+            <h2>AI 글자 지우기</h2>
+            {!running ? <button className="icon-button ai-erase-close" onClick={() => { setDismissed(true); setError(""); }} aria-label="이 카드 닫기" title="이 카드를 닫습니다(적용된 AI 지움은 그대로 유지됩니다)">×</button> : null}
+          </div>
           {running ? <p className="hint">지우는 중… 20초 안팎 걸립니다.</p> : null}
           {applied.map((patch) => (
             <div className="ai-erase-applied" key={patch.id}>
               <span>{patchLabel(patch)} 적용됨{patch.accepted_at ? ` · ${patch.accepted_at.replace("T", " ").slice(5, 16)}` : ""}</span>
-              <button className="danger" onClick={() => remove(patch.id)} disabled={busy || running}>해제</button>
+              <button className="danger" onClick={() => remove(patch.id)} disabled={busy || running}
+                title="이 AI 지움을 취소하고 기본 지우기 결과(LaMa 등)로 되돌립니다">되돌리기</button>
             </div>
           ))}
           {done ? (
@@ -185,6 +195,13 @@ export default function AiErasePanel({ sessionId, page, region, disabled, onCand
               <div><dt>시간</dt><dd>20초 안팎</dd></div>
               <div><dt>비용</dt><dd>{region ? "한 영역에 약 2센트" : "한 장에 약 3~5센트"} (외부 API 요금이 발생합니다)</dd></div>
             </dl>
+            {!region ? (
+              <fieldset className="ai-erase-scope">
+                <legend>지울 범위</legend>
+                <label><input type="radio" name="ai-erase-scope" checked={scope === "regions"} onChange={() => setScope("regions")} /> 대화 영역만 <small>영역(R) 안의 글자만 지웁니다. 영역 밖의 효과음·그림 속 글자는 원본 그대로 둡니다.</small></label>
+                <label><input type="radio" name="ai-erase-scope" checked={scope === "page"} onChange={() => setScope("page")} /> 쪽 전체 글자 <small>효과음을 포함해 모델이 찾은 모든 글자를 지웁니다.</small></label>
+              </fieldset>
+            ) : null}
             {applied.some((p) => region ? p.region_id === region.id : p.region_id == null) ? <p className="ai-erase-note">{region ? "이 영역에 이미 적용된 AI 지움이 있습니다. 새 결과를 적용하면 교체됩니다." : "이미 적용된 쪽 전체 AI 지움이 있습니다. 새 결과를 적용하면 교체됩니다."}</p> : null}
             <div className="ai-erase-actions">
               <button ref={cancelRef} onClick={() => onConfirmClose?.()}>취소</button>

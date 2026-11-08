@@ -430,6 +430,7 @@ class AiEraseRequest(BaseModel):
     quality: str | None = None  # 비우면 모델별 기본값: gpt-image medium, Gemini low(1K가 반투명 말풍선을 주변 색에 더 잘 맞춤)
     ocr_model: str | None = None  # 세션의 OCR·번역 모델. gemini-*이면 Gemini 이미지 모델로 지운다
     region_id: int | None = None  # 주면 그 영역(R 번호)의 크롭만 보내 그 영역만 지운다. 비우면 쪽 전체
+    scope: str = "page"  # 쪽 전체 모드의 범위: page=쪽 전체 글자, regions=영역(R) 안의 글자 획만(영역 밖 효과음 등은 원본 유지)
 
 
 class RestorePatchRemoveRequest(BaseModel):
@@ -3036,6 +3037,8 @@ def submit_ai_erase_job(req: AiEraseRequest) -> dict[str, Any]:
     quality = req.quality or ("low" if is_gemini_model(model) else "medium")
     if quality not in {"low", "medium", "high"}:
         raise HTTPException(status_code=400, detail="quality는 low, medium, high 중 하나여야 합니다")
+    if req.scope not in {"page", "regions"}:
+        raise HTTPException(status_code=400, detail="scope는 page 또는 regions 중 하나여야 합니다")
     record = _restore_record(req.session_id, req.image_id)
     page = _read_bgr(record["input_path"])  # 이전 지우기 결과가 아니라 원본에서 지운다
     h, w = page.shape[:2]
@@ -3079,12 +3082,25 @@ def submit_ai_erase_job(req: AiEraseRequest) -> dict[str, Any]:
             job_dir.mkdir(parents=True, exist_ok=True)
             if region_info is None:
                 erased, meta = erase_page_text(page, job_dir, model=model, quality=quality)
-                # 배경 복원 확정 흐름이 그대로 쓰도록 같은 파일 이름으로 남긴다(페이지 전체 = rect, 마스크 전부 255)
+                # 배경 복원 확정 흐름이 그대로 쓰도록 같은 파일 이름으로 남긴다(페이지 전체 = rect)
                 cv2.imwrite(str(job_dir / "crop_before.png"), page)
                 cv2.imwrite(str(job_dir / "crop_after.png"), erased)
-                cv2.imwrite(str(job_dir / "crop_mask.png"), np.full((h, w), 255, dtype=np.uint8))
                 context = [0, 0, w, h]
-                preview_url = file_url(job_dir / "crop_after.png")
+                if req.scope == "regions":
+                    # 영역(R) 안의 글자 획 주변만 합성한다. 영역 밖의 효과음·그림 속 글자는 원본 그대로 남는다.
+                    from pipeline.ai_erase_region import all_regions_patch_mask
+
+                    regions = (load_json(record["regions_json"], default={}) or {}).get("regions", [])
+                    mask = all_regions_patch_mask(page, regions)
+                    cv2.imwrite(str(job_dir / "crop_mask.png"), mask)
+                    base_path = Path(record["masked_jpg"])
+                    preview = (_read_bgr(str(base_path)) if base_path.exists() else page.copy())
+                    preview[mask > 0] = erased[mask > 0]
+                    cv2.imwrite(str(job_dir / "candidate_page.png"), preview)
+                    preview_url = file_url(job_dir / "candidate_page.png")
+                else:
+                    cv2.imwrite(str(job_dir / "crop_mask.png"), np.full((h, w), 255, dtype=np.uint8))
+                    preview_url = file_url(job_dir / "crop_after.png")
             else:
                 from pipeline.ai_erase_region import ERASE_PROMPT, region_patch_mask
 
@@ -3110,6 +3126,7 @@ def submit_ai_erase_job(req: AiEraseRequest) -> dict[str, Any]:
                 "timing": {"total_sec": meta["elapsed_sec"]},
                 "usage": {k: meta[k] for k in ("input_tokens", "output_tokens", "estimated_cost_usd", "request_size")},
                 **({k: region_info[k] for k in ("region_id", "region_ref", "region_rect")} if region_info else {}),
+                **({"scope": "regions"} if region_info is None and req.scope == "regions" else {}),
             }
             job["result"] = {
                 "crop_before_url": file_url(job_dir / "crop_before.png"),
@@ -3153,7 +3170,7 @@ def accept_restore_job(req: RestoreAcceptRequest) -> dict[str, Any]:
         "source": job.get("source"),
         "accepted_at": dt.datetime.now().isoformat(timespec="seconds"),
         # 영역 모드로 만든 패치는 어느 영역 것인지 남겨 두 가지에 쓴다: 같은 영역을 다시 지울 때 교체, 영역이 지워지면 정리
-        **{k: meta[k] for k in ("region_id", "region_ref", "region_rect") if meta.get(k) is not None},
+        **{k: meta[k] for k in ("region_id", "region_ref", "region_rect", "scope") if meta.get(k) is not None},
     }
     with _RESTORE_STATE_LOCK:
         state = _restore_state(record)
