@@ -67,7 +67,7 @@ const OVERLAY_HISTORY_MERGE_MS = 1500;
 
 // OCR·번역 AI 경로 이름(홈 화면·편집기 공용)
 const ROUTE_NAMES = { openai: "OpenAI", gemini: "Gemini API", vertex: "Vertex" };
-const ENGINE_NAMES = { lama: "LaMa", telea: "Telea" };
+const ENGINE_NAMES = { lama: "LaMa", telea: "Telea", stripe: "줄무늬" };
 // 그리기 도구를 고르면 캔버스 아래에 띄우는 안내. 도구를 한 번 쓰면 선택 도구로 돌아가며 함께 사라진다.
 const TOOL_HINTS = {
   "tg-split": "나눌 TG 위로 선을 그으세요",
@@ -3320,9 +3320,9 @@ export default function App() {
                   {selectedIsTextBased ? <div className="inspector-row">
                     <span className="inspector-label">지우기</span>
                     <div className="segmented" role="radiogroup" aria-label="지우기 방식">
-                      {[[null, autoEngineUsed ? `자동 · ${autoEngineUsed}` : "자동"], ["lama", "LaMa"], ["telea", "Telea"]].map(([value, label]) => (
+                      {[[null, autoEngineUsed ? `자동 · ${autoEngineUsed}` : "자동"], ["lama", "LaMa"], ["telea", "Telea"], ["stripe", "줄무늬"]].map(([value, label]) => (
                         <button key={label} role="radio" aria-checked={enginePending === value} className={enginePending === value ? "active" : ""} disabled={anyBusy} onClick={() => setSelectedRegionEngine(value)}
-                          title={value ? `${label}로 고정 (변경사항 적용 시 반영)` : "배경을 보고 Telea·LaMa를 자동으로 고릅니다"}>{label}</button>
+                          title={value === "stripe" ? "가로·세로 줄무늬(집중선, 줄 톤) 배경을 줄 방향으로 이어 채웁니다 (변경사항 적용 시 반영)" : value ? `${label}로 고정 (변경사항 적용 시 반영)` : "배경을 보고 Telea·LaMa를 자동으로 고릅니다"}>{label}</button>
                       ))}
                     </div>
                     {enginePending !== engineSaved ? <small className="inspector-pending">변경사항 적용 시 반영</small> : null}

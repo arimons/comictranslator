@@ -388,12 +388,48 @@ def _crop_binding_key(item: Dict[str, Any]) -> str:
     })
 
 
-FORCEABLE_INPAINT_ENGINES = ("lama", "telea")
+FORCEABLE_INPAINT_ENGINES = ("lama", "telea", "stripe")
 DEFAULT_UNBOXED_INPAINT_ENGINE = "lama"
 
 
+_STRIPE_HALO_PX = 7
+
+
+def _stripe_fill(roi: np.ndarray, mask: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
+    """가로·세로 줄무늬(집중선, 줄 톤) 배경을 줄 방향으로 이어서 채운다.
+
+    LaMa·Telea는 규칙적인 평행선을 뭉개 글자 자리에 희미한 얼룩을 남긴다. 줄은 줄 방향으로는
+    값이 거의 변하지 않으므로, 마스크 칸을 같은 줄의 양옆 배경값을 선형으로 이어서 채우면
+    원래 줄이 그대로 이어진다. 줄 방향은 마스크 밖 화소의 가로·세로 변화량을 비교해 정한다.
+
+    글자 둘레의 흰 테두리가 줄을 끊고 있으므로, 마스크를 테두리 폭만큼 넓혀서 채운다.
+    (채운 화소를 나타내는 넓힌 마스크도 함께 돌려주니, 호출한 쪽은 이 마스크로 붙여 넣는다.)
+    """
+    mask = cv2.dilate(mask, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (_STRIPE_HALO_PX * 2 + 1,) * 2))
+    out = roi.copy()
+    outside = mask == 0
+    gray = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY).astype(np.float32)
+    pair_h = outside[:, 1:] & outside[:, :-1]
+    pair_v = outside[1:, :] & outside[:-1, :]
+    diff_h = np.abs(gray[:, 1:] - gray[:, :-1])[pair_h].mean() if pair_h.any() else 0.0
+    diff_v = np.abs(gray[1:, :] - gray[:-1, :])[pair_v].mean() if pair_v.any() else 0.0
+    horizontal = diff_h <= diff_v  # 가로 방향 변화가 적으면 가로줄
+
+    work = out if horizontal else np.ascontiguousarray(out.transpose(1, 0, 2))
+    work_mask = mask if horizontal else np.ascontiguousarray(mask.T)
+    width = work.shape[1]
+    xs = np.arange(width)
+    for y in np.flatnonzero((work_mask > 0).any(axis=1)):
+        known = work_mask[y] == 0
+        if not known.any():
+            continue
+        for c in range(3):
+            work[y, ~known, c] = np.interp(xs[~known], xs[known], work[y, known, c].astype(np.float32)).astype(np.uint8)
+    return (out if horizontal else np.ascontiguousarray(work.transpose(1, 0, 2))), mask
+
+
 def _forced_engine_by_key(overrides: List[Dict[str, Any]] | None) -> Dict[str, str]:
-    """사용자가 지우기 엔진을 고정한 영역 키 → 엔진(lama/telea). 가이드의 inpaint_engine_overrides에서 읽는다."""
+    """사용자가 지우기 엔진을 고정한 영역 키 → 엔진(lama/telea/stripe). 가이드의 inpaint_engine_overrides에서 읽는다."""
     return {
         str(item["target_key"]): str(item["engine"])
         for item in overrides or []
@@ -637,6 +673,8 @@ def _apply_manual_ubox_lama(
     engine = str(item.get("inpaint_engine_override") or DEFAULT_UNBOXED_INPAINT_ENGINE)
     if engine == "telea":
         inpaint_roi = cv2.inpaint(roi, context_mask, 5, cv2.INPAINT_TELEA)
+    elif engine == "stripe":
+        inpaint_roi, context_mask = _stripe_fill(roi, context_mask)
     else:
         lama = _get_lama()
         roi_pil = Image.fromarray(cv2.cvtColor(roi, cv2.COLOR_BGR2RGB))
@@ -3581,6 +3619,8 @@ def build_dialogue_sheet(
                     int(cand.get("inpaint_radius", 5)),
                     cv2.INPAINT_TELEA,
                 )
+            elif engine == "stripe":
+                inpaint_roi, safe_text_mask = _stripe_fill(cand["roi"], safe_text_mask)
             else:
                 lama = _get_lama()
                 roi_pil = Image.fromarray(cv2.cvtColor(cand["roi"], cv2.COLOR_BGR2RGB))

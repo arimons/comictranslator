@@ -1440,3 +1440,35 @@ def test_manual_split_keeps_piece_without_tg_on_masked_region():
     assert sorted(tuple(item["anchor_ids"]) for item in split) == [(), (3,)]
     upper = next(item for item in split if not item["anchor_ids"])
     assert upper["bubble_rect"][1] < 150 and upper["bubble_rect"][1] + upper["bubble_rect"][3] <= 152
+
+
+def test_stripe_fill_continues_horizontal_lines_through_text_mask():
+    import cv2
+    import numpy as np
+    from pipeline.dialogue_extractor import _stripe_fill
+
+    roi = np.full((60, 80, 3), 255, np.uint8)
+    roi[::6, :] = 0  # 가로줄 배경
+    mask = np.zeros((60, 80), np.uint8)
+    mask[20:40, 30:50] = 255
+    roi[20:40, 30:50] = 128  # 글자 자리
+    out, widened = _stripe_fill(roi, mask)
+    expected = np.full((60, 80, 3), 255, np.uint8)
+    expected[::6, :] = 0
+    assert (widened >= mask).all() and widened.sum() > mask.sum()
+    assert np.array_equal(out[widened > 0], expected[widened > 0])
+
+
+def test_stripe_fill_follows_vertical_lines():
+    import numpy as np
+    from pipeline.dialogue_extractor import _stripe_fill
+
+    roi = np.full((80, 60, 3), 255, np.uint8)
+    roi[:, ::6] = 0  # 세로줄 배경
+    mask = np.zeros((80, 60), np.uint8)
+    mask[30:50, 20:40] = 255
+    roi[30:50, 20:40] = 128
+    out, widened = _stripe_fill(roi, mask)
+    expected = np.full((80, 60, 3), 255, np.uint8)
+    expected[:, ::6] = 0
+    assert np.array_equal(out[widened > 0], expected[widened > 0])
