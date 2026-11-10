@@ -1,0 +1,45 @@
+# push와 PR마다 린트와 테스트를 자동으로 돌린다.
+# 개발 환경(맥 arm64, Python 3.11)과 같은 조건에서 돌리려고 macOS 러너를 쓴다.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install ruff==0.13.0
+      - run: ruff check .
+
+  test:
+    runs-on: macos-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: |
+            requirements.txt
+            requirements-dev.txt
+      # 프런트·백엔드 호환 테스트(tests/test_region_processing_basis.py)가 Node를 쓴다.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - run: pip install -r requirements-dev.txt
+      # 데이터 홈을 임시 폴더로 돌려 러너의 홈 디렉터리를 건드리지 않는다.
+      - run: python -m pytest -q
+        env:
+          COMIC_TRANSLATOR_HOME: ${{ runner.temp }}/ComicTranslator

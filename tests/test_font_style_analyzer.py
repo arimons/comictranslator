@@ -70,6 +70,9 @@ class FontStyleAnalyzerTest(unittest.TestCase):
         self.assertEqual(font_path, Path("Fonts/SourceHanSerifK-Medium.otf"))
 
     def test_overlay_manual_efx_and_serif_emphasis_map_to_atractor_font(self) -> None:
+        # a트랙터는 재배포할 수 없어 git으로 추적하지 않는다(Fonts/README.md). 없는 환경에서는 건너뛴다.
+        if not any(unicodedata.normalize("NFC", p.name) == "a트랙터.ttf" for p in Path("Fonts").glob("*.ttf")):
+            self.skipTest("a트랙터.ttf 없음")
         default_font = Path("Fonts/Freesentation-5Medium.ttf")
         efx_path = font_path_for_style("efx", default_font)
         emphasis_path = font_path_for_style("serif_emphasis", default_font)

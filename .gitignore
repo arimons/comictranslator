@@ -71,9 +71,16 @@ claudedocs/
 # 현재 파이프라인의 핵심 파일이 이 이름을 쓴다.
 cluster_cv.py
 
-# Fonts (user should add their own)
+# Fonts: 재배포가 허용된 폰트만 추적한다. 나머지는 각자 넣는다. 근거는 Fonts/README.md.
 Fonts/*
 !Fonts/README.md
+!Fonts/licenses/
+!Fonts/Freesentation-*.ttf
+!Fonts/Pretendard-*.otf
+!Fonts/SUIT-Variable.ttf
+!Fonts/SourceHanSerifK-Medium.otf
+!Fonts/SourceHanSerifK-Bold.otf
+!Fonts/NanumGiBbeumBarkEum.ttf
 
 # Images
 test_image/

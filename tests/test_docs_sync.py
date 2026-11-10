@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import html as html_module
 import re
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -56,6 +57,7 @@ RETIRED_REFERENCES = {
     "run_gemini_ocr.py": "구 OCR sheet 검증. 메인 파이프라인으로 승격 후 제거됨",
     "run_inpaint_test.py": "구 inpaint 실험. pipeline/experimental로 흡수 후 제거됨",
     "run_masked_batch.py": "구 FloodFill+masking 단독 검증. 제거됨",
+    "run_tg_vis.py": "구 text group 시각화 실험. archive/experiment/src/ 보관",
 }
 
 
@@ -67,8 +69,29 @@ def _extract_text(path: Path) -> str:
     return html_module.unescape(re.sub(r"<[^>]+>", " ", stripped))
 
 
+# git에서 제외된 로컬 보관 폴더. 깨끗한 복제본·CI에는 추적 중인 몇 개 파일만 있으므로,
+# 로컬 보관본이 없는 환경에서는 그 안을 가리키는 참조를 확인하지 않는다.
+LOCAL_ONLY_DIRS = ("archive",)
+
+
+def _local_copy_present(name: str) -> bool:
+    """폴더에 git이 추적하지 않는 파일이 하나라도 있으면 로컬 보관본이 있는 것으로 본다."""
+    folder = ROOT / name
+    if not folder.is_dir():
+        return False
+    try:
+        tracked = subprocess.run(["git", "ls-files", name], cwd=ROOT, capture_output=True, text=True, check=True).stdout.split("\n")
+    except (OSError, subprocess.CalledProcessError):
+        return True
+    tracked_top = {Path(item).parts[1] for item in tracked if item and len(Path(item).parts) > 1}
+    return any(entry.name not in tracked_top and not entry.name.startswith(".") for entry in folder.iterdir())
+
+
 def _reference_exists(reference: str, doc_path: Path) -> bool:
     if "/" in reference:
+        first = reference.split("/", 1)[0]
+        if first in LOCAL_ONLY_DIRS and not _local_copy_present(first):
+            return True
         # 경로가 명시된 참조는 그 자리에 정확히 있어야 한다.
         # 리포지토리 루트 기준과 문서 위치 기준(상대 링크) 둘 다 인정한다.
         return (ROOT / reference).exists() or (doc_path.parent / reference).exists()
