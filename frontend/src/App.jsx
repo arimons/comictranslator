@@ -70,6 +70,7 @@ import useBusyTasks from "./hooks/useBusyTasks.js";
 import useAutoAnalysis from "./hooks/useAutoAnalysis.js";
 import useWorkspaceResume from "./hooks/useWorkspaceResume.js";
 import useExportSettings from "./hooks/useExportSettings.js";
+import useTopbarMenu from "./hooks/useTopbarMenu.js";
 
 // 글자 입히기 편집 기록 상한과, 같은 종류의 연속 변경을 한 칸으로 묶는 시간
 const OVERLAY_HISTORY_LIMIT = 100;
@@ -195,16 +196,7 @@ export default function App() {
   const [contextDraft, setContextDraft] = useState(null);
   const [speakerPickerOpen, setSpeakerPickerOpen] = useState(false);
   // 영역 분석 상단 바의 펼침 메뉴("history" | "more" | null). 바깥을 누르면 닫는다.
-  const [guidanceMenu, setGuidanceMenu] = useState(null);
-  const guidanceMenuRef = useRef(null);
-  useEffect(() => {
-    if (!guidanceMenu) return undefined;
-    const onDown = (event) => { if (!guidanceMenuRef.current?.contains(event.target)) setGuidanceMenu(null); };
-    const onKey = (event) => { if (event.key === "Escape") setGuidanceMenu(null); };
-    window.addEventListener("mousedown", onDown);
-    window.addEventListener("keydown", onKey);
-    return () => { window.removeEventListener("mousedown", onDown); window.removeEventListener("keydown", onKey); };
-  }, [guidanceMenu]);
+  const { guidanceMenu, setGuidanceMenu, guidanceMenuRef } = useTopbarMenu();
   const [shortcutToast, setShortcutToast] = useState(null);
   const fileRef = useRef(null);
   const editorCanvasRef = useRef(null);
