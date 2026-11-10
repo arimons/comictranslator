@@ -68,6 +68,7 @@ import { ocrStateForImage as ocrStateOf, ocrDetailForImage as ocrDetailOf, ocrPr
 import useRecentSessions from "./hooks/useRecentSessions.js";
 import useBusyTasks from "./hooks/useBusyTasks.js";
 import useAutoAnalysis from "./hooks/useAutoAnalysis.js";
+import useWorkspaceResume from "./hooks/useWorkspaceResume.js";
 
 // 글자 입히기 편집 기록 상한과, 같은 종류의 연속 변경을 한 칸으로 묶는 시간
 const OVERLAY_HISTORY_LIMIT = 100;
@@ -95,9 +96,6 @@ const TOOL_HINTS = {
 };
 // 지우기 보정 붓 굵기(원본 px) 단계. [ ]로 한 단계씩 바꾼다.
 const MASK_BRUSH_STEPS = [2, 4, 6, 8, 12, 16, 24, 32, 48, 64];
-const RESUME_KEY = "comic-translator-resume-after-restart";
-// 새로고침해도 열려 있던 프로젝트로 돌아가도록 탭 단위(sessionStorage)로 기억한다.
-const OPEN_WORKSPACE_KEY = "comic-translator-open-workspace";
 
 // 화자·번역 메모는 영역 참조(region_ref)로 저장한다. 참조를 주지 않는 구버전 응답만 구형 영역 키를 쓴다.
 const regionStoreKey = (region) => region?.region_ref || regionBindingKey(region);
@@ -1619,67 +1617,11 @@ export default function App() {
     });
   }
 
-  // 서버 재시작 뒤: 보던 위치를 기억하고 새로고침한다. 새 화면이 같은 프로젝트를 다시 연다.
-  function reloadAfterServerRestart() {
-    try {
-      if (sessionId) {
-        window.sessionStorage.setItem(RESUME_KEY, JSON.stringify({ session_id: sessionId, image_id: selectedIdRef.current || selectedId, tab: activeTab, home: !workspaceStarted }));
-      }
-    } catch { /* 저장소를 못 쓰면 시작 화면으로 돌아간다 */ }
-    window.location.reload();
-  }
-
-  // 프로젝트별로 마지막에 보던 페이지를 기억한다. 세션 전환 중 이전 세션의 선택이 섞이지 않도록 목록에 있는 페이지만 저장한다.
-  useEffect(() => {
-    if (!workspaceStarted || !sessionId || !selectedId) return;
-    if (!images.some((img) => img.id === selectedId)) return;
-    writeSessionSettings(sessionId, { lastImageId: selectedId });
-  }, [workspaceStarted, sessionId, selectedId, images]);
-
-  useEffect(() => {
-    if (!workspaceStarted || !sessionId) return;
-    try { window.sessionStorage.setItem(OPEN_WORKSPACE_KEY, JSON.stringify({ session_id: sessionId, tab: activeTab })); } catch { /* 저장소를 못 쓰면 새로고침 때 홈으로 간다 */ }
-  }, [workspaceStarted, sessionId, activeTab]);
-
-  function forgetOpenWorkspace() {
-    try { window.sessionStorage.removeItem(OPEN_WORKSPACE_KEY); } catch { /* 무시 */ }
-  }
-
-  useEffect(() => {
-    let resume = null;
-    let reopened = false;
-    try {
-      resume = JSON.parse(window.sessionStorage.getItem(RESUME_KEY) || "null");
-      window.sessionStorage.removeItem(RESUME_KEY);
-      // 검토·미리보기 링크는 자기 세션을 직접 연다
-      const query = new URLSearchParams(window.location.search);
-      if (!resume?.session_id && !query.get("generation_review") && !query.get("page_preview")) {
-        resume = JSON.parse(window.sessionStorage.getItem(OPEN_WORKSPACE_KEY) || "null");
-        reopened = Boolean(resume?.session_id);
-      }
-    } catch { resume = null; }
-    if (!resume?.session_id) return undefined;
-    let cancelled = false;
-    (async () => {
-      try {
-        // 홈에서 재시작했으면 편집기로 들어가지 않는다. 나누기·제외를 고르기 전에 분석이 시작되지 않게 한다.
-        if (resume.home) {
-          await openSessionForSetup({ session_id: resume.session_id });
-          if (!cancelled) setStatus("서버를 재시작하고 준비 화면으로 다시 불러왔습니다");
-          return;
-        }
-        await openRecentSession({ session_id: resume.session_id });
-        if (cancelled) return;
-        if (resume.image_id) { setSelectedId(resume.image_id); selectedIdRef.current = resume.image_id; }
-        if (resume.tab) setActiveTab(resume.tab);
-        if (!reopened) setStatus("서버를 재시작하고 프로젝트를 다시 불러왔습니다");
-      } catch (error) {
-        if (reopened) forgetOpenWorkspace();
-        if (!cancelled) setStatus(error.message);
-      }
-    })();
-    return () => { cancelled = true; };
-  }, []);
+  // 서버 재시작·새로고침 뒤 보던 프로젝트로 돌아가기, 마지막으로 보던 페이지 기억. 세 effect는 이 자리에서 돈다.
+  const { reloadAfterServerRestart, forgetOpenWorkspace } = useWorkspaceResume({
+    workspaceStarted, sessionId, selectedId, images, activeTab, selectedIdRef,
+    setSelectedId, setActiveTab, setStatus, openSessionForSetup, openRecentSession,
+  });
 
   async function openRecentSession(recent) {
     if (!recent?.session_id) return;
