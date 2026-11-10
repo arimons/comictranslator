@@ -65,6 +65,7 @@ import { readStored, writeStored } from "./storage.js";
 import { normalizedFontSize, normalizeOverlayRegionOverride, normalizeOverlayGuidance } from "./overlayNormalize.js";
 import { ENGINE_NAMES, guidanceEquals, guidanceHistoryItems as buildGuidanceHistoryItems, stripGuidanceHistoryItem } from "./guidanceHistory.js";
 import { ocrStateForImage as ocrStateOf, ocrDetailForImage as ocrDetailOf, ocrProgressForImage, isImageGenerationFallback } from "./ocrStatus.js";
+import { emptyOverlayHistory, recordOverlayHistory as recordOverlayHistoryEntry, takeOverlayHistoryStep } from "./overlayHistory.js";
 import useRecentSessions from "./hooks/useRecentSessions.js";
 import useBusyTasks from "./hooks/useBusyTasks.js";
 import useAutoAnalysis from "./hooks/useAutoAnalysis.js";
@@ -75,9 +76,6 @@ import useGlobalKeyboard, { useShortcutToast } from "./hooks/useGlobalKeyboard.j
 import useReviewProgress from "./hooks/useReviewProgress.js";
 import useSpeakerNotes from "./hooks/useSpeakerNotes.js";
 
-// 글자 입히기 편집 기록 상한과, 같은 종류의 연속 변경을 한 칸으로 묶는 시간
-const OVERLAY_HISTORY_LIMIT = 100;
-const OVERLAY_HISTORY_MERGE_MS = 1500;
 
 // OCR·번역 AI 경로 이름(홈 화면·편집기 공용)
 const ROUTE_NAMES = { openai: "OpenAI", gemini: "Gemini API", vertex: "Vertex" };
@@ -185,7 +183,7 @@ export default function App() {
   const overlayCanvasRef = useRef(null);
   const keyHandlerRef = useRef(null);
   // 글자 입히기 편집 기록(페이지 단위). 확정된 변경마다 직전 overlayGuidance를 쌓는다.
-  const overlayHistoryRef = useRef({ undo: [], redo: [], lastKey: "", lastAt: 0 });
+  const overlayHistoryRef = useRef(emptyOverlayHistory());
   const overlayGuidanceRef = useRef(overlayGuidance);
   overlayGuidanceRef.current = overlayGuidance;
   const sessionIdRef = useRef(sessionId);
@@ -636,25 +634,11 @@ export default function App() {
   }
 
   function resetOverlayHistory() {
-    overlayHistoryRef.current = { undo: [], redo: [], lastKey: "", lastAt: 0 };
+    overlayHistoryRef.current = emptyOverlayHistory();
   }
 
   function recordOverlayHistory(previous, historyKey) {
-    const history = overlayHistoryRef.current;
-    const now = Date.now();
-    const key = historyKey || "";
-    const merge = Boolean(key)
-      && history.lastKey === key
-      && (key.startsWith("rotate:") || now - history.lastAt < OVERLAY_HISTORY_MERGE_MS);
-    history.lastKey = key;
-    history.lastAt = now;
-    history.redo = [];
-    if (merge) return;
-    const snapshot = cloneJson(previous || {});
-    const top = history.undo[history.undo.length - 1];
-    // updater가 두 번 호출돼도 같은 스냅샷을 두 번 쌓지 않는다.
-    if (top && guidanceEquals(top, snapshot)) return;
-    history.undo = [...history.undo.slice(-(OVERLAY_HISTORY_LIMIT - 1)), snapshot];
+    recordOverlayHistoryEntry(overlayHistoryRef.current, previous, historyKey);
   }
 
   function stepOverlayHistory(direction) {
@@ -664,16 +648,7 @@ export default function App() {
       setStatus(direction < 0 ? "되돌릴 overlay 편집 없음" : "다시 실행할 overlay 편집 없음");
       return;
     }
-    const target = from[from.length - 1];
-    const current = cloneJson(overlayGuidanceRef.current || {});
-    if (direction < 0) {
-      history.undo = history.undo.slice(0, -1);
-      history.redo = [...history.redo, current];
-    } else {
-      history.redo = history.redo.slice(0, -1);
-      history.undo = [...history.undo, current];
-    }
-    history.lastKey = "";
+    const target = takeOverlayHistoryStep(history, direction, cloneJson(overlayGuidanceRef.current || {}));
     const next = normalizeOverlayGuidance(cloneJson(target));
     overlayGuidanceRef.current = next;
     setOverlayGuidance(next);
