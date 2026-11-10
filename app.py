@@ -32,7 +32,7 @@ from urllib.parse import quote
 
 from dotenv import load_dotenv
 from fastapi import FastAPI, File, HTTPException, UploadFile
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.responses import StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from PIL import Image
 from pydantic import BaseModel
@@ -54,7 +54,7 @@ from pipeline.region_refs import (
 from pipeline.region_types import region_binding_key, regions_with_processing_basis
 from pipeline.source_library import SourceLibrary, atomic_link, digest as source_digest
 from pipeline.page_preparation import build_plan, is_split_page, split_in_place
-from pipeline.image_generation_bridge import ImageGenerationStore
+from pipeline.image_generation_bridge import ImageGenerationStore  # noqa: F401 (routers가 app_module로 쓴다)
 from pipeline.openai_image_redraw import redraw_image_with_openai
 from pipeline.openai_tasks import IMAGE_MODEL
 from pipeline.pipeline_runner import DEFAULT_FONT, run_single_image, stream_subprocess
@@ -62,7 +62,7 @@ from pipeline.render_text_overlay import apply_text_overlay
 from pipeline.work_glossary import (NARRATION, GlossaryStore, character_map, cv_page_text, glossary_snapshot, match_works,
                                     page_region_contexts, page_speakers, region_context_prompt, speaker_prompt,
                                     REGION_CONTEXT_LIMIT)
-from routers import glossary as glossary_routes, restore as restore_routes, system as system_routes
+from routers import glossary as glossary_routes, final as final_routes, restore as restore_routes, system as system_routes
 
 load_dotenv()
 
@@ -3466,16 +3466,6 @@ def create_app() -> FastAPI:
         write_json(path, {**policy, "analysis_route": req.route, "updated_at": dt.datetime.now().isoformat()})
         return {"image": page_record(req.session_id, req.image_id)}
 
-    @app.get("/api/image-generation/{session_id}/{image_id}")
-    def read_image_generation(session_id: str, image_id: str) -> dict:
-        try:
-            result = ImageGenerationStore(ROOT).status(session_id, image_id)
-            for item in result["results"]:
-                item["preview_url"] = file_url(item["preview_path"])
-            return result
-        except (ValueError, OSError) as exc:
-            raise HTTPException(status_code=400, detail=str(exc)) from exc
-
     @app.get("/api/speakers/{session_id}/{image_id}")
     def read_speakers(session_id: str, image_id: str) -> dict:
         try:
@@ -3850,78 +3840,9 @@ def create_app() -> FastAPI:
         refreshed = clear_guidance_outputs(req.session_id, req.image_id)
         return {"ok": True, "image": refreshed}
 
-    @app.post("/api/run-final")
-    def run_final(req: RunFinalRequest) -> dict[str, Any]:
-        if page_processing_excluded(req.session_id, req.image_id):
-            return {"ok": True, "image": page_record(req.session_id, req.image_id)}
-        try:
-            context = session_glossary_snapshot(req.session_id)
-        except ValueError as exc:
-            raise HTTPException(status_code=409, detail=str(exc)) from exc
-        source = get_image(req.session_id, req.image_id)
-        try:
-            refreshed = run_final_for_item(
-                req.session_id,
-                source,
-                req.extra_prompt,
-                req.font_path,
-                req.tracking_offset,
-                req.overlay_guidance,
-                req.force,
-                ocr_model=req.ocr_model,
-                replace_overlay=req.replace,
-                glossary_context=context,
-            )
-        except Exception as exc:
-            record = image_record(req.session_id, Path(source["input_path"]), source.get("image_sha256"))
-            mark_ocr_status(record, "failed", "실패", str(exc))
-            raise
-        return {"ok": True, "image": refreshed}
-
-    @app.post("/api/run-final-stream")
-    def run_final_stream(req: RunFinalRequest) -> StreamingResponse:
-        return StreamingResponse(stream_run_final(req), media_type="application/x-ndjson")
-
-    @app.post("/api/overlay/apply")
-    def apply_overlay(req: OverlayRequest) -> dict[str, Any]:
-        if page_processing_excluded(req.session_id, req.image_id):
-            raise HTTPException(status_code=409, detail="처리 제외 페이지입니다. 처리 대상으로 복원한 뒤 편집하세요.")
-        source = get_image(req.session_id, req.image_id)
-        # 렌더에는 경로만 필요하다. 원본 전체를 여는 여백 probe는 하지 않고 manifest 크기 정보를 쓴다.
-        record = image_record(req.session_id, Path(source["input_path"]), source.get("image_sha256"), source, probe_image=False, include_detail=False)
-        store_overlay_guidance(record, req.overlay_guidance, req.replace)
-        render_overlay_for_record(record, req.font_path, req.tracking_offset)
-        return {"ok": True, "image": page_record(req.session_id, req.image_id)}
-
-    @app.get("/api/session/{session_id}/export")
-    def export_session(session_id: str) -> FileResponse:
-        zip_path = build_session_export_zip(session_id)
-        return FileResponse(zip_path, media_type="application/zip", filename=zip_path.name)
-
-    @app.post("/api/export/generate-missing")
-    def generate_missing_final_images(req: GenerateMissingFinalRequest) -> dict[str, Any]:
-        return generate_missing_finals_with_openai(req)
-
-    @app.post("/api/export/generate-missing/stream")
-    def generate_missing_final_images_stream(req: GenerateMissingFinalRequest) -> StreamingResponse:
-        return StreamingResponse(stream_generate_missing_finals(req), media_type="application/x-ndjson")
-
-    @app.get("/api/file")
-    def get_file(path: str) -> FileResponse:
-        # 세션·캐시 폴더 아래의 이미지만 내려준다. 저장소 루트 전체를 열면 .env나 인증서 파일까지 읽힌다.
-        resolved = Path(path).resolve()
-        servable_roots = (SESSION_ROOT, INPUT_CACHE_DIR, ANALYSIS_CACHE_DIR)
-        if resolved.suffix.lower() not in IMAGE_EXTS or not (any(
-            resolved.is_relative_to(root.resolve()) for root in servable_roots
-        ) or source_library().allowed_source(resolved, SESSION_ROOT)):
-            raise HTTPException(status_code=403, detail="File outside workspace is not served")
-        if not resolved.exists():
-            raise HTTPException(status_code=404, detail="File not found")
-        return FileResponse(resolved)
-
     # 라우트 묶음은 routers/에 있다. 처리기가 이 모듈의 전역을 호출 시점에 찾도록 모듈 객체를 넘긴다(__main__ 실행 포함).
     app_module = sys.modules[__name__]
-    for router_module in (glossary_routes, restore_routes, system_routes):
+    for router_module in (glossary_routes, final_routes, restore_routes, system_routes):
         app.include_router(router_module.build_router(app_module))
 
     fonts_dir = ROOT / "Fonts"
