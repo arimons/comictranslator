@@ -9,7 +9,7 @@ import PageJump from "./PageJump.jsx";
 import StartScreen from "./StartScreen.jsx";
 import ImagePreview from "./ImagePreview.jsx";
 import GuidanceToolIcon from "./GuidanceToolIcon.jsx";
-import OcrBatchPrompt, { LastPagePrompt, OCR_PROMPT_MILESTONES } from "./OcrBatchPrompt.jsx";
+import OcrBatchPrompt, { LastPagePrompt } from "./OcrBatchPrompt.jsx";
 import ImageGenProgress from "./ImageGenProgress.jsx";
 import ImageGenerationPanel from "./ImageGenerationPanel.jsx";
 import AiErasePanel from "./AiErasePanel.jsx";
@@ -72,6 +72,7 @@ import useWorkspaceResume from "./hooks/useWorkspaceResume.js";
 import useExportSettings from "./hooks/useExportSettings.js";
 import useTopbarMenu from "./hooks/useTopbarMenu.js";
 import useGlobalKeyboard, { useShortcutToast } from "./hooks/useGlobalKeyboard.js";
+import useReviewProgress from "./hooks/useReviewProgress.js";
 
 // 글자 입히기 편집 기록 상한과, 같은 종류의 연속 변경을 한 칸으로 묶는 시간
 const OVERLAY_HISTORY_LIMIT = 100;
@@ -161,23 +162,12 @@ export default function App() {
   const [aiEraseTarget, setAiEraseTarget] = useState("region");
   // 불러온 가로 이미지를 분석 시작 때 나눌지(기본 켜짐). 표지처럼 가운데 한 장인 이미지는 가운데만 남긴다.
   const [splitLandscape, setSplitLandscape] = useState(() => readStored("ct.splitLandscape", true, (v) => typeof v === "boolean"));
-  // 확인한 페이지(영역 분석 탭에서 보고 넘어간 페이지)가 쌓이면 번역을 백그라운드로 돌릴지 묻는다.
-  const [reviewedIds, setReviewedIds] = useState(() => new Set());
-  const [ocrPromptOff, setOcrPromptOff] = useState(() => readStored("ct.ocrPromptOff", false, (v) => typeof v === "boolean"));
-  // 알림을 이미 처리한 가장 높은 진행률 기준(0, 60, 80). 세션별로 기억한다.
-  const [ocrMilestone, setOcrMilestone] = useState(0);
-  // 대사 검수 상태: `${페이지 id}|${overlay 키}` -> { status: "ok"|"ask", text }. text는 검수 당시 번역문이라 번역이 바뀌면 미검수로 돌아간다.
-  const [dialogueReview, setDialogueReview] = useState({});
   const [dialogueFilter, setDialogueFilter] = useState("all");
-  // 프로젝트별 '앞으로 묻지 않고 번역' 표시. LLM 비용이 드는 일이라 다른 프로젝트로 번지지 않게 세션 단위로 둔다.
-  const [ocrAutoStart, setOcrAutoStart] = useState(false);
-  const ocrAutoStartingRef = useRef(false);
   // 대사 편집을 ⌘Enter로 확정한 영역. 반영된 새 번역문으로 확인을 다시 기록한다.
   const dialogueConfirmAfterCommitRef = useRef(null);
   const [bgOcr, setBgOcr] = useState({ running: false, total: 0, done: 0, failed: 0, ids: [], finishedIds: [] });
   // 이미지 생성 모델 통번역 진행(진행 창). 생성 중에도 다른 페이지는 편집할 수 있다.
   const [imageGen, setImageGen] = useState(null);
-  const prevPageRef = useRef({ id: null, ready: false });
   const [autoOverlayPreview, setAutoOverlayPreview] = useState(true);
   const [overlayEditVersion, setOverlayEditVersion] = useState(0);
   const [overlayApplyRequest, setOverlayApplyRequest] = useState(0);
@@ -396,64 +386,14 @@ export default function App() {
     const state = ocrStateForImage(img);
     return !img.processing_excluded && state === "idle" && Boolean(img.indexed_sheet_url) && !img.final_url;
   });
-  // 확인한 페이지: 영역 분석 탭에서 분석이 끝난 페이지를 적용하지 않은 변경 없이 넘기면 센다.
-  // 세션별로 브라우저에 기억해 새로고침해도 이어진다. 저장소를 못 쓰면 이번 화면에서만 센다.
-  useEffect(() => {
-    setReviewedIds(new Set(readStored(`ct.reviewed.${sessionId || ""}`, [], Array.isArray)));
-    setOcrAutoStart(Boolean(sessionId) && readStored(`ct.ocrAutoStart.${sessionId}`, false, (v) => typeof v === "boolean"));
-    setDialogueReview(readStored(`ct.dialogueReview.${sessionId || ""}`, {}, (v) => v && typeof v === "object" && !Array.isArray(v)));
-    setOcrMilestone(Number(readStored(`ct.ocrMilestone.${sessionId || ""}`, 0, (v) => OCR_PROMPT_MILESTONES.includes(v) || v === 0)) || 0);
-  }, [sessionId]);
-  useEffect(() => {
-    const prev = prevPageRef.current;
-    if (prev.id && prev.sid === sessionId && prev.id !== selected?.id && prev.ready) {
-      setReviewedIds((current) => {
-        if (current.has(prev.id)) return current;
-        const next = new Set(current).add(prev.id);
-        writeStored(`ct.reviewed.${sessionId || ""}`, [...next]);
-        return next;
-      });
-    }
-    prevPageRef.current = {
-      sid: sessionId,
-      id: selected?.id || null,
-      ready: Boolean(activeTab === "guidance" && selected?.detail_loaded && selected?.indexed_sheet_url && !selected?.processing_excluded && !guidanceDirty),
-    };
+  // 확인한 페이지 집계와 번역 알림(60%·80%·마지막 페이지·자동 번역), 대사 검수 상태. 네 effect는 이 자리에서 원래 순서대로 돈다.
+  const {
+    dialogueReview, setDialogueReview, ocrPromptOff, ocrAutoStart, lastPagePrompt, setLastPagePrompt,
+    ocrBatchCandidates, ocrReachedMilestone, showOcrPrompt,
+    translateRemainingFromLastPage, dismissOcrPrompt, markOcrMilestone, setProjectOcrAutoStart, changeOcrPromptOff,
+  } = useReviewProgress({
+    sessionId, selected, activeTab, guidanceDirty, images, ocrReadyImages, bgOcr, ocrBusy, startBackgroundOcr,
   });
-  const ocrBatchCandidates = ocrReadyImages.filter((img) => reviewedIds.has(img.id) && img.id !== selected?.id);
-  // 수동 작업 진행률: 처리 대상 페이지 중 확인한 페이지 비율. 60%, 80%를 넘을 때 한 번씩 묻는다.
-  const ocrTargetImages = images.filter((img) => !img.processing_excluded);
-  const ocrProgressPct = ocrTargetImages.length
-    ? Math.round((ocrTargetImages.filter((img) => reviewedIds.has(img.id)).length / ocrTargetImages.length) * 100)
-    : 0;
-  const ocrReachedMilestone = Math.max(0, ...OCR_PROMPT_MILESTONES.filter((value) => ocrProgressPct >= value));
-  const showOcrPrompt = !ocrPromptOff && !bgOcr.running && !ocrBusy
-    && ocrReachedMilestone > ocrMilestone && ocrBatchCandidates.length > 0;
-  // 마지막 페이지에 도착하면 남은 페이지를 모두 번역할지 항상 묻는다(자동 번역·알림 끄기와 상관없이).
-  const ocrTargetLastId = ocrTargetImages.length ? ocrTargetImages[ocrTargetImages.length - 1].id : null;
-  const [lastPagePrompt, setLastPagePrompt] = useState(null);
-  const lastPagePromptForRef = useRef(null);
-  useEffect(() => {
-    if (!selected?.id || selected.id !== ocrTargetLastId) { lastPagePromptForRef.current = null; setLastPagePrompt(null); return; }
-    if (lastPagePromptForRef.current === `${sessionId}:${selected.id}` || bgOcr.running || ocrBusy) return;
-    const restIds = ocrReadyImages.filter((img) => img.id !== selected.id).map((img) => img.id);
-    const selfReady = ocrReadyImages.some((img) => img.id === selected.id);
-    if (!restIds.length && !selfReady) return;
-    lastPagePromptForRef.current = `${sessionId}:${selected.id}`;
-    setLastPagePrompt({ restIds, selfId: selfReady ? selected.id : null, unanalyzed: ocrTargetImages.filter((img) => !img.indexed_sheet_url).length });
-  }, [selected?.id, ocrTargetLastId, images, bgOcr.running, ocrBusy]);
-  function translateRemainingFromLastPage(includeSelf) {
-    const prompt = lastPagePrompt;
-    setLastPagePrompt(null);
-    if (!prompt) return;
-    const ids = [...prompt.restIds, ...(includeSelf && prompt.selfId ? [prompt.selfId] : [])];
-    if (ids.length) startBackgroundOcr(ids);
-  }
-  useEffect(() => {
-    if (!ocrAutoStart || !showOcrPrompt || ocrAutoStartingRef.current) return;
-    ocrAutoStartingRef.current = true;
-    startBackgroundOcr().finally(() => { ocrAutoStartingRef.current = false; });
-  }, [ocrAutoStart, showOcrPrompt]);
   useEffect(() => {
     const rid = dialogueConfirmAfterCommitRef.current;
     if (!rid || !selected) return;
@@ -1947,26 +1887,6 @@ export default function App() {
       }
       return { logs: logLines.join("\n") };
     });
-  }
-
-  function dismissOcrPrompt() {
-    // 지금 넘은 기준까지 처리한 것으로 두고, 다음 기준(80%)에서 다시 묻는다
-    markOcrMilestone(ocrReachedMilestone);
-  }
-
-  function markOcrMilestone(value) {
-    setOcrMilestone(value);
-    if (sessionId) writeStored(`ct.ocrMilestone.${sessionId}`, value);
-  }
-
-  function setProjectOcrAutoStart(value) {
-    setOcrAutoStart(value);
-    if (sessionId) writeStored(`ct.ocrAutoStart.${sessionId}`, value);
-  }
-
-  function changeOcrPromptOff(value) {
-    setOcrPromptOff(value);
-    writeStored("ct.ocrPromptOff", value);
   }
 
   // 확인한 페이지만 모아 OCR·번역을 백그라운드로 돌린다. 작업 잠금(busyTasks)을 쓰지 않아 다른 페이지는 계속 편집할 수 있다.
