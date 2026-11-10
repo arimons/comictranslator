@@ -62,6 +62,7 @@ import {
   patchTargetsRegion,
 } from "./lib.js";
 import { recordTargetsRegion, regionIsExcluded } from "./regionExclusion.js";
+import { PREFETCH_SETTING_KEY, pickPrefetchTarget, prefetchRequestKey } from "./prefetchPlan.js";
 
 // 글자 입히기 편집 기록 상한과, 같은 종류의 연속 변경을 한 칸으로 묶는 시간
 const OVERLAY_HISTORY_LIMIT = 100;
@@ -179,6 +180,8 @@ export default function App() {
   // 확인한 페이지(영역 분석 탭에서 보고 넘어간 페이지)가 쌓이면 번역을 백그라운드로 돌릴지 묻는다.
   const [reviewedIds, setReviewedIds] = useState(() => new Set());
   const [ocrPromptOff, setOcrPromptOff] = useState(() => readStored("ct.ocrPromptOff", false, (v) => typeof v === "boolean"));
+  // 남은 페이지 미리 분석(기본 꺼짐). 프로젝트를 열거나 페이지를 넘기기만 해도 유료 분석이 나가지 않도록 사용자가 켤 때만 돈다.
+  const [prefetchEnabled, setPrefetchEnabled] = useState(() => readStored(PREFETCH_SETTING_KEY, false, (v) => typeof v === "boolean"));
   // 알림을 이미 처리한 가장 높은 진행률 기준(0, 60, 80). 세션별로 기억한다.
   const [ocrMilestone, setOcrMilestone] = useState(0);
   // 대사 검수 상태: `${페이지 id}|${overlay 키}` -> { status: "ok"|"ask", text }. text는 검수 당시 번역문이라 번역이 바뀌면 미검수로 돌아간다.
@@ -1457,27 +1460,24 @@ export default function App() {
   // 보고 있는 페이지 분석이 끝나고 화면 작업이 없을 때, 남은 미분석 페이지를 한 장씩 미리 분석한다.
   // 보던 페이지 뒤부터 끝까지, 이어서 앞쪽 순서로 돈다. 번역(OCR)은 네트워크 작업이라 함께 돌아도 막지 않는다.
   useEffect(() => {
+    // 설정이 꺼져 있으면 미리 분석 요청을 새로 보내지 않는다. 이미 진행 중인 한 장은 끝까지 두고 결과만 반영한다.
+    if (!prefetchEnabled) return;
     if (!workspaceStarted || generationReviewMode || !sessionId || !selected || prefetchPromiseRef.current) return;
     if (routeBusy || Object.entries(busyTasks).some(([kind, value]) => value && kind !== "export")) return;
-    // 보는 페이지 분석을 아직 시도하지 않았으면 그쪽이 먼저다. 시도했다가 실패했으면 멈추지 않고 이어간다.
-    // 생성 권장 페이지는 자동 분석하지 않으므로 기다리지 않는다.
-    const selectedSkipsAuto = selected.analysis_route !== "standard" && selected.image_generation_recommendation?.priority === "recommended";
-    if (imageNeedsAnalysis(selected) && !selectedSkipsAuto && !autoAnalysisRequestedRef.current.has(`${selected.id}:${selected.image_sha256 || ""}`)) return;
-    const start = images.findIndex((img) => img.id === selected.id);
-    if (start < 0) return;
-    const target = [...images.slice(start + 1), ...images.slice(0, start)].find((img) => {
-      const key = `${img.id}:${img.image_sha256 || ""}`;
-      return imageNeedsAnalysis(img)
-        && !(img.analysis_route !== "standard" && img.image_generation_recommendation?.priority === "recommended")
-        && !autoAnalysisRequestedRef.current.has(key)
-        && !prefetchFailedRef.current.has(key);
+    const target = pickPrefetchTarget({
+      enabled: prefetchEnabled,
+      images,
+      selected,
+      requested: autoAnalysisRequestedRef.current,
+      failed: prefetchFailedRef.current,
+      needsAnalysis: imageNeedsAnalysis,
     });
     if (target) prefetchAnalysis(target);
-  }, [workspaceStarted, generationReviewMode, sessionId, selected?.id, selected?.regions, selected?.has_analysis, images, routeBusy, busyTasks, prefetchingId]);
+  }, [prefetchEnabled, workspaceStarted, generationReviewMode, sessionId, selected?.id, selected?.regions, selected?.has_analysis, images, routeBusy, busyTasks, prefetchingId]);
 
   function prefetchAnalysis(target) {
     const sid = sessionId;
-    const key = `${target.id}:${target.image_sha256 || ""}`;
+    const key = prefetchRequestKey(target);
     // 같은 페이지를 열어도 자동 분석이 겹쳐 돌지 않게 요청 기록을 먼저 남긴다
     autoAnalysisRequestedRef.current.add(key);
     setPrefetchingId(target.id);
@@ -2042,8 +2042,14 @@ export default function App() {
     setWorkspaceStarted(true);
     setActiveTab("guidance");
     // 처음부터 다시 분석은 전체를 강제로 돈다. 그 외에는 바로 편집기로 들어가 보이는 페이지를 먼저 분석하고,
-    // 나머지는 미리 분석이 화면을 잠그지 않고 한 장씩 이어간다.
+    // 나머지는 '남은 페이지 미리 분석'을 켠 경우에만 화면을 잠그지 않고 한 장씩 이어간다.
     if (force) await analyze("all", { force });
+  }
+
+  function changePrefetchEnabled(value) {
+    setPrefetchEnabled(value);
+    writeStored(PREFETCH_SETTING_KEY, value);
+    setStatus(value ? "남은 페이지 미리 분석을 켰습니다." : `남은 페이지 미리 분석을 껐습니다.${prefetchingId ? " 진행 중인 한 장만 마치고 멈춥니다." : ""}`);
   }
 
   function changeSplitLandscape(value) {
@@ -3274,6 +3280,13 @@ export default function App() {
                       <button type="button" disabled={!selected?.detail_loaded || anyBusy || selected?.processing_excluded}
                         onClick={() => { setAiEraseTarget("page"); setAiEraseConfirmOpen(true); setGuidanceMenu(null); }}
                         title={selected?.processing_excluded ? "처리 대상으로 복원한 뒤 쓸 수 있습니다" : "이미지 모델로 이 페이지의 글자를 지웁니다. 대화 영역만 지울지 쪽 전체 글자를 지울지 확인 창에서 고릅니다. 비용이 발생합니다."}>AI로 쪽 전체 지우기</button>
+                      <div className="prefetch-setting">
+                        <label className="check">
+                          <input type="checkbox" checked={prefetchEnabled} onChange={(e) => changePrefetchEnabled(e.target.checked)} />
+                          남은 페이지 미리 분석{prefetchEnabled ? " (켜짐)" : " (꺼짐)"}
+                        </label>
+                        <p className="hint">보고 있는 페이지 분석이 끝나면 아직 분석하지 않은 페이지를 한 장씩 미리 분석합니다. 유료 분석(Cloud Vision)이 페이지마다 호출됩니다.</p>
+                      </div>
                       <details className="guidance-disclosure">
                         <summary>표시 설정{Object.values(layers).some((visible) => !visible) ? <span>일부 숨김</span> : null}</summary>
           <p className="hint">겹친 표시를 확인할 때만 끕니다. 분석·출력 결과는 바뀌지 않습니다.</p>

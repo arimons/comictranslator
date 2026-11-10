@@ -5,7 +5,8 @@
   "description": "web 리뷰 앱 프론트엔드 빌드 (esbuild 번들 -> ../web/app.bundle.js)",
   "scripts": {
     "build": "esbuild src/main.jsx --bundle --minify --jsx=automatic --define:process.env.NODE_ENV=\\\"production\\\" --outfile=../web/app.bundle.js",
-    "watch": "esbuild src/main.jsx --bundle --jsx=automatic --define:process.env.NODE_ENV=\\\"development\\\" --outfile=../web/app.bundle.js --watch --sourcemap"
+    "watch": "esbuild src/main.jsx --bundle --jsx=automatic --define:process.env.NODE_ENV=\\\"development\\\" --outfile=../web/app.bundle.js --watch --sourcemap",
+    "test": "cd .. && node --test proof/src/test_*.mjs"
   },
   "dependencies": {
     "konva": "^9.3.0",
