@@ -73,6 +73,7 @@ import useExportSettings from "./hooks/useExportSettings.js";
 import useTopbarMenu from "./hooks/useTopbarMenu.js";
 import useGlobalKeyboard, { useShortcutToast } from "./hooks/useGlobalKeyboard.js";
 import useReviewProgress from "./hooks/useReviewProgress.js";
+import useSpeakerNotes from "./hooks/useSpeakerNotes.js";
 
 // 글자 입히기 편집 기록 상한과, 같은 종류의 연속 변경을 한 칸으로 묶는 시간
 const OVERLAY_HISTORY_LIMIT = 100;
@@ -101,8 +102,6 @@ const TOOL_HINTS = {
 // 지우기 보정 붓 굵기(원본 px) 단계. [ ]로 한 단계씩 바꾼다.
 const MASK_BRUSH_STEPS = [2, 4, 6, 8, 12, 16, 24, 32, 48, 64];
 
-// 화자·번역 메모는 영역 참조(region_ref)로 저장한다. 참조를 주지 않는 구버전 응답만 구형 영역 키를 쓴다.
-const regionStoreKey = (region) => region?.region_ref || regionBindingKey(region);
 
 export default function App() {
   const [sessionId, setSessionId] = useState("");
@@ -178,14 +177,6 @@ export default function App() {
   // 글자 입히기 캔버스 도구: select | hand | eraser
   const [overlayTool, setOverlayTool] = useState("select");
   const [helpOpen, setHelpOpen] = useState(false);
-  // 작품 메모(인물 표)와 현재 페이지의 TG별 화자 지정
-  const [workMemo, setWorkMemo] = useState(null);
-  const [speakerByTg, setSpeakerByTg] = useState({});
-  const [speakerByRegion, setSpeakerByRegion] = useState({});
-  // R별 번역 메모(영역 키 → 글). 다음 OCR/번역 때 '영역별 번역 가이드'로 붙는다.
-  const [contextByRegion, setContextByRegion] = useState({});
-  const [contextDraft, setContextDraft] = useState(null);
-  const [speakerPickerOpen, setSpeakerPickerOpen] = useState(false);
   // 영역 분석 상단 바의 펼침 메뉴("history" | "more" | null). 바깥을 누르면 닫는다.
   const { guidanceMenu, setGuidanceMenu, guidanceMenuRef } = useTopbarMenu();
   const { shortcutToast, showShortcutToast } = useShortcutToast(setStatus);
@@ -274,26 +265,9 @@ export default function App() {
     const item = overlayRegions.find((region) => overlayItemKey(region) === String(key));
     return item ? overlayItemLabel(item) : "R?";
   };
-  // 화자 단축키 1-8 = 작품 메모 인물 표 순서(주인공 1번), 9 = 기타(전체 목록 팝업)
-  const allSpeakerCharacters = workMemo?.characters || [];
-  const speakerCharacters = allSpeakerCharacters.slice(0, 8);
   const guidanceRegions = useMemo(() => imageRegions(selected)
     .filter((region) => !regionIsExcluded(region, guidance))
     .sort((a, b) => regionId(a) - regionId(b)), [selected, guidance]);
-  const speakerLabels = useMemo(() => {
-    const names = Object.fromEntries((workMemo?.characters || []).map((row) => [row.id, row.name]));
-    names.narration = "내레이션";
-    const lead = (workMemo?.characters || []).find((row) => row.protagonist);
-    const labels = {};
-    guidanceRegions.forEach((region) => {
-      const key = regionStoreKey(region);
-      const assigned = Object.hasOwn(speakerByRegion,key) ? speakerByRegion[key] : (region.anchor_ids || []).map((id) => speakerByTg[String(id)]).find((id) => names[id]);
-      // 텍스트 기반 영역의 자동 기본값은 괄호로 구분한다.
-      if (assigned) labels[regionId(region)] = names[assigned];
-      else if (lead && regionProcessingBasis(region) === TEXT_BASED) labels[regionId(region)] = `(${lead.name})`;
-    });
-    return labels;
-  }, [workMemo, speakerByTg, speakerByRegion, guidanceRegions]);
   const selectedGuidanceRegion = selectedGuidanceRegionId != null
     ? guidanceRegions.find(region => regionId(region) === Number(selectedGuidanceRegionId)) || null
     : null;
@@ -329,17 +303,14 @@ export default function App() {
   const selectedPageId = selected?.id || "";
   useEffect(() => { setOverlayFocusRect(null); }, [selectedPageId, activeTab]);
 
-  useEffect(() => {
-    setSpeakerByTg({});
-    setSpeakerByRegion({});
-    setContextByRegion({});
-    if (!sessionId || !selectedPageId) return undefined;
-    let alive = true;
-    api(`/api/speakers/${encodeURIComponent(sessionId)}/${encodeURIComponent(selectedPageId)}`)
-      .then((result) => { if (alive) { setSpeakerByTg(result.by_tg || {}); setSpeakerByRegion(result.by_region_ref || result.by_region || {}); setContextByRegion(result.context_by_region_ref || result.context_by_region || {}); } })
-      .catch(() => {});
-    return () => { alive = false; };
-  }, [sessionId, selectedPageId]);
+  // 화자 지정·작품 메모 인물·영역별 번역 메모. 두 effect는 이 자리에서 돈다(메모 입력칸 초기화는 원래 아래쪽에 있었다).
+  const {
+    setWorkMemo, speakerLabels, speakerCharacters, allSpeakerCharacters, speakerPickerOpen, setSpeakerPickerOpen,
+    contextDraft, setContextDraft, savedRegionContext, regionContextValue, assignSpeaker, saveRegionContext,
+  } = useSpeakerNotes({
+    sessionId, selectedPageId, guidanceRegions, selectedGuidanceRegion, selectedRegionKey, selectedIdRef,
+    setStatus, cycleGuidanceRegion,
+  });
   const selectedRegion = selectedRegionId
     ? (overlayRegions.find((region) => overlayItemKey(region) === String(selectedRegionId)) || null)
     : null;
@@ -762,54 +733,6 @@ export default function App() {
       next = step > 0 ? list[0] : list[list.length - 1];
     }
     return selectGuidanceRegion(next, list.indexOf(next), list.length);
-  }
-
-  async function assignSpeaker(slot) {
-    const region = selectedGuidanceRegion;
-    if (!region) {
-      setStatus("화자를 지정할 영역을 먼저 선택하세요");
-      return true;
-    }
-    let characterId = null;
-    let name = "자동";
-    if (slot === "narration") {
-      characterId = "narration";
-      name = "내레이션";
-    } else if (slot === 9) {
-      if (!allSpeakerCharacters.length) {
-        setStatus(workMemo ? "작품 메모에 인물이 없습니다" : "작품 메모를 먼저 연결하세요");
-        return true;
-      }
-      setSpeakerPickerOpen(true);
-      return true;
-    } else if (typeof slot === "object" && slot) {
-      characterId = slot.id;
-      name = slot.name;
-    } else if (slot > 0) {
-      const row = speakerCharacters[slot - 1];
-      if (!row) {
-        setStatus(workMemo ? `${slot}번 인물이 없습니다. 작품 메모에서 인물을 추가하세요` : "작품 메모를 먼저 연결하세요");
-        return true;
-      }
-      characterId = row.id;
-      name = row.name;
-    }
-    const pageId = selectedPageId;
-    // 화면을 먼저 갱신하고 저장은 뒤에서 한다. 실패하면 서버 값으로 되돌린다.
-    setSpeakerByRegion((current) => ({...current,[regionStoreKey(region)]:characterId || null}));
-    setStatus(`R${regionId(region)} 화자: ${name}`);
-    if (slot !== 0) cycleGuidanceRegion(1, true);
-    try {
-      const result = await api("/api/speakers", { method: "POST", body: JSON.stringify({
-        session_id: sessionId, image_id: pageId, region_id: regionId(region), region_key: regionBindingKey(region), region_ref: region.region_ref || null, character_id: characterId,
-      }) });
-      if (selectedIdRef.current === pageId || !selectedIdRef.current) { setSpeakerByTg(result.by_tg || {}); setSpeakerByRegion(result.by_region_ref || result.by_region || {}); }
-    } catch (err) {
-      setStatus(`화자 저장 실패: ${err.message}`);
-      api(`/api/speakers/${encodeURIComponent(sessionId)}/${encodeURIComponent(pageId)}`)
-        .then((result) => { setSpeakerByTg(result.by_tg || {}); setSpeakerByRegion(result.by_region_ref || result.by_region || {}); }).catch(() => {});
-    }
-    return true;
   }
 
   // 대사 리스트 행: overlayRegions 순서(읽는 순서)를 그대로 쓴다. 키는 영역 참조 기반 overlay 키다.
@@ -2313,11 +2236,6 @@ export default function App() {
       : "지우기 보정(자동 배정) · 칠한 곳은 흰칠되고 가장 많이 겹치는 영역의 OCR에 들어갑니다");
   }
 
-  // 선택한 R이 바뀌면 메모 입력칸을 저장된 값으로 되돌린다.
-  useEffect(() => { setContextDraft(null); }, [selectedRegionKey, selectedPageId]);
-  const savedRegionContext = selectedGuidanceRegion ? contextByRegion[regionStoreKey(selectedGuidanceRegion)] || "" : "";
-  const regionContextValue = contextDraft ?? savedRegionContext;
-
   // 입력칸을 벗어나면 저장한다. 번역은 실행하지 않는다.
   // 화자·번역 메모를 바꾼 뒤 이 페이지만 OCR·번역을 다시 돌린다(OCR 탭의 Force Current와 같음).
   // 적어 둔 메모가 아직 저장 전이면 먼저 저장해 이번 번역에 들어가게 한다.
@@ -2336,22 +2254,6 @@ export default function App() {
       setStatus("기존 번역을 유지합니다.");
     } catch (err) {
       setStatus(`기존 번역 유지 실패: ${err.message}`);
-    }
-  }
-
-  async function saveRegionContext() {
-    const region = selectedGuidanceRegion;
-    if (!region || contextDraft == null || contextDraft.trim() === savedRegionContext) { setContextDraft(null); return; }
-    const pageId = selectedPageId;
-    try {
-      const result = await api("/api/region-context", { method: "POST", body: JSON.stringify({
-        session_id: sessionId, image_id: pageId, region_id: regionId(region), region_key: regionBindingKey(region), region_ref: region.region_ref || null, text: contextDraft,
-      }) });
-      if (selectedPageId === pageId) setContextByRegion(result.context_by_region_ref || result.context_by_region || {});
-      setContextDraft(null);
-      setStatus(`R${regionId(region)} 번역 메모 ${contextDraft.trim() ? "저장" : "삭제"} · 다음 OCR/번역 때 반영됩니다.`);
-    } catch (err) {
-      setStatus(`번역 메모 저장 실패: ${err.message}`);
     }
   }
 
