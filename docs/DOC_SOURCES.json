@@ -189,6 +189,11 @@
         "web/styles.css"
       ]
     },
+    "docs/IMPROVEMENT_BACKLOG.md": {
+      "role": "hub",
+      "topic": "저장소 전체 점검에서 나온 개선 작업 목록",
+      "sources": []
+    },
     "docs/EDITOR_TODO.md": {
       "role": "hub",
       "topic": "편집기 UI와 MCP 후속 할 일",

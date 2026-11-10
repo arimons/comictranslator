@@ -51,6 +51,8 @@ NEW_COMIC_TRANSLATOR/
 ├── scripts/run_debug_pipeline.py       # Debug 이미지 일괄 실행 wrapper
 ├── scripts/visualize_debug.py          # Debug bbox 시각화
 ├── pytest.ini                  # pytest 수집 경로를 tests/로 고정
+├── ruff.toml                   # 린트 기준 (ruff check .)
+├── .github/workflows/ci.yml    # push·PR마다 린트와 테스트 자동 실행
 ├── tests/                      # pytest 테스트 (문서 동기화 검사 포함)
 ├── proof/                      # 검증용 스크립트 및 출력물
 │   └── src/                    # 검증 보조 스크립트 (삭제 금지)

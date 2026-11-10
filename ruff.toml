@@ -1,4 +1,4 @@
-# 린트 기준. 실행: .venv/bin/ruff check .
+# 린트 기준. 실행: ruff check . (설치는 docs/DEPENDENCIES.md의 린트 절)
 # 목적은 실제 결함(미정의 이름, 미사용 import·변수, 맨 except)을 잡는 것이다. 서식은 강제하지 않는다.
 target-version = "py311"
 line-length = 160

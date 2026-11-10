@@ -106,3 +106,7 @@ projects 아래 폴더 ID는 기존 timestamp ID를 유지한다. project.json�
 <!-- 2026-11-08 review: OverlayCanvas.jsx 제자리 편집기 쓰기 방향에 자동 버튼 추가, 선택 상태 표시 수정. 이 문서 내용 영향 없음 -->
 
 <!-- 2026-11-08 review: 쓰기 방향 자동 옵션 제거, layout writing_mode 기록과 첫 편집 때 방향 저장. 이 문서 내용 영향 없음 -->
+
+## 린트
+
+린트는 ruff로 하며 기준은 저장소 루트의 `ruff.toml`에 있습니다. ruff는 `requirements-dev.txt`에 넣지 않았고, CI는 0.13.0을 따로 설치해 `ruff check .`을 돌립니다. 로컬에서는 `.venv/bin/python -m pip install ruff==0.13.0` 뒤 `.venv/bin/ruff check .`으로 같은 검사를 합니다.
