@@ -2864,6 +2864,13 @@ def run_subprocess_stream(cmd: list[str], timeout: int = 300, log_callback=None)
 _RESTORE_EXECUTOR = ThreadPoolExecutor(max_workers=1, thread_name_prefix="restore")
 _RESTORE_JOBS: dict[str, dict[str, Any]] = {}
 _RESTORE_JOBS_LOCK = threading.Lock()
+# 끝난 작업 기록은 메모리에만 있어 상시 서버에서 계속 쌓인다. 새 작업을 받을 때 오래된 것만 지운다.
+# 편집기는 후보를 띄워 둔 채 한참 뒤에 확정할 수 있으므로 끝난 지 하루가 지나야 지우고,
+# 개수가 상한을 넘으면 끝난 지 1시간이 지난 것부터 오래된 순으로 지운다. 대기·실행 중인 작업은 지우지 않는다.
+_RESTORE_JOB_TERMINAL = {"done", "error"}
+_RESTORE_JOB_MAX_AGE_SEC = 24 * 3600
+_RESTORE_JOB_MAX_FINISHED = 200
+_RESTORE_JOB_MIN_AGE_SEC = 3600
 _RESTORE_STATE_LOCK = threading.Lock()
 
 
@@ -2951,6 +2958,27 @@ def _restore_job_public(job: dict[str, Any]) -> dict[str, Any]:
     return {key: value for key, value in job.items() if not key.startswith("_")}
 
 
+def prune_restore_jobs(now: float | None = None) -> list[str]:
+    """끝난 복원·AI 지우기 작업 기록을 정리한다. 작업 폴더의 파일은 건드리지 않는다."""
+    now = time.time() if now is None else now
+    with _RESTORE_JOBS_LOCK:
+        finished = sorted(
+            ((job.get("finished_at") or job.get("created_at") or 0.0, job_id)
+             for job_id, job in _RESTORE_JOBS.items() if job.get("status") in _RESTORE_JOB_TERMINAL),
+        )
+        drop = {job_id for finished_at, job_id in finished if now - finished_at > _RESTORE_JOB_MAX_AGE_SEC}
+        excess = len(finished) - len(drop) - _RESTORE_JOB_MAX_FINISHED
+        for finished_at, job_id in finished:
+            if excess <= 0:
+                break
+            if job_id not in drop and now - finished_at > _RESTORE_JOB_MIN_AGE_SEC:
+                drop.add(job_id)
+                excess -= 1
+        for job_id in drop:
+            del _RESTORE_JOBS[job_id]
+    return sorted(drop)
+
+
 def submit_restore_job(req: RestoreRunRequest) -> dict[str, Any]:
     import cv2
 
@@ -2992,6 +3020,7 @@ def submit_restore_job(req: RestoreRunRequest) -> dict[str, Any]:
         "created_at": time.time(),
         "_job_dir": str(job_dir),
     }
+    prune_restore_jobs()
     with _RESTORE_JOBS_LOCK:
         _RESTORE_JOBS[job_id] = job
 
@@ -3068,6 +3097,7 @@ def submit_ai_erase_job(req: AiEraseRequest) -> dict[str, Any]:
         "created_at": time.time(),
         "_job_dir": str(job_dir),
     }
+    prune_restore_jobs()
     with _RESTORE_JOBS_LOCK:
         _RESTORE_JOBS[job_id] = job
 
