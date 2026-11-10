@@ -19,7 +19,14 @@ FloodFill 필터 체계 상세는 [FLOODFILL_MASKING_PROGRESS.md](FLOODFILL_MASK
 
 ```text
 NEW_COMIC_TRANSLATOR/
-├── app.py                  # FastAPI 기반 리뷰 UI (현재 메인 UI)
+├── app.py                  # FastAPI 기반 리뷰 UI (현재 메인 UI). 도우미·요청 모델·create_app()
+├── routers/                # app.py의 API 라우트 묶음. 묶음마다 build_router(app_module)를 두고 create_app()이 등록
+│   ├── sessions.py         # 프로젝트 목록·생성·삭제·메타, 페이지 나누기, 원본 연결, 서버 폴더 탐색, 이미지 가져오기·올리기
+│   ├── analysis.py         # 페이지 처리 정책, 분석(Step 1-3)·수동 보정, 화자·R 번역 메모, OCR 재실행 알림
+│   ├── glossary.py         # 작품 메모 연결·저장·초안, 나무위키 조회
+│   ├── final.py            # OCR·번역 실행(run-final), 글자 입히기 적용, 내보내기, 이미지 생성 결과, /api/file
+│   ├── restore.py          # /api/restore/* (AI 글자 지우기·배경 복원)
+│   └── system.py           # 서버 상태·재시작, LaMa 작업 프로세스, OCR 모델·글꼴 목록, 사용자 매뉴얼
 ├── scripts/run_editor_mcp.py           # UI 독립 stdio MCP 진입점 (조회·검토 초안)
 ├── scripts/configure_editor_mcp.py     # 프로젝트 로컬 Codex/Claude MCP 설정 생성
 ├── web/                      # app.py 정적 자산 (index.html, styles.css, app.bundle.js)
@@ -142,6 +149,8 @@ Gradio UI(`main.py`)와 test_image 범위 실행 wrapper(`run_test_pipeline.py`)
 ### `app.py` (현재 메인 UI)
 
 FastAPI 기반 로컬 리뷰 웹앱이다. TG(Anchor Text Group) 수동 보정, Step 3 flood region 재판정, OCR/번역, 텍스트 오버레이 배치까지 한 화면에서 다루는 캔버스 편집기를 제공한다.
+
+**모듈 구성** — `app.py`에는 세션·캐시·분석·렌더 도우미, 요청 모델, `create_app()`이 있고, API 라우트는 묶음별로 `routers/`에 있다. `create_app()`은 앱 생성, LaMa 작업 프로세스 연결, 라우터 등록, 정적 파일(`/fonts`, `/`) 마운트만 한다. 각 라우터 모듈의 `build_router(app_module)`은 `create_app()`이 넘긴 `app.py` 모듈 객체를 받아, 처리기 안에서 `app_module.X`로 도우미·상수를 호출 시점에 찾는다. 두 가지 이유가 있다. 시험이 `monkeypatch.setattr(app, "X", ...)`로 바꾼 값을 처리기가 그대로 봐야 하고, `python app.py`로 띄우면 모듈 이름이 `__main__`이라 라우터가 `import app`을 하면 `app.py`가 한 번 더 실행돼 작업 표(`_RESTORE_JOBS`)·캐시·잠금이 둘로 갈린다. 그래서 `routers/`의 모듈은 `app`을 import하지 않는다. 라우트는 묶음 순서로 등록되며, 같은 메서드에서 서로의 경로를 가로채는 라우트가 없어 순서가 매칭에 영향을 주지 않는다(`tests/test_app_routers.py`가 이 조건과 스크립트 실행 시 전역 공유를 확인한다). 라우터만 쓰는 import는 `app.py`에 `# noqa: F401`로 남겨 `app.X`로 바꿔 끼울 수 있게 했다.
 
 ```bash
 python3 app.py            # http://127.0.0.1:7870

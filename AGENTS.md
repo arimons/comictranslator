@@ -23,6 +23,7 @@
 ```text
 NEW_COMIC_TRANSLATOR/
 ├── app.py                   # FastAPI 기반 리뷰 UI (현재 메인 UI, 상세는 docs/CODEBASE_FILE_MAP.md)
+├── routers/                 # app.py API 라우트 묶음 (sessions·analysis·glossary·final·restore·system). 처리기는 app 전역을 app_module.X로 찾고 app을 import하지 않음
 ├── web/                       # app.py 정적 자산 (frontend/ 빌드 결과)
 ├── frontend/                    # React 프론트엔드 소스
 ├── run_pipeline.py             # CLI 진입점
