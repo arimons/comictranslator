@@ -59,7 +59,6 @@ from pipeline.render_text_overlay import (
     should_use_bubble_rect_for_short_vertical_source,
     shared_segment_safe_rect,
     single_tg_centered_safe_rect,
-    synthetic_vertical_ellipsis_size,
     synthetic_vertical_dot_run_size,
     synthetic_dot_radius_for_font,
     text_group_centered_sub_rect,
@@ -1237,7 +1236,7 @@ class RenderTextOverlayTest(unittest.TestCase):
         layout = choose_layout(
             draw,
             "보고도\n못 본 척을 하며…",
-            [438, 451, 142, 314],
+            [438, 451, 200, 314],
             image.size,
             FONT_PATH,
             src_line_count=2,
@@ -1247,6 +1246,29 @@ class RenderTextOverlayTest(unittest.TestCase):
 
         self.assertEqual(layout.lines, ["보고도", "못 본 척을 하며…"])
         self.assertLess(layout.measured_height / layout.inner_rect[3], 0.5)
+
+    def test_explicit_translation_lines_yield_when_they_would_shrink_text_too_much(self) -> None:
+        # 번역문의 줄바꿈은 자동 배치의 초기값이다. 그대로 두면 글자가 자유 배치의 45% 아래로
+        # 줄어드는 좁은 말풍선에서는 다시 나눈다. 사용자가 직접 넣은 줄바꿈(text_override)은
+        # preserve_explicit_lines 경로로 항상 지켜지며 이 규칙의 대상이 아니다.
+        if not Path(FONT_PATH).exists():
+            self.skipTest(f"font not found: {FONT_PATH}")
+
+        image = Image.new("RGB", (1350, 1920), "white")
+        draw = ImageDraw.Draw(image)
+        layout = choose_layout(
+            draw,
+            "보고도\n못 본 척을 하며…",
+            [438, 451, 142, 314],
+            image.size,
+            FONT_PATH,
+            src_line_count=2,
+            is_split_rect=True,
+            prefer_explicit_lines_when_reasonable=True,
+        )
+
+        self.assertGreater(len(layout.lines), 2)
+        self.assertGreater(layout.font_size, 40)
 
     def test_manual_stacked_dots_use_compact_spacing(self) -> None:
         offsets = vertical_line_offsets(["아", ".", ".", "."], 42, 32)

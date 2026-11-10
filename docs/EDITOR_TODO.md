@@ -63,7 +63,7 @@
 - [ ] 페이지 이동이 곧 실행인 문제: 10-28에 남은 페이지 전체 미리 분석이 추가돼 유료 호출이 늘었다. 확인창이나 설정으로 끌 수 있게 한다.
 - [ ] 썸네일·상태 배지 필름스트립, 탭 4개를 모드 3개로 줄이는 개편, 작업 드로어, 커맨드 팔레트(보고 3-5단계)는 미착수.
 - [ ] 토스트·계속 남는 에러 배너·상단 작업 칩, 삭제·유료 버튼 분리 상태를 다시 확인한다.
-- [ ] `tests/test_render_text_overlay.py::test_explicit_translation_lines_are_preferred_over_height_filling_split` 실패(10-29 `7d511fa` 기본 자간 확대 이후)를 코드와 테스트 중 어느 쪽이 맞는지 정해 고친다.
+- [x] `tests/test_render_text_overlay.py::test_explicit_translation_lines_are_preferred_over_height_filling_split` 실패(10-29 `7d511fa` 기본 자간 확대 이후): 코드 동작을 유지하기로 정했다(11-10). 번역문 줄바꿈은 자동 배치의 초기값이라, 그대로 두면 글자가 자유 배치의 45% 아래로 줄어드는 좁은 말풍선에서는 다시 나눈다. 사용자가 직접 넣은 줄바꿈은 항상 우선한다. 테스트는 문턱에 걸치지 않는 사례 두 개로 나눴다.
 
 ## 매뉴얼 구조와 실제 사용 패턴 (UI 개선 뒤 진행)
 
