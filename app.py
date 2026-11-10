@@ -65,7 +65,7 @@ from pipeline.work_glossary import (NARRATION, GlossaryStore, character_map, cv_
 load_dotenv()
 
 from pipeline.paths import (REPO_ROOT as ROOT, WEB_DIR as UI_DIR, PROJECTS_DIR as SESSION_ROOT,
-                            INPUT_CACHE_DIR, CV_CACHE_DIR, ANALYSIS_CACHE_DIR, GLOSSARY_DIR, export_directory)
+                            INPUT_CACHE_DIR, CV_CACHE_DIR, ANALYSIS_CACHE_DIR, GLOSSARY_DIR, DATA_HOME, export_directory)
 ANALYSIS_CACHE_VERSION = "2026-05-29-region-suppress-v1"
 ANALYSIS_CACHE_COMPATIBLE_VERSIONS = {
     ANALYSIS_CACHE_VERSION,
@@ -1833,6 +1833,37 @@ def scan_images(path: Path, recursive: bool) -> list[Path]:
     )
 
 
+# 서버 폴더 열람(/api/fs/list)과 경로 가져오기(/api/import-path)가 열 수 있는 최상위 폴더.
+# 서버에 인증이 없어 같은 네트워크의 누구나 부를 수 있으므로 홈, 외장 디스크(/Volumes), 데이터 홈 아래로 제한한다.
+# 다른 위치를 더하려면 환경변수 COMIC_TRANSLATOR_BROWSE_ROOTS에 경로를 os.pathsep(맥은 ":")으로 이어 적는다. 기본 목록에 더해진다.
+SERVER_VOLUMES_DIR = Path("/Volumes")
+BROWSE_ROOTS_ENV = "COMIC_TRANSLATOR_BROWSE_ROOTS"
+BROWSE_FORBIDDEN_DETAIL = "허용된 폴더(홈, 외장 디스크, 데이터 폴더) 밖은 열 수 없습니다"
+
+
+def server_browse_roots() -> list[Path]:
+    candidates = [Path.home(), SERVER_VOLUMES_DIR, DATA_HOME]
+    candidates += [Path(item).expanduser() for item in os.environ.get(BROWSE_ROOTS_ENV, "").split(os.pathsep) if item.strip()]
+    roots: list[Path] = []
+    for candidate in candidates:
+        try:
+            root = candidate.resolve()
+        except OSError:
+            continue
+        if root not in roots:
+            roots.append(root)
+    return roots
+
+
+def server_path_allowed(path: Path) -> bool:
+    """심볼릭 링크를 풀어 실제 위치로 판단한다. 홈 안의 링크가 바깥을 가리켜도 막힌다."""
+    try:
+        resolved = Path(path).expanduser().resolve()
+    except OSError:
+        return False
+    return any(resolved.is_relative_to(root) for root in server_browse_roots())
+
+
 def server_folder_listing(path: str = "") -> dict[str, Any]:
     """서버(이 앱이 도는 컴퓨터)의 폴더를 고르는 창용 목록. 하위 폴더 이름과 이 폴더의 이미지 수만 돌려준다."""
     home = Path.home()
@@ -1841,6 +1872,8 @@ def server_folder_listing(path: str = "") -> dict[str, Any]:
         current = current.resolve()
     except OSError:
         current = home
+    if not server_path_allowed(current):
+        raise HTTPException(status_code=403, detail=BROWSE_FORBIDDEN_DETAIL)
     if not current.is_dir():
         raise HTTPException(status_code=404, detail="폴더를 찾을 수 없습니다")
     dirs: list[dict[str, str]] = []
@@ -1867,7 +1900,8 @@ def server_folder_listing(path: str = "") -> dict[str, Any]:
             # 시동 디스크 바로가기(심볼릭 링크)와 복구 볼륨은 사진 폴더가 아니므로 뺀다
             if not entry.name.startswith(".") and entry.name != "Recovery" and not entry.is_symlink() and entry.is_dir():
                 roots.append({"name": entry.name, "path": str(entry)})
-    parent = str(current.parent) if current.parent != current else ""
+    # 허용 범위의 맨 위에서는 상위 폴더 버튼을 끈다(빈 값이면 창이 버튼을 비활성화한다)
+    parent = str(current.parent) if current.parent != current and server_path_allowed(current.parent) else ""
     return {"path": str(current), "parent": parent, "dirs": dirs, "image_count": images, "roots": roots}
 
 
@@ -3791,9 +3825,12 @@ def create_app() -> FastAPI:
 
     @app.post("/api/import-path")
     def import_path(req: ImportPathRequest) -> dict[str, Any]:
-        data = ensure_session(req.session_id)
         src = Path(req.path).expanduser()
-        paths = scan_images(src, req.recursive)
+        if not server_path_allowed(src):
+            raise HTTPException(status_code=403, detail=BROWSE_FORBIDDEN_DETAIL)
+        data = ensure_session(req.session_id)
+        # 폴더 안의 링크가 허용 범위 밖 파일을 가리키면 그 파일은 가져오지 않는다
+        paths = [path for path in scan_images(src, req.recursive) if server_path_allowed(path)]
         records = copy_images_into_session(paths, data["session_id"])
         if records:
             data = ensure_session(data["session_id"])
