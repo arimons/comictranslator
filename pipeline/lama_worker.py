@@ -11,6 +11,7 @@
 # 통신: 표준 입출력으로 길이(8바이트) + pickle 프레임을 주고받는다. 같은 사용자의 자식 프로세스끼리만 쓴다.
 from __future__ import annotations
 
+import logging
 import os
 import pickle
 import struct
@@ -26,6 +27,7 @@ from PIL import Image
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 _HEADER = struct.Struct("<Q")
+logger = logging.getLogger(__name__)
 
 
 def _idle_release_sec() -> float:
@@ -99,7 +101,7 @@ class LamaWorkerClient:
             stderr=None,  # 로그는 서버 로그로 그대로 보낸다
         )
         self._started_at = time.monotonic()
-        print(f"[lama] 작업 프로세스 시작 (pid {self._proc.pid})", file=sys.stderr, flush=True)
+        logger.info(f"[lama] 작업 프로세스 시작 (pid {self._proc.pid})")
         self._start_watcher()
         return self._proc
 
@@ -139,7 +141,7 @@ class LamaWorkerClient:
         except Exception:  # noqa: BLE001 - 정상 종료가 안 되면 강제로 끝낸다
             proc.kill()
             proc.wait(timeout=5)
-        print(f"[lama] 작업 프로세스 종료 (pid {proc.pid}, {reason})", file=sys.stderr, flush=True)
+        logger.info(f"[lama] 작업 프로세스 종료 (pid {proc.pid}, {reason})")
         return True
 
     def release(self, reason: str = "요청") -> bool:
@@ -200,6 +202,9 @@ def _serve(loader: Any = _default_loader) -> None:
     channel_in = sys.stdin.buffer
     channel_out = sys.stdout.buffer
     sys.stdout = sys.stderr  # 라이브러리 print가 통신 채널을 더럽히지 않게 한다
+    from pipeline.logging_setup import configure_logging
+
+    configure_logging(stdout=sys.stderr, stderr=sys.stderr)  # 로그도 통신 채널(stdout)이 아니라 서버 로그로 간다
     lama = None
     while True:
         try:

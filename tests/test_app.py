@@ -140,6 +140,7 @@ def test_file_upload_defaults_to_first_natural_filename_and_keeps_custom_name(tm
 def test_import_path_defaults_project_name_to_input_name(tmp_path, monkeypatch, is_folder):
     monkeypatch.setattr(app, "SESSION_ROOT", tmp_path / "sessions")
     monkeypatch.setattr(app, "hydrate_load_cache_for_records", lambda *args, **kwargs: None)
+    monkeypatch.setenv(app.BROWSE_ROOTS_ENV, str(tmp_path))
     folder = tmp_path / "작품 폴더"
     folder.mkdir()
     source = folder / "page1.jpg"
@@ -150,7 +151,9 @@ def test_import_path_defaults_project_name_to_input_name(tmp_path, monkeypatch, 
     assert saved["project_name"] == ("작품 폴더" if is_folder else "page1")
 
 
-def test_server_folder_listing_returns_subfolders_and_image_count(tmp_path):
+def test_server_folder_listing_returns_subfolders_and_image_count(tmp_path, monkeypatch):
+    # 임시 폴더는 홈 밖이므로 허용 목록에 더한다. 상위 폴더 버튼까지 보려고 한 단계 위를 연다.
+    monkeypatch.setenv(app.BROWSE_ROOTS_ENV, str(tmp_path.parent))
     (tmp_path / "vol10").mkdir()
     (tmp_path / "vol2").mkdir()
     (tmp_path / ".hidden").mkdir()

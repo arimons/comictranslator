@@ -14,6 +14,7 @@ import datetime as dt
 import filecmp
 import hashlib
 import json
+import logging
 import os
 import queue
 import re
@@ -65,13 +66,14 @@ from pipeline.work_glossary import (NARRATION, GlossaryStore, character_map, cv_
 load_dotenv()
 
 from pipeline.paths import (REPO_ROOT as ROOT, WEB_DIR as UI_DIR, PROJECTS_DIR as SESSION_ROOT,
-                            INPUT_CACHE_DIR, CV_CACHE_DIR, ANALYSIS_CACHE_DIR, GLOSSARY_DIR, export_directory)
+                            INPUT_CACHE_DIR, CV_CACHE_DIR, ANALYSIS_CACHE_DIR, GLOSSARY_DIR, DATA_HOME, export_directory)
 ANALYSIS_CACHE_VERSION = "2026-05-29-region-suppress-v1"
 ANALYSIS_CACHE_COMPATIBLE_VERSIONS = {
     ANALYSIS_CACHE_VERSION,
     "2026-05-29-seed-bright-component-v1",
 }
 IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".webp", ".bmp", ".tif", ".tiff"}
+logger = logging.getLogger(__name__)
 PYTHON = sys.executable
 DEFAULT_ANALYZE_WORKERS = 4
 LOAD_CACHE_SYNC_LIMIT = 10
@@ -1833,6 +1835,37 @@ def scan_images(path: Path, recursive: bool) -> list[Path]:
     )
 
 
+# 서버 폴더 열람(/api/fs/list)과 경로 가져오기(/api/import-path)가 열 수 있는 최상위 폴더.
+# 서버에 인증이 없어 같은 네트워크의 누구나 부를 수 있으므로 홈, 외장 디스크(/Volumes), 데이터 홈 아래로 제한한다.
+# 다른 위치를 더하려면 환경변수 COMIC_TRANSLATOR_BROWSE_ROOTS에 경로를 os.pathsep(맥은 ":")으로 이어 적는다. 기본 목록에 더해진다.
+SERVER_VOLUMES_DIR = Path("/Volumes")
+BROWSE_ROOTS_ENV = "COMIC_TRANSLATOR_BROWSE_ROOTS"
+BROWSE_FORBIDDEN_DETAIL = "허용된 폴더(홈, 외장 디스크, 데이터 폴더) 밖은 열 수 없습니다"
+
+
+def server_browse_roots() -> list[Path]:
+    candidates = [Path.home(), SERVER_VOLUMES_DIR, DATA_HOME]
+    candidates += [Path(item).expanduser() for item in os.environ.get(BROWSE_ROOTS_ENV, "").split(os.pathsep) if item.strip()]
+    roots: list[Path] = []
+    for candidate in candidates:
+        try:
+            root = candidate.resolve()
+        except OSError:
+            continue
+        if root not in roots:
+            roots.append(root)
+    return roots
+
+
+def server_path_allowed(path: Path) -> bool:
+    """심볼릭 링크를 풀어 실제 위치로 판단한다. 홈 안의 링크가 바깥을 가리켜도 막힌다."""
+    try:
+        resolved = Path(path).expanduser().resolve()
+    except OSError:
+        return False
+    return any(resolved.is_relative_to(root) for root in server_browse_roots())
+
+
 def server_folder_listing(path: str = "") -> dict[str, Any]:
     """서버(이 앱이 도는 컴퓨터)의 폴더를 고르는 창용 목록. 하위 폴더 이름과 이 폴더의 이미지 수만 돌려준다."""
     home = Path.home()
@@ -1841,6 +1874,8 @@ def server_folder_listing(path: str = "") -> dict[str, Any]:
         current = current.resolve()
     except OSError:
         current = home
+    if not server_path_allowed(current):
+        raise HTTPException(status_code=403, detail=BROWSE_FORBIDDEN_DETAIL)
     if not current.is_dir():
         raise HTTPException(status_code=404, detail="폴더를 찾을 수 없습니다")
     dirs: list[dict[str, str]] = []
@@ -1867,7 +1902,8 @@ def server_folder_listing(path: str = "") -> dict[str, Any]:
             # 시동 디스크 바로가기(심볼릭 링크)와 복구 볼륨은 사진 폴더가 아니므로 뺀다
             if not entry.name.startswith(".") and entry.name != "Recovery" and not entry.is_symlink() and entry.is_dir():
                 roots.append({"name": entry.name, "path": str(entry)})
-    parent = str(current.parent) if current.parent != current else ""
+    # 허용 범위의 맨 위에서는 상위 폴더 버튼을 끈다(빈 값이면 창이 버튼을 비활성화한다)
+    parent = str(current.parent) if current.parent != current and server_path_allowed(current.parent) else ""
     return {"path": str(current), "parent": parent, "dirs": dirs, "image_count": images, "roots": roots}
 
 
@@ -2406,7 +2442,7 @@ def sync_overlay_guidance_for_record(record: dict[str, Any], log_callback=None) 
         message = f"글자 입히기 수동값 영역 참조 맞춤: 이동 {report['moved'] or '-'}"
         if stashed:
             message += f", 짝 없음(보관) {sorted(stashed)}"
-        print(f"[overlay] {record['id']} {message}", flush=True)
+        logger.info(f"[overlay] {record['id']} {message}")
         if log_callback is not None:
             log_callback(message)
     report["stashed"] = {**normalize_report.get("stashed", {}), **report.get("stashed", {})}
@@ -2864,6 +2900,13 @@ def run_subprocess_stream(cmd: list[str], timeout: int = 300, log_callback=None)
 _RESTORE_EXECUTOR = ThreadPoolExecutor(max_workers=1, thread_name_prefix="restore")
 _RESTORE_JOBS: dict[str, dict[str, Any]] = {}
 _RESTORE_JOBS_LOCK = threading.Lock()
+# 끝난 작업 기록은 메모리에만 있어 상시 서버에서 계속 쌓인다. 새 작업을 받을 때 오래된 것만 지운다.
+# 편집기는 후보를 띄워 둔 채 한참 뒤에 확정할 수 있으므로 끝난 지 하루가 지나야 지우고,
+# 개수가 상한을 넘으면 끝난 지 1시간이 지난 것부터 오래된 순으로 지운다. 대기·실행 중인 작업은 지우지 않는다.
+_RESTORE_JOB_TERMINAL = {"done", "error"}
+_RESTORE_JOB_MAX_AGE_SEC = 24 * 3600
+_RESTORE_JOB_MAX_FINISHED = 200
+_RESTORE_JOB_MIN_AGE_SEC = 3600
 _RESTORE_STATE_LOCK = threading.Lock()
 
 
@@ -2951,6 +2994,27 @@ def _restore_job_public(job: dict[str, Any]) -> dict[str, Any]:
     return {key: value for key, value in job.items() if not key.startswith("_")}
 
 
+def prune_restore_jobs(now: float | None = None) -> list[str]:
+    """끝난 복원·AI 지우기 작업 기록을 정리한다. 작업 폴더의 파일은 건드리지 않는다."""
+    now = time.time() if now is None else now
+    with _RESTORE_JOBS_LOCK:
+        finished = sorted(
+            ((job.get("finished_at") or job.get("created_at") or 0.0, job_id)
+             for job_id, job in _RESTORE_JOBS.items() if job.get("status") in _RESTORE_JOB_TERMINAL),
+        )
+        drop = {job_id for finished_at, job_id in finished if now - finished_at > _RESTORE_JOB_MAX_AGE_SEC}
+        excess = len(finished) - len(drop) - _RESTORE_JOB_MAX_FINISHED
+        for finished_at, job_id in finished:
+            if excess <= 0:
+                break
+            if job_id not in drop and now - finished_at > _RESTORE_JOB_MIN_AGE_SEC:
+                drop.add(job_id)
+                excess -= 1
+        for job_id in drop:
+            del _RESTORE_JOBS[job_id]
+    return sorted(drop)
+
+
 def submit_restore_job(req: RestoreRunRequest) -> dict[str, Any]:
     import cv2
 
@@ -2992,6 +3056,7 @@ def submit_restore_job(req: RestoreRunRequest) -> dict[str, Any]:
         "created_at": time.time(),
         "_job_dir": str(job_dir),
     }
+    prune_restore_jobs()
     with _RESTORE_JOBS_LOCK:
         _RESTORE_JOBS[job_id] = job
 
@@ -3068,6 +3133,7 @@ def submit_ai_erase_job(req: AiEraseRequest) -> dict[str, Any]:
         "created_at": time.time(),
         "_job_dir": str(job_dir),
     }
+    prune_restore_jobs()
     with _RESTORE_JOBS_LOCK:
         _RESTORE_JOBS[job_id] = job
 
@@ -3761,9 +3827,12 @@ def create_app() -> FastAPI:
 
     @app.post("/api/import-path")
     def import_path(req: ImportPathRequest) -> dict[str, Any]:
-        data = ensure_session(req.session_id)
         src = Path(req.path).expanduser()
-        paths = scan_images(src, req.recursive)
+        if not server_path_allowed(src):
+            raise HTTPException(status_code=403, detail=BROWSE_FORBIDDEN_DETAIL)
+        data = ensure_session(req.session_id)
+        # 폴더 안의 링크가 허용 범위 밖 파일을 가리키면 그 파일은 가져오지 않는다
+        paths = [path for path in scan_images(src, req.recursive) if server_path_allowed(path)]
         records = copy_images_into_session(paths, data["session_id"])
         if records:
             data = ensure_session(data["session_id"])
@@ -4046,6 +4115,10 @@ def main() -> None:
     parser.add_argument("--port", type=int, default=7870)
     parser.add_argument("--no-browser", action="store_true")
     args = parser.parse_args()
+    # 서버 진단 로그는 PM2가 받는 stdout(정보)·stderr(경고 이상)로 보낸다. 수준과 모듈 이름을 앞에 붙여 골라 볼 수 있게 한다.
+    from pipeline.logging_setup import SERVER_FORMAT, configure_logging
+
+    configure_logging(SERVER_FORMAT)
 
     import uvicorn
 

@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 import json
+import logging
 import sys
 from typing import Any, Dict, List, Tuple
 
 import numpy as np
+
+logger = logging.getLogger(__name__)
 
 
 Rect = List[int]
@@ -347,7 +350,7 @@ def repair_line_fragments(
     }
 
     if debug:
-        print(
+        logger.info(
             f"  [Repair] lines {len(lines)} → {len(merged_all)} "
             f"(merge {merge_success}/{merge_attempts}, "
             f"rej: horiz={rejected['horizontal']} gap={rejected['gap']} blank_gap={rejected['large_blank_gap']} "
@@ -428,7 +431,7 @@ def filter_furigana_lines(lines: List[Dict], avg_width: float, image_height: flo
     if remove_indices:
         filtered = [line for idx, line in enumerate(filtered) if idx not in remove_indices]
 
-    print(f"  Furigana filter: {len(lines)} -> {len(filtered)} lines")
+    logger.info(f"  Furigana filter: {len(lines)} -> {len(filtered)} lines")
     return filtered
 
 
@@ -585,7 +588,7 @@ def expand_x_adjacent(
         clusters = result
 
     if debug:
-        print(f"  [XExpand] {n_before} → {len(clusters)} clusters "
+        logger.info(f"  [XExpand] {n_before} → {len(clusters)} clusters "
               f"(x_thr={x_threshold:.1f}, y_ovlp≥{y_overlap_min:.0%})")
 
     return clusters
@@ -700,10 +703,7 @@ def consolidate_clusters(
                     f"x_gap={best_diag.get('x_gap', 0):.0f} "
                     f"y_overlap={best_diag.get('overlap_y', 0):.0f}/{best_diag.get('min_h', 0):.0f}"
                 )
-                try:
-                    print(msg)
-                except UnicodeEncodeError:
-                    print(msg.encode("ascii", errors="replace").decode("ascii"))
+                logger.info(msg)
 
             merged_flags[j] = True
             merge_count += 1
@@ -715,7 +715,7 @@ def consolidate_clusters(
         result.append(clusters[i])
 
     if debug:
-        print(f"  [Consolidate] clusters {n} → {len(result)} (merged={merge_count})")
+        logger.info(f"  [Consolidate] clusters {n} → {len(result)} (merged={merge_count})")
 
     return result
 
@@ -914,11 +914,11 @@ def build_text_groups_v2(
 
     if debug:
         ytol_mode = "dynamic" if enable_dynamic_ytol else "fixed"
-        print(f"  avg_width={avg_width:.1f}  median_h={median_h:.1f}  p75_h={p75_h:.1f}  y_tol={y_tolerance:.1f} ({ytol_mode})")
+        logger.info(f"  avg_width={avg_width:.1f}  median_h={median_h:.1f}  p75_h={p75_h:.1f}  y_tol={y_tolerance:.1f} ({ytol_mode})")
 
     lines = pass1_create_lines(fragments, avg_width, y_tolerance)
     if debug:
-        print(f"  Pass1: {len(fragments)} blocks → {len(lines)} lines")
+        logger.info(f"  Pass1: {len(fragments)} blocks → {len(lines)} lines")
 
     if enable_repair:
         # merge_gap: 누락 글자 3개분 gap까지 커버 (3글자 * 글자높이 + 자간)
@@ -928,7 +928,7 @@ def build_text_groups_v2(
             image_height * 0.12,  # 이미지 높이의 12%를 상한으로 (과도한 병합 방지)
         )
         if debug:
-            print(f"  [Repair] merge_gap={merge_gap:.1f}")
+            logger.info(f"  [Repair] merge_gap={merge_gap:.1f}")
         lines, _ = repair_line_fragments(
             lines, x_tol=avg_width * 0.33, merge_gap=merge_gap, avg_width=avg_width, debug=debug
         )
@@ -938,7 +938,7 @@ def build_text_groups_v2(
 
     groups = pass2_create_clusters(lines, avg_width, y_tolerance)
     if debug:
-        print(f"  Pass2: {len(lines)} lines → {len(groups)} clusters")
+        logger.info(f"  Pass2: {len(lines)} lines → {len(groups)} clusters")
 
     if enable_x_expand:
         # x_threshold = avg_width * 0.80: 열 간 간격이 약 4/5자 이내일 때만 병합
@@ -959,6 +959,11 @@ def build_text_groups_v2(
 
 
 def main() -> None:
+    try:
+        from pipeline.logging_setup import configure_logging
+    except ImportError:  # 저장소 루트가 sys.path에 없이 파일 경로로 직접 실행한 경우
+        from logging_setup import configure_logging
+    configure_logging()
     if len(sys.argv) < 3:
         print("Usage: python text_group_builder_v2.py <cv_json> <output_json> [image_height]")
         raise SystemExit(1)
