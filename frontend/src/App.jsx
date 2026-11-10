@@ -68,6 +68,7 @@ import { normalizedFontSize, normalizeOverlayRegionOverride, normalizeOverlayGui
 import { ENGINE_NAMES, guidanceEquals, guidanceHistoryItems as buildGuidanceHistoryItems, stripGuidanceHistoryItem } from "./guidanceHistory.js";
 import { ocrStateForImage as ocrStateOf, ocrDetailForImage as ocrDetailOf, ocrProgressForImage, isImageGenerationFallback } from "./ocrStatus.js";
 import useRecentSessions from "./hooks/useRecentSessions.js";
+import useBusyTasks from "./hooks/useBusyTasks.js";
 
 // 글자 입히기 편집 기록 상한과, 같은 종류의 연속 변경을 한 칸으로 묶는 시간
 const OVERLAY_HISTORY_LIMIT = 100;
@@ -117,8 +118,7 @@ export default function App() {
   const [status, setStatus] = useState("");
   const [ocrLog, setOcrLog] = useState("");
   const [exportLog, setExportLog] = useState("");
-  const [busyTasks, setBusyTasks] = useState({});
-  const taskLocksRef = useRef(new Set());
+  const { busyTasks, setBusyTasks, taskLocksRef, runTask } = useBusyTasks(setStatus);
   const [activeTab, setActiveTab] = useState("guidance");
   const [workspaceStarted, setWorkspaceStarted] = useState(false);
   const generationReviewMode = Boolean(new URLSearchParams(window.location.search).get("generation_review"));
@@ -1626,23 +1626,6 @@ export default function App() {
     handledOverlayApplyRequestRef.current = overlayApplyRequest;
     if (activeTab === "overlay" && canRenderOverlayImage(selected)) applyOverlay();
   }, [overlayApplyRequest, overlayBusy]);
-
-  async function runTask(kind, label, fn) {
-    if (taskLocksRef.current.has(kind)) return;
-    taskLocksRef.current.add(kind);
-    setBusyTasks((current) => ({ ...current, [kind]: true }));
-    setStatus(`${label}...`);
-    try {
-      const result = await fn();
-      setStatus(result?.logs || `${label} 완료`);
-      return result;
-    } catch (err) {
-      setStatus(String(err.message || err));
-    } finally {
-      taskLocksRef.current.delete(kind);
-      setBusyTasks((current) => ({ ...current, [kind]: false }));
-    }
-  }
 
   // 세션 id가 아직 없을 때 서버가 새 세션을 만들었다면 그 세션을 현재 세션으로 채택한다.
   async function adoptCreatedSession(requestSid, resultSid) {
