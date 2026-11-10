@@ -69,6 +69,7 @@ import useRecentSessions from "./hooks/useRecentSessions.js";
 import useBusyTasks from "./hooks/useBusyTasks.js";
 import useAutoAnalysis from "./hooks/useAutoAnalysis.js";
 import useWorkspaceResume from "./hooks/useWorkspaceResume.js";
+import useExportSettings from "./hooks/useExportSettings.js";
 
 // 글자 입히기 편집 기록 상한과, 같은 종류의 연속 변경을 한 칸으로 묶는 시간
 const OVERLAY_HISTORY_LIMIT = 100;
@@ -114,7 +115,6 @@ export default function App() {
   const [folderPath, setFolderPath] = useState("");
   const [status, setStatus] = useState("");
   const [ocrLog, setOcrLog] = useState("");
-  const [exportLog, setExportLog] = useState("");
   const { busyTasks, setBusyTasks, taskLocksRef, runTask } = useBusyTasks(setStatus);
   const [activeTab, setActiveTab] = useState("guidance");
   const [workspaceStarted, setWorkspaceStarted] = useState(false);
@@ -177,16 +177,6 @@ export default function App() {
   const [imageGen, setImageGen] = useState(null);
   const prevPageRef = useRef({ id: null, ready: false });
   const [autoOverlayPreview, setAutoOverlayPreview] = useState(true);
-  const [exportImageModel, setExportImageModel] = useState("gpt-image-2.5-sunburst");
-  const [exportTextModel, setExportTextModel] = useState("gpt-6.1-terra");
-  const [exportImageQuality, setExportImageQuality] = useState("medium");
-  const [exportImageSize, setExportImageSize] = useState("match_input");
-  const [exportOutputFormat, setExportOutputFormat] = useState("jpeg");
-  const [exportOutputCompression, setExportOutputCompression] = useState(92);
-  const [exportPromptGuide, setExportPromptGuide] = useState("");
-  const [exportAnalyzeFirst, setExportAnalyzeFirst] = useState(true);
-  const [exportGenerateIds, setExportGenerateIds] = useState([]);
-  const [exportFocusedId, setExportFocusedId] = useState("");
   const [overlayEditVersion, setOverlayEditVersion] = useState(0);
   const [overlayApplyRequest, setOverlayApplyRequest] = useState(0);
   const [toolsOpen, setToolsOpen] = useState(true);
@@ -263,6 +253,14 @@ export default function App() {
   const effectiveOcrModel = ocrModels.some((model) => model.id === ocrModel) ? ocrModel : ocrDefaultModel;
   // 이미지 작업(글자 지우기·통번역 재생성)은 OCR·번역 모델의 제공자를 따라간다
   const ocrProvider = ocrModels.find((model) => model.id === effectiveOcrModel)?.provider || "openai";
+  // 내보내기 탭(이미지 생성) 설정·선택·로그. 제공자 맞춤 effect가 함께 들어 있다.
+  const {
+    exportLog, setExportLog, exportImageModel, setExportImageModel, exportTextModel, setExportTextModel,
+    exportImageQuality, setExportImageQuality, exportImageSize, setExportImageSize,
+    exportOutputFormat, setExportOutputFormat, exportOutputCompression, setExportOutputCompression,
+    exportPromptGuide, setExportPromptGuide, exportAnalyzeFirst, setExportAnalyzeFirst,
+    exportGenerateIds, setExportGenerateIds, exportFocusedId, setExportFocusedId, toggleExportGenerateId,
+  } = useExportSettings({ ocrProvider, effectiveOcrModel, imageModels });
   const guidanceEditorUrl = selected?.input_url || null;
   const generatedCandidates = generationStatus?.session_id === sessionId && generationStatus?.image_id === selected?.id ? generationStatus.results || [] : [];
   const latestGeneratedCandidate = generatedCandidates.at(-1);
@@ -1179,13 +1177,6 @@ export default function App() {
       if (data.image_models) setImageModels(data.image_models);
     }).catch(() => {});
   }, []);
-
-  // OCR·번역 제공자를 바꾸면 통번역 재생성 모델도 같은 제공자로 맞춘다(입력란에서 직접 고칠 수는 있다)
-  useEffect(() => {
-    const gemini = ocrProvider === "gemini";
-    setExportImageModel((gemini ? imageModels.gemini : imageModels.openai) || "gpt-image-2.5-sunburst");
-    setExportTextModel(gemini ? effectiveOcrModel : "gpt-6.1-terra");
-  }, [ocrProvider, effectiveOcrModel, imageModels]);
 
   useEffect(() => {
     if (!sessionId || !baseSelected?.id) return;
@@ -2171,14 +2162,6 @@ export default function App() {
     if (!sessionId) return;
     window.location.href = `/api/session/${encodeURIComponent(sessionId)}/export`;
     setStatus("작업 결과 zip 다운로드를 시작했습니다.");
-  }
-
-  function toggleExportGenerateId(imageId) {
-    setExportGenerateIds((current) => (
-      current.includes(imageId)
-        ? current.filter((id) => id !== imageId)
-        : [...current, imageId]
-    ));
   }
 
   async function generateMissingFinals(options = {}) {
