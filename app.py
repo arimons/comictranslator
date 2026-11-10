@@ -62,7 +62,7 @@ from pipeline.render_text_overlay import apply_text_overlay
 from pipeline.work_glossary import (NARRATION, GlossaryStore, character_map, cv_page_text, glossary_snapshot, match_works,
                                     page_region_contexts, page_speakers, region_context_prompt, speaker_prompt,
                                     REGION_CONTEXT_LIMIT)
-from routers import restore as restore_routes, system as system_routes
+from routers import glossary as glossary_routes, restore as restore_routes, system as system_routes
 
 load_dotenv()
 
@@ -3476,76 +3476,6 @@ def create_app() -> FastAPI:
         except (ValueError, OSError) as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-    @app.get("/api/glossary/{session_id}")
-    def read_glossary(session_id: str) -> dict:
-        try:
-            return glossary_payload(session_id)
-        except ValueError as exc:
-            raise HTTPException(status_code=400, detail=str(exc)) from exc
-
-    @app.post("/api/glossary/bind")
-    def bind_glossary(req: GlossaryBindRequest) -> dict:
-        try:
-            if not session_file(req.session_id).is_file():
-                raise ValueError("프로젝트를 찾을 수 없습니다.")
-            store = glossary_store()
-            wid = store.read(req.work_id)["work_id"] if req.work_id else store.create(req.title)
-            auto = req.matched_by == "cv"
-            write_json(glossary_binding_path(req.session_id), {"work_id": wid, "matched_by": "cv" if auto else "user",
-                                                               "hits": [str(hit)[:40] for hit in req.hits[:12]] if auto else []})
-            return glossary_payload(req.session_id)
-        except ValueError as exc:
-            raise HTTPException(status_code=400, detail=str(exc)) from exc
-
-    @app.post("/api/glossary/unbind")
-    def unbind_glossary(req: GlossaryBindRequest) -> dict:
-        try:
-            if not session_file(req.session_id).is_file():
-                raise ValueError("프로젝트를 찾을 수 없습니다.")
-            # 작품 없이 진행. 'none'을 남겨 CV 자동 연결이 다시 붙지 않게 한다.
-            write_json(glossary_binding_path(req.session_id), {"work_id": None, "matched_by": "none", "hits": []})
-            return glossary_payload(req.session_id)
-        except ValueError as exc:
-            raise HTTPException(status_code=400, detail=str(exc)) from exc
-
-    def bound_work(session_id: str, work_id: str) -> None:
-        data = session_glossary(session_id)
-        if not data or data["work_id"] != work_id:
-            raise ValueError("연결된 작품이 바뀌었습니다. 작품 메모를 다시 여세요.")
-
-    @app.post("/api/glossary/save")
-    def save_glossary(req: GlossarySaveRequest) -> dict:
-        try:
-            bound_work(req.session_id, req.work_id)
-            glossary_store().save(req.work_id, req.model_dump())
-            return glossary_payload(req.session_id)
-        except ValueError as exc:
-            raise HTTPException(status_code=400, detail=str(exc)) from exc
-
-    @app.get("/api/namu-lookup")
-    def lookup_namu(q: str = "") -> dict:
-        from pipeline.work_sources import namu_lookup
-        try:
-            return namu_lookup(q)
-        except ValueError as exc:
-            raise HTTPException(status_code=400, detail=str(exc)) from exc
-        except OSError:
-            raise HTTPException(status_code=502, detail="나무위키에 연결하지 못했습니다. 직접 검색해 주소를 붙여 넣으세요.") from None
-
-    @app.post("/api/glossary/draft")
-    def draft_glossary(req: GlossaryDraftRequest) -> dict:
-        try:
-            bound_work(req.session_id, req.work_id)
-            if len(req.text) > 16000:
-                raise ValueError("붙여 넣는 자료는 16000자 이내로 입력하세요.")
-            glossary_store().draft(req.work_id, req.url, req.text)
-            return glossary_payload(req.session_id)
-        except ValueError as exc:
-            raise HTTPException(status_code=400, detail=str(exc)) from exc
-        except Exception:
-            # SDK 예외에는 키/요청 정보가 들어갈 수 있어 원문을 노출하지 않는다.
-            raise HTTPException(status_code=400, detail="초안 생성에 실패했습니다. URL 접근이 막히면 본문을 직접 붙여 넣고, OpenAI 키·한도를 확인하세요.") from None
-
     @app.get("/api/speakers/{session_id}/{image_id}")
     def read_speakers(session_id: str, image_id: str) -> dict:
         try:
@@ -3991,7 +3921,7 @@ def create_app() -> FastAPI:
 
     # 라우트 묶음은 routers/에 있다. 처리기가 이 모듈의 전역을 호출 시점에 찾도록 모듈 객체를 넘긴다(__main__ 실행 포함).
     app_module = sys.modules[__name__]
-    for router_module in (restore_routes, system_routes):
+    for router_module in (glossary_routes, restore_routes, system_routes):
         app.include_router(router_module.build_router(app_module))
 
     fonts_dir = ROOT / "Fonts"
