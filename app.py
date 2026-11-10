@@ -62,7 +62,7 @@ from pipeline.render_text_overlay import apply_text_overlay
 from pipeline.work_glossary import (NARRATION, GlossaryStore, character_map, cv_page_text, glossary_snapshot, match_works,
                                     page_region_contexts, page_speakers, region_context_prompt, speaker_prompt,
                                     REGION_CONTEXT_LIMIT)
-from routers import system as system_routes
+from routers import restore as restore_routes, system as system_routes
 
 load_dotenv()
 
@@ -3989,63 +3989,9 @@ def create_app() -> FastAPI:
             raise HTTPException(status_code=404, detail="File not found")
         return FileResponse(resolved)
 
-    @app.get("/api/restore/status")
-    def restore_status() -> dict[str, Any]:
-        from pipeline.background_restore import ENGINES, RESOLUTION_CHOICES
-
-        return {
-            "engines": list(ENGINES),
-            "resolutions": list(RESOLUTION_CHOICES),
-        }
-
-    @app.get("/api/restore/info")
-    def restore_info_endpoint(session_id: str, image_id: str) -> dict[str, Any]:
-        return restore_info(_restore_record(session_id, image_id))
-
-    @app.post("/api/restore/auto-mask")
-    def restore_auto_mask(req: RestoreAutoMaskRequest) -> dict[str, Any]:
-        return build_restore_auto_mask(req)
-
-    @app.post("/api/restore/mask")
-    def restore_save_mask(req: RestoreMaskRequest) -> dict[str, Any]:
-        import cv2
-
-        from pipeline.background_restore import decode_mask_png
-
-        record = _restore_record(req.session_id, req.image_id)
-        original = _read_bgr(record["input_path"])
-        mask = decode_mask_png(req.mask_png, original.shape[1], original.shape[0])
-        Path(record["restore_dir"]).mkdir(parents=True, exist_ok=True)
-        cv2.imwrite(record["restore_mask_png"], mask)
-        return restore_info(_restore_record(req.session_id, req.image_id))
-
-    @app.post("/api/restore/ai-erase")
-    def restore_ai_erase(req: AiEraseRequest) -> dict[str, Any]:
-        return submit_ai_erase_job(req)
-
-    @app.post("/api/restore/run")
-    def restore_run(req: RestoreRunRequest) -> dict[str, Any]:
-        return submit_restore_job(req)
-
-    @app.get("/api/restore/job/{job_id}")
-    def restore_job(job_id: str) -> dict[str, Any]:
-        with _RESTORE_JOBS_LOCK:
-            job = _RESTORE_JOBS.get(job_id)
-        if job is None:
-            raise HTTPException(status_code=404, detail="복원 작업을 찾을 수 없습니다")
-        return _restore_job_public(job)
-
-    @app.post("/api/restore/accept")
-    def restore_accept(req: RestoreAcceptRequest) -> dict[str, Any]:
-        return accept_restore_job(req)
-
-    @app.post("/api/restore/patch/remove")
-    def restore_patch_remove(req: RestorePatchRemoveRequest) -> dict[str, Any]:
-        return remove_restore_patch(req)
-
     # 라우트 묶음은 routers/에 있다. 처리기가 이 모듈의 전역을 호출 시점에 찾도록 모듈 객체를 넘긴다(__main__ 실행 포함).
     app_module = sys.modules[__name__]
-    for router_module in (system_routes,):
+    for router_module in (restore_routes, system_routes):
         app.include_router(router_module.build_router(app_module))
 
     fonts_dir = ROOT / "Fonts"
