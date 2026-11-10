@@ -71,6 +71,7 @@ import useAutoAnalysis from "./hooks/useAutoAnalysis.js";
 import useWorkspaceResume from "./hooks/useWorkspaceResume.js";
 import useExportSettings from "./hooks/useExportSettings.js";
 import useTopbarMenu from "./hooks/useTopbarMenu.js";
+import useGlobalKeyboard, { useShortcutToast } from "./hooks/useGlobalKeyboard.js";
 
 // 글자 입히기 편집 기록 상한과, 같은 종류의 연속 변경을 한 칸으로 묶는 시간
 const OVERLAY_HISTORY_LIMIT = 100;
@@ -197,12 +198,11 @@ export default function App() {
   const [speakerPickerOpen, setSpeakerPickerOpen] = useState(false);
   // 영역 분석 상단 바의 펼침 메뉴("history" | "more" | null). 바깥을 누르면 닫는다.
   const { guidanceMenu, setGuidanceMenu, guidanceMenuRef } = useTopbarMenu();
-  const [shortcutToast, setShortcutToast] = useState(null);
+  const { shortcutToast, showShortcutToast } = useShortcutToast(setStatus);
   const fileRef = useRef(null);
   const editorCanvasRef = useRef(null);
   const overlayCanvasRef = useRef(null);
   const keyHandlerRef = useRef(null);
-  const shortcutToastTimerRef = useRef(null);
   // 글자 입히기 편집 기록(페이지 단위). 확정된 변경마다 직전 overlayGuidance를 쌓는다.
   const overlayHistoryRef = useRef({ undo: [], redo: [], lastKey: "", lastAt: 0 });
   const overlayGuidanceRef = useRef(overlayGuidance);
@@ -769,13 +769,6 @@ export default function App() {
     // 일반 편집과 같은 경로로 auto preview가 다시 render한다.
     bumpOverlayEditVersion();
     setStatus(`${direction < 0 ? "Undo" : "Redo"} overlay (남은 undo ${history.undo.length} / redo ${history.redo.length})`);
-  }
-
-  function showShortcutToast(text) {
-    setStatus(text);
-    setShortcutToast(text);
-    if (shortcutToastTimerRef.current) window.clearTimeout(shortcutToastTimerRef.current);
-    shortcutToastTimerRef.current = window.setTimeout(() => setShortcutToast(null), 1600);
   }
 
   const WRITING_MODE_LABELS = { horizontal: "가로", vertical: "세로" };
@@ -1498,37 +1491,8 @@ export default function App() {
   }
   keyHandlerRef.current = handleShortcutKeyDown;
 
-  useEffect(() => {
-    const onKeyDown = (event) => {
-      // 입력칸 밖의 ⌘A/Ctrl+A는 화면 글자 전체 선택만 일으키고 클릭을 방해하므로 막는다
-      const target = event.target;
-      const typing = ["INPUT", "TEXTAREA", "SELECT"].includes(target?.tagName) || target?.isContentEditable;
-      if ((event.metaKey || event.ctrlKey) && !event.altKey && event.code === "KeyA" && !typing) {
-        event.preventDefault();
-        return;
-      }
-      keyHandlerRef.current?.(event);
-    };
-    window.addEventListener("keydown", onKeyDown, true);
-    return () => window.removeEventListener("keydown", onKeyDown, true);
-  }, []);
-
-  // 미리보기 캔버스를 누르면 사이드 패널의 입력창에 남은 포커스를 풀어 방향키가 페이지 이동에 쓰이게 한다.
-  useEffect(() => {
-    const onPointerDown = (event) => {
-      if (!event.target?.closest?.("#stageHost, #overlayStageHost")) return;
-      const active = document.activeElement;
-      if (!active || active === document.body || active.closest?.(".floating-text-editor")) return;
-      const tag = active.tagName?.toLowerCase();
-      if (tag === "input" || tag === "textarea" || tag === "select" || active.isContentEditable) active.blur();
-    };
-    window.addEventListener("pointerdown", onPointerDown, true);
-    return () => window.removeEventListener("pointerdown", onPointerDown, true);
-  }, []);
-
-  useEffect(() => () => {
-    if (shortcutToastTimerRef.current) window.clearTimeout(shortcutToastTimerRef.current);
-  }, []);
+  // 전역 keydown(캡처)·캔버스 포인터 리스너. 두 effect는 이 자리에서 원래 순서대로 돈다.
+  useGlobalKeyboard(keyHandlerRef);
 
   // floating text editor의 Cmd/Ctrl+Enter: 초안 반영과 같은 render에서 갱신된 overlayGuidance로 적용한다.
   // 다른 overlay 렌더가 진행 중이면 끝난 뒤 한 번 적용한다.
