@@ -14,6 +14,7 @@ import datetime as dt
 import filecmp
 import hashlib
 import json
+import logging
 import os
 import queue
 import re
@@ -72,6 +73,7 @@ ANALYSIS_CACHE_COMPATIBLE_VERSIONS = {
     "2026-05-29-seed-bright-component-v1",
 }
 IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".webp", ".bmp", ".tif", ".tiff"}
+logger = logging.getLogger(__name__)
 PYTHON = sys.executable
 DEFAULT_ANALYZE_WORKERS = 4
 LOAD_CACHE_SYNC_LIMIT = 10
@@ -2440,7 +2442,7 @@ def sync_overlay_guidance_for_record(record: dict[str, Any], log_callback=None) 
         message = f"글자 입히기 수동값 영역 참조 맞춤: 이동 {report['moved'] or '-'}"
         if stashed:
             message += f", 짝 없음(보관) {sorted(stashed)}"
-        print(f"[overlay] {record['id']} {message}", flush=True)
+        logger.info(f"[overlay] {record['id']} {message}")
         if log_callback is not None:
             log_callback(message)
     report["stashed"] = {**normalize_report.get("stashed", {}), **report.get("stashed", {})}
@@ -4113,6 +4115,10 @@ def main() -> None:
     parser.add_argument("--port", type=int, default=7870)
     parser.add_argument("--no-browser", action="store_true")
     args = parser.parse_args()
+    # 서버 진단 로그는 PM2가 받는 stdout(정보)·stderr(경고 이상)로 보낸다. 수준과 모듈 이름을 앞에 붙여 골라 볼 수 있게 한다.
+    from pipeline.logging_setup import SERVER_FORMAT, configure_logging
+
+    configure_logging(SERVER_FORMAT)
 
     import uvicorn
 

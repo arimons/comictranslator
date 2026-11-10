@@ -8,6 +8,7 @@ OCR sheet가 없을 때만 기존 원본 이미지 + CV cluster 힌트 경로로
 
 import argparse
 import json
+import logging
 import os
 import re
 import sys
@@ -42,6 +43,7 @@ except ImportError:
     )
 
 load_dotenv()
+logger = logging.getLogger(__name__)
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 # Vertex(Agent Platform) 경로 키. Cloud 청구라 체험판 크레딧을 쓸 수 있고, Gemini API(AI Studio) 키와 따로 둔다.
@@ -305,7 +307,7 @@ def _run_openai_json(
     for attempt in range(max_retries):
         if attempt > 0:
             wait = 2 ** attempt
-            print(f"  ⏳ OpenAI 재시도 {attempt}/{max_retries - 1} ({wait}s 대기)...")
+            logger.warning(f"  ⏳ OpenAI 재시도 {attempt}/{max_retries - 1} ({wait}s 대기)...")
             time.sleep(wait)
         try:
             response = client.responses.create(
@@ -371,7 +373,7 @@ def _run_gemini_json(
     for attempt in range(max_retries):
         if attempt > 0:
             wait = 2 ** attempt
-            print(f"  ⏳ Gemini 재시도 {attempt}/{max_retries - 1} ({wait}s 대기)...")
+            logger.warning(f"  ⏳ Gemini 재시도 {attempt}/{max_retries - 1} ({wait}s 대기)...")
             time.sleep(wait)
         try:
             response = client.models.generate_content(
@@ -960,7 +962,7 @@ def _process_sheet_ocr(
                 f"{i + 1}:[{','.join(str(r.get('region_id')) for r in chunk)}]"
                 for i, chunk in enumerate(ocr_chunks)
             )
-            print(f"  ✂️ OCR sheet chunk 분할: {chunk_log}")
+            logger.info(f"  ✂️ OCR sheet chunk 분할: {chunk_log}")
 
         # chunk마다 최대 3회 요청한다. 통과한 region은 보관하고 다음 시도에는 실패한 region만 다시 보낸다.
         # 끝까지 실패한 region은 누락으로 남기고 나머지로 페이지를 완성한다(렌더는 누락 region을 원본으로 둔다).
@@ -1005,7 +1007,7 @@ def _process_sheet_ocr(
                 except Exception as e:
                     for rid in pending_ids:
                         problems[rid] = f"LLM API 호출 실패: {str(e)}"
-                    print(f"  ⚠️ LLM API 호출 실패 chunk {chunk_index}/{len(ocr_chunks)} — {str(e)} (시도 {attempt}/{max_content_retries})")
+                    logger.warning(f"  ⚠️ LLM API 호출 실패 chunk {chunk_index}/{len(ocr_chunks)} — {str(e)} (시도 {attempt}/{max_content_retries})")
                     if attempt < max_content_retries:
                         time.sleep(2)
                     continue
@@ -1016,9 +1018,9 @@ def _process_sheet_ocr(
                 still = sorted(chunk_expected_ids - set(good))
                 if not still:
                     if attempt > 1:
-                        print(f"  ✨ OCR/번역 검증 통과 chunk {chunk_index}/{len(ocr_chunks)} (시도 {attempt}/{max_content_retries})")
+                        logger.info(f"  ✨ OCR/번역 검증 통과 chunk {chunk_index}/{len(ocr_chunks)} (시도 {attempt}/{max_content_retries})")
                     break
-                print(f"  ⚠️ OCR/번역 일부 실패 chunk {chunk_index}/{len(ocr_chunks)} — 남은 region {still}: {problems.get(still[0], '')} (시도 {attempt}/{max_content_retries})")
+                logger.warning(f"  ⚠️ OCR/번역 일부 실패 chunk {chunk_index}/{len(ocr_chunks)} — 남은 region {still}: {problems.get(still[0], '')} (시도 {attempt}/{max_content_retries})")
                 if attempt < max_content_retries:
                     time.sleep(2)
 
@@ -1042,8 +1044,8 @@ def _process_sheet_ocr(
                     error_save_msg = f"이상로그 덤프 파일 저장 완료: {error_dump_path}"
                 except Exception as _log_e:
                     error_save_msg = f"이상로그 파일 저장 실패: {str(_log_e)}"
-                print(f"\n⚠️ [이상로그] OCR/번역 누락 region {still_missing} (chunk {chunk_index}/{len(ocr_chunks)}). 나머지 region은 저장합니다.", file=sys.stderr)
-                print(f"    - {error_save_msg}\n", file=sys.stderr)
+                logger.warning(f"\n⚠️ [이상로그] OCR/번역 누락 region {still_missing} (chunk {chunk_index}/{len(ocr_chunks)}). 나머지 region은 저장합니다.")
+                logger.warning(f"    - {error_save_msg}\n")
                 missing_region_ids.extend(still_missing)
                 missing_reasons.update({rid: problems.get(rid, "") for rid in still_missing})
 
@@ -1098,7 +1100,7 @@ def _process_single_ocr(
 
         # LLM이 비어있는 응답을 반환했으면 1회 재시도
         if not gemini_clusters and cv_clusters:
-            print("  ⚠️ OCR 응답 비어있음 — 재시도...")
+            logger.warning("  ⚠️ OCR 응답 비어있음 — 재시도...")
             time.sleep(2)
             result, elapsed = _run_model_json(
                 image_path,
@@ -1253,6 +1255,11 @@ def main() -> None:
     # 모델을 모듈 전역으로 반영한다. integrated.json의 model 필드도 이 값을 따른다.
     global MODEL_NAME
 
+    try:
+        from pipeline.logging_setup import configure_logging
+    except ImportError:  # 저장소 루트가 sys.path에 없이 파일 경로로 직접 실행한 경우
+        from logging_setup import configure_logging
+    configure_logging()
     parser = argparse.ArgumentParser(description="OCR + Translation + Integrated JSON 생성 (OpenAI / Gemini)")
     parser.add_argument("image_path", help="원본 이미지 경로")
     parser.add_argument("cv_clusters_json", help="cv_clusters JSON 경로")

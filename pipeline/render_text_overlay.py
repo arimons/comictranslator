@@ -3,6 +3,7 @@
 
 import argparse
 import json
+import logging
 import math
 import re
 from dataclasses import dataclass
@@ -13,6 +14,8 @@ from typing import Iterable
 import cv2
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
+
+logger = logging.getLogger(__name__)
 
 try:
     from pipeline.background_restore import apply_restore_patches
@@ -5124,11 +5127,11 @@ def apply_text_overlay(
 
     cv2.imwrite(str(output_path), image)
     if restored_untranslated:
-        print(f"  ↩️ 미번역/누락 region {restored_untranslated}개 — 원본 복원")
+        logger.info(f"  ↩️ 미번역/누락 region {restored_untranslated}개 — 원본 복원")
     if preserved_original_count:
-        print(f"  ↩️ 원본 보존 클러스터 {preserved_original_count}개 — 원본 복원")
+        logger.info(f"  ↩️ 원본 보존 클러스터 {preserved_original_count}개 — 원본 복원")
     if applied_eraser_count:
-        print(f"  🧽 수동 지우개 rect {applied_eraser_count}개 적용")
+        logger.info(f"  🧽 수동 지우개 rect {applied_eraser_count}개 적용")
 
     # debug merge: vis 이미지에 centroid(파란 dot) 를 그린 뒤 final과 나란히 저장
     if debug_vis_image is not None and debug_merge_output is not None and debug_vis_image.exists():
@@ -5183,6 +5186,11 @@ def _save_merge_image(left: np.ndarray, right: np.ndarray, out_path: Path) -> No
 
 
 def main() -> None:
+    try:
+        from pipeline.logging_setup import configure_logging
+    except ImportError:  # 저장소 루트가 sys.path에 없이 파일 경로로 직접 실행한 경우
+        from logging_setup import configure_logging
+    configure_logging()
     parser = argparse.ArgumentParser(description="텍스트 오버레이 렌더링")
     parser.add_argument("masked_jpg", help="마스킹된 이미지 경로")
     parser.add_argument("integrated_json", help="integrated JSON 경로")

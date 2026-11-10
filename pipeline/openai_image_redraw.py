@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import base64
+import logging
 import mimetypes
 import os
 from collections.abc import Callable
@@ -18,6 +19,7 @@ from pipeline.openai_tasks import IMAGE_MODEL
 load_dotenv()
 
 LogCallback = Callable[[str], None]
+logger = logging.getLogger(__name__)
 
 GPT_IMAGE_2_MIN_PIXELS = 655_360
 GPT_IMAGE_2_MAX_PIXELS = 8_294_400
@@ -26,7 +28,7 @@ GPT_IMAGE_2_MAX_RATIO = 3.0
 
 
 def _emit(message: str, log_callback: LogCallback | None = None) -> None:
-    print(message, flush=True)
+    logger.info(message)
     if log_callback is not None:
         log_callback(message)
 

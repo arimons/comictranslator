@@ -6,6 +6,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import copy
 import hashlib
+import logging
 import cv2
 import json
 from collections import OrderedDict
@@ -21,6 +22,8 @@ import numpy as np
 from pathlib import Path
 from typing import Any, Dict, List, Tuple
 from PIL import Image
+
+logger = logging.getLogger(__name__)
 
 # simple_lama_inpainting은 torch를 끌어온다. LaMa가 실제로 필요한 페이지에서만 import한다(_get_lama).
 SimpleLama: Any | None = None
@@ -2390,11 +2393,11 @@ def _acquire_lama_process_slot() -> None:
                 continue
             _lama_slot_handle = handle
             if waited_since is not None:
-                print(f"[lama] 슬롯 {index} 확보 ({time.monotonic() - waited_since:.1f}s 대기)", file=sys.stderr, flush=True)
+                logger.info(f"[lama] 슬롯 {index} 확보 ({time.monotonic() - waited_since:.1f}s 대기)")
             return
         if waited_since is None:
             waited_since = time.monotonic()
-            print(f"[lama] 다른 프로세스가 LaMa를 쓰는 중이라 대기 (최대 {_lama_max_processes()}개)", file=sys.stderr, flush=True)
+            logger.info(f"[lama] 다른 프로세스가 LaMa를 쓰는 중이라 대기 (최대 {_lama_max_processes()}개)")
         time.sleep(0.5)
 
 
@@ -2476,7 +2479,7 @@ def _load_lama_in_process() -> Any:
             except Exception as exc:  # noqa: BLE001 - GPU 초기화 실패는 CPU로 대신한다
                 if device.type == "cpu":
                     raise
-                print(f"[lama] {device.type} 초기화 실패, cpu로 실행: {exc}", file=sys.stderr, flush=True)
+                logger.warning(f"[lama] {device.type} 초기화 실패, cpu로 실행: {exc}")
                 import torch
 
                 _lama = _LamaReleasingCache(lama_class(torch.device("cpu")))
@@ -3844,6 +3847,11 @@ def build_dialogue_sheet(
 
 def main() -> None:
     import argparse
+    try:
+        from pipeline.logging_setup import configure_logging
+    except ImportError:  # 저장소 루트가 sys.path에 없이 파일 경로로 직접 실행한 경우
+        from logging_setup import configure_logging
+    configure_logging()
     parser = argparse.ArgumentParser(description="만화 대사 추출 — Bubble Detect + LaMa + OCR Sheet 생성")
     parser.add_argument("image_path", help="원본 이미지 경로")
     parser.add_argument("clusters_json", help="text_groups JSON 경로")

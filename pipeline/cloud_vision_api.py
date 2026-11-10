@@ -3,6 +3,7 @@
 
 import base64
 import json
+import logging
 import os
 import tempfile
 from pathlib import Path
@@ -14,13 +15,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 _VISION_ENDPOINT = "https://vision.googleapis.com/v1/images:annotate"
-
-
-def _safe_print(msg: str) -> None:
-    try:
-        print(msg)
-    except UnicodeEncodeError:
-        print(msg.encode("ascii", errors="replace").decode("ascii"))
+logger = logging.getLogger(__name__)
 
 
 def _load_api_key() -> str:
@@ -151,7 +146,7 @@ class CloudVisionAPI:
             resp = self._request(request_path, "TEXT_DETECTION")
             annotations = resp.get("textAnnotations", [])
             if not annotations:
-                _safe_print("⚠️ Cloud Vision: 텍스트 없음")
+                logger.warning("⚠️ Cloud Vision: 텍스트 없음")
                 return []
 
             results = []
@@ -165,10 +160,10 @@ class CloudVisionAPI:
                     "confidence": 1.0,
                 })
             suffix = f" ({preprocess})" if preprocess not in (None, "", "none") else ""
-            _safe_print(f"[OK] Cloud Vision TEXT_DETECTION{suffix}: {len(results)}개")
+            logger.info(f"[OK] Cloud Vision TEXT_DETECTION{suffix}: {len(results)}개")
             return results
         except Exception as e:
-            _safe_print(f"[ERR] detect_text: {e}")
+            logger.error(f"[ERR] detect_text: {e}")
             return None
         finally:
             if tmp_path is not None:
@@ -187,7 +182,7 @@ class CloudVisionAPI:
             resp = self._request(request_path, "DOCUMENT_TEXT_DETECTION")
             full = resp.get("fullTextAnnotation")
             if not full:
-                _safe_print("⚠️ Cloud Vision: 문서 텍스트 없음")
+                logger.warning("⚠️ Cloud Vision: 문서 텍스트 없음")
                 return []
 
             results = []
@@ -207,10 +202,10 @@ class CloudVisionAPI:
                                 "confidence": word.get("confidence", 1.0),
                             })
             suffix = f" ({preprocess})" if preprocess not in (None, "", "none") else ""
-            _safe_print(f"[OK] Cloud Vision DOCUMENT_TEXT_DETECTION{suffix}: {len(results)}개")
+            logger.info(f"[OK] Cloud Vision DOCUMENT_TEXT_DETECTION{suffix}: {len(results)}개")
             return results
         except Exception as e:
-            _safe_print(f"[ERR] detect_document_text: {e}")
+            logger.error(f"[ERR] detect_document_text: {e}")
             return None
         finally:
             if tmp_path is not None:
@@ -220,6 +215,12 @@ class CloudVisionAPI:
 if __name__ == "__main__":
     import sys
 
+    try:
+        from pipeline.logging_setup import configure_logging
+    except ImportError:  # 저장소 루트가 sys.path에 없이 파일 경로로 직접 실행한 경우
+        from logging_setup import configure_logging
+
+    configure_logging()
     api = CloudVisionAPI()
 
     if len(sys.argv) >= 3:
