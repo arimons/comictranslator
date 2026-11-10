@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import EditorCanvas from "./EditorCanvas.jsx";
 import OverlayCanvas from "./OverlayCanvas.jsx";
 import OriginalFocusPane from "./OriginalFocusPane.jsx";
-import { TEXT_BASED, regionProcessingBasis, regionTypeLabel, regionDetectionLabel, regionBindingKey } from "./regionTypes.js";
+import { TEXT_BASED, regionProcessingBasis, regionDetectionLabel, regionBindingKey } from "./regionTypes.js";
 import ShortcutHelp from "./ShortcutHelp.jsx";
 import SourceLinks from "./SourceLinks.jsx";
 import PageJump from "./PageJump.jsx";
@@ -65,6 +65,7 @@ import { recordTargetsRegion, regionIsExcluded } from "./regionExclusion.js";
 import { PREFETCH_SETTING_KEY, pickPrefetchTarget, prefetchRequestKey } from "./prefetchPlan.js";
 import { readStored, writeStored } from "./storage.js";
 import { normalizedFontSize, normalizeOverlayRegionOverride, normalizeOverlayGuidance } from "./overlayNormalize.js";
+import { ENGINE_NAMES, guidanceEquals, guidanceHistoryItems as buildGuidanceHistoryItems, stripGuidanceHistoryItem } from "./guidanceHistory.js";
 
 // 글자 입히기 편집 기록 상한과, 같은 종류의 연속 변경을 한 칸으로 묶는 시간
 const OVERLAY_HISTORY_LIMIT = 100;
@@ -72,7 +73,6 @@ const OVERLAY_HISTORY_MERGE_MS = 1500;
 
 // OCR·번역 AI 경로 이름(홈 화면·편집기 공용)
 const ROUTE_NAMES = { openai: "OpenAI", gemini: "Gemini API", vertex: "Vertex" };
-const ENGINE_NAMES = { lama: "LaMa", telea: "Telea", stripe: "줄무늬" };
 // 텍스트 기반 영역의 지우기 방식. 처음 분석이 고른 방식이 미리 선택돼 있고, 마음에 안 들 때 다른 칸을 눌러 바꾼다.
 // 앞의 셋은 변경사항 적용 때 로컬에서 지우고, AI는 확인 후 외부 이미지 모델로 지워 바로 저장한다.
 const DEFAULT_ERASE_ENGINE = "lama";
@@ -605,10 +605,6 @@ export default function App() {
       return;
     }
     setExtraSelectedIds((items) => (items.includes(key) ? items.filter((item) => item !== key) : [...items, key]));
-  }
-
-  function guidanceEquals(left, right) {
-    return JSON.stringify(left || {}) === JSON.stringify(right || {});
   }
 
   function resetGuidanceHistory() {
@@ -2661,74 +2657,6 @@ export default function App() {
     });
   }
 
-  function guidanceHistoryItems() {
-    const items = [];
-    (guidance.manual_seed_points || []).forEach((item, index) => {
-      const point = item.point || item.seed || [];
-      items.push({ key: `seed-${index}`, kind: "manual_seed_points", index, label: `Seed ${index + 1}`, detail: Array.isArray(point) ? `${Math.round(point[0])}, ${Math.round(point[1])}` : "" });
-    });
-    (guidance.virtual_walls || []).forEach((item, index) => {
-      items.push({ key: `wall-${index}`, kind: "virtual_walls", index, boxId: item.box_id || "", label: item.box_id ? `Edge ${item.box_id}` : `Edge ${index + 1}`, detail: item.source || "" });
-    });
-    (guidance.split_guides || []).forEach((item, index) => {
-      items.push({ key: `split-${index}`, kind: "split_guides", index, label: `Split line ${index + 1}`, detail: item.source || "" });
-    });
-    (guidance.manual_regions || []).forEach((item, index) => {
-      const type = regionTypeLabel(item);
-      const forcedLama = regionProcessingBasis(item) === TEXT_BASED && item.inpaint_engine === "lama";
-      items.push({
-        key: `region-${index}`,
-        kind: "manual_regions",
-        index,
-        label: `${type} ${index + 1}`,
-        detail: forcedLama ? "LaMa 강제" : item.source || "",
-        isTextBased: regionProcessingBasis(item) === TEXT_BASED,
-        forcedLama,
-      });
-    });
-    (guidance.tg_splits || []).forEach((item, index) => {
-      items.push({ key: `tg-split-${index}`, kind: "tg_splits", index, label: `TG${item.text_group_id || "?"} split`, detail: "" });
-    });
-    (guidance.disabled_tg_ids || []).forEach((id) => {
-      items.push({ key: `tg-off-${id}`, kind: "disabled_tg_ids", id, label: `TG${id} off`, detail: "" });
-    });
-    (guidance.suppressed_regions || []).forEach((item, index) => {
-      items.push({ key: `region-off-${index}`, kind: "suppressed_regions", index, label: `R${item.display_region_id || item.region_id || item.source_region_id || "?"} 제외 기록`, detail: "자동 처리 대상에서 제외" });
-    });
-    (guidance.inpaint_engine_overrides || []).forEach((item, index) => {
-      items.push({ key: `engine-${index}`, kind: "inpaint_engine_overrides", index, label: `R${item.display_region_id || "?"} ${ENGINE_NAMES[item.engine] || item.engine} 고정`, detail: `지우기 엔진을 ${ENGINE_NAMES[item.engine] || item.engine}로 고정` });
-    });
-    (guidance.custom_masks || []).forEach((item, index) => {
-      // R에 붙인 기록은 R마다 한 줄, R 지정 없이 칠한 기록(가장 많이 겹치는 영역에 자동 배정)은 한 줄이다.
-      const attached = Boolean(item.instance_ref || item.region_ref || item.target_key);
-      const dormant = attached && !guidanceRegions.some((region) => recordTargetsRegion(item, region));
-      const shapes = `붓 ${(item.strokes || []).length} · 다각형 ${(item.polygons || []).length} · 사각형 ${(item.rects || []).length}`;
-      items.push({
-        key: `custom-mask-${index}`, kind: "custom_masks", index,
-        label: attached ? `R${item.display_region_id || "?"} 지우기 보정` : "지우기 보정(자동 배정)",
-        detail: dormant ? `${shapes} · 영역 없음: 흰칠만` : shapes,
-      });
-    });
-    return items;
-  }
-
-  function stripGuidanceHistoryItem(baseGuidance, historyItem) {
-    const next = cloneJson(baseGuidance || defaultGuidance(null));
-    if (!historyItem?.kind) return next;
-    if (historyItem.kind === "virtual_walls" && historyItem.boxId) {
-      next.virtual_walls = (next.virtual_walls || []).filter((item) => item.box_id !== historyItem.boxId);
-      return next;
-    }
-    if (historyItem.kind === "disabled_tg_ids") {
-      next.disabled_tg_ids = (next.disabled_tg_ids || []).filter((id) => Number(id) !== Number(historyItem.id));
-      return next;
-    }
-    const list = [...(next[historyItem.kind] || [])];
-    if (historyItem.index >= 0 && historyItem.index < list.length) list.splice(historyItem.index, 1);
-    next[historyItem.kind] = list;
-    return next;
-  }
-
   // 텍스트 기반 영역 지우기 엔진: 기본은 배경 분류(Telea/LaMa) 자동, 켜면 LaMa로 고정한다.
   function toggleTextBasedForcedLama(historyItem) {
     setGuidanceTracked((current) => {
@@ -2830,6 +2758,10 @@ export default function App() {
     }
     if (!enginePending && value === autoEngine) return; // 이미 선택된 칸이면 고정을 새로 만들지 않는다
     setSelectedRegionEngine(value);
+  }
+
+  function guidanceHistoryItems() {
+    return buildGuidanceHistoryItems(guidance, guidanceRegions);
   }
 
   function removeGuidanceHistoryItem(historyItem, options = {}) {
