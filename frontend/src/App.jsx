@@ -66,6 +66,7 @@ import { PREFETCH_SETTING_KEY, pickPrefetchTarget, prefetchRequestKey } from "./
 import { readStored, writeStored } from "./storage.js";
 import { normalizedFontSize, normalizeOverlayRegionOverride, normalizeOverlayGuidance } from "./overlayNormalize.js";
 import { ENGINE_NAMES, guidanceEquals, guidanceHistoryItems as buildGuidanceHistoryItems, stripGuidanceHistoryItem } from "./guidanceHistory.js";
+import { ocrStateForImage as ocrStateOf, ocrDetailForImage as ocrDetailOf, ocrProgressForImage, isImageGenerationFallback } from "./ocrStatus.js";
 
 // 글자 입히기 편집 기록 상한과, 같은 종류의 연속 변경을 한 칸으로 묶는 시간
 const OVERLAY_HISTORY_LIMIT = 100;
@@ -499,11 +500,6 @@ export default function App() {
     const state = ocrStateForImage(img);
     return state === "failed";
   });
-  const isImageGenerationFallback = (img) => (
-    Boolean(img?.has_image_generation_fallback)
-    || img?.export_recovery?.status === "generated"
-    || img?.export_recovery?.source === "image_generation_fallback"
-  );
   const finalImages = images.filter((img) => Boolean(img.final_url));
   const unresolvedFinalImages = images.filter((img) => !img.final_url);
   const missingFinalImages = images.filter((img) => !img.processing_excluded && (!img.final_url || isImageGenerationFallback(img)));
@@ -2494,48 +2490,11 @@ export default function App() {
   }
 
   function ocrStateForImage(img) {
-    if (img.processing_excluded) return "skipped";
-    const liveStatus = imageStatuses[img.id];
-    const state = liveStatus?.phase === "ocr" ? liveStatus.status : null;
-    if (state === "failed" || state === "running" || state === "queued" || state === "skipped") return state;
-    if (state === "done" && img.final_url) return "done";
-    const savedState = img.ocr_status?.status;
-    if (savedState === "failed" || savedState === "skipped") return savedState;
-    if (savedState === "done") return "done";
-    if (img.integrated_skipped || img.integrated?.skipped) return "skipped";
-    if (img.has_integrated_json) return "done";
-    if (img.final_url) return "done";
-    // 영역 분석 전인 페이지는 실패가 아니라 아직 손대지 않은 대기열이다. 실패는 OCR·번역 호출이 실제로 실패한 경우만.
-    if (!img.indexed_sheet_url) return "unanalyzed";
-    return "idle";
+    return ocrStateOf(img, imageStatuses);
   }
 
   function ocrDetailForImage(img) {
-    const liveStatus = imageStatuses[img.id];
-    const detail = liveStatus?.phase === "ocr" ? liveStatus.detail : "";
-    if (detail) return detail;
-    if (img.ocr_status?.detail) return img.ocr_status.detail;
-    if (img.ocr_status?.message) return img.ocr_status.message;
-    if (img.integrated_skipped || img.integrated?.skipped) return img.integrated_message || img.integrated?.message || "OCR/번역 스킵";
-    if (img.has_integrated_json) return "integrated.json 있음";
-    if (img.final_url) return "final ready";
-    if (img.indexed_sheet_url) return "ready";
-    return "영역 분석을 마치면 번역할 수 있습니다";
-  }
-
-  function ocrProgressForImage(img, state, detail) {
-    if (state === "done" || state === "skipped") return 100;
-    if (state === "queued" || state === "idle") return 0;
-    const text = String(detail || "");
-    const percentMatch = text.match(/(\d{1,3})\s*%/);
-    if (percentMatch) return Math.max(0, Math.min(100, Number(percentMatch[1])));
-    const stepMatch = text.match(/(\d+)\s*\/\s*(\d+)/);
-    if (stepMatch) {
-      const current = Number(stepMatch[1]);
-      const total = Math.max(1, Number(stepMatch[2]));
-      return Math.max(0, Math.min(100, Math.round((current / total) * 100)));
-    }
-    return state === "running" ? 38 : 0;
+    return ocrDetailOf(img, imageStatuses);
   }
 
   function renderOcrImageButton(img) {
