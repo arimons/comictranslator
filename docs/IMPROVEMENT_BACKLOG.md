@@ -30,9 +30,9 @@
 
 코드 안에 TODO 주석이 없어서 문서가 유일한 할 일 목록인데, 일부가 오래됐습니다.
 
-- [ ] **[파이프라인 상태](PIPELINE_STATUS.md)를 현재 기준으로 다시 씁니다.** 최종 갱신이 2026-05-16이고, 지금은 없는 `floodfill_anchor_probe.py`, `apply_masking.py`, `cluster_cv_v5.py`, Gradio `main.py`를 "연결됨"으로 적고 있습니다. 미해결 이슈 목록도 하나씩 아직 유효한지 확인해야 합니다.
-- [ ] **`CLAUDE.md`의 파이프라인 그림을 고칩니다.** Step 5 White Masking을 별도 단계로 그리는데, [코드 파일 지도](CODEBASE_FILE_MAP.md)는 그 단계가 없어지고 Step 3이 마스킹을 직접 만든다고 적습니다.
-- [ ] **문서 동기화 훅의 경로를 고칩니다.** `.claude/settings.json`이 이 맥의 절대 경로로 훅을 부르기 때문에 클라우드와 맥미니에서는 돌지 않습니다.
+- [x] **[파이프라인 상태](PIPELINE_STATUS.md)를 현재 기준으로 다시 씁니다.** 최종 갱신이 2026-05-16이고, 지금은 없는 `floodfill_anchor_probe.py`, `apply_masking.py`, `cluster_cv_v5.py`, Gradio `main.py`를 "연결됨"으로 적고 있습니다. 미해결 이슈 목록도 하나씩 아직 유효한지 확인해야 합니다. (2026-11-10)
+- [x] **`CLAUDE.md`의 파이프라인 그림을 고칩니다.** Step 5 White Masking을 별도 단계로 그리는데, [코드 파일 지도](CODEBASE_FILE_MAP.md)는 그 단계가 없어지고 Step 3이 마스킹을 직접 만든다고 적습니다. (2026-11-10)
+- [x] **문서 동기화 훅의 경로를 고칩니다.** `.claude/settings.json`이 이 맥의 절대 경로로 훅을 부르기 때문에 클라우드와 맥미니에서는 돌지 않습니다. (2026-11-10)
 
 ## 4. 구조
 

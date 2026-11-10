@@ -30,24 +30,24 @@
 ## 파이프라인 흐름
 
 ```
-Step 1  Cloud Vision          이미지 → *_cv.json
-           ↓ (배치: 9장 그리드 묶음)
+Step 1  Cloud Vision          이미지 → *_cv.json (이미지마다 1회 호출)
+           ↓
 Step 2  Text Grouping         *_cv.json → *_text_groups.json
            ↓
-Step 3  FloodFill             *_text_groups.json → *_flood_vis.json (overlay용)
-         └─ 3-B split/OCR sheet                     → *_flood_regions.json + *_flood_indexed_sheet.jpg
-         └─ 3-C masking                             → *_flood_pre_masked.jpg (masking용)
+Step 3  대사 추출             *_text_groups.json → *_regions.json
+         │                   (경계 기반 검출·마스킹 + 텍스트 기반 글자 지우기(LaMa) + indexed OCR sheet)
+         └─ 산출물           → *_masked.jpg, *_indexed_sheet.jpg, *_bubble_vis.jpg
            ↓
-Step 4  Gemini OCR+번역       indexed OCR sheet + flood_regions → *_integrated.json
+Step 4  OCR+번역              indexed OCR sheet + regions → *_integrated.json
            ↓
-Step 5  White Masking         flood_pre_masked.jpg 승격 (없으면 bbox fallback) → *_masked.jpg
-           ↓
-Step 6  Text Overlay          masked.jpg + integrated + flood_regions + flood_vis → *_final.jpg
+Step 5  Text Overlay          masked.jpg + integrated + regions → *_final.jpg
 ```
 
-표준 산출물: `*_cv.json`, `*_text_groups.json`, `*_integrated.json`, `*_masked.jpg`, `*_final.jpg`
+마스킹은 별도 단계가 아니라 Step 3이 만든다. 상세는 `AGENTS.md`와 `docs/PIPELINE_STATUS.md` 참고.
 
-레거시 (현재 파이프라인 외): `*_ocr_v5.json`, `*_integrated_translated.json`
+표준 산출물: `*_cv.json`, `*_text_groups.json`, `*_regions.json`, `*_indexed_sheet.jpg`, `*_integrated.json`, `*_masked.jpg`, `*_final.jpg`
+
+레거시 (현재 파이프라인 외): `*_ocr_v5.json`, `*_integrated_translated.json`, `*_flood_vis.json`, `*_flood_regions.json`
 
 아카이브된 파일 (`archive/`): `integrate_ocr_v3.py`, `gemini_api.py`, `bbox_utils.py`, `preprocess_for_cv.py`, `gemini_batch_api.py`, `cluster_cv_v5.py`
 
