@@ -62,6 +62,7 @@ from pipeline.render_text_overlay import apply_text_overlay
 from pipeline.work_glossary import (NARRATION, GlossaryStore, character_map, cv_page_text, glossary_snapshot, match_works,
                                     page_region_contexts, page_speakers, region_context_prompt, speaker_prompt,
                                     REGION_CONTEXT_LIMIT)
+from routers import system as system_routes
 
 load_dotenv()
 
@@ -3671,30 +3672,6 @@ def create_app() -> FastAPI:
 
     _CODE_MTIMES.update(loaded_code_mtimes())
 
-    @app.post("/api/server/restart")
-    def restart_server(force: bool = False) -> dict[str, Any]:
-        busy = busy_job_count()
-        if busy and not force:
-            raise HTTPException(status_code=409, detail=f"진행 중인 작업 {busy}개가 있습니다. 재시작하면 중단됩니다.")
-        threading.Thread(target=restart_current_process, daemon=True, name="server-restart").start()
-        return {"ok": True, "interrupted": busy}
-
-    @app.post("/api/lama/release")
-    def lama_release() -> dict[str, Any]:
-        # 프로젝트 홈으로 나갈 때 화면이 부른다. 프로젝트 안에서는 모델을 살려 둔다.
-        return release_lama_worker("프로젝트 홈으로 이동")
-
-    @app.get("/api/lama/status")
-    def lama_status() -> dict[str, Any]:
-        from pipeline.lama_worker import shared_status
-
-        return shared_status()
-
-    @app.get("/api/health")
-    def server_health() -> dict[str, Any]:
-        # stale_code: 서버 시작 뒤 바뀐 Python 파일(재시작 필요). bundle: 화면 번들 버전(바뀌면 새로고침 필요).
-        return {"status": "ok", "stale_code": stale_code_files(), "bundle": bundle_version()}
-
     def preparation_source(session_id: str) -> dict[str, Any]:
         if not re.fullmatch(r"[A-Za-z0-9_-]+", session_id) or not session_file(session_id).is_file():
             raise HTTPException(status_code=404, detail="프로젝트를 찾을 수 없습니다.")
@@ -4066,38 +4043,10 @@ def create_app() -> FastAPI:
     def restore_patch_remove(req: RestorePatchRemoveRequest) -> dict[str, Any]:
         return remove_restore_patch(req)
 
-    @app.get("/api/ocr-models")
-    def list_ocr_models() -> dict[str, Any]:
-        """Step 4에서 선택 가능한 OCR/번역 모델 목록."""
-        from pipeline.gemini_image import GEMINI_IMAGE_MODEL
-        from pipeline.gemini_ocr_translate_v5 import MODEL_NAME, SUPPORTED_OCR_MODELS
-
-        # 이미지 작업(글자 지우기·통번역 재생성)은 OCR·번역 모델의 제공자를 따라간다
-        # 경로별 키가 .env에 있는지만 알려 준다(값은 보내지 않는다). 서버 재시작 때 읽은 값 기준이다.
-        key_ready = {name: bool(os.getenv(env)) for name, env in
-                     (("openai", "OPENAI_API_KEY"), ("gemini", "GEMINI_API_KEY"), ("vertex", "VERTEX_API_KEY"))}
-        return {"default": MODEL_NAME, "models": SUPPORTED_OCR_MODELS, "key_ready": key_ready,
-                "image_models": {"openai": IMAGE_MODEL, "gemini": GEMINI_IMAGE_MODEL}}
-
-    @app.get("/api/fonts")
-    def list_fonts() -> dict[str, Any]:
-        fonts_dir = ROOT / "Fonts"
-        fonts = sorted([*fonts_dir.glob("*.ttf"), *fonts_dir.glob("*.otf")]) if fonts_dir.exists() else []
-        # 편집기가 렌더와 같은 글꼴로 제자리 편집하도록 스타일별 실제 폰트 파일 이름도 알려 준다(/fonts/<이름>).
-        from pipeline.render_text_overlay import font_path_for_style
-
-        default_path = Path(DEFAULT_FONT)
-        style_ids = ("normal", "bold", "impact", "light", "memory_serif", "serif_bold", "handwritten", "serif_emphasis")
-        return {
-            "default": DEFAULT_FONT,
-            "fonts": [{"name": path.stem, "path": str(path)} for path in fonts],
-            "styles": {style: font_path_for_style(style, default_path).name for style in style_ids},
-        }
-
-    @app.get("/manual")
-    def editor_manual() -> FileResponse:
-        # 사용자 매뉴얼은 docs/editor_manual.html 하나를 정본으로 두고 그대로 보여 준다.
-        return FileResponse(ROOT / "docs" / "editor_manual.html", media_type="text/html")
+    # 라우트 묶음은 routers/에 있다. 처리기가 이 모듈의 전역을 호출 시점에 찾도록 모듈 객체를 넘긴다(__main__ 실행 포함).
+    app_module = sys.modules[__name__]
+    for router_module in (system_routes,):
+        app.include_router(router_module.build_router(app_module))
 
     fonts_dir = ROOT / "Fonts"
     if fonts_dir.exists():
