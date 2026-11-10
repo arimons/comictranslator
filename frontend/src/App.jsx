@@ -63,6 +63,7 @@ import {
 } from "./lib.js";
 import { recordTargetsRegion, regionIsExcluded } from "./regionExclusion.js";
 import { PREFETCH_SETTING_KEY, pickPrefetchTarget, prefetchRequestKey } from "./prefetchPlan.js";
+import { readStored, writeStored } from "./storage.js";
 
 // 글자 입히기 편집 기록 상한과, 같은 종류의 연속 변경을 한 칸으로 묶는 시간
 const OVERLAY_HISTORY_LIMIT = 100;
@@ -94,20 +95,6 @@ const MASK_BRUSH_STEPS = [2, 4, 6, 8, 12, 16, 24, 32, 48, 64];
 const RESUME_KEY = "comic-translator-resume-after-restart";
 // 새로고침해도 열려 있던 프로젝트로 돌아가도록 탭 단위(sessionStorage)로 기억한다.
 const OPEN_WORKSPACE_KEY = "comic-translator-open-workspace";
-
-// 브라우저 저장소는 막혀 있을 수 있어 모든 읽기·쓰기를 감싼다. 값이 없거나 올바르지 않으면 기본값을 쓴다.
-function readStored(key, fallback, valid = () => true) {
-  try {
-    const value = JSON.parse(window.localStorage.getItem(key));
-    return value !== null && valid(value) ? value : fallback;
-  } catch {
-    return fallback;
-  }
-}
-
-function writeStored(key, value) {
-  try { window.localStorage.setItem(key, JSON.stringify(value)); } catch { /* 저장소를 쓸 수 없어도 기능은 동작한다 */ }
-}
 
 // 화자·번역 메모는 영역 참조(region_ref)로 저장한다. 참조를 주지 않는 구버전 응답만 구형 영역 키를 쓴다.
 const regionStoreKey = (region) => region?.region_ref || regionBindingKey(region);
