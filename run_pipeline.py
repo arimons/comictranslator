@@ -11,7 +11,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 from pipeline.input_preprocessor import prepare_pipeline_inputs
-from pipeline.pipeline_runner import DEFAULT_FONT, run_batch_images, run_single_image
+from pipeline.pipeline_runner import run_batch_images
 
 IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".webp"}
 

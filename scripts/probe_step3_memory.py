@@ -4,10 +4,16 @@
 부른 뒤 `footprint`(압축·스왑 포함 실제 점유량)와 tracemalloc(파이썬 객체 추적량)을 출력한다. 끝나면 임시 프로젝트를 직접 지운다.
 맥미니의 저장소 루트에서 `.venv/bin/python scripts/probe_step3_memory.py`로 실행한다. 경로는 맥미니 기준으로 하드코딩돼 있다.
 """
-import os, re, subprocess, sys, tempfile, tracemalloc
+import os
+import re
+import subprocess
+import sys
+import tempfile
+import tracemalloc
 from pathlib import Path
 sys.path.insert(0, "scripts"); sys.path.insert(0, ".")
-import run_page_flow as rpf, series_translate as st
+import run_page_flow as rpf
+import series_translate as st
 from fastapi.testclient import TestClient
 
 c = st.comic_app

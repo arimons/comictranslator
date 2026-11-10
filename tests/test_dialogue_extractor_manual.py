@@ -1443,7 +1443,6 @@ def test_manual_split_keeps_piece_without_tg_on_masked_region():
 
 
 def test_stripe_fill_continues_horizontal_lines_through_text_mask():
-    import cv2
     import numpy as np
     from pipeline.dialogue_extractor import _stripe_fill
 

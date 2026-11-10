@@ -8,7 +8,6 @@ from __future__ import annotations
 import argparse
 from collections import defaultdict, Counter
 from datetime import datetime
-import hashlib
 import json
 import os
 from pathlib import Path
@@ -211,7 +210,7 @@ def apply(repo, home, moves):
 
 
 def rollback(journal):
-    record=read(journal);repo=Path(record['repo']);home=Path(record['home']);backup=Path(record['backup'])
+    record=read(journal);home=Path(record['home']);backup=Path(record['backup'])
     assert_stopped()
     keep=home/'legacy'/('rollback-'+datetime.now().strftime('%Y%m%d_%H%M%S'))
     for index,(_,target) in enumerate(record['completed_moves']):

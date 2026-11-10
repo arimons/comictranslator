@@ -1,0 +1,23 @@
+# 린트 기준. 실행: .venv/bin/ruff check .
+# 목적은 실제 결함(미정의 이름, 미사용 import·변수, 맨 except)을 잡는 것이다. 서식은 강제하지 않는다.
+target-version = "py311"
+line-length = 160
+extend-exclude = ["archive", "pipeline/archive", "proof", "temp_output", "frontend", "web"]
+
+[lint]
+select = ["E4", "E7", "E9", "F"]
+ignore = [
+    "E701",  # 한 줄 if/for: 이 저장소가 의도적으로 쓰는 압축 표기
+    "E702",  # 세미콜론으로 이은 문장: 위와 같음
+    "E741",  # l, I 같은 짧은 변수명: 좌표·루프 변수에 널리 쓰임
+    "E731",  # lambda 대입
+]
+
+[lint.per-file-ignores]
+# sys.path를 먼저 고친 뒤 import하는 진입점·스크립트
+"app.py" = ["E402"]
+"run_pipeline.py" = ["E402"]
+"scripts/*" = ["E402"]
+"batch/*" = ["E402"]
+"tests/*" = ["E402"]
+"pipeline/vis/*" = ["E402"]

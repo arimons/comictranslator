@@ -9,7 +9,6 @@ import subprocess
 from pathlib import Path
 
 from pipeline.paths import PROOF_DIR
-from pipeline.paths import PROOF_DIR
 from pipeline.pipeline_runner import run_single_image
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -75,8 +74,8 @@ def run_debug_pipeline():
             print(f"⚠️ 시각화 경고: {result.stderr}")
 
     print(f"\n{'='*60}")
-    print(f"🎉 Debug 파이프라인 완료!")
-    print(f"📁 모든 파일: proof/Debug/")
+    print("🎉 Debug 파이프라인 완료!")
+    print("📁 모든 파일: proof/Debug/")
     print(f"{'='*60}")
 
 

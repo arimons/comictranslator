@@ -17,7 +17,6 @@ import json
 import cv2
 import numpy as np
 from pathlib import Path
-from typing import List, Dict
 from PIL import Image, ImageDraw, ImageFont
 
 
@@ -72,7 +71,7 @@ def visualize_unified(
     # PIL 폰트 준비 (더 크고 굵게)
     try:
         font_large = ImageFont.truetype("/System/Library/Fonts/Arial.ttf", 20)
-    except:
+    except OSError:
         font_large = ImageFont.load_default()
 
     # ===== Step 1: Sentence (Union bbox) 먼저 그리기 (뒤에 보이게) - 빨간색 굵은 선 =====
@@ -193,7 +192,7 @@ def visualize_tight_text_groups(
 
     try:
         font_large = ImageFont.truetype("/System/Library/Fonts/Arial.ttf", 20)
-    except:
+    except OSError:
         font_large = ImageFont.load_default()
 
     for group in groups:
@@ -261,10 +260,8 @@ def visualize_anchor_text_groups(
 
     try:
         font_large = ImageFont.truetype("/System/Library/Fonts/Arial.ttf", 22)
-        font_small = ImageFont.truetype("/System/Library/Fonts/Arial.ttf", 16)
-    except:
+    except OSError:
         font_large = ImageFont.load_default()
-        font_small = ImageFont.load_default()
 
     img_h, img_w = img.shape[:2]
 
@@ -372,4 +369,4 @@ if __name__ == "__main__":
         for img_num in ["00013", "00014", "00016", "00019"]:
             visualize_all(img_num)
 
-        print(f"\n✅ 모든 시각화 완료!")
+        print("\n✅ 모든 시각화 완료!")

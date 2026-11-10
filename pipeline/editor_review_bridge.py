@@ -17,7 +17,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from pipeline.source_library import SourceLibrary, digest as source_digest
 from pipeline.paths import for_repo
-from pipeline.project_paths import manifest_path, manifest_files, runtime_json, transform_paths
+from pipeline.project_paths import manifest_path, manifest_files, runtime_json
 from pipeline.region_refs import annotate_regions, integrated_groups, resolve_cluster_refs
 from pipeline.region_types import regions_with_processing_basis
 

@@ -1,9 +1,6 @@
 """원본 직접 참조, 호스트 재연결, 기존 캐시 보존과 읽기 경계를 검증한다."""
-import copy
 import json
-import os
 from pathlib import Path
-from unittest.mock import patch
 import pytest
 from PIL import Image
 from fastapi.testclient import TestClient

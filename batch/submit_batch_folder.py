@@ -29,7 +29,6 @@ MODEL_NAME = "models/gemini-3.1-flash-image-preview"
 
 # API 서버 보호를 위한 재시도 업로드 래퍼
 def upload_with_retry(img_path, max_retries=3, mime_type=None):
-    start_time = time.time()
     for attempt in range(max_retries):
         try:
             if mime_type:
@@ -62,13 +61,13 @@ def main():
         print(f"❌ 폴더를 찾을 수 없습니다: {input_dir}")
         return
 
-    print(f"==========================================================")
-    print(f"🚀 대규모 폴더 배치 전송기 (Google 순정 Async Batch API)")
-    print(f"==========================================================")
+    print("==========================================================")
+    print("🚀 대규모 폴더 배치 전송기 (Google 순정 Async Batch API)")
+    print("==========================================================")
     print(f"📂 대상 최상위 폴더: {input_dir.absolute()}")
 
     # 1. 재귀적으로(Recursive) 모든 하위 폴더의 jpg, png 검색
-    print(f"\n🚨 1. 하위 폴더까지 샅샅이 뒤져 이미지 파일을 수집합니다...")
+    print("\n🚨 1. 하위 폴더까지 샅샅이 뒤져 이미지 파일을 수집합니다...")
     # rglob()을 쓰면 자식 폴더1, 자식 폴더2 안에 있는 이미지까지 한 큐에 찾아옵니다!
     image_paths = list(input_dir.rglob("*.jpg")) + list(input_dir.rglob("*.png")) + list(input_dir.rglob("*.jpeg"))
     
@@ -193,7 +192,7 @@ def main():
             history_file = Path("batch_history.log")
             with open(history_file, "a", encoding="utf-8") as f:
                 f.write(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] Folder: {input_dir} | Batch ID: {batch_name} | Files: {len(uploaded_files)}\n")
-            print(f"(참고: 작업 ID는 batch_history.log 에도 기록되었습니다.)")
+            print("(참고: 작업 ID는 batch_history.log 에도 기록되었습니다.)")
             print("\n⚠️ 안내: 화면을 끄고 주무셔도 됩니다. 결과 처리는 구글 클라우드에서 비동기로 알아서 진행됩니다.")
         else:
             print(f"❌ 구글 측 일괄 접수 거절: HTTP {res.status_code}")

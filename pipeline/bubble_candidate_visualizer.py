@@ -228,7 +228,6 @@ def _draw_legend(vis_img: np.ndarray) -> None:
     scale = 0.52
     thick = 1
     pad_x = 10
-    pad_y = 8
     swatch = 16
     gap = 18
     x = pad_x
@@ -251,7 +250,6 @@ def _draw_text_groups(vis_img: np.ndarray, clusters: List[Dict[str, Any]]) -> No
         if not rect or len(rect) < 4:
             continue
 
-        cluster_id = cluster.get("text_group_id", cluster.get("cluster_id", idx))
         x, y, w, h = _as_rect(rect)
 
         if _rects_differ(fallback_rect, rect):

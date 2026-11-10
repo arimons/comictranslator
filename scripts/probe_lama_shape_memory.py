@@ -3,8 +3,13 @@
 사용: .venv/bin/python scripts/probe_lama_shape_memory.py {fixed|vary|vary_empty|bucket|bucket_empty}  (DEV=cpu로 장치 변경)
 API 호출이 없고 임의 이미지만 쓴다.
 """
-import os, re, subprocess, sys, gc
-import numpy as np, torch
+import os
+import re
+import subprocess
+import sys
+import gc
+import numpy as np
+import torch
 from PIL import Image
 from simple_lama_inpainting import SimpleLama
 mode = sys.argv[1]  # vary | fixed | vary_empty | vary_nojit

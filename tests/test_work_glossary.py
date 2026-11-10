@@ -1,7 +1,5 @@
 """작품 메모(인물·말투·용어)와 region 화자 지정이 번역 프롬프트로 전달되는 계약."""
-from pathlib import Path
 
-import pytest
 from fastapi.testclient import TestClient
 from PIL import Image
 

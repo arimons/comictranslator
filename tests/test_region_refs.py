@@ -229,7 +229,6 @@ class NormalizeOverlayTest(unittest.TestCase):
         self.assertEqual(list(v1["regions_by_ref"]), ["guide:manual_seed_1"])
         self.assertEqual(v1["regions_by_ref"]["guide:manual_seed_1"]["_migrated"], "legacy_region_number")
         # 번역 묶음이 이미 그 영역을 쓰고 있으면(번호가 번역 번호) 현재 번호로 보지 않는다.
-        regions2 = [region(2, [2], R_B)]
         v1, _ = rr.normalize_overlay_guidance({"regions": {"7": {"text_override": "x"}}}, self.integrated, [region(7, [2], R_B)], True,
                                               overlay_newer_than_regions=True)
         self.assertEqual(v1["regions_by_ref"], {})

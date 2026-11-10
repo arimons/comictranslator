@@ -1,6 +1,5 @@
 """모델 자동 라우팅·재시도 비용·구조화 출력 계약."""
 from types import SimpleNamespace as NS
-import json
 
 import pytest
 import openai

@@ -1,5 +1,4 @@
 import os
-import time
 import json
 import requests
 import argparse
@@ -47,9 +46,9 @@ def main():
     parser.add_argument("--batch_id", type=str, help="조회할 특정 Batch ID (입력 안하면 가장 최근에 보낸 작업을 자동 추적)")
     args = parser.parse_args()
 
-    print(f"==========================================================")
-    print(f"📦 대규모 통짜 배치 수령기 (Google Async Batch API)")
-    print(f"==========================================================")
+    print("==========================================================")
+    print("📦 대규모 통짜 배치 수령기 (Google Async Batch API)")
+    print("==========================================================")
 
     # 1. 수령할 송장 번호(Batch ID) 파악하기
     target_batch_id = args.batch_id
@@ -58,11 +57,11 @@ def main():
     if target_batch_id:
         print(f"🔍 지정하신 송장 번호 '{target_batch_id}' 의 상태를 조회합니다...")
     else:
-        print(f"🔍 배치 ID를 입력하지 않으셨으므로, 내가 가장 마지막으로 보낸 택배를 찾습니다...")
+        print("🔍 배치 ID를 입력하지 않으셨으므로, 내가 가장 마지막으로 보낸 택배를 찾습니다...")
         target_batch_id, target_folder = get_latest_job_info()
         
         if not target_batch_id:
-            print(f"❌ batch_history.log 기록이 없거나 분석할 수 없습니다. --batch_id 옵션을 붙여 직접 실행하세요.")
+            print("❌ batch_history.log 기록이 없거나 분석할 수 없습니다. --batch_id 옵션을 붙여 직접 실행하세요.")
             return
             
         print(f"🏷️ 발견된 최신 송장 번호: {target_batch_id}")
@@ -95,7 +94,7 @@ def main():
         return
 
     # 3. 상태 출력
-    print(f"\n================ [택배(배치) 진행 상황] ================")
+    print("\n================ [택배(배치) 진행 상황] ================")
     print(f"📦 상태: {state}")
     print(f"📊 총 접수량: {request_count} 건")
     print(f"✅ 처리 완료: {completed_count} 건")
@@ -117,7 +116,7 @@ def main():
         return
         
     if not target_folder or not target_folder.exists():
-        print(f"⚠️ 원본 대상 폴더를 찾을 수 없습니다! 현재 디렉토리에 'batch_result' 폴더를 파서 다운로드합니다.")
+        print("⚠️ 원본 대상 폴더를 찾을 수 없습니다! 현재 디렉토리에 'batch_result' 폴더를 파서 다운로드합니다.")
         target_folder = Path("batch_result")
         
     # 결과 해석을 위한 로컬 맵핑(Mapping) 파일 읽어오기
@@ -134,11 +133,11 @@ def main():
             except Exception as e:
                 print(f"⚠️ 맵핑 파일을 읽는 데 실패했습니다: {e}")
     else:
-        print(f"⚠️ 맵핑 파일을 찾을 수 없습니다! 결과물이 폴더 트리 없이 일괄 다운로드 될 수 있습니다.")
+        print("⚠️ 맵핑 파일을 찾을 수 없습니다! 결과물이 폴더 트리 없이 일괄 다운로드 될 수 있습니다.")
 
     # 5. Output 파일(JSONL 덩어리) 다운로드
     output_download_url = output_uri
-    print(f"\n🚨 2. 결과물 덩어리(Output file)를 다운로드합니다...")
+    print("\n🚨 2. 결과물 덩어리(Output file)를 다운로드합니다...")
     
     try:
         download_res = requests.get(output_download_url, params={"key": API_KEY, "alt": "media"})
@@ -221,7 +220,7 @@ def main():
             fail_count += 1
             
     # 마무리 정리
-    print(f"\n================ [택배 배송 완료] ================")
+    print("\n================ [택배 배송 완료] ================")
     print(f"🎉 총 {success_count} 개의 이미지가 성공적으로 배달(저장) 되었습니다!")
     if fail_count > 0:
         print(f"⚠️ {fail_count} 개는 번역 실패 또는 부분 에러가 있었습니다.")

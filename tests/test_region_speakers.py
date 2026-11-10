@@ -1,5 +1,4 @@
 """R 단위 화자는 TG 유무와 재번호화에 독립적이고 기존 TG 기록과 호환된다."""
-import json
 from pathlib import Path
 from PIL import Image
 from fastapi.testclient import TestClient

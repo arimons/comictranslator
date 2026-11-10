@@ -206,7 +206,7 @@ def page_speakers(regions: list[dict], by_tg: dict, snapshot: dict, by_region: d
     """R 직접 지정(영역 참조 우선)을 우선하고 기존 TG 지정을 호환용으로 읽는다. 텍스트 기반 미지정은 주인공 기본값.
 
     region_ref가 붙은 영역(annotate_regions 결과)을 넘기면 재분석으로 사각형이 바뀌어도 지정이 대사를 따라간다."""
-    from pipeline.region_types import TEXT_BASED, region_processing_basis, region_binding_key
+    from pipeline.region_types import TEXT_BASED, region_processing_basis
     names = {row["id"]: row["name"] for row in snapshot.get("characters", [])}
     names[NARRATION] = "내레이션"
     lead = next((row for row in snapshot.get("characters", []) if row.get("protagonist")), None)

@@ -52,7 +52,6 @@ review_tags         Rescue 이후에도 미확정인 후보에 붙는 후단 처
 import json
 import math
 import sys
-from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 import cv2
@@ -76,24 +75,20 @@ try:
     from pipeline.bubble_text_filters import (
         cluster_text as _cluster_text,
         is_english_only_text as _is_english_only_text,
-        is_japanese_char as _is_japanese_char,
         is_large_short_kana_sfx_like as _is_large_short_kana_sfx_like,
         is_large_single_glyph_sfx_like as _is_large_single_glyph_sfx_like,
         is_short_non_japanese_noise_text as _is_short_non_japanese_noise_text,
         is_symbol_only_text as _is_symbol_only_text,
-        strip_and_stats as _strip_and_stats,
         text_stats as _text_stats,
     )
 except ImportError:
     from bubble_text_filters import (
         cluster_text as _cluster_text,
         is_english_only_text as _is_english_only_text,
-        is_japanese_char as _is_japanese_char,
         is_large_short_kana_sfx_like as _is_large_short_kana_sfx_like,
         is_large_single_glyph_sfx_like as _is_large_single_glyph_sfx_like,
         is_short_non_japanese_noise_text as _is_short_non_japanese_noise_text,
         is_symbol_only_text as _is_symbol_only_text,
-        strip_and_stats as _strip_and_stats,
         text_stats as _text_stats,
     )
 
@@ -1009,18 +1004,12 @@ def _split_single_tg_bubble(
     """
     # shape gate
     shape_score = None
-    bubble_tg_ratio = None
     prefix = "shape="
     for flag in quality_flags:
         for part in str(flag).replace(",", " ").split():
             if part.startswith(prefix):
                 try:
                     shape_score = float(part[len(prefix):])
-                except ValueError:
-                    pass
-            if part.startswith("tg="):
-                try:
-                    bubble_tg_ratio = float(part[len("tg="):])
                 except ValueError:
                     pass
     if shape_score is None or shape_score < _SINGLE_TG_SPLIT_MIN_SHAPE:
@@ -1457,7 +1446,6 @@ def visualize_anchor_floodfill(
 
     for idx, cluster in enumerate(clusters, start=1):
         rect = _tight_text_group_rect(cluster)
-        fallback_rect = _fallback_text_group_rect(cluster)
         if len(rect) < 4:
             continue
 
@@ -2176,7 +2164,6 @@ def build_ocr_region_sheet(
         )
         candidate_mask = np.zeros((img_h, img_w), dtype=np.uint8)
         is_bimodal = False
-        is_solid = False
         is_shape_ok = False
 
         if is_dark_bg and not is_horizontal_tg:
@@ -2212,7 +2199,6 @@ def build_ocr_region_sheet(
                     region_type = "bubble"
                     is_shape_ok = True
                     is_bimodal = True
-                    is_solid = True
                     quality_flags.extend(["dark_flood_success", "skip_edge_barrier_for_dark_bg"])
                 else:
                     quality_flags.append("dark_flood_failed_validation")
@@ -3268,8 +3254,8 @@ def build_ocr_region_sheet(
         if not vertically_aligned:
             return False
 
-        right_x1, right_x2 = right_rect[0], right_rect[0] + right_rect[2]
-        left_x1, left_x2 = left_rect[0], left_rect[0] + left_rect[2]
+        right_x1 = right_rect[0]
+        left_x2 = left_rect[0] + left_rect[2]
         x_gap = max(0, right_x1 - left_x2)
         if x_gap > max(80, int(max(right_rect[2], left_rect[2]) * 1.2)):
             return False

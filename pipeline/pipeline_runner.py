@@ -256,7 +256,6 @@ def stream_subprocess(
 
     reader.join(timeout=1)
     return process.returncode, lines
-    return stdout
 
 
 def run_single_image(

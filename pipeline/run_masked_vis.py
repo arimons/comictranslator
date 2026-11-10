@@ -18,12 +18,11 @@ ROOT_DIR = Path(__file__).resolve().parents[1]
 SRC_DIR = Path(__file__).resolve().parent
 
 try:
-    from pipeline.geometry import as_rect as _as_rect, union_rect as _union_rect
+    from pipeline.geometry import as_rect as _as_rect
     from pipeline.unboxed_grouping import (
         cluster_adjacent_text_groups as _cluster_adjacent_tgs,
         is_noise_text as _is_noise,
         text_group_id as _tg_id,
-        text_group_stats as _text_stats,
         text_group_text as _tg_text,
     )
     from pipeline.text_style_metrics import (
@@ -34,12 +33,11 @@ try:
     from pipeline.unboxed_text_detector import extract_unboxed_text_candidate
     from pipeline.bubble_detector import build_ocr_region_sheet
 except ImportError:
-    from geometry import as_rect as _as_rect, union_rect as _union_rect
+    from geometry import as_rect as _as_rect
     from unboxed_grouping import (
         cluster_adjacent_text_groups as _cluster_adjacent_tgs,
         is_noise_text as _is_noise,
         text_group_id as _tg_id,
-        text_group_stats as _text_stats,
         text_group_text as _tg_text,
     )
     from text_style_metrics import (

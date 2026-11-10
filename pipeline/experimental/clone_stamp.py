@@ -112,7 +112,6 @@ def restoration_score(image: np.ndarray, restored: np.ndarray, mask: np.ndarray)
 
     지운 영역과 주변 링의 통계가 이어지면 잘 복원된 것으로 본다.
     """
-    g0 = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
     g1 = cv2.cvtColor(restored, cv2.COLOR_BGR2GRAY)
     ring = (cv2.dilate(mask, np.ones((25, 25), np.uint8), 1) > 0) & (mask == 0)
     inside = mask > 0

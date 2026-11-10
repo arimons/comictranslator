@@ -1885,7 +1885,6 @@ def _rect_replaces_region(override_rect: List[int], region: Dict[str, Any]) -> b
     ox, oy, ow, oh = _as_rect(override_rect)
     if ow <= 0 or oh <= 0:
         return False
-    override_area = max(1, ow * oh)
     for raw_rect in candidate_rects:
         if not raw_rect:
             continue
@@ -3547,7 +3546,6 @@ def build_dialogue_sheet(
         return _aggregate_style_decisions(decisions)
 
     for cluster in _cluster_adjacent_tgs(eligible):
-        tids = [t for t, _ in cluster]
         cand = _extract_with_lane_retry(
             image, [g for _, g in cluster], pad=pad, lane_pad=lane_pad, dark_threshold=dark_threshold
         )

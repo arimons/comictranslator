@@ -25,15 +25,6 @@ try:
     from pipeline.region_refs import annotate_regions
     from pipeline.font_style_analyzer import (
         _normalized_render_hint,
-        _clip_rect,
-        _union_rects,
-        _median,
-        _japanese_text_len,
-        _content_origin_in_sheet,
-        _style_crop_rect_in_sheet,
-        _map_original_rect_to_sheet,
-        _measure_style_features_for_crop,
-        _aggregate_line_style_features,
         _measure_region_style_features,
         _final_render_hint,
         _should_preserve_original_by_style,
@@ -44,15 +35,6 @@ except ImportError:
     from region_refs import annotate_regions
     from font_style_analyzer import (
         _normalized_render_hint,
-        _clip_rect,
-        _union_rects,
-        _median,
-        _japanese_text_len,
-        _content_origin_in_sheet,
-        _style_crop_rect_in_sheet,
-        _map_original_rect_to_sheet,
-        _measure_style_features_for_crop,
-        _aggregate_line_style_features,
         _measure_region_style_features,
         _final_render_hint,
         _should_preserve_original_by_style,
@@ -1116,7 +1098,7 @@ def _process_single_ocr(
 
         # LLM이 비어있는 응답을 반환했으면 1회 재시도
         if not gemini_clusters and cv_clusters:
-            print(f"  ⚠️ OCR 응답 비어있음 — 재시도...")
+            print("  ⚠️ OCR 응답 비어있음 — 재시도...")
             time.sleep(2)
             result, elapsed = _run_model_json(
                 image_path,

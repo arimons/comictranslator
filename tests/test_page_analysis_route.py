@@ -1,6 +1,5 @@
 """이미지 생성 후보를 유지하면서 기존 분석 경로를 선택하는 계약."""
 import json
-from pathlib import Path
 from PIL import Image
 from fastapi.testclient import TestClient
 import pytest
