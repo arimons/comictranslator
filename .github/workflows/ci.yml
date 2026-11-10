@@ -43,6 +43,9 @@ jobs:
           node-version: "20"
       - run: pip install -r requirements-dev.txt
       # 데이터 홈을 임시 폴더로 돌려 러너의 홈 디렉터리를 건드리지 않는다.
+      # 프런트 단위 테스트(proof/src/test_*.mjs). 외부 패키지를 쓰지 않아 npm ci 없이 돈다.
+      - run: npm test
+        working-directory: frontend
       - run: python -m pytest -q
         env:
           COMIC_TRANSLATOR_HOME: ${{ runner.temp }}/ComicTranslator

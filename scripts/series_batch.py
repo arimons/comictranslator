@@ -79,6 +79,9 @@ def process_page(client: TestClient, sid: str, iid: str, args) -> float:
 
 
 def main() -> None:
+    # 서버를 이 프로세스 안에 올려 쓰므로, 서버 실행 때처럼 진단 로그 설정을 직접 건다.
+    from pipeline.logging_setup import SERVER_FORMAT, configure_logging
+    configure_logging(SERVER_FORMAT)
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--folder", required=True)
     parser.add_argument("--session-id", required=True)

@@ -45,6 +45,7 @@ NEW_COMIC_TRANSLATOR/
 │       ├── ImageGenProgress.jsx  # AI로 통번역(이미지 생성) 진행 창: 모델·경과 시간·진행 메시지, 완료 뒤 결과 보기
 │       ├── ShortcutHelp.jsx      # ? 단축키 도움말
 │       ├── regionTypes.js        # 경계 기반/텍스트 기반 용어 및 과거 타입 호환
+│       ├── prefetchPlan.js       # 남은 페이지 미리 분석 대상 선택(설정이 꺼져 있으면 없음)
 │       ├── RegionTypeBadge.jsx   # 공통 처리 기준 배지
 │       └── lib.js                # 공용 순수 헬퍼 함수 + 상수
 ├── run_pipeline.py             # CLI 진입점
@@ -90,6 +91,7 @@ NEW_COMIC_TRANSLATOR/
     ├── render_text_overlay.py  # Step 5
     ├── overlay_anchor.py       # 영역 사각형 겹침(IoU) 계산과 구형 위치 재매칭(서버는 단계 6부터 region_refs.py를 쓴다)
     ├── region_refs.py          # 영역 참조(region_ref) 해석기: 번역·수동값·화자·메모를 R 번호 대신 TG 집합으로 연결 (순수 함수)
+    ├── logging_setup.py        # 진입점용 로깅 설정(서버는 수준·모듈 표시, 단계 스크립트는 메시지만)
     ├── lama_worker.py          # 상주 서버용 LaMa 작업 프로세스(프로젝트 홈 이동·1시간 유휴 시 종료해 메모리 반환)
     ├── background_restore.py   # 배경 복원 엔진 (문맥 영역·마스크 분리, LaMa, 확정 패치 합성). 편집기 탭은 제거됐고 AI 글자 지우기가 쓴다
     ├── ai_text_erase.py        # 이미지 편집 모델로 페이지 글자 지우기 (16배수 덧대기·잘라내기, gemini-*는 gemini_image로)

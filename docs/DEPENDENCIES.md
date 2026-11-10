@@ -110,3 +110,5 @@ projects 아래 폴더 ID는 기존 timestamp ID를 유지한다. project.json�
 ## 린트
 
 린트는 ruff로 하며 기준은 저장소 루트의 `ruff.toml`에 있습니다. ruff는 `requirements-dev.txt`에 넣지 않았고, CI는 0.13.0을 따로 설치해 `ruff check .`을 돌립니다. 로컬에서는 `.venv/bin/python -m pip install ruff==0.13.0` 뒤 `.venv/bin/ruff check .`으로 같은 검사를 합니다.
+
+<!-- 변경 검토(2026-11-11): 진단 출력의 logging 전환, 복원 작업 기록 정리, 서버 폴더 열람 범위 제한으로 소스가 바뀜. 이 문서 내용 영향 없음 -->

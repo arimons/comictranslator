@@ -43,7 +43,7 @@ macOS 앱 배포의 CLI는 `/Applications/Tailscale.app/Contents/MacOS/Tailscale
 접속은 `https://MAC_MINI_MAGIC_DNS_NAME:8443/`이며 접속 기기도 해당 tailnet에 연결돼 있어야 한다.
 `--bg` 설정은 Tailscale이 재시작돼도 유지된다.
 
-로그는 데이터 홈의 `logs/server.out.log`, `logs/server.err.log`에 저장한다. 기존 PM2 전체 운영 정책에 맞춰 로그 회전을 별도로 구성할 수 있다.
+로그는 데이터 홈의 `logs/server.out.log`, `logs/server.err.log`에 저장한다. 서버 진단 로그는 `수준 [모듈] 메시지` 형식이며(2026-11-10), 정보는 out, 경고 이상은 err 파일로 간다. 설정은 `pipeline/logging_setup.py`에 있다. 기존 PM2 전체 운영 정책에 맞춰 로그 회전을 별도로 구성할 수 있다.
 
 ## 패키지
 
