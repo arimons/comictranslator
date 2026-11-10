@@ -42,7 +42,7 @@
 - [ ] **`App.jsx`의 상태를 탭별로 나눕니다.** 4,002줄에 `useState`가 87개입니다.
 - [ ] **가장 긴 함수를 단계별로 쪼갭니다.** `bubble_detector.py`의 `build_ocr_region_sheet`가 1,979줄, `dialogue_extractor.py`의 `build_dialogue_sheet`가 565줄입니다. 150줄을 넘는 함수는 모두 19개입니다.
 - [ ] **`print`를 `logging`으로 바꿉니다.** `print`가 77곳이고 `logging`을 쓰는 모듈은 없습니다. 상시 서버 로그에서 경고와 오류만 골라 볼 수 없습니다.
-- [ ] **프런트 검증 스크립트를 추적하고 `npm test`로 묶습니다.** `proof/src/`의 `check_*.js`, `test_*.mjs`가 프런트의 유일한 테스트인데, `.gitignore`가 `proof/`를 제외하고 있어 새로 만든 스크립트는 git에 들어가지 않습니다.
+- [x] (2026-11-10) **프런트 검증 스크립트를 추적하고 `npm test`로 묶습니다.** `proof/src/`의 `check_*.js`, `test_*.mjs`가 프런트의 유일한 테스트인데, `.gitignore`가 `proof/`를 제외하고 있어 새로 만든 스크립트는 git에 들어가지 않습니다.
 
 ## 5. 기능 백로그 중 체감이 클 것
 
