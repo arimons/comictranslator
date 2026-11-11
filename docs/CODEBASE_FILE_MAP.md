@@ -46,7 +46,7 @@ NEW_COMIC_TRANSLATOR/
 │       ├── ImageGenProgress.jsx  # AI로 통번역(이미지 생성) 진행 창: 모델·경과 시간·진행 메시지, 완료 뒤 결과 보기
 │       ├── ShortcutHelp.jsx      # ? 단축키 도움말
 │       ├── regionTypes.js        # 경계 기반/텍스트 기반 용어 및 과거 타입 호환
-│       ├── prefetchPlan.js       # 남은 페이지 미리 분석 대상 선택(설정이 꺼져 있으면 없음)
+│       ├── prefetchPlan.js       # 다음 페이지 미리 분석 대상 선택(보던 페이지 뒤 5장까지, 설정이 꺼져 있으면 없음)
 │       ├── storage.js            # 화면 설정 localStorage 읽기·쓰기(막혀 있어도 기본값)
 │       ├── overlayNormalize.js   # 글자 입히기 수동값 정리(크기·굵기·외곽선·안전 영역 범위)
 │       ├── overlayHistory.js     # 글자 입히기 편집 기록 쌓기·Undo/Redo 한 칸
@@ -233,7 +233,7 @@ guidance(수동 보정)가 있는 이미지는 `guidance_digest`(guidance 내용
 | `frontend/src/main.jsx` | React 엔트리포인트 |
 | `frontend/src/hooks/useRecentSessions.js` | 홈 최근 프로젝트 목록: 정렬(브라우저에 기억), 12개씩 이어 받기, 프로젝트 메뉴 열림 상태 |
 | `frontend/src/hooks/useBusyTasks.js` | 화면을 잠그는 작업 종류별 진행 표시(`busyTasks`)와 중복 실행 잠금, `runTask` |
-| `frontend/src/hooks/useAutoAnalysis.js` | 영역 분석 탭에서 보고 있는 페이지 자동 분석과 남은 페이지 미리 분석(설정, 기본 꺼짐). 두 effect의 실행 순서(자동 분석 → 미리 분석)는 App이 훅을 부르는 자리로 지킨다 |
+| `frontend/src/hooks/useAutoAnalysis.js` | 영역 분석 탭에서 보고 있는 페이지 자동 분석과 다음 페이지 미리 분석(설정, 기본 켜짐, 뒤 5장까지). 두 effect의 실행 순서(자동 분석 → 미리 분석)는 App이 훅을 부르는 자리로 지킨다 |
 | `frontend/src/hooks/useWorkspaceResume.js` | 서버 재시작·새로고침 뒤 보던 프로젝트·페이지·탭으로 돌아가기, 프로젝트별 마지막 페이지 기억 |
 | `frontend/src/hooks/useExportSettings.js` | 내보내기 탭 이미지 생성 설정·후보 선택·로그. OCR·번역 제공자를 바꾸면 이미지 모델을 같은 제공자로 맞춘다 |
 | `frontend/src/hooks/useTopbarMenu.js` | 영역 분석 상단 `기록`·`⋯` 펼침 메뉴 상태와 바깥 클릭·Esc 닫기 |

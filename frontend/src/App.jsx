@@ -69,6 +69,7 @@ import { emptyOverlayHistory, recordOverlayHistory as recordOverlayHistoryEntry,
 import useRecentSessions from "./hooks/useRecentSessions.js";
 import useBusyTasks from "./hooks/useBusyTasks.js";
 import useAutoAnalysis from "./hooks/useAutoAnalysis.js";
+import { PREFETCH_LOOKAHEAD } from "./prefetchPlan.js";
 import useWorkspaceResume from "./hooks/useWorkspaceResume.js";
 import useExportSettings from "./hooks/useExportSettings.js";
 import useTopbarMenu from "./hooks/useTopbarMenu.js";
@@ -1066,11 +1067,11 @@ export default function App() {
     overlayEditVersionRef.current = overlayEditVersion;
   }, [overlayEditVersion]);
 
-  // 보고 있는 페이지 자동 분석과 남은 페이지 미리 분석. 두 effect는 이 자리(페이지 상태 동기화 effect 다음)에서 이 순서로 돈다.
+  // 보고 있는 페이지 자동 분석과 다음 페이지 미리 분석. 두 effect는 이 자리(페이지 상태 동기화 effect 다음)에서 이 순서로 돈다.
   const { prefetchEnabled, prefetchingId, prefetchPromiseRef, changePrefetchEnabled } = useAutoAnalysis({
     workspaceStarted, generationReviewMode, activeTab, selected, sessionId, images,
     inputBusy, analyzeBusy, guidanceBusy, routeBusy, busyTasks,
-    autoAnalysisRequestedRef, sessionIdRef, setStatus, analyze, applyImageRecord,
+    autoAnalysisRequestedRef, sessionIdRef, taskLocksRef, setStatus, analyze, applyImageRecord,
   });
 
   useEffect(() => {
@@ -1513,7 +1514,7 @@ export default function App() {
     setWorkspaceStarted(true);
     setActiveTab("guidance");
     // 처음부터 다시 분석은 전체를 강제로 돈다. 그 외에는 바로 편집기로 들어가 보이는 페이지를 먼저 분석하고,
-    // 나머지는 '남은 페이지 미리 분석'을 켠 경우에만 화면을 잠그지 않고 한 장씩 이어간다.
+    // 그 뒤 페이지는 '다음 페이지 미리 분석'(기본 켜짐)이 화면을 잠그지 않고 한 장씩 이어간다.
     if (force) await analyze("all", { force });
   }
 
@@ -2598,9 +2599,9 @@ export default function App() {
                       <div className="prefetch-setting">
                         <label className="check">
                           <input type="checkbox" checked={prefetchEnabled} onChange={(e) => changePrefetchEnabled(e.target.checked)} />
-                          남은 페이지 미리 분석{prefetchEnabled ? " (켜짐)" : " (꺼짐)"}
+                          다음 페이지 미리 분석{prefetchEnabled ? " (켜짐)" : " (꺼짐)"}
                         </label>
-                        <p className="hint">보고 있는 페이지 분석이 끝나면 아직 분석하지 않은 페이지를 한 장씩 미리 분석합니다. 유료 분석(Cloud Vision)이 페이지마다 호출됩니다.</p>
+                        <p className="hint">보고 있는 페이지 분석이 끝나면 뒤의 {PREFETCH_LOOKAHEAD}장까지 미리 분석합니다. 페이지마다 Cloud Vision이 호출됩니다.</p>
                       </div>
                       <details className="guidance-disclosure">
                         <summary>표시 설정{Object.values(layers).some((visible) => !visible) ? <span>일부 숨김</span> : null}</summary>
