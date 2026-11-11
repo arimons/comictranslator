@@ -406,6 +406,13 @@ export default function App() {
   // inheritLastRoute: 방금 만든 새 프로젝트만 마지막으로 고른 AI 경로로 시작한다(기존 프로젝트를 열 때는 저장된 값만 쓴다).
   function setSessionTracked(nextSessionId, { inheritLastRoute = false } = {}) {
     const sid = nextSessionId || "";
+    if (sid !== sessionIdRef.current) {
+      // 다른 프로젝트로 바꾸면 이전 프로젝트의 페이지 목록·선택을 같은 render에서 비운다.
+      // 그대로 두면 새 세션 id와 이전 페이지 id로 페이지 상세·화자 요청이 나가 404가 난다.
+      setImages([]);
+      setSelectedId("");
+      selectedIdRef.current = "";
+    }
     sessionIdRef.current = sid;
     setSessionId(sid);
     pageDetailRequestRef.current += 1;
