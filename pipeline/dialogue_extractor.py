@@ -3351,88 +3351,15 @@ def _init_masking_state(
     return masked_image, forced_engines, reused_unboxed_inpaint, bubble_base_mask, protected_mask, split_parent_masks
 
 
-def build_dialogue_sheet(
-    image_path: str,
-    clusters_json: str,
-    output_masked_path: str,
-    output_json_path: str,
-    indexed_output_sheet_path: str,
-    output_vis_path: str | None = None,
-    manual_regions: List[Dict[str, Any]] | None = None,
-    manual_seed_points: List[Dict[str, Any]] | None = None,
-    manual_virtual_walls: List[Dict[str, Any]] | None = None,
-    manual_split_guides: List[Dict[str, Any]] | None = None,
-    suppressed_regions: List[Dict[str, Any]] | None = None,
-    pad: int = 60,
-    lane_pad: int = 20,
-    dark_threshold: int = 214,
-    min_mask_pixels: int = 80,
-    bubble_protect_pad: int = 10,
-    bubble_mask_erode: int = 2,
-    indexed_label_gutter: int = 48,
-    base_masked_path: str | None = None,
-    reuse_existing_unboxed_inpaint: bool = False,
-    inpaint_engine_overrides: List[Dict[str, Any]] | None = None,
-    force_standard: bool = False,
-    custom_masks: List[Dict[str, Any]] | None = None,
-) -> Dict[str, Any]:
-    """
-    1. Bubble 영역 검출 → 흰색 마스킹
-    2. Unboxed 텍스트 검출 → LaMa inpaint로 제거
-    3. 두 종류 crop을 모아 indexed OCR sheet 생성
-
-    Returns: regions JSON dict
-    """
-    image = cv2.imread(image_path)
-    if image is None:
-        raise FileNotFoundError(image_path)
-    img_h, img_w = image.shape[:2]
-    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-
-    if _is_cover_image_path(image_path) and not force_standard:
-        return _write_cover_skip_outputs(
-            image,
-            image_path,
-            clusters_json,
-            output_masked_path,
-            output_json_path,
-            indexed_output_sheet_path,
-            output_vis_path,
-        )
-
-    groups = _load_json(Path(clusters_json))
-    mask_artifact_dir = Path(output_json_path).parent.parent / "masks"
-    manual_guidance_report: Dict[str, Any] = {"edge_boxes": []}
-    style_baseline = _compute_page_style_baseline(image, groups)
-    style_decisions_by_tg: Dict[int, Dict[str, Any]] = {}
-    for idx, group in enumerate(groups, start=1):
-        tid = _tg_id(group, idx)
-        style = _compute_text_group_style(image, group)
-        style_decisions_by_tg[tid] = _classify_text_group_style(style, style_baseline)
-
-    sheet, regions, suppressed_tg_ids, source_meta_by_anchor = _detect_and_apply_guides(
-        image_path, clusters_json, image, gray, output_vis_path, groups,
-        manual_regions, manual_seed_points, manual_virtual_walls, manual_split_guides,
-        suppressed_regions, manual_guidance_report,
-    )
-
-    (
-        masked_image, forced_engines, reused_unboxed_inpaint,
-        bubble_base_mask, protected_mask, split_parent_masks,
-    ) = _init_masking_state(image, reuse_existing_unboxed_inpaint, base_masked_path, inpaint_engine_overrides)
-
-    # 출력 사각형은 마스크 경계로 줄어든다. 화면은 그 출력 사각형으로 제외 키를 저장하므로,
-    # 사각형을 맞춘 뒤 제외를 한 번 더 판정해야 제외한 영역이 마스크·OCR·중복 판정에 남지 않는다.
-    for region in regions:
-        if not region.get("is_valid") or region.get("split_parent_rect"):
-            continue
-        trimmed = _mask_bounding_rect(region.get("mask") if isinstance(region.get("mask"), np.ndarray) else _polygon_to_mask(region.get("polygon"), image.shape))
-        if trimmed is not None:
-            region["bubble_rect"] = trimmed
-    _invalidate_suppressed_regions(regions, [item for item in suppressed_regions or [] if item.get("target_key") or item.get("instance_ref")])
-    suppressed_tg_ids.update(_suppressed_text_group_ids(groups, regions, suppressed_regions or []))
-
-    valid_regions = [r for r in regions if r.get("is_valid")]
+def _build_bubble_crops(
+    image: np.ndarray,
+    masked_image: np.ndarray,
+    groups: List[Dict[str, Any]],
+    valid_regions: List[Dict[str, Any]],
+    bubble_base_mask: np.ndarray,
+    split_parent_masks: Dict[Tuple[int, int, int, int], np.ndarray],
+) -> Tuple[List[Dict[str, Any]], int]:
+    """Bubble crop: 유효 경계 기반 region마다 흰칠 마스크를 쌓고 OCR crop을 만든다. 어두운 flood는 글자만 지운다. (crops, 다음 region 번호)를 돌려준다."""
     crops: List[Dict[str, Any]] = []
     region_id_counter = 1
 
@@ -3523,6 +3450,23 @@ def build_dialogue_sheet(
         })
         region_id_counter += 1
 
+    return crops, region_id_counter
+
+
+def _add_manual_unboxed_crops(
+    image: np.ndarray,
+    masked_image: np.ndarray,
+    crops: List[Dict[str, Any]],
+    manual_regions: List[Dict[str, Any]] | None,
+    groups: List[Dict[str, Any]],
+    img_w: int,
+    img_h: int,
+    suppressed_regions: List[Dict[str, Any]] | None,
+    inpaint_engine_overrides: List[Dict[str, Any]] | None,
+    forced_engines: Dict[str, str],
+    region_id_counter: int,
+) -> Tuple[set[int], int]:
+    """수동 텍스트 박스: 제외되지 않은 수동 텍스트 기반 crop을 crops에 넣고 LaMa로 지운다. (수동 박스가 차지한 TG id, 다음 region 번호)를 돌려준다."""
     manual_unboxed_crops = _manual_unboxed_crops(image, manual_regions or [], groups, img_w, img_h)
     manual_unboxed_tg_ids: set[int] = set()
     group_by_id = {_tg_id(group, idx): group for idx, group in enumerate(groups, start=1)}
@@ -3541,8 +3485,18 @@ def build_dialogue_sheet(
             ))
         region_id_counter += 1
 
-    protected_mask[_expand_mask(bubble_base_mask, bubble_protect_pad) > 0] = 255
+    return manual_unboxed_tg_ids, region_id_counter
 
+
+def _eligible_unboxed_groups(
+    groups: List[Dict[str, Any]],
+    valid_regions: List[Dict[str, Any]],
+    sheet: Dict[str, Any],
+    suppressed_tg_ids: set[int],
+    manual_unboxed_tg_ids: set[int],
+    style_decisions_by_tg: Dict[int, Dict[str, Any]],
+) -> List[Tuple[int, Dict]]:
+    """Unboxed 후보: bubble·제외·수동 박스·OCR 제외 사유·노이즈·스타일 제외에 걸리지 않은 TG를 (id, group) 목록으로 돌려준다."""
     # ── 2. Unboxed Text Erase (LaMa) ──
     # valid 버블에 속한 TG는 이미 bubble crop으로 처리됨 → unboxed 후보에서 제외
     valid_bubble_tg_ids: set[int] = set()
@@ -3579,6 +3533,30 @@ def build_dialogue_sheet(
             continue
         eligible.append((tid, group))
 
+    return eligible
+
+
+def _erase_unboxed_clusters(
+    image: np.ndarray,
+    gray: np.ndarray,
+    masked_image: np.ndarray,
+    crops: List[Dict[str, Any]],
+    eligible: List[Tuple[int, Dict]],
+    img_w: int,
+    img_h: int,
+    source_meta_by_anchor: Dict[int, Dict[str, Any]],
+    protected_mask: np.ndarray,
+    style_decisions_by_tg: Dict[int, Dict[str, Any]],
+    inpaint_engine_overrides: List[Dict[str, Any]] | None,
+    forced_engines: Dict[str, str],
+    reused_unboxed_inpaint: bool,
+    pad: int,
+    lane_pad: int,
+    dark_threshold: int,
+    min_mask_pixels: int,
+    region_id_counter: int,
+) -> int:
+    """Unboxed 지우기: 인접 TG 묶음마다 글자 마스크를 뽑아 보호 범위 밖만 LaMa·Telea·stripe로 지우고 텍스트 기반 crop을 넣는다. 다음 region 번호를 돌려준다."""
     def _style_meta_for_cluster(cluster: List[Tuple[int, Dict]]) -> Dict[str, Any]:
         decisions = [
             style_decisions_by_tg[int(tid)]
@@ -3678,6 +3656,112 @@ def build_dialogue_sheet(
         # 인접 TG cluster를 하나의 OCR/overlay region으로 유지해 번역 문맥과 rect를 함께 보존한다.
         crops.append(unboxed_crop)
         region_id_counter += 1
+
+    return region_id_counter
+
+
+def build_dialogue_sheet(
+    image_path: str,
+    clusters_json: str,
+    output_masked_path: str,
+    output_json_path: str,
+    indexed_output_sheet_path: str,
+    output_vis_path: str | None = None,
+    manual_regions: List[Dict[str, Any]] | None = None,
+    manual_seed_points: List[Dict[str, Any]] | None = None,
+    manual_virtual_walls: List[Dict[str, Any]] | None = None,
+    manual_split_guides: List[Dict[str, Any]] | None = None,
+    suppressed_regions: List[Dict[str, Any]] | None = None,
+    pad: int = 60,
+    lane_pad: int = 20,
+    dark_threshold: int = 214,
+    min_mask_pixels: int = 80,
+    bubble_protect_pad: int = 10,
+    bubble_mask_erode: int = 2,
+    indexed_label_gutter: int = 48,
+    base_masked_path: str | None = None,
+    reuse_existing_unboxed_inpaint: bool = False,
+    inpaint_engine_overrides: List[Dict[str, Any]] | None = None,
+    force_standard: bool = False,
+    custom_masks: List[Dict[str, Any]] | None = None,
+) -> Dict[str, Any]:
+    """
+    1. Bubble 영역 검출 → 흰색 마스킹
+    2. Unboxed 텍스트 검출 → LaMa inpaint로 제거
+    3. 두 종류 crop을 모아 indexed OCR sheet 생성
+
+    Returns: regions JSON dict
+    """
+    image = cv2.imread(image_path)
+    if image is None:
+        raise FileNotFoundError(image_path)
+    img_h, img_w = image.shape[:2]
+    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+
+    if _is_cover_image_path(image_path) and not force_standard:
+        return _write_cover_skip_outputs(
+            image,
+            image_path,
+            clusters_json,
+            output_masked_path,
+            output_json_path,
+            indexed_output_sheet_path,
+            output_vis_path,
+        )
+
+    groups = _load_json(Path(clusters_json))
+    mask_artifact_dir = Path(output_json_path).parent.parent / "masks"
+    manual_guidance_report: Dict[str, Any] = {"edge_boxes": []}
+    style_baseline = _compute_page_style_baseline(image, groups)
+    style_decisions_by_tg: Dict[int, Dict[str, Any]] = {}
+    for idx, group in enumerate(groups, start=1):
+        tid = _tg_id(group, idx)
+        style = _compute_text_group_style(image, group)
+        style_decisions_by_tg[tid] = _classify_text_group_style(style, style_baseline)
+
+    sheet, regions, suppressed_tg_ids, source_meta_by_anchor = _detect_and_apply_guides(
+        image_path, clusters_json, image, gray, output_vis_path, groups,
+        manual_regions, manual_seed_points, manual_virtual_walls, manual_split_guides,
+        suppressed_regions, manual_guidance_report,
+    )
+
+    (
+        masked_image, forced_engines, reused_unboxed_inpaint,
+        bubble_base_mask, protected_mask, split_parent_masks,
+    ) = _init_masking_state(image, reuse_existing_unboxed_inpaint, base_masked_path, inpaint_engine_overrides)
+
+    # 출력 사각형은 마스크 경계로 줄어든다. 화면은 그 출력 사각형으로 제외 키를 저장하므로,
+    # 사각형을 맞춘 뒤 제외를 한 번 더 판정해야 제외한 영역이 마스크·OCR·중복 판정에 남지 않는다.
+    for region in regions:
+        if not region.get("is_valid") or region.get("split_parent_rect"):
+            continue
+        trimmed = _mask_bounding_rect(region.get("mask") if isinstance(region.get("mask"), np.ndarray) else _polygon_to_mask(region.get("polygon"), image.shape))
+        if trimmed is not None:
+            region["bubble_rect"] = trimmed
+    _invalidate_suppressed_regions(regions, [item for item in suppressed_regions or [] if item.get("target_key") or item.get("instance_ref")])
+    suppressed_tg_ids.update(_suppressed_text_group_ids(groups, regions, suppressed_regions or []))
+
+    valid_regions = [r for r in regions if r.get("is_valid")]
+    crops, region_id_counter = _build_bubble_crops(
+        image, masked_image, groups, valid_regions, bubble_base_mask, split_parent_masks,
+    )
+
+    manual_unboxed_tg_ids, region_id_counter = _add_manual_unboxed_crops(
+        image, masked_image, crops, manual_regions, groups, img_w, img_h,
+        suppressed_regions, inpaint_engine_overrides, forced_engines, region_id_counter,
+    )
+
+    protected_mask[_expand_mask(bubble_base_mask, bubble_protect_pad) > 0] = 255
+
+    eligible = _eligible_unboxed_groups(
+        groups, valid_regions, sheet, suppressed_tg_ids, manual_unboxed_tg_ids, style_decisions_by_tg,
+    )
+
+    region_id_counter = _erase_unboxed_clusters(
+        image, gray, masked_image, crops, eligible, img_w, img_h, source_meta_by_anchor,
+        protected_mask, style_decisions_by_tg, inpaint_engine_overrides, forced_engines,
+        reused_unboxed_inpaint, pad, lane_pad, dark_threshold, min_mask_pixels, region_id_counter,
+    )
 
     for parent_rect, split_mask in split_parent_masks.items():
         x, y, w, h = parent_rect
