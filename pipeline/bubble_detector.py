@@ -3681,6 +3681,120 @@ def _split_and_crop_regions(
     return crops, total_width, max_height
 
 
+def _write_masked_outputs(
+    image: np.ndarray,
+    crops: List[Dict[str, Any]],
+    img_w: int,
+    img_h: int,
+    output_masked_path: Optional[str],
+    output_vis_path: Optional[str],
+    output_regions_only_path: Optional[str],
+    clusters: List[Dict[str, Any]],
+    skipped: List[Dict[str, Any]],
+) -> None:
+    """Finalize 출력: 유효 region mask를 합쳐 흰칠 이미지·후보 검토 vis·region-only 이미지를 경로가 있을 때만 쓴다."""
+    combined_mask = np.zeros((img_h, img_w), dtype=np.uint8)
+    for item in crops:
+        if item["region"]["is_valid"]:
+            combined_mask = cv2.bitwise_or(combined_mask, item["region"]["mask"])
+
+    masked = image.copy()
+    masked[combined_mask > 0] = (255, 255, 255)
+    
+    if output_masked_path:
+        cv2.imwrite(output_masked_path, masked)
+        
+    if output_vis_path:
+        try:
+            from pipeline.bubble_candidate_visualizer import render_candidate_review_vis
+        except ImportError:
+            from bubble_candidate_visualizer import render_candidate_review_vis
+
+        render_candidate_review_vis(image, crops, output_vis_path, clusters=clusters, skipped=skipped)
+
+    if output_regions_only_path:
+        regions_only = np.full_like(image, 255)
+        regions_only[combined_mask > 0] = image[combined_mask > 0]
+        cv2.imwrite(output_regions_only_path, regions_only)
+
+
+def _pack_ocr_sheet(
+    crops: List[Dict[str, Any]],
+    total_width: int,
+    max_height: int,
+) -> Tuple[np.ndarray, List[Dict[str, Any]]]:
+    """Sheet packing: crop을 가로로 이어 붙인 OCR 시트와 시트 좌표가 담긴 출력 region 목록을 돌려준다."""
+    sheet = np.full((max_height or 1, total_width or 1, 3), 255, dtype=np.uint8)
+    sheet_x = 0
+    output_regions: List[Dict[str, Any]] = []
+    
+    for item in crops:
+        crop = item["crop"]
+        h, w = crop.shape[:2]
+        sheet[0:h, sheet_x:sheet_x + w] = crop
+        region = item["region"]
+        polygon = _extract_mask_polygon(region["mask"]) if region["is_valid"] else None
+        region_data = {
+            "region_id": item["region_id"],
+            "anchor_ids": region["anchor_ids"],
+            "method": region["method"],
+            "region_type_guess": region["region_type"],
+            "bubble_rect": region["bubble_rect"],
+            "sheet_rect": [sheet_x, 0, w, h],
+            "seed_points": region.get("seed_points", []),
+            "polygon": polygon,
+            "bubble_page_ratio": round(float(region["bubble_page_ratio"]), 5),
+            "bubble_tg_ratio": round(float(region["bubble_tg_ratio"]), 2),
+            "touches_image_border": region["touches_image_border"],
+            "quality_flags": region["quality_flags"],
+            "review_tags": region.get("review_tags", []),
+            "is_valid": region["is_valid"],
+        }
+        if "sort_group_index" in region:
+            region_data["sort_group_index"] = region["sort_group_index"]
+        if region.get("split_parent_rect"):
+            region_data["split_parent_rect"] = region["split_parent_rect"]
+            region_data["split_order"] = region.get("split_order", 0)
+        if region.get("split_line"):
+            region_data["split_line"] = region["split_line"]
+        if region.get("ocr_rect"):
+            region_data["ocr_rect"] = region["ocr_rect"]
+        if region.get("ocr_text_rects"):
+            region_data["ocr_text_rects"] = region["ocr_text_rects"]
+        if region.get("black_contour_probe"):
+            region_data["black_contour_probe"] = region["black_contour_probe"]
+        output_regions.append(region_data)
+        sheet_x += w
+
+    return sheet, output_regions
+
+
+def _write_indexed_sheet(
+    sheet: np.ndarray,
+    output_regions: List[Dict[str, Any]],
+    indexed_label_gutter: int,
+    indexed_output_sheet_path: str,
+) -> None:
+    """Indexed sheet: 시트 위에 R·A 번호 라벨 여백을 붙여 저장하고 각 region에 indexed_sheet_rect를 기록한다."""
+    gutter = max(0, indexed_label_gutter)
+    indexed = np.full((sheet.shape[0] + gutter, sheet.shape[1], 3), 255, dtype=np.uint8)
+    indexed[gutter:gutter + sheet.shape[0], 0:sheet.shape[1]] = sheet
+    for region in output_regions:
+        sx, sy, sw, sh = region["sheet_rect"]
+        region["indexed_sheet_rect"] = [sx, sy + gutter, sw, sh]
+        color = (0, 150, 0) if region["is_valid"] else (0, 0, 210)
+
+        cv2.rectangle(indexed, (sx, gutter + sy), (sx + sw - 1, gutter + sy + sh - 1), (225, 225, 225), 1)
+        if sx > 0:
+            cv2.line(indexed, (sx, 0), (sx, indexed.shape[0] - 1), (238, 238, 238), 1)
+
+        label = f"R{region['region_id']}"
+        aids = "A" + ",".join(str(a) for a in region["anchor_ids"]) if region["anchor_ids"] else "A-"
+        cv2.putText(indexed, label, (sx + 4, 20), cv2.FONT_HERSHEY_SIMPLEX, 0.58, color, 2, cv2.LINE_AA)
+        cv2.putText(indexed, aids, (sx + 4, 39), cv2.FONT_HERSHEY_SIMPLEX, 0.46, (130, 80, 0), 1, cv2.LINE_AA)
+    cv2.imwrite(indexed_output_sheet_path, indexed)
+
+
 def build_ocr_region_sheet(
     image_path: str,
     clusters_json: str,
@@ -3761,93 +3875,18 @@ def build_ocr_region_sheet(
         item["region_id"] = idx
         item["region"]["review_tags"] = _derive_review_tags(item["region"])
 
-    combined_mask = np.zeros((img_h, img_w), dtype=np.uint8)
-    for item in crops:
-        if item["region"]["is_valid"]:
-            combined_mask = cv2.bitwise_or(combined_mask, item["region"]["mask"])
+    _write_masked_outputs(
+        image, crops, img_w, img_h, output_masked_path, output_vis_path,
+        output_regions_only_path, clusters, skipped,
+    )
 
-    masked = image.copy()
-    masked[combined_mask > 0] = (255, 255, 255)
-    
-    if output_masked_path:
-        cv2.imwrite(output_masked_path, masked)
-        
-    if output_vis_path:
-        try:
-            from pipeline.bubble_candidate_visualizer import render_candidate_review_vis
-        except ImportError:
-            from bubble_candidate_visualizer import render_candidate_review_vis
-
-        render_candidate_review_vis(image, crops, output_vis_path, clusters=clusters, skipped=skipped)
-
-    if output_regions_only_path:
-        regions_only = np.full_like(image, 255)
-        regions_only[combined_mask > 0] = image[combined_mask > 0]
-        cv2.imwrite(output_regions_only_path, regions_only)
-
-    sheet = np.full((max_height or 1, total_width or 1, 3), 255, dtype=np.uint8)
-    sheet_x = 0
-    output_regions: List[Dict[str, Any]] = []
-    
-    for item in crops:
-        crop = item["crop"]
-        h, w = crop.shape[:2]
-        sheet[0:h, sheet_x:sheet_x + w] = crop
-        region = item["region"]
-        polygon = _extract_mask_polygon(region["mask"]) if region["is_valid"] else None
-        region_data = {
-            "region_id": item["region_id"],
-            "anchor_ids": region["anchor_ids"],
-            "method": region["method"],
-            "region_type_guess": region["region_type"],
-            "bubble_rect": region["bubble_rect"],
-            "sheet_rect": [sheet_x, 0, w, h],
-            "seed_points": region.get("seed_points", []),
-            "polygon": polygon,
-            "bubble_page_ratio": round(float(region["bubble_page_ratio"]), 5),
-            "bubble_tg_ratio": round(float(region["bubble_tg_ratio"]), 2),
-            "touches_image_border": region["touches_image_border"],
-            "quality_flags": region["quality_flags"],
-            "review_tags": region.get("review_tags", []),
-            "is_valid": region["is_valid"],
-        }
-        if "sort_group_index" in region:
-            region_data["sort_group_index"] = region["sort_group_index"]
-        if region.get("split_parent_rect"):
-            region_data["split_parent_rect"] = region["split_parent_rect"]
-            region_data["split_order"] = region.get("split_order", 0)
-        if region.get("split_line"):
-            region_data["split_line"] = region["split_line"]
-        if region.get("ocr_rect"):
-            region_data["ocr_rect"] = region["ocr_rect"]
-        if region.get("ocr_text_rects"):
-            region_data["ocr_text_rects"] = region["ocr_text_rects"]
-        if region.get("black_contour_probe"):
-            region_data["black_contour_probe"] = region["black_contour_probe"]
-        output_regions.append(region_data)
-        sheet_x += w
+    sheet, output_regions = _pack_ocr_sheet(crops, total_width, max_height)
 
     if output_sheet_path:
         cv2.imwrite(output_sheet_path, sheet)
 
     if indexed_output_sheet_path:
-        gutter = max(0, indexed_label_gutter)
-        indexed = np.full((sheet.shape[0] + gutter, sheet.shape[1], 3), 255, dtype=np.uint8)
-        indexed[gutter:gutter + sheet.shape[0], 0:sheet.shape[1]] = sheet
-        for region in output_regions:
-            sx, sy, sw, sh = region["sheet_rect"]
-            region["indexed_sheet_rect"] = [sx, sy + gutter, sw, sh]
-            color = (0, 150, 0) if region["is_valid"] else (0, 0, 210)
-
-            cv2.rectangle(indexed, (sx, gutter + sy), (sx + sw - 1, gutter + sy + sh - 1), (225, 225, 225), 1)
-            if sx > 0:
-                cv2.line(indexed, (sx, 0), (sx, indexed.shape[0] - 1), (238, 238, 238), 1)
-
-            label = f"R{region['region_id']}"
-            aids = "A" + ",".join(str(a) for a in region["anchor_ids"]) if region["anchor_ids"] else "A-"
-            cv2.putText(indexed, label, (sx + 4, 20), cv2.FONT_HERSHEY_SIMPLEX, 0.58, color, 2, cv2.LINE_AA)
-            cv2.putText(indexed, aids, (sx + 4, 39), cv2.FONT_HERSHEY_SIMPLEX, 0.46, (130, 80, 0), 1, cv2.LINE_AA)
-        cv2.imwrite(indexed_output_sheet_path, indexed)
+        _write_indexed_sheet(sheet, output_regions, indexed_label_gutter, indexed_output_sheet_path)
 
     output = {
         "image": image_path,
