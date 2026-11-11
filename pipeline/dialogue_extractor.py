@@ -3660,6 +3660,183 @@ def _erase_unboxed_clusters(
     return region_id_counter
 
 
+def _finalize_masked_image(
+    image: np.ndarray,
+    masked_image: np.ndarray,
+    bubble_base_mask: np.ndarray,
+    protected_mask: np.ndarray,
+    split_parent_masks: Dict[Tuple[int, int, int, int], np.ndarray],
+    bubble_mask_erode: int,
+    custom_masks: List[Dict[str, Any]] | None,
+    output_masked_path: str,
+) -> Tuple[int, List[Dict[str, Any]], Dict[str, Any] | None]:
+    """마스킹 마무리: split 이음매를 메우고 보호 범위를 복원한 뒤 말풍선 흰칠·지우기 보정을 칠해 masked 이미지를 쓴다. (침식 px, 보정 도형, 보정 보고)를 돌려준다."""
+    for parent_rect, split_mask in split_parent_masks.items():
+        x, y, w, h = parent_rect
+        if w <= 0 or h <= 0:
+            continue
+        crop = split_mask[y:y + h, x:x + w]
+        if crop.size == 0 or crop.max() == 0:
+            continue
+        close_px = int(round(min(w, h) * 0.025))
+        close_px = max(3, min(9, close_px))
+        kernel_size = close_px * 2 + 1
+        kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (kernel_size, kernel_size))
+        closed = cv2.morphologyEx(crop, cv2.MORPH_CLOSE, kernel, iterations=1)
+        seam_fill = np.where((closed > 0) & (crop == 0), 255, 0).astype(np.uint8)
+        if close_px > 0:
+            seam_fill[:close_px, :] = 0
+            seam_fill[-close_px:, :] = 0
+            seam_fill[:, :close_px] = 0
+            seam_fill[:, -close_px:] = 0
+        bubble_base_mask[y:y + h, x:x + w][seam_fill > 0] = 255
+
+    if np.any(protected_mask):
+        masked_image[protected_mask > 0] = image[protected_mask > 0]
+    scaled_bubble_mask_erode = _scaled_erode_px(bubble_mask_erode, image.shape)
+    bubble_overlay_mask = _erode_mask(bubble_base_mask, scaled_bubble_mask_erode)
+    masked_image[bubble_overlay_mask > 0] = (255, 255, 255)
+    # 지우기 보정은 모든 지우기(말풍선 흰칠·텍스트 LaMa·보호 범위 복원)가 끝난 뒤 마지막에 흰색으로 칠한다.
+    # 재사용한 이전 결과 위에도 다시 칠한다(보호 범위 복원이 이전 보정을 되돌렸을 수 있다).
+    custom_shapes = _custom_mask_shapes(custom_masks, image.shape)
+    custom_mask_report = _whiten_custom_masks(masked_image, custom_shapes)
+
+    cv2.imwrite(output_masked_path, masked_image)
+
+    return scaled_bubble_mask_erode, custom_shapes, custom_mask_report
+
+
+def _build_output_regions(
+    crops: List[Dict[str, Any]],
+    image_path: str,
+    mask_artifact_dir: Path,
+    n_crops: int,
+    _SHEET_GAP: int,
+) -> List[Dict[str, Any]]:
+    """OCR sheet 조립: 읽기 순서로 정렬된 crop마다 시트 좌표·타입·좌표·마스크 파일을 담은 출력 region을 만든다."""
+    sheet_x = 0
+    output_regions = []
+
+    for i, item in enumerate(crops):
+        c_img = item["crop"]
+        h, w = c_img.shape[:2]
+
+        region_data = {
+            "region_id": item["region_id"],
+            "anchor_ids": item["anchor_ids"],
+            "sheet_rect": [sheet_x, 0, w, h],
+            "type": item["type"],
+            "processing_basis": region_processing_basis(item),
+        }
+        if item["type"] == "unboxed":
+            region_data["erase_rect"] = item["erase_rect"]
+            region_data["unboxed_rect"] = item["source_rect"]
+            region_data["consolidated_text_group"] = item.get("consolidated_text_group")
+            region_data["inpaint_skipped"] = item.get("inpaint_skipped", False)
+            if item.get("inpaint_engine_used"):
+                region_data["inpaint_engine_used"] = item["inpaint_engine_used"]
+                region_data["inpaint_engine_source"] = item.get("inpaint_engine_source", "auto")
+        else:
+            region_data["bubble_rect"] = item["source_rect"]
+            if item.get("polygon"):
+                region_data["contour"] = item["polygon"]
+                region_data["polygon"] = item["polygon"]
+            if item.get("mask") is not None:
+                mask_artifact_dir.mkdir(parents=True, exist_ok=True)
+                mask_path = mask_artifact_dir / f"{Path(image_path).stem}_R{item['region_id']}_mask.png"
+                cv2.imwrite(str(mask_path), np.where(item["mask"] > 0, 255, 0).astype(np.uint8))
+                region_data["mask_ref"] = str(mask_path)
+            # mask_centroid: polygon mask 있을 때만 존재. overlay ix/iy 중심 보정용
+            if item.get("mask_centroid") is not None:
+                region_data["mask_centroid"] = item["mask_centroid"]
+            if item.get("safe_text_rect") is not None:
+                region_data["safe_text_rect"] = item["safe_text_rect"]
+            if item.get("safe_text_rect_quality"):
+                region_data["safe_text_rect_quality"] = item["safe_text_rect_quality"]
+            if item.get("ocr_rect"):
+                region_data["ocr_rect"] = item["ocr_rect"]
+            if item.get("ocr_text_rects"):
+                region_data["ocr_text_rects"] = item["ocr_text_rects"]
+        if item.get("source_method"):
+            region_data["source_method"] = item["source_method"]
+        if item.get("source_region_type"):
+            region_data["source_region_type"] = item["source_region_type"]
+        if item.get("quality_flags"):
+            region_data["quality_flags"] = item["quality_flags"]
+        if item.get("review_tags"):
+            region_data["review_tags"] = item["review_tags"]
+        if item.get("black_contour_probe"):
+            region_data["black_contour_probe"] = item["black_contour_probe"]
+        if item.get("sort_rect") and item.get("sort_rect") != item["source_rect"]:
+            region_data["split_parent_rect"] = item["sort_rect"]
+            region_data["split_order"] = item.get("split_order", 0)
+        if item.get("split_line"):
+            region_data["split_line"] = item["split_line"]
+        if item.get("guide_id"):
+            region_data["region_origin"] = str(item["guide_id"])
+        if item.get("split_parent_anchor_ids"):
+            region_data["split_parent_anchor_ids"] = [int(v) for v in item["split_parent_anchor_ids"]]
+
+        output_regions.append(region_data)
+        sheet_x += w + (_SHEET_GAP if i < n_crops - 1 else 0)
+
+    return output_regions
+
+
+def _write_dialogue_indexed_sheet(
+    crops: List[Dict[str, Any]],
+    output_regions: List[Dict[str, Any]],
+    indexed_label_gutter: int,
+    max_height: int,
+    n_crops: int,
+    _SHEET_GAP: int,
+    indexed_output_sheet_path: str,
+) -> Tuple[int, int]:
+    """Indexed sheet: crop 왼쪽에 R/U 번호·TG 라벨 열을 붙인 시트를 쓰고 각 region에 indexed_sheet_rect를 기록한다. 시트 (너비, 높이)를 돌려준다."""
+    # Indexed sheet — 각 crop 왼쪽에 라벨 컬럼 배치 (상단 gutter 제거)
+    _LABEL_W = max(0, indexed_label_gutter)  # 좌측 라벨 열 너비 (기존 파라미터 재활용)
+    idx_total_w = max(1, sum(_LABEL_W + c["crop"].shape[1] for c in crops) + _SHEET_GAP * max(0, n_crops - 1))
+    idx_total_h = max(1, max_height)
+    indexed = np.full((idx_total_h, idx_total_w, 3), 255, dtype=np.uint8)
+
+    idx_x = 0
+    for i, (item, region) in enumerate(zip(crops, output_regions)):
+        c_img = item["crop"]
+        h, w = c_img.shape[:2]
+        img_x = idx_x + _LABEL_W
+
+        # 이미지 배치
+        indexed[0:h, img_x:img_x + w] = c_img
+
+        # indexed_sheet_rect: 라벨+이미지 전체 영역
+        region["indexed_sheet_rect"] = [idx_x, 0, _LABEL_W + w, h]
+
+        # 이미지 테두리
+        cv2.rectangle(indexed, (img_x, 0), (img_x + w - 1, h - 1), (225, 225, 225), 1)
+
+        # 라벨-이미지 구분선
+        if _LABEL_W > 0:
+            cv2.line(indexed, (img_x - 1, 0), (img_x - 1, max(0, h - 1)), (180, 180, 180), 1)
+
+        # 라벨 텍스트
+        is_text_based = region_processing_basis(region) == TEXT_BASED
+        prefix = "U" if is_text_based else "R"
+        label = f"{prefix}{region['region_id']}"
+        aids = "TG" + ",".join(str(a) for a in region["anchor_ids"]) if region["anchor_ids"] else "TG-"
+
+        color_id = (0, 90, 220) if is_text_based else (0, 0, 220)
+        color_tg = (130, 80, 0) if is_text_based else (200, 60, 0)
+
+        cv2.putText(indexed, label, (idx_x + 4, 18), cv2.FONT_HERSHEY_SIMPLEX, 0.58, color_id, 2, cv2.LINE_AA)
+        cv2.putText(indexed, aids, (idx_x + 4, 37), cv2.FONT_HERSHEY_SIMPLEX, 0.42, color_tg, 1, cv2.LINE_AA)
+
+        idx_x += _LABEL_W + w + (_SHEET_GAP if i < n_crops - 1 else 0)
+
+    cv2.imwrite(indexed_output_sheet_path, indexed)
+
+    return idx_total_w, idx_total_h
+
+
 def build_dialogue_sheet(
     image_path: str,
     clusters_json: str,
@@ -3763,37 +3940,10 @@ def build_dialogue_sheet(
         reused_unboxed_inpaint, pad, lane_pad, dark_threshold, min_mask_pixels, region_id_counter,
     )
 
-    for parent_rect, split_mask in split_parent_masks.items():
-        x, y, w, h = parent_rect
-        if w <= 0 or h <= 0:
-            continue
-        crop = split_mask[y:y + h, x:x + w]
-        if crop.size == 0 or crop.max() == 0:
-            continue
-        close_px = int(round(min(w, h) * 0.025))
-        close_px = max(3, min(9, close_px))
-        kernel_size = close_px * 2 + 1
-        kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (kernel_size, kernel_size))
-        closed = cv2.morphologyEx(crop, cv2.MORPH_CLOSE, kernel, iterations=1)
-        seam_fill = np.where((closed > 0) & (crop == 0), 255, 0).astype(np.uint8)
-        if close_px > 0:
-            seam_fill[:close_px, :] = 0
-            seam_fill[-close_px:, :] = 0
-            seam_fill[:, :close_px] = 0
-            seam_fill[:, -close_px:] = 0
-        bubble_base_mask[y:y + h, x:x + w][seam_fill > 0] = 255
-
-    if np.any(protected_mask):
-        masked_image[protected_mask > 0] = image[protected_mask > 0]
-    scaled_bubble_mask_erode = _scaled_erode_px(bubble_mask_erode, image.shape)
-    bubble_overlay_mask = _erode_mask(bubble_base_mask, scaled_bubble_mask_erode)
-    masked_image[bubble_overlay_mask > 0] = (255, 255, 255)
-    # 지우기 보정은 모든 지우기(말풍선 흰칠·텍스트 LaMa·보호 범위 복원)가 끝난 뒤 마지막에 흰색으로 칠한다.
-    # 재사용한 이전 결과 위에도 다시 칠한다(보호 범위 복원이 이전 보정을 되돌렸을 수 있다).
-    custom_shapes = _custom_mask_shapes(custom_masks, image.shape)
-    custom_mask_report = _whiten_custom_masks(masked_image, custom_shapes)
-
-    cv2.imwrite(output_masked_path, masked_image)
+    scaled_bubble_mask_erode, custom_shapes, custom_mask_report = _finalize_masked_image(
+        image, masked_image, bubble_base_mask, protected_mask, split_parent_masks,
+        bubble_mask_erode, custom_masks, output_masked_path,
+    )
 
     # ── 3. OCR Sheet 조립 ──
     crops = _apply_manual_unboxed_overrides(image, crops, img_w, img_h)
@@ -3819,71 +3969,7 @@ def build_dialogue_sheet(
     n_crops = len(crops)
     max_height = max((c["crop"].shape[0] for c in crops), default=1)
 
-    sheet_x = 0
-    output_regions = []
-
-    for i, item in enumerate(crops):
-        c_img = item["crop"]
-        h, w = c_img.shape[:2]
-
-        region_data = {
-            "region_id": item["region_id"],
-            "anchor_ids": item["anchor_ids"],
-            "sheet_rect": [sheet_x, 0, w, h],
-            "type": item["type"],
-            "processing_basis": region_processing_basis(item),
-        }
-        if item["type"] == "unboxed":
-            region_data["erase_rect"] = item["erase_rect"]
-            region_data["unboxed_rect"] = item["source_rect"]
-            region_data["consolidated_text_group"] = item.get("consolidated_text_group")
-            region_data["inpaint_skipped"] = item.get("inpaint_skipped", False)
-            if item.get("inpaint_engine_used"):
-                region_data["inpaint_engine_used"] = item["inpaint_engine_used"]
-                region_data["inpaint_engine_source"] = item.get("inpaint_engine_source", "auto")
-        else:
-            region_data["bubble_rect"] = item["source_rect"]
-            if item.get("polygon"):
-                region_data["contour"] = item["polygon"]
-                region_data["polygon"] = item["polygon"]
-            if item.get("mask") is not None:
-                mask_artifact_dir.mkdir(parents=True, exist_ok=True)
-                mask_path = mask_artifact_dir / f"{Path(image_path).stem}_R{item['region_id']}_mask.png"
-                cv2.imwrite(str(mask_path), np.where(item["mask"] > 0, 255, 0).astype(np.uint8))
-                region_data["mask_ref"] = str(mask_path)
-            # mask_centroid: polygon mask 있을 때만 존재. overlay ix/iy 중심 보정용
-            if item.get("mask_centroid") is not None:
-                region_data["mask_centroid"] = item["mask_centroid"]
-            if item.get("safe_text_rect") is not None:
-                region_data["safe_text_rect"] = item["safe_text_rect"]
-            if item.get("safe_text_rect_quality"):
-                region_data["safe_text_rect_quality"] = item["safe_text_rect_quality"]
-            if item.get("ocr_rect"):
-                region_data["ocr_rect"] = item["ocr_rect"]
-            if item.get("ocr_text_rects"):
-                region_data["ocr_text_rects"] = item["ocr_text_rects"]
-        if item.get("source_method"):
-            region_data["source_method"] = item["source_method"]
-        if item.get("source_region_type"):
-            region_data["source_region_type"] = item["source_region_type"]
-        if item.get("quality_flags"):
-            region_data["quality_flags"] = item["quality_flags"]
-        if item.get("review_tags"):
-            region_data["review_tags"] = item["review_tags"]
-        if item.get("black_contour_probe"):
-            region_data["black_contour_probe"] = item["black_contour_probe"]
-        if item.get("sort_rect") and item.get("sort_rect") != item["source_rect"]:
-            region_data["split_parent_rect"] = item["sort_rect"]
-            region_data["split_order"] = item.get("split_order", 0)
-        if item.get("split_line"):
-            region_data["split_line"] = item["split_line"]
-        if item.get("guide_id"):
-            region_data["region_origin"] = str(item["guide_id"])
-        if item.get("split_parent_anchor_ids"):
-            region_data["split_parent_anchor_ids"] = [int(v) for v in item["split_parent_anchor_ids"]]
-
-        output_regions.append(region_data)
-        sheet_x += w + (_SHEET_GAP if i < n_crops - 1 else 0)
+    output_regions = _build_output_regions(crops, image_path, mask_artifact_dir, n_crops, _SHEET_GAP)
 
     # 영역 참조(region_ref): 번호가 아니라 TG 집합·가이드 id로 번역/수동값/화자를 영역에 붙이기 위한 덧붙임 필드.
     # 기존 키(region_id, type, 좌표 등)는 바꾸지 않는다.
@@ -3904,46 +3990,9 @@ def build_dialogue_sheet(
     if custom_mask_report is not None and custom_ocr_report is not None:
         custom_mask_report.update(custom_ocr_report)
 
-    # Indexed sheet — 각 crop 왼쪽에 라벨 컬럼 배치 (상단 gutter 제거)
-    _LABEL_W = max(0, indexed_label_gutter)  # 좌측 라벨 열 너비 (기존 파라미터 재활용)
-    idx_total_w = max(1, sum(_LABEL_W + c["crop"].shape[1] for c in crops) + _SHEET_GAP * max(0, n_crops - 1))
-    idx_total_h = max(1, max_height)
-    indexed = np.full((idx_total_h, idx_total_w, 3), 255, dtype=np.uint8)
-
-    idx_x = 0
-    for i, (item, region) in enumerate(zip(crops, output_regions)):
-        c_img = item["crop"]
-        h, w = c_img.shape[:2]
-        img_x = idx_x + _LABEL_W
-
-        # 이미지 배치
-        indexed[0:h, img_x:img_x + w] = c_img
-
-        # indexed_sheet_rect: 라벨+이미지 전체 영역
-        region["indexed_sheet_rect"] = [idx_x, 0, _LABEL_W + w, h]
-
-        # 이미지 테두리
-        cv2.rectangle(indexed, (img_x, 0), (img_x + w - 1, h - 1), (225, 225, 225), 1)
-
-        # 라벨-이미지 구분선
-        if _LABEL_W > 0:
-            cv2.line(indexed, (img_x - 1, 0), (img_x - 1, max(0, h - 1)), (180, 180, 180), 1)
-
-        # 라벨 텍스트
-        is_text_based = region_processing_basis(region) == TEXT_BASED
-        prefix = "U" if is_text_based else "R"
-        label = f"{prefix}{region['region_id']}"
-        aids = "TG" + ",".join(str(a) for a in region["anchor_ids"]) if region["anchor_ids"] else "TG-"
-
-        color_id = (0, 90, 220) if is_text_based else (0, 0, 220)
-        color_tg = (130, 80, 0) if is_text_based else (200, 60, 0)
-
-        cv2.putText(indexed, label, (idx_x + 4, 18), cv2.FONT_HERSHEY_SIMPLEX, 0.58, color_id, 2, cv2.LINE_AA)
-        cv2.putText(indexed, aids, (idx_x + 4, 37), cv2.FONT_HERSHEY_SIMPLEX, 0.42, color_tg, 1, cv2.LINE_AA)
-
-        idx_x += _LABEL_W + w + (_SHEET_GAP if i < n_crops - 1 else 0)
-
-    cv2.imwrite(indexed_output_sheet_path, indexed)
+    idx_total_w, idx_total_h = _write_dialogue_indexed_sheet(
+        crops, output_regions, indexed_label_gutter, max_height, n_crops, _SHEET_GAP, indexed_output_sheet_path,
+    )
     _overlay_final_unboxed_regions(image, output_vis_path, output_regions, groups)
 
     output_data = {
