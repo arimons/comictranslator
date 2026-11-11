@@ -38,6 +38,7 @@
       "topic": "Comic Translator Studio 편집기 사용법",
       "sources": [
         "app.py",
+        "routers",
         "web/index.html",
         "pipeline/manual_guidance.py",
         "pipeline/dialogue_extractor.py",
@@ -61,6 +62,7 @@
       "topic": "2026-10-19 편집기 MCP 연결 및 에이전트 1차 검토 방안",
       "sources": [
         "app.py",
+        "routers",
         "pipeline/manual_guidance.py",
         "pipeline/background_restore.py",
         "frontend/src/EditorCanvas.jsx"
@@ -72,6 +74,7 @@
       "sources": [
         "run_pipeline.py",
         "app.py",
+        "routers",
         "pipeline/pipeline_runner.py",
         "pipeline/background_restore.py",
         "frontend/src/DialogueList.jsx",
@@ -159,6 +162,7 @@
         "frontend/src/regionTypes.js",
         "frontend/src/RegionTypeBadge.jsx",
         "app.py",
+        "routers",
         "pipeline/dialogue_extractor.py",
         "tests/test_region_processing_basis.py"
       ]
@@ -186,6 +190,7 @@
         "frontend/src/StartScreen.jsx",
         "frontend/src/App.jsx",
         "app.py",
+        "routers",
         "web/styles.css"
       ]
     },
@@ -236,7 +241,8 @@
         "pipeline/image_generation_bridge.py",
         "scripts/run_editor_mcp.py",
         "frontend/src/ImageGenerationPanel.jsx",
-        "app.py"
+        "app.py",
+        "routers"
       ]
     },
     "docs/TOOLBAR_UX_REVIEW.md": {
