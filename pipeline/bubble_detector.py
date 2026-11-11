@@ -2743,6 +2743,80 @@ def _probe_text_group(
         grouped[key]["region_type"] = region_type
 
 
+def _merge_fallback_anchors_into_valid(
+    grouped: Dict[Tuple[Any, ...], Dict[str, Any]],
+) -> None:
+    """Probe 뒤 정리: 유효 bubble과 같은 rect를 가진 fallback 그룹의 앵커를 유효 그룹에 합치고 fallback 그룹을 지운다(grouped 제자리 수정)."""
+    # 같은 bubble rect를 공유하는 fallback TG는 valid bubble group에 합류시킨다.
+    # 그래야 한 말풍선 안의 여러 TG가 split 단계에서 함께 고려된다.
+    valid_by_rect = {
+        tuple(region["bubble_rect"]): key
+        for key, region in grouped.items()
+        if region.get("is_valid")
+    }
+    keys_to_remove: List[Tuple[Any, ...]] = []
+    for key, region in list(grouped.items()):
+        if region.get("is_valid"):
+            continue
+        valid_key = valid_by_rect.get(tuple(region["bubble_rect"]))
+        if valid_key is None:
+            continue
+        valid_region = grouped[valid_key]
+        for aid in region["anchor_ids"]:
+            if aid not in valid_region["anchor_ids"]:
+                valid_region["anchor_ids"].append(aid)
+        valid_region["quality_flags"].append("merged_fallback_anchor_for_split")
+        keys_to_remove.append(key)
+    for key in keys_to_remove:
+        grouped.pop(key, None)
+
+
+def _attach_english_anchors_to_bubbles(
+    grouped: Dict[Tuple[Any, ...], Dict[str, Any]],
+    skipped: List[Dict[str, Any]],
+) -> None:
+    """Probe 뒤 정리: 건너뛴 영어-only TG가 유효 bubble 안에 충분히 겹치면 split용 앵커로 붙인다(grouped 제자리 수정)."""
+    # 영어-only 텍스트는 독립 bubble 후보에서는 제외하지만, 이미 잡힌 bubble 안에 있으면
+    # split anchor로 필요하다. 예: 일본어 설명 옆 영문 타이틀이 같은 bubble crop 안에 있는 경우.
+    assigned_anchor_ids = {
+        int(aid)
+        for region in grouped.values()
+        for aid in region.get("anchor_ids", [])
+    }
+    for skipped_item in skipped:
+        if skipped_item.get("reason") != "english_only_text":
+            continue
+        aid = int(skipped_item.get("cluster_id", 0))
+        if not aid or aid in assigned_anchor_ids:
+            continue
+        anchor_rect = [int(v) for v in skipped_item.get("anchor_bbox", [0, 0, 0, 0])[:4]]
+        ax, ay, aw, ah = anchor_rect
+        if aw <= 0 or ah <= 0:
+            continue
+        acx, acy = _bbox_center(anchor_rect)
+        anchor_area = aw * ah
+        best_region: Optional[Dict[str, Any]] = None
+        best_overlap = 0.0
+        for region in grouped.values():
+            if not region.get("is_valid"):
+                continue
+            rx, ry, rw, rh = [int(v) for v in region.get("bubble_rect", [0, 0, 0, 0])[:4]]
+            if not (rx <= acx <= rx + rw and ry <= acy <= ry + rh):
+                continue
+            ix1 = max(ax, rx)
+            iy1 = max(ay, ry)
+            ix2 = min(ax + aw, rx + rw)
+            iy2 = min(ay + ah, ry + rh)
+            overlap = max(0, ix2 - ix1) * max(0, iy2 - iy1) / max(1, anchor_area)
+            if overlap > best_overlap:
+                best_overlap = overlap
+                best_region = region
+        if best_region is not None and best_overlap >= 0.60:
+            best_region["anchor_ids"].append(aid)
+            best_region.setdefault("quality_flags", []).append(f"merged_english_anchor_for_split:A{aid}")
+            assigned_anchor_ids.add(aid)
+
+
 def build_ocr_region_sheet(
     image_path: str,
     clusters_json: str,
@@ -2793,68 +2867,8 @@ def build_ocr_region_sheet(
             grouped, diagnostics, skipped, noise_like_anchors,
         )
 
-    # 같은 bubble rect를 공유하는 fallback TG는 valid bubble group에 합류시킨다.
-    # 그래야 한 말풍선 안의 여러 TG가 split 단계에서 함께 고려된다.
-    valid_by_rect = {
-        tuple(region["bubble_rect"]): key
-        for key, region in grouped.items()
-        if region.get("is_valid")
-    }
-    keys_to_remove: List[Tuple[Any, ...]] = []
-    for key, region in list(grouped.items()):
-        if region.get("is_valid"):
-            continue
-        valid_key = valid_by_rect.get(tuple(region["bubble_rect"]))
-        if valid_key is None:
-            continue
-        valid_region = grouped[valid_key]
-        for aid in region["anchor_ids"]:
-            if aid not in valid_region["anchor_ids"]:
-                valid_region["anchor_ids"].append(aid)
-        valid_region["quality_flags"].append("merged_fallback_anchor_for_split")
-        keys_to_remove.append(key)
-    for key in keys_to_remove:
-        grouped.pop(key, None)
-
-    # 영어-only 텍스트는 독립 bubble 후보에서는 제외하지만, 이미 잡힌 bubble 안에 있으면
-    # split anchor로 필요하다. 예: 일본어 설명 옆 영문 타이틀이 같은 bubble crop 안에 있는 경우.
-    assigned_anchor_ids = {
-        int(aid)
-        for region in grouped.values()
-        for aid in region.get("anchor_ids", [])
-    }
-    for skipped_item in skipped:
-        if skipped_item.get("reason") != "english_only_text":
-            continue
-        aid = int(skipped_item.get("cluster_id", 0))
-        if not aid or aid in assigned_anchor_ids:
-            continue
-        anchor_rect = [int(v) for v in skipped_item.get("anchor_bbox", [0, 0, 0, 0])[:4]]
-        ax, ay, aw, ah = anchor_rect
-        if aw <= 0 or ah <= 0:
-            continue
-        acx, acy = _bbox_center(anchor_rect)
-        anchor_area = aw * ah
-        best_region: Optional[Dict[str, Any]] = None
-        best_overlap = 0.0
-        for region in grouped.values():
-            if not region.get("is_valid"):
-                continue
-            rx, ry, rw, rh = [int(v) for v in region.get("bubble_rect", [0, 0, 0, 0])[:4]]
-            if not (rx <= acx <= rx + rw and ry <= acy <= ry + rh):
-                continue
-            ix1 = max(ax, rx)
-            iy1 = max(ay, ry)
-            ix2 = min(ax + aw, rx + rw)
-            iy2 = min(ay + ah, ry + rh)
-            overlap = max(0, ix2 - ix1) * max(0, iy2 - iy1) / max(1, anchor_area)
-            if overlap > best_overlap:
-                best_overlap = overlap
-                best_region = region
-        if best_region is not None and best_overlap >= 0.60:
-            best_region["anchor_ids"].append(aid)
-            best_region.setdefault("quality_flags", []).append(f"merged_english_anchor_for_split:A{aid}")
-            assigned_anchor_ids.add(aid)
+    _merge_fallback_anchors_into_valid(grouped)
+    _attach_english_anchors_to_bubbles(grouped, skipped)
 
     clusters_by_id = {_text_group_id(c, i + 1): c for i, c in enumerate(clusters)}
 
