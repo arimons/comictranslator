@@ -311,6 +311,19 @@
         "pipeline/render_text_overlay.py",
         "frontend/src/lib.js"
       ]
+    },
+    "docs/UX_FIXES_HANDOVER.md": {
+      "role": "record",
+      "topic": "2026-11-11 UI/UX 동작 수정 5건 인계 기록",
+      "sources": [
+        "app.py",
+        "routers/sessions.py",
+        "frontend/src/App.jsx",
+        "frontend/src/StartScreen.jsx",
+        "frontend/src/hooks/useAutoAnalysis.js",
+        "frontend/src/prefetchPlan.js",
+        "web/styles.css"
+      ]
     }
   }
 }
