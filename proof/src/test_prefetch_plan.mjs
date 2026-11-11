@@ -54,3 +54,29 @@ assert.equal(pickPrefetchTarget({ ...base, enabled: true, images: long, selected
 assert.equal(pickPrefetchTarget({ ...base, enabled: true, selected: page("missing", { has_analysis: true }) }), null);
 
 console.log("미리 분석 대상: 꺼짐이면 없음, 뒤 5장 범위·앞쪽으로 돌지 않음·범위 고정·범위 인자, 요청/실패/제외/생성 권장 건너뜀, 보는 페이지 우선 통과");
+
+// ── 등록 직후 미리 분석 ──
+const early = await import(`data:text/javascript;base64,${readFileSync("frontend/src/prefetchPlan.js").toString("base64")}`);
+const fresh = Array.from({ length: 9 }, (_, i) => page(`n${i + 1}`));
+const earlyBase = { images: fresh, requested: new Set(), failed: new Set(), needsAnalysis };
+
+// 설정이 꺼져 있으면 1쪽만, 켜져 있으면 1〜6쪽까지 본다
+assert.deepEqual(early.earlyAnalysisWindow({ images: fresh, prefetchEnabled: false }).map((img) => img.id), ["n1"]);
+assert.deepEqual(early.earlyAnalysisWindow({ images: fresh, prefetchEnabled: true }).map((img) => img.id), ["n1", "n2", "n3", "n4", "n5", "n6"]);
+assert.equal(early.pickEarlyAnalysisTarget({ ...earlyBase, prefetchEnabled: false })?.id, "n1");
+assert.equal(early.pickEarlyAnalysisTarget({ ...earlyBase, prefetchEnabled: false, requested: new Set([prefetchRequestKey(fresh[0])]) }), null);
+
+// 읽는 순서대로 하나씩 고르고, 요청했거나 실패한 페이지는 다시 고르지 않으며, 7쪽 이후로 넘어가지 않는다
+assert.equal(early.pickEarlyAnalysisTarget({ ...earlyBase, prefetchEnabled: true })?.id, "n1");
+assert.equal(early.pickEarlyAnalysisTarget({ ...earlyBase, prefetchEnabled: true, requested: new Set([prefetchRequestKey(fresh[0])]), failed: new Set([prefetchRequestKey(fresh[1])]) })?.id, "n3");
+assert.equal(early.pickEarlyAnalysisTarget({ ...earlyBase, prefetchEnabled: true, requested: new Set(fresh.slice(0, 6).map(prefetchRequestKey)) }), null);
+
+// 처리 제외·생성 권장·나누기 전 가로 펼침 후보는 건너뛰고 범위를 늘리지 않는다
+const mixed = [page("m1", { processing_excluded: true }), page("m2", { analysis_route: "generation", image_generation_recommendation: { priority: "recommended" } }), page("m3", { wide_spread_candidate: true }), page("m4", { wide_spread_candidate: true, parent_id: "m3" }), page("m5", { has_analysis: true }), page("m6"), page("m7")];
+assert.equal(early.pickEarlyAnalysisTarget({ ...earlyBase, images: mixed, prefetchEnabled: true })?.id, "m4");
+assert.equal(early.pickEarlyAnalysisTarget({ ...earlyBase, images: mixed, prefetchEnabled: false }), null);
+assert.equal(early.pickEarlyAnalysisTarget({ ...earlyBase, images: mixed, prefetchEnabled: true, requested: new Set([prefetchRequestKey(mixed[3]), prefetchRequestKey(mixed[5])]) }), null);
+
+// 진행 표시: 범위 안 분석 대상(m4, m5, m6) 중 끝난 수, 실패 수, 지금 분석 중인 쪽 번호
+assert.deepEqual(early.earlyAnalysisProgress({ images: mixed, prefetchEnabled: true, failed: new Set([prefetchRequestKey(mixed[5])]), needsAnalysis, currentId: "m4" }), { total: 3, done: 1, failed: 1, current: 4 });
+assert.deepEqual(early.earlyAnalysisProgress({ images: fresh, prefetchEnabled: false, failed: new Set(), needsAnalysis }), { total: 1, done: 0, failed: 0, current: 0 });

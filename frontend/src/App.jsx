@@ -1096,10 +1096,11 @@ export default function App() {
   }, [overlayEditVersion]);
 
   // 보고 있는 페이지 자동 분석과 다음 페이지 미리 분석. 두 effect는 이 자리(페이지 상태 동기화 effect 다음)에서 이 순서로 돈다.
-  const { prefetchEnabled, prefetchingId, prefetchPromiseRef, changePrefetchEnabled } = useAutoAnalysis({
+  const { prefetchEnabled, prefetchingId, prefetchPromiseRef, changePrefetchEnabled, startEarlyAnalysis, earlyProgress } = useAutoAnalysis({
     workspaceStarted, generationReviewMode, activeTab, selected, sessionId, images,
     inputBusy, analyzeBusy, guidanceBusy, routeBusy, busyTasks,
     autoAnalysisRequestedRef, sessionIdRef, taskLocksRef, setStatus, analyze, applyImageRecord,
+    analysisPolicy, hydrationPendingRef,
   });
 
   useEffect(() => {
@@ -1374,6 +1375,8 @@ export default function App() {
   async function adoptCreatedSession(requestSid, resultSid) {
     if (!requestSid && resultSid && resultSid !== sessionIdRef.current) {
       setSessionTracked(resultSid, { inheritLastRoute: true });
+      // 방금 만든 프로젝트만 등록과 동시에 앞쪽 페이지 분석을 시작한다(홈 준비 화면에 있는 동안)
+      startEarlyAnalysis(resultSid);
       const pendingName = projectName.trim();
       if (projectNameDirtyRef.current && pendingName) {
         await api("/api/session/meta", { method: "POST", body: JSON.stringify({ session_id: resultSid, project_name: pendingName }) })
@@ -1525,6 +1528,11 @@ export default function App() {
     if (!recent?.session_id) return;
     const label = recent.project_name || recent.session_id;
     if (!window.confirm(`${label} 프로젝트를 삭제하시겠습니까? 이 작업은 되돌릴 수 없습니다.`)) return;
+    // 미리 분석 중인 한 장이 있으면 끝난 뒤 지운다. 지운 폴더에 분석 결과가 다시 쓰여 빈 프로젝트가 남지 않게 한다.
+    if (prefetchPromiseRef.current) {
+      setStatus("진행 중인 미리 분석 한 장이 끝나면 삭제합니다…");
+      await prefetchPromiseRef.current;
+    }
     const result = await api("/api/session/delete", {
       method: "POST",
       body: JSON.stringify({ session_id: recent.session_id }),
@@ -1565,6 +1573,8 @@ export default function App() {
     const force = analysisPolicy === "refresh";
     if (force && !window.confirm(`${images.length}개 이미지를 다시 분석합니다. 기존 분석결과를 활용하지 않으며 Cloud Vision API 호출 비용이 발생할 수 있습니다. 진행할까요?`)) return;
     if (splitLandscape && images.some((image) => image.wide_spread_candidate && !image.parent_id)) {
+      // 등록 직후 미리 분석 중인 한 장이 있으면 끝난 뒤 나눈다(프로젝트 파일을 동시에 고치지 않게)
+      if (prefetchPromiseRef.current) await prefetchPromiseRef.current;
       try {
         const result = await api("/api/pages/split", { method: "POST", body: JSON.stringify({ session_id: sessionId, include_worked: false }) });
         await adoptSplitResult(result);
@@ -2404,6 +2414,7 @@ export default function App() {
       renameRecentSession={renameRecentSession} deleteRecentSession={deleteRecentSession}
       ocrModels={ocrModels} ocrModel={effectiveOcrModel} ocrDefaultModel={ocrDefaultModel} ocrKeyReady={ocrKeyReady}
       onOcrModelChange={changeOcrRoute}
+      earlyProgress={earlyProgress} prefetchEnabled={prefetchEnabled}
       status={status} setStatus={setStatus} homeNotice={homeNotice} onDismissHomeNotice={() => setHomeNotice("")}
     />;
   }

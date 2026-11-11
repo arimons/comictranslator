@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { apiStream, imageNeedsAnalysis } from "../lib.js";
 import { readStored, writeStored } from "../storage.js";
-import { PREFETCH_LOOKAHEAD, PREFETCH_SETTING_KEY, pickPrefetchTarget, prefetchRequestKey } from "../prefetchPlan.js";
+import { PREFETCH_LOOKAHEAD, PREFETCH_SETTING_KEY, earlyAnalysisProgress, pickEarlyAnalysisTarget, pickPrefetchTarget, prefetchRequestKey } from "../prefetchPlan.js";
 
 // 영역 분석 탭에서 보고 있는 페이지의 자동 분석과, 다음 페이지 미리 분석(설정, 기본 켜짐, 뒤 PREFETCH_LOOKAHEAD장까지).
 // App.jsx에서 그대로 옮겼다. 두 effect는 원래 순서(자동 분석 → 미리 분석)를 지키고,
@@ -11,6 +11,7 @@ export default function useAutoAnalysis({
   workspaceStarted, generationReviewMode, activeTab, selected, sessionId, images,
   inputBusy, analyzeBusy, guidanceBusy, routeBusy, busyTasks,
   autoAnalysisRequestedRef, sessionIdRef, taskLocksRef, setStatus, analyze, applyImageRecord,
+  analysisPolicy, hydrationPendingRef,
 }) {
   // 다음 페이지 미리 분석(기본 켜짐). Cloud Vision 호출만 들어 부담이 적어 보던 페이지 뒤 몇 장을 미리 준비한다.
   // 사용자가 끈 값이 저장돼 있으면 그 값을 따른다.
@@ -67,6 +68,38 @@ export default function useAutoAnalysis({
     if (target) prefetchAnalysis(target);
   }, [prefetchEnabled, workspaceStarted, generationReviewMode, sessionId, selected?.id, selected?.regions, selected?.has_analysis, images, routeBusy, busyTasks, prefetchingId]);
 
+  // 등록 직후 미리 분석: 방금 만든 프로젝트(earlySessionId)에서만, 홈 준비 화면에 있는 동안 앞쪽 페이지를 한 장씩 분석한다.
+  // 기존 프로젝트를 열 때는 켜지지 않는다. 편집기에 들어가면 끄고, 그 뒤는 위의 자동 분석·미리 분석이 이어받는다.
+  // 요청은 미리 분석과 같은 한 장 잠금(prefetchPromiseRef)을 써서 /api/analyze-stream이 동시에 둘 나가지 않는다.
+  // '처음부터 다시 분석'을 고르면 새 요청을 보내지 않는다(진행 중인 한 장만 끝난다). 시작할 때 전체를 강제로 다시 분석한다.
+  const [earlySessionId, setEarlySessionId] = useState("");
+  function startEarlyAnalysis(sid) {
+    setEarlySessionId(sid || "");
+  }
+  useEffect(() => {
+    if (workspaceStarted && earlySessionId) setEarlySessionId("");
+  }, [workspaceStarted, earlySessionId]);
+  const earlyActive = Boolean(earlySessionId) && !workspaceStarted && !generationReviewMode && sessionId === earlySessionId;
+  useEffect(() => {
+    if (!earlyActive || analysisPolicy === "refresh" || prefetchPromiseRef.current) return;
+    // 업로드 직후 서버가 이전 분석 캐시를 연결하는 동안은 기다린다(캐시가 있으면 Cloud Vision을 다시 부르지 않게)
+    if (hydrationPendingRef?.current) return;
+    if (routeBusy || Object.entries(busyTasks).some(([kind, value]) => value && kind !== "export")) return;
+    if ([...taskLocksRef.current].some((kind) => kind !== "export")) return;
+    const target = pickEarlyAnalysisTarget({
+      images,
+      prefetchEnabled,
+      requested: autoAnalysisRequestedRef.current,
+      failed: prefetchFailedRef.current,
+      needsAnalysis: imageNeedsAnalysis,
+    });
+    if (target) prefetchAnalysis(target);
+  }, [earlyActive, analysisPolicy, prefetchEnabled, images, routeBusy, busyTasks, prefetchingId]);
+  const earlyProgress = earlyActive ? {
+    ...earlyAnalysisProgress({ images, prefetchEnabled, failed: prefetchFailedRef.current, needsAnalysis: imageNeedsAnalysis, currentId: prefetchingId }),
+    paused: analysisPolicy === "refresh",
+  } : null;
+
   function prefetchAnalysis(target) {
     const sid = sessionId;
     const key = prefetchRequestKey(target);
@@ -98,5 +131,5 @@ export default function useAutoAnalysis({
     setStatus(value ? `다음 페이지 미리 분석을 켰습니다. 보고 있는 페이지 뒤 ${PREFETCH_LOOKAHEAD}장까지 미리 분석합니다.` : `다음 페이지 미리 분석을 껐습니다.${prefetchingId ? " 진행 중인 한 장만 마치고 멈춥니다." : ""}`);
   }
 
-  return { prefetchEnabled, prefetchingId, prefetchPromiseRef, changePrefetchEnabled };
+  return { prefetchEnabled, prefetchingId, prefetchPromiseRef, changePrefetchEnabled, startEarlyAnalysis, earlyProgress };
 }

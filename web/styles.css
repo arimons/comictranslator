@@ -3793,3 +3793,7 @@ select.memo-key { width: 100%; padding: 2px; font-size: 12px; }
 .overlay-style-toggle:hover { color: var(--text); }
 .overlay-style-summary { font-size: 11px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
 .overlay-style-section.collapsed .overlay-style-head { margin-bottom: 0; }
+
+/* 홈 준비 화면: 등록 직후 미리 분석 진행 */
+.early-analysis-status { margin: 0; font-size: 12px; color: var(--text); line-height: 1.5; display: grid; gap: 2px; }
+.early-analysis-status small { color: var(--muted); font-size: 11px; }

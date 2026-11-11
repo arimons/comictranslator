@@ -29,6 +29,7 @@ export default function StartScreen({
   inputBusy, analyzeBusy, analyzeWorkers, setAnalyzeWorkers, analysisPolicy, setAnalysisPolicy,
   startRegionAnalysis, splitLandscape, setSplitLandscape, removeLoadedImage, openRecentSession, openSessionForSetup, recentMenuId, setRecentMenuId,
   renameRecentSession, deleteRecentSession, status, setStatus, homeNotice = "", onDismissHomeNotice, ocrModelLabel,
+  earlyProgress = null, prefetchEnabled = true,
   ocrModels = [], ocrModel = "", ocrDefaultModel = "", ocrKeyReady = {}, onOcrModelChange,
 }) {
   const recentEndRef = useRef(null);
@@ -215,6 +216,14 @@ export default function StartScreen({
               </details>
               <div className="import-action">
                 {images.length > 0 && <strong>{images.length}장 작업 준비</strong>}
+                {earlyProgress && earlyProgress.total > 0 && <p className="early-analysis-status" role="status">
+                  {earlyProgress.paused ? "처음부터 다시 분석을 골라 미리 분석을 멈췄습니다. 시작하면 전체를 다시 분석합니다."
+                    : earlyProgress.current ? `${earlyProgress.current}쪽 분석 중 · 미리 분석 ${earlyProgress.done}/${earlyProgress.total}`
+                    : earlyProgress.done >= earlyProgress.total ? `앞 ${earlyProgress.total}쪽 미리 분석 완료`
+                    : `미리 분석 ${earlyProgress.done}/${earlyProgress.total}`}
+                  {!earlyProgress.paused && earlyProgress.failed > 0 ? ` · 실패 ${earlyProgress.failed}장은 편집기에서 다시 시도합니다` : ""}
+                  <small>등록과 함께 앞 {prefetchEnabled ? "6쪽" : "1쪽"}을 Cloud Vision으로 한 장씩 미리 분석합니다. 번역은 하지 않습니다.</small>
+                </p>}
                 <button className="primary wide" onClick={startRegionAnalysis} disabled={!images.length || busy}>{analysisPolicy === "refresh" ? "다시 분석하고 열기" : "분석하고 작업 시작"}<span aria-hidden="true"> →</span></button>
                 <p className="home-hint">새 분석에 필요한 외부 API 비용이 발생할 수 있습니다. 번역은 편집기에서 별도로 실행합니다.</p>
               </div>
