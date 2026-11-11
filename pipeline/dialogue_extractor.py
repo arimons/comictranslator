@@ -3279,6 +3279,78 @@ def _detect_regions_cached(image_path: str, clusters_json: str, image: np.ndarra
     return sheet
 
 
+def _detect_and_apply_guides(
+    image_path: str,
+    clusters_json: str,
+    image: np.ndarray,
+    gray: np.ndarray,
+    output_vis_path: str | None,
+    groups: List[Dict[str, Any]],
+    manual_regions: List[Dict[str, Any]] | None,
+    manual_seed_points: List[Dict[str, Any]] | None,
+    manual_virtual_walls: List[Dict[str, Any]] | None,
+    manual_split_guides: List[Dict[str, Any]] | None,
+    suppressed_regions: List[Dict[str, Any]] | None,
+    manual_guidance_report: Dict[str, Any],
+) -> Tuple[Dict[str, Any], List[Dict[str, Any]], set[int], Dict[int, Dict[str, Any]]]:
+    """Bubble 검출: 자동 영역 검출(캐시) 결과에 수동 영역·seed·Edge 가이드·분리선·제외를 반영해 (sheet, regions, 제외 TG id, 앵커별 원본 region)을 돌려준다."""
+    # ── 1. Bubble Detection ──
+    # image/gray를 미리 읽었으므로 build_ocr_region_sheet에 넘겨 재독 방지
+    sheet = _detect_regions_cached(image_path, clusters_json, image, gray, output_vis_path)
+    regions = sheet["regions"]
+    regions.extend(_manual_bubble_regions(manual_regions or [], groups))
+    regions.extend(_manual_seed_bubble_regions(image, groups, manual_seed_points or [], manual_virtual_walls or []))
+    regions.extend(_manual_edge_barrier_regions(
+        image,
+        groups,
+        manual_virtual_walls or [],
+        diagnostics=manual_guidance_report["edge_boxes"],
+    ))
+    _invalidate_regions_replaced_by_manual_edge(regions)
+    _invalidate_regions_replaced_by_manual_overrides(regions, manual_regions or [], manual_virtual_walls or [])
+    _invalidate_suppressed_regions(regions, suppressed_regions or [])
+    suppressed_tg_ids = _suppressed_text_group_ids(groups, regions, suppressed_regions or [])
+    regions = _split_manual_seed_regions(regions, groups, manual_split_guides or [], image_shape=image.shape[:2])
+    # 분리된 R 직접 제외도 부모 전체가 아닌 해당 자식에만 반영한다.
+    _invalidate_suppressed_regions(regions, [item for item in suppressed_regions or [] if item.get("target_key")])
+    suppressed_tg_ids.update(_suppressed_text_group_ids(groups, regions, suppressed_regions or []))
+    source_meta_by_anchor: Dict[int, Dict[str, Any]] = {}
+    for source_region in sheet.get("regions", []):
+        for aid in source_region.get("anchor_ids", []):
+            try:
+                source_meta_by_anchor[int(aid)] = source_region
+            except (TypeError, ValueError):
+                continue
+
+    # 다른 valid bubble을 완전히 포함하는 bubble 무효화
+    # (flood-fill이 패널 전체를 채우는 경우 발생 — 포함하는 쪽을 탈락시켜 unboxed로 재처리)
+    _invalidate_containing_bubbles(regions)
+
+    return sheet, regions, suppressed_tg_ids, source_meta_by_anchor
+
+
+def _init_masking_state(
+    image: np.ndarray,
+    reuse_existing_unboxed_inpaint: bool,
+    base_masked_path: str | None,
+    inpaint_engine_overrides: List[Dict[str, Any]] | None,
+) -> Tuple[np.ndarray, Dict[str, str], bool, np.ndarray, np.ndarray, Dict[Tuple[int, int, int, int], np.ndarray]]:
+    """마스킹 준비: 작업 이미지(필요하면 이전 지우기 결과 재사용), 고정 엔진 표, 말풍선·보호 마스크, split 부모 마스크 표를 만든다."""
+    masked_image = image.copy()
+    forced_engines = _forced_engine_by_key(inpaint_engine_overrides)
+    reused_unboxed_inpaint = False
+    if reuse_existing_unboxed_inpaint and base_masked_path:
+        base_masked = cv2.imread(base_masked_path)
+        if base_masked is not None and base_masked.shape == image.shape:
+            masked_image = base_masked.copy()
+            reused_unboxed_inpaint = True
+    bubble_base_mask = np.zeros(image.shape[:2], dtype=np.uint8)
+    protected_mask = np.zeros(image.shape[:2], dtype=np.uint8)
+    split_parent_masks: Dict[Tuple[int, int, int, int], np.ndarray] = {}
+
+    return masked_image, forced_engines, reused_unboxed_inpaint, bubble_base_mask, protected_mask, split_parent_masks
+
+
 def build_dialogue_sheet(
     image_path: str,
     clusters_json: str,
@@ -3338,49 +3410,16 @@ def build_dialogue_sheet(
         style = _compute_text_group_style(image, group)
         style_decisions_by_tg[tid] = _classify_text_group_style(style, style_baseline)
 
-    # ── 1. Bubble Detection ──
-    # image/gray를 미리 읽었으므로 build_ocr_region_sheet에 넘겨 재독 방지
-    sheet = _detect_regions_cached(image_path, clusters_json, image, gray, output_vis_path)
-    regions = sheet["regions"]
-    regions.extend(_manual_bubble_regions(manual_regions or [], groups))
-    regions.extend(_manual_seed_bubble_regions(image, groups, manual_seed_points or [], manual_virtual_walls or []))
-    regions.extend(_manual_edge_barrier_regions(
-        image,
-        groups,
-        manual_virtual_walls or [],
-        diagnostics=manual_guidance_report["edge_boxes"],
-    ))
-    _invalidate_regions_replaced_by_manual_edge(regions)
-    _invalidate_regions_replaced_by_manual_overrides(regions, manual_regions or [], manual_virtual_walls or [])
-    _invalidate_suppressed_regions(regions, suppressed_regions or [])
-    suppressed_tg_ids = _suppressed_text_group_ids(groups, regions, suppressed_regions or [])
-    regions = _split_manual_seed_regions(regions, groups, manual_split_guides or [], image_shape=image.shape[:2])
-    # 분리된 R 직접 제외도 부모 전체가 아닌 해당 자식에만 반영한다.
-    _invalidate_suppressed_regions(regions, [item for item in suppressed_regions or [] if item.get("target_key")])
-    suppressed_tg_ids.update(_suppressed_text_group_ids(groups, regions, suppressed_regions or []))
-    source_meta_by_anchor: Dict[int, Dict[str, Any]] = {}
-    for source_region in sheet.get("regions", []):
-        for aid in source_region.get("anchor_ids", []):
-            try:
-                source_meta_by_anchor[int(aid)] = source_region
-            except (TypeError, ValueError):
-                continue
+    sheet, regions, suppressed_tg_ids, source_meta_by_anchor = _detect_and_apply_guides(
+        image_path, clusters_json, image, gray, output_vis_path, groups,
+        manual_regions, manual_seed_points, manual_virtual_walls, manual_split_guides,
+        suppressed_regions, manual_guidance_report,
+    )
 
-    # 다른 valid bubble을 완전히 포함하는 bubble 무효화
-    # (flood-fill이 패널 전체를 채우는 경우 발생 — 포함하는 쪽을 탈락시켜 unboxed로 재처리)
-    _invalidate_containing_bubbles(regions)
-
-    masked_image = image.copy()
-    forced_engines = _forced_engine_by_key(inpaint_engine_overrides)
-    reused_unboxed_inpaint = False
-    if reuse_existing_unboxed_inpaint and base_masked_path:
-        base_masked = cv2.imread(base_masked_path)
-        if base_masked is not None and base_masked.shape == image.shape:
-            masked_image = base_masked.copy()
-            reused_unboxed_inpaint = True
-    bubble_base_mask = np.zeros(image.shape[:2], dtype=np.uint8)
-    protected_mask = np.zeros(image.shape[:2], dtype=np.uint8)
-    split_parent_masks: Dict[Tuple[int, int, int, int], np.ndarray] = {}
+    (
+        masked_image, forced_engines, reused_unboxed_inpaint,
+        bubble_base_mask, protected_mask, split_parent_masks,
+    ) = _init_masking_state(image, reuse_existing_unboxed_inpaint, base_masked_path, inpaint_engine_overrides)
 
     # 출력 사각형은 마스크 경계로 줄어든다. 화면은 그 출력 사각형으로 제외 키를 저장하므로,
     # 사각형을 맞춘 뒤 제외를 한 번 더 판정해야 제외한 영역이 마스크·OCR·중복 판정에 남지 않는다.
