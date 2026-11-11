@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { askConfirm } from "./dialogs.js";
 
 export default function ServerStatus({ onRestarted }) {
   const [state, setState] = useState({ color: "yellow", label: "서버 연결 확인 중" });
@@ -43,12 +44,12 @@ export default function ServerStatus({ onRestarted }) {
   }, []);
   // 서버가 자기 프로세스를 같은 명령으로 다시 띄운다. 진행 중인 작업이 있으면 한 번 더 묻는다.
   async function restartServer() {
-    if (!window.confirm("서버를 재시작할까요? 몇 초 걸립니다.")) return;
+    if (!await askConfirm({ title: "서버 재시작", message: "서버를 재시작합니다. 몇 초 걸립니다.", confirmLabel: "재시작" })) return;
     try {
       let response = await fetch("/api/server/restart", { method: "POST" });
       if (response.status === 409) {
         const detail = (await response.json()).detail;
-        if (!window.confirm(`${detail}\n그래도 재시작할까요?`)) return;
+        if (!await askConfirm({ title: "진행 중인 작업이 있습니다", message: `${detail} 그래도 재시작하면 진행 중인 작업이 끊깁니다.`, confirmLabel: "그래도 재시작", danger: true })) return;
         response = await fetch("/api/server/restart?force=true", { method: "POST" });
       }
       if (!response.ok) throw new Error(`HTTP ${response.status}`);

@@ -129,22 +129,22 @@ def main():
     text = insert_before(text, '      <h3>Guidance 시각화 색상</h3>', 'guidance', examples)
 
     ocr = '''<h3>실제 화면 — OCR을 다시 실행할 때</h3>
-      <p>아래 화면은 기존 결과가 있는 6장이 Success Files에 놓인 상태입니다. 이 매뉴얼을 만들면서 유료 OCR/번역은 새로 요청하지 않았습니다.</p>
+      <p>아래 화면은 기존 결과가 있는 6장이 완료에 놓인 상태입니다. 이 매뉴얼을 만들면서 유료 OCR/번역은 새로 요청하지 않았습니다.</p>
       <p>가이드를 바꿔 OCR의 입력 단위가 달라졌다면 먼저 말풍선 분석 화면의 <strong>OCR Sheet</strong>에서 crop·누락·대사 묶음을 확인합니다.
       입력 이미지가 잘못 잘렸다면 Guidance로 돌아가고, 입력은 맞는데 인식·번역이 잘못됐다면 모델·추가 프롬프트와 재실행을 검토합니다.
       문구 몇 개나 줄바꿈만 고치려면 글자 입히기의 대사 편집을 이용할 수 있습니다.</p>'''
-    ocr += figure('09_ocr.png', 'OCR/Translation 실제 화면: Run Current, Force Current, Retry Failed와 추가 번역 프롬프트의 위치.', folded=True)
+    ocr += figure('09_ocr.png', 'OCR/Translation 실제 화면: 현재 페이지 실행, 현재 페이지 다시 실행, 실패 재시도와 추가 번역 프롬프트의 위치.', folded=True)
     # 다음 섹션 직전이 아니라 OCR 섹션의 닫는 태그 안에 삽입한다.
     marker = '    </section>\n\n    <section id="overlay">'
     text = insert_before(text, marker, 'ocr', ocr)
 
     overlay = '''<h3>실제 화면 — 내용과 배치를 고치는 경우</h3>
-      <p>00006.jpg의 R2를 선택한 화면입니다. 원문·번역문 대응을 확인한 뒤, 내용이 맞으면 Selected Region의 X/Y/W/H와 쓰기 방향,
-      Selected Style의 글꼴·크기를 조정합니다. 이 화면은 기존 렌더 결과이며, 배치가 적절하다는 품질 판정은 아닙니다.</p>'''
+      <p>00006.jpg의 R2를 선택한 화면입니다. 원문·번역문 대응을 확인한 뒤, 내용이 맞으면 선택한 영역의 X/Y/W/H와 쓰기 방향,
+      글자 스타일의 글꼴·크기를 조정합니다. 이 화면은 기존 렌더 결과이며, 배치가 적절하다는 품질 판정은 아닙니다.</p>'''
     overlay += figure('10_overlay.png', '선택된 R2와 오른쪽의 위치·크기·쓰기 방향·스타일 조절부.')
     overlay += '<p>대사나 줄바꿈을 바꾸려면 해당 영역을 더블클릭합니다. 아래는 실제로 열린 대사 편집 팝업입니다. Cancel은 초안을 버리고, Apply는 대사를 반영합니다.</p>'
     overlay += figure('11_text_editor.png', 'R2를 더블클릭해 연 대사 편집 팝업. 문구와 줄바꿈을 고치는 위치.', folded=True)
-    overlay += figure('17_type_badges.png', '00008.jpg의 R4 선택: Selected Region과 Region List에서도 텍스트 기반 배지가 표시됩니다.', folded=True)
+    overlay += figure('17_type_badges.png', '00008.jpg의 R4 선택: 선택한 영역과 Region List에서도 텍스트 기반 배지가 표시됩니다.', folded=True)
     overlay += '<p><strong>지우개 선택 기준:</strong> 흰색을 덧칠해도 되는 바탕의 작은 원문 흔적에 사용합니다. 무늬·망점·선화 위에 흰색 사각형을 올리면 배경이 사라질 수 있으므로 배경 복원을 검토합니다. 큰 영역 검출 문제는 Guidance에서 먼저 확인합니다.</p>'
     text = insert_before(text, '      <h3>자동 미리보기</h3>', 'overlay', overlay)
 

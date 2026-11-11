@@ -76,6 +76,8 @@ import useTopbarMenu from "./hooks/useTopbarMenu.js";
 import useGlobalKeyboard, { useShortcutToast } from "./hooks/useGlobalKeyboard.js";
 import useReviewProgress from "./hooks/useReviewProgress.js";
 import useSpeakerNotes from "./hooks/useSpeakerNotes.js";
+import DialogHost from "./DialogHost.jsx";
+import { askConfirm, askText } from "./dialogs.js";
 
 
 // OCR·번역 AI 경로 이름(홈 화면·편집기 공용)
@@ -1397,6 +1399,8 @@ export default function App() {
       if (result.imported > 0) {
         scheduleLazyRefresh(result.session_id);
         setImportNameFocusRequest((request) => request + 1);
+        // 방금 등록한 프로젝트가 홈의 최근 목록에 바로 보이게 한다.
+        refreshRecentSessions();
       }
       setImageStatuses({});
       if (imgs?.length) {
@@ -1426,6 +1430,8 @@ export default function App() {
       if (result.imported > 0) {
         scheduleLazyRefresh(result.session_id);
         setImportNameFocusRequest((request) => request + 1);
+        // 방금 등록한 프로젝트가 홈의 최근 목록에 바로 보이게 한다.
+        refreshRecentSessions();
       }
       setImageStatuses({});
       setActiveTab("guidance");
@@ -1512,7 +1518,7 @@ export default function App() {
   async function renameRecentSession(recent) {
     if (!recent?.session_id) return;
     const currentName = recent.project_name || "";
-    const nextName = window.prompt("프로젝트 이름을 입력하세요.", currentName);
+    const nextName = await askText({ title: "프로젝트 이름 변경", initialValue: currentName, confirmLabel: "변경" });
     if (nextName === null) return;
     const result = await api("/api/session/meta", {
       method: "POST",
@@ -1527,7 +1533,7 @@ export default function App() {
   async function deleteRecentSession(recent) {
     if (!recent?.session_id) return;
     const label = recent.project_name || recent.session_id;
-    if (!window.confirm(`${label} 프로젝트를 삭제하시겠습니까? 이 작업은 되돌릴 수 없습니다.`)) return;
+    if (!await askConfirm({ title: "프로젝트 삭제", message: `${label} 프로젝트를 삭제합니다. 분석·번역·편집 결과가 모두 지워지며 되돌릴 수 없습니다.`, confirmLabel: "삭제", danger: true })) return;
     // 지우려는 프로젝트의 등록 직후 미리 분석을 먼저 멈춘다. 그래야 진행 중인 한 장이 끝나도 다음 쪽 요청이 나가지 않는다.
     if (recent.session_id === sessionIdRef.current) startEarlyAnalysis("");
     // 미리 분석 중인 한 장이 있으면 끝난 뒤 지운다. 지운 폴더에 분석 결과가 다시 쓰여 빈 프로젝트가 남지 않게 한다.
@@ -1560,7 +1566,7 @@ export default function App() {
   }
 
   function returnToStartPage() {
-    if (!window.confirm("홈으로 돌아가시겠습니까? 현재 프로젝트는 저장된 상태로 유지됩니다.")) return;
+    // 프로젝트는 저장된 채로 남으므로 확인을 묻지 않는다.
     setWorkspaceStarted(false);
     forgetOpenWorkspace();
     releaseLamaWorker();
@@ -1573,7 +1579,7 @@ export default function App() {
   async function startRegionAnalysis() {
     if (!images.length || analyzeBusy || inputBusy) return;
     const force = analysisPolicy === "refresh";
-    if (force && !window.confirm(`${images.length}개 이미지를 다시 분석합니다. 기존 분석결과를 활용하지 않으며 Cloud Vision API 호출 비용이 발생할 수 있습니다. 진행할까요?`)) return;
+    if (force && !await askConfirm({ title: "처음부터 다시 분석", message: `${images.length}개 이미지를 다시 분석합니다. 기존 분석결과를 쓰지 않으며 Cloud Vision 호출 비용이 발생할 수 있습니다.`, confirmLabel: `${images.length}장 다시 분석` })) return;
     if (splitLandscape && images.some((image) => image.wide_spread_candidate && !image.parent_id)) {
       // 등록 직후 미리 분석 중인 한 장이 있으면 끝난 뒤 나눈다(프로젝트 파일을 동시에 고치지 않게)
       if (prefetchPromiseRef.current) await prefetchPromiseRef.current;
@@ -1776,6 +1782,14 @@ export default function App() {
       }
       return { logs: `최종 렌더 완료\nFinal: ${result.image.final_jpg}` };
     });
+  }
+
+  // 미완료 페이지 일괄 실행. 여러 장이면 장수와 비용을 한 번 확인받는다.
+  async function runUnfinishedOcr() {
+    const count = ocrReadyImages.length;
+    if (!count) return;
+    if (count > 1 && !await askConfirm({ title: "미완료 페이지 일괄 실행", message: `${count}장의 글자인식·번역을 실행합니다. 페이지마다 LLM 호출 비용이 발생합니다.`, confirmLabel: `${count}장 실행` })) return;
+    runFinalStream("all");
   }
 
   async function runFinalStream(target = "all", force = false) {
@@ -2101,7 +2115,7 @@ export default function App() {
     const replace = Boolean(selected.final_url);
     // 이미지 모델은 OCR·번역 모델의 제공자를 따라간다(Gemini면 나노바나나). 어느 설정을 따랐는지 함께 보여 준다.
     const basis = `OCR·번역 모델 ${effectiveOcrModel || "기본"}(${ROUTE_NAMES[ocrProvider] || "OpenAI"})을 따름`;
-    if (!window.confirm(`${selected.name}을(를) ${model}로 통번역합니다(${basis}).${replace ? " 지금 최종 출력을 새 생성 결과로 바꿉니다." : ""} 이미지 생성 비용이 발생합니다. 생성하는 동안 다른 페이지는 계속 편집할 수 있습니다. 진행할까요?`)) return;
+    if (!await askConfirm({ title: "AI로 통번역", message: `${selected.name}을(를) ${model}로 통번역합니다(${basis}).${replace ? " 지금 최종 출력을 새 생성 결과로 바꿉니다." : ""} 이미지 생성 비용이 발생합니다. 생성하는 동안 다른 페이지는 계속 편집할 수 있습니다.`, confirmLabel: "통번역 실행" })) return;
     setGuidanceMenu(null);
     await generateMissingFinals({ imageIds: [selected.id], force: replace });
   }
@@ -2217,7 +2231,7 @@ export default function App() {
   async function removeLoadedImage(imageId) {
     if (!imageId || !sessionId) return;
     const target = images.find((img) => img.id === imageId);
-    if (workspaceStarted && !window.confirm(`${target?.name || imageId} 파일을 이 세션에서 삭제하시겠습니까?`)) return;
+    if (workspaceStarted && !await askConfirm({ title: "페이지 삭제", message: `${target?.name || imageId} 페이지를 이 프로젝트에서 삭제합니다. 이 페이지의 분석·번역·편집 결과도 함께 지워집니다.`, confirmLabel: "삭제", danger: true })) return;
     await runTask("input", "이미지 제거", async () => {
       const removedIndex = Math.max(0, images.findIndex((img) => img.id === imageId));
       const result = await api("/api/image/remove", {
@@ -2394,7 +2408,7 @@ export default function App() {
   const pagePreparationControl = (sessionId || previewSessionId) ? <PagePreparation sessionId={sessionId || previewSessionId} disabled={anyBusy} onSplit={adoptSplitResult} onOverride={() => refresh(sessionId || previewSessionId)} autoOpen={Boolean(previewSessionId)} label="미리보기·페이지별 조정" className="link-button" /> : null;
 
   if (!workspaceStarted) {
-    return <StartScreen
+    return <><StartScreen
       images={images} recentSessions={recentSessions} projectName={projectName}
       ocrModelLabel={(id) => {
         const model = ocrModels.find((item) => item.id === (id || ocrDefaultModel));
@@ -2418,7 +2432,7 @@ export default function App() {
       onOcrModelChange={changeOcrRoute}
       earlyProgress={earlyProgress} prefetchEnabled={prefetchEnabled}
       status={status} setStatus={setStatus} homeNotice={homeNotice} onDismissHomeNotice={() => setHomeNotice("")}
-    />;
+    /><DialogHost /></>;
   }
 
   return (
@@ -2465,15 +2479,6 @@ export default function App() {
             {images.map((img, index) => <option key={img.id} value={img.id}>{`${index + 1}. ${img.name || img.id}`}</option>)}
           </select>
           <button onClick={() => selectImageByIndex(currentIndex + 1)} disabled={currentIndex < 0 || currentIndex >= images.length - 1}>›</button>
-          <button
-            className="danger-file-button"
-            type="button"
-            onClick={() => selected && removeLoadedImage(selected.id)}
-            disabled={!selected || inputBusy || analyzeBusy || guidanceBusy}
-            title="현재 파일을 세션에서 삭제"
-          >
-            ×
-          </button>
           <button className="shortcut-help-button" type="button" onClick={() => setHelpOpen((open) => !open)} title={`단축키 도움말 (${shortcutById("help.toggle")})`}>?</button>
           {sourceLinksControl}
         </div>
@@ -2517,9 +2522,9 @@ export default function App() {
             />
           </div>
           <div className="field">
-            <label>Overlay font</label>
+            <label>기본 글꼴</label>
             <select value={fontPath} onChange={(e) => updateFontPath(e.target.value)}>
-              <option value={fontPath}>{fontPath ? "Default" : "Font"}</option>
+              <option value={fontPath}>{fontPath ? "기본" : "글꼴"}</option>
               {fonts.map((font) => <option key={font.path} value={font.path}>{font.name}</option>)}
             </select>
           </div>
@@ -2615,7 +2620,7 @@ export default function App() {
                 <div className="editor-title">
                   <button type="button" className="secondary-pane-toggle" onClick={() => toggleSecondaryPane("compare")} aria-pressed={secondaryPanes.compare !== false}
                     title={secondaryPanes.compare === false ? "비교 미리보기 펼치기" : "비교 미리보기 접기 · 캔버스를 넓게"}>{secondaryPanes.compare === false ? "비교 ▸" : "◂ 비교"}</button>
-                  <span>Analysis Workspace</span>
+                  <span>영역 분석 작업 화면</span>
                   {images.length ? <span className="page-counter" title="현재 페이지 / 전체 페이지. 괄호는 결과 이미지가 생성된 페이지 수(수동 검토 완료를 뜻하지 않음)">
                     {currentIndex + 1}<small>({images.filter((img) => img.final_url).length})</small> / {images.length}
                   </span> : null}
@@ -2673,6 +2678,9 @@ export default function App() {
                       <button type="button" disabled={!selected?.detail_loaded || anyBusy || selected?.processing_excluded}
                         onClick={() => { setAiEraseTarget("page"); setAiEraseConfirmOpen(true); setGuidanceMenu(null); }}
                         title={selected?.processing_excluded ? "처리 대상으로 복원한 뒤 쓸 수 있습니다" : "이미지 모델로 이 페이지의 글자를 지웁니다. 대화 영역만 지울지 쪽 전체 글자를 지울지 확인 창에서 고릅니다. 비용이 발생합니다."}>AI로 쪽 전체 지우기</button>
+                      <button type="button" className="danger-text-button" disabled={!selected || inputBusy || analyzeBusy || guidanceBusy}
+                        onClick={() => { setGuidanceMenu(null); if (selected) removeLoadedImage(selected.id); }}
+                        title="현재 페이지를 이 프로젝트에서 삭제합니다. 확인 창이 한 번 뜹니다.">이 페이지를 프로젝트에서 삭제</button>
                       <div className="prefetch-setting">
                         <label className="check">
                           <input type="checkbox" checked={prefetchEnabled} onChange={(e) => changePrefetchEnabled(e.target.checked)} />
@@ -2835,12 +2843,12 @@ export default function App() {
             <section className="viewer-card">
               <div className="ocr-job-header">
                 <div className="ocr-job-title">
-                  <h1>Job Queue Monitor</h1>
-                  <span>Gemini OCR / Translation Pipeline</span>
+                  <h1>글자인식·번역 작업 목록</h1>
+                  <span>{ROUTE_NAMES[ocrProvider] || "OpenAI"} · {(ocrModels.find((model) => model.id === effectiveOcrModel)?.label || effectiveOcrModel || "기본 모델").replace(/\s*\(.*\)$/, "")}</span>
                 </div>
                 <div className="ocr-job-actions">
                   <label>
-                    Workers
+                    동시 작업 수
                     <input
                       type="number"
                       min="1"
@@ -2849,16 +2857,16 @@ export default function App() {
                       onChange={(e) => setAnalyzeWorkers(Math.max(1, Math.min(12, Number(e.target.value) || 1)))}
                     />
                   </label>
-                  <button onClick={() => selected && runFinalStream(selected.id)} disabled={ocrBusy || !selected || selected.processing_excluded || !selected.indexed_sheet_url}>Run Current</button>
-                  <button onClick={() => selected && runFinalStream(selected.id, true)} disabled={ocrBusy || !selected || selected.processing_excluded || !selected.indexed_sheet_url} title="현재 파일의 기존 OCR 결과를 무시하고 다시 실행">Force Current</button>
-                  <button className="danger" onClick={() => runFinalStream("failed")} disabled={ocrBusy || !ocrNeedsAttentionImages.length}>Retry Failed</button>
-                  <button className="primary" onClick={() => runFinalStream("all")} disabled={ocrBusy || !images.length} title="이미 OCR 결과가 있는 파일은 건너뛰고 미완료 파일만 실행">Run Unfinished</button>
+                  <button onClick={() => selected && runFinalStream(selected.id)} disabled={ocrBusy || !selected || selected.processing_excluded || !selected.indexed_sheet_url} title="현재 페이지의 글자인식·번역을 실행합니다. LLM 호출 비용이 발생합니다.">현재 페이지 실행<span className="paid-tag">유료</span></button>
+                  <button onClick={() => selected && runFinalStream(selected.id, true)} disabled={ocrBusy || !selected || selected.processing_excluded || !selected.indexed_sheet_url} title="현재 페이지의 기존 글자인식·번역 결과를 무시하고 다시 실행합니다. LLM 호출 비용이 발생합니다.">현재 페이지 다시 실행<span className="paid-tag">유료</span></button>
+                  <button className="danger" onClick={() => runFinalStream("failed")} disabled={ocrBusy || !ocrNeedsAttentionImages.length} title="실패한 페이지만 다시 실행합니다. LLM 호출 비용이 발생합니다.">실패 {ocrNeedsAttentionImages.length}장 재시도<span className="paid-tag">유료</span></button>
+                  <button className="primary" onClick={runUnfinishedOcr} disabled={ocrBusy || !ocrReadyImages.length} title="이미 결과가 있는 페이지는 건너뛰고 미완료 페이지만 실행합니다. 페이지마다 LLM 호출 비용이 발생합니다.">미완료 {ocrReadyImages.length}장 실행<span className="paid-tag">유료</span></button>
                 </div>
               </div>
               <div className="ocr-panel">
                 <div className="ocr-prompt-panel">
                   <label className="ocr-model-field">
-                    OCR/Translation Model
+                    글자인식·번역 모델
                     <select
                       value={effectiveOcrModel}
                       onChange={(e) => updateOcrModel(e.target.value)}
@@ -2877,7 +2885,7 @@ export default function App() {
                       })}
                     </select>
                   </label>
-                  <label>Additional Translation Prompt</label>
+                  <label>추가 번역 프롬프트</label>
                   <textarea
                     value={extraPrompt}
                     onChange={(e) => updateExtraPrompt(e.target.value)}
@@ -2887,7 +2895,7 @@ export default function App() {
                 <div className="ocr-queue-sections">
                   <section className="ocr-queue-group ready">
                     <div className="ocr-queue-head">
-                      <strong>Queue</strong>
+                      <strong>대기</strong>
                       <span title={`번역 가능 ${ocrReadyImages.length} · 분석 전 ${ocrUnanalyzedImages.length}`}>{ocrReadyImages.length}{ocrUnanalyzedImages.length ? ` + ${ocrUnanalyzedImages.length}` : ""}</span>
                     </div>
                     <div
@@ -2913,7 +2921,7 @@ export default function App() {
                   </section>
                   <section className="ocr-queue-group progress">
                     <div className="ocr-queue-head">
-                      <strong>In Progress</strong>
+                      <strong>진행 중</strong>
                       <span>{ocrInProgressImages.length}</span>
                     </div>
                     <div className="image-status-list large">
@@ -2922,7 +2930,7 @@ export default function App() {
                   </section>
                   <section className="ocr-queue-group success">
                     <div className="ocr-queue-head">
-                      <strong>Success Files</strong>
+                      <strong>완료</strong>
                       <span>{successImages.length}</span>
                     </div>
                     <div className="image-status-list large">
@@ -2931,7 +2939,7 @@ export default function App() {
                   </section>
                   <section className="ocr-queue-group attention">
                     <div className="ocr-queue-head">
-                      <strong>Needs Retry</strong>
+                      <strong>재시도 필요</strong>
                       <span>{ocrNeedsAttentionImages.length}</span>
                     </div>
                     <div className="image-status-list large">
@@ -2949,7 +2957,7 @@ export default function App() {
             <section className="viewer-card overlay-stage-card overlay-final-card">
               <div className="card-head editor-head">
                 <div className="editor-title">
-                  <span>Original Image</span>
+                  <span>원본 이미지</span>
                   <strong>{selected?.name || "-"}</strong>
                 </div>
               </div>
@@ -2962,7 +2970,7 @@ export default function App() {
                 <div className="editor-title">
                   <button type="button" className="secondary-pane-toggle" onClick={() => toggleSecondaryPane("original")} aria-pressed={secondaryPanes.original !== false}
                     title={secondaryPanes.original === false ? "원본 이미지 펼치기" : "원본 이미지 접기 · 캔버스를 넓게"}>{secondaryPanes.original === false ? "원본 ▸" : "◂ 원본"}</button>
-                  <span>Overlay Result Editor</span>
+                  <span>글자 입히기 편집</span>
                   <strong>{selectedRegion ? overlayItemLabel(selectedRegion) : "-"}</strong>
                 </div>
               </div>
@@ -2993,28 +3001,29 @@ export default function App() {
             <section className="export-left-panel">
               <div className="export-status-card">
                 <div className="export-status-head">
-                  <span>Project Status</span>
+                  <span>진행 현황</span>
                   <strong>{finalImages.length} / {images.length}</strong>
                 </div>
                 <div className="export-progress-track">
                   <span style={{ width: `${images.length ? Math.round((finalImages.length / images.length) * 100) : 0}%` }} />
                 </div>
                 <div className="export-status-legend">
-                  <span><i className="ready-dot" />Ready {finalImages.length}</span>
-                  <span><i className="missing-dot" />Fallback candidates {missingFinalImages.length}</span>
+                  <span><i className="ready-dot" />결과 있음 {finalImages.length}</span>
+                  <span><i className="missing-dot" />결과 없음 {missingFinalImages.length}</span>
                 </div>
               </div>
+              {missingFinalImages.length ? <>
               <div className="export-missing-list-head">
-                <strong>Fallback Candidates</strong>
+                <strong>결과 없는 페이지</strong>
                 <button
                   onClick={() => setExportGenerateIds(missingFinalImages.map((img) => img.id))}
                   disabled={!missingFinalImages.length}
                 >
-                  Select All
+                  모두 선택
                 </button>
               </div>
               <div className="export-missing-file-list">
-                {missingFinalImages.length ? missingFinalImages.map((img) => (
+                {missingFinalImages.map((img) => (
                   <button
                     key={img.id}
                     className={`export-missing-file ${exportFocusedImage?.id === img.id ? "active" : ""}`}
@@ -3033,35 +3042,34 @@ export default function App() {
                       onClick={(event) => event.stopPropagation()}
                     />
                     <span>{img.name || img.id}</span>
-                    <em>{isImageGenerationFallback(img) ? "generated fallback" : "original fallback"}</em>
+                    <em>{isImageGenerationFallback(img) ? "AI 생성본으로 출력" : "원본 그대로 출력"}</em>
                   </button>
-                )) : <div className="empty compact-empty">Fallback 후보 없음</div>}
+                ))}
               </div>
-              <button className="primary export-cta" onClick={exportSession} disabled={anyBusy || !sessionId || !images.length}>
-                Export Final Zip
-              </button>
+              </> : <p className="export-all-ready">{images.length ? "모든 페이지에 결과 이미지가 있습니다." : "페이지가 없습니다."}</p>}
             </section>
             <section className="export-center-panel">
               <section className="export-preview-panel">
                 <div className="export-preview-head">
                   <div>
-                    <span>{exportFocusedIsGenerated ? "Generated Preview" : "Send Preview"}</span>
+                    <span>{exportFocusedIsGenerated ? "AI 생성본 미리보기" : "출력 미리보기"}</span>
                     <strong>{exportFocusedImage?.name || "-"}</strong>
                   </div>
                   <div className="export-preview-actions">
                     <button
                       onClick={() => exportFocusedImage && generateMissingFinals({ imageIds: [exportFocusedImage.id], force: true })}
                       disabled={anyBusy || !exportFocusedImage}
+                      title="이 페이지를 이미지 생성 모델로 다시 만듭니다. 이미지 생성 비용이 발생합니다."
                     >
-                      Retry
+                      AI로 다시 생성<span className="paid-tag">유료</span>
                     </button>
                     <button className="primary" onClick={exportSession} disabled={anyBusy || !sessionId || !images.length}>
-                      Export to Final ZIP
+                      ZIP으로 내보내기
                     </button>
                   </div>
                 </div>
                 <div className="export-preview-stage">
-                  {exportPreviewUrl ? <img src={exportPreviewUrl} /> : <div className="empty">Preview 없음</div>}
+                  {exportPreviewUrl ? <img src={exportPreviewUrl} /> : <div className="empty">미리보기 없음</div>}
                 </div>
               </section>
             </section>
@@ -3086,8 +3094,8 @@ export default function App() {
         {activeTab === "overlay" ? <>
         <div className="section compact-section">
           <div className="row">
-            <button className="primary" onClick={applyOverlay} disabled={overlayBusy || !canRenderOverlayImage(selected)} title={`Overlay 적용 (${shortcutById("overlay.apply")})`}>Apply Overlay</button>
-            <button onClick={() => runFinal(true)} disabled={ocrBusy || !selected || selected.processing_excluded} title="현재 Additional Translation Prompt를 사용해 OCR/번역부터 다시 실행합니다.">Re-run OCR</button>
+            <button className="primary" onClick={applyOverlay} disabled={overlayBusy || !canRenderOverlayImage(selected)} title={`편집한 내용으로 결과 이미지를 다시 그립니다 (${shortcutById("overlay.apply")}). 비용이 들지 않습니다.`}>글자 입히기 적용</button>
+            <button onClick={() => runFinal(true)} disabled={ocrBusy || !selected || selected.processing_excluded} title="현재 추가 번역 프롬프트로 이 페이지의 글자인식·번역부터 다시 실행합니다. LLM 호출 비용이 발생합니다.">재번역<span className="paid-tag">유료</span></button>
             {/* 기록은 ref라 편집·Undo마다 올라가는 overlayEditVersion 리렌더 때 개수를 다시 읽는다 */}
             <button className="icon-button" onClick={() => stepOverlayHistory(-1)} disabled={!overlayHistoryRef.current.undo.length} aria-label="Overlay 편집 실행 취소" title={`실행 취소 (${shortcutById("edit.undo")})`}>↶</button>
             <button className="icon-button" onClick={() => stepOverlayHistory(1)} disabled={!overlayHistoryRef.current.redo.length} aria-label="Overlay 편집 다시 실행" title={`다시 실행 (${shortcutById("edit.redo")})`}>↷</button>
@@ -3098,14 +3106,14 @@ export default function App() {
               checked={autoOverlayPreview}
               onChange={(event) => setAutoOverlayPreview(event.target.checked)}
             />
-            <span>Auto preview 300ms</span>
+            <span>자동 미리보기 (0.3초 뒤)</span>
           </label>
         </div>
         <div className="section selected-overlay-section">
           <div className="selected-overlay-grid">
             <div className="selected-overlay-pane overlay-region-section">
               <div className="side-section-head">
-                <h2>Selected Region</h2>
+                <h2>선택한 영역</h2>
               </div>
               {isGroupSelection ? (
                 <div className="overlay-group-card">
@@ -3128,13 +3136,13 @@ export default function App() {
                   </div>
                   <button type="button" onClick={() => setExtraSelectedIds([])}>추가 선택 해제</button>
                 </div>
-              ) : selectedRegion ? null : <div className="empty compact-empty">Region을 선택하세요. Shift/Cmd+클릭으로 여러 개를 고를 수 있습니다.</div>}
+              ) : selectedRegion ? null : <div className="empty compact-empty">영역을 선택하세요. Shift/Cmd+클릭으로 여러 개를 고를 수 있습니다.</div>}
             </div>
             <div className={`selected-overlay-pane overlay-style-section${overlayStyleOpen ? "" : " collapsed"}`}>
               <div className="side-section-head overlay-style-head">
                 <button type="button" className="overlay-style-toggle" onClick={toggleOverlayStyleOpen} aria-expanded={overlayStyleOpen}
                   title={overlayStyleOpen ? "스타일 설정 접기 · 대사 리스트를 넓게" : "스타일 설정 펼치기"}>
-                  <span aria-hidden="true">{overlayStyleOpen ? "▾" : "▸"}</span><h2>Selected Style</h2>
+                  <span aria-hidden="true">{overlayStyleOpen ? "▾" : "▸"}</span><h2>글자 스타일</h2>
                 </button>
                 {!overlayStyleOpen ? <span className="overlay-style-summary">
                   {FONT_STYLES.find(([id]) => id === (isGroupSelection ? groupFontStyle : selectedEffectiveFontStyle))?.[2] || "-"} · 숫자 키 1〜9로 바꿈
@@ -3160,24 +3168,24 @@ export default function App() {
                 {(isGroupSelection ? groupFontStyle : selectedEffectiveFontStyle) === "etc" ? (
                   <>
                     <div className="field compact-field">
-                      <label>Etc font</label>
+                      <label>기타 글꼴</label>
                       <select
                         value={(isGroupSelection ? groupValue((o) => o.font_path || "") : selectedOverlayOverride.font_path) || ""}
                         onChange={(e) => updateOverlayStyle({ font_path: e.target.value })}
                         disabled={!selectedRegionRefValue()}
                       >
-                        <option value="">Default</option>
+                        <option value="">기본</option>
                         {fonts.map((font) => <option key={font.path} value={font.path}>{font.name}</option>)}
                       </select>
                     </div>
                     <div className="field compact-field">
-                      <label>Weight</label>
+                      <label>굵기</label>
                       <select
                         value={(isGroupSelection ? groupValue((o) => o.font_weight || "") : selectedOverlayOverride.font_weight) || ""}
                         onChange={(e) => updateOverlayStyle({ font_weight: e.target.value })}
                         disabled={!selectedRegionRefValue()}
                       >
-                        <option value="">Default</option>
+                        <option value="">기본</option>
                         {[100, 200, 300, 400, 500, 600, 700, 800, 900].map((weight) => (
                           <option key={weight} value={weight}>{weight}</option>
                         ))}
@@ -3186,16 +3194,16 @@ export default function App() {
                   </>
                 ) : (
                   <div className="field compact-field">
-                    <label>Overlay font</label>
+                    <label>기본 글꼴</label>
                     <select value={fontPath} onChange={(e) => updateFontPath(e.target.value)}>
-                      <option value={fontPath}>{fontPath ? "Default" : "Font"}</option>
+                      <option value={fontPath}>{fontPath ? "기본" : "글꼴"}</option>
                       {fonts.map((font) => <option key={font.path} value={font.path}>{font.name}</option>)}
                     </select>
                   </div>
                 )}
-                {renderColorField("Text color", "font_color", "#000000", "글자색. 기본은 검정입니다")}
+                {renderColorField("글자색", "font_color", "#000000", "글자색. 기본은 검정입니다")}
                 <div className="field compact-field">
-                  <label>Outline 두께</label>
+                  <label>외곽선 두께</label>
                   <input
                     type="number"
                     min="0"
@@ -3205,7 +3213,7 @@ export default function App() {
                     disabled={!selectedRegionRefValue()}
                   />
                 </div>
-                {renderColorField("Outline color", "stroke_color", "#ffffff", "외곽선색. 기본은 흰색입니다")}
+                {renderColorField("외곽선색", "stroke_color", "#ffffff", "외곽선색. 기본은 흰색입니다")}
               </div>
               </> : null}
             </div>
@@ -3230,18 +3238,18 @@ export default function App() {
 
         {activeTab === "ocr" ? <>
         <div className="section compact-section">
-          <h2>OCR Queue</h2>
+          <h2>글자인식 현황</h2>
           <div className="metric-grid">
-            <div className="metric"><strong>{ocrNeedsAttentionImages.length}</strong><span>retry</span></div>
-            <div className="metric"><strong>{ocrReadyImages.length}</strong><span>ready</span></div>
-            <div className="metric"><strong>{successImages.length}</strong><span>success</span></div>
-            <div className="metric"><strong>{analyzeWorkers}</strong><span>workers</span></div>
+            <div className="metric"><strong>{ocrNeedsAttentionImages.length}</strong><span>재시도</span></div>
+            <div className="metric"><strong>{ocrReadyImages.length}</strong><span>대기</span></div>
+            <div className="metric"><strong>{successImages.length}</strong><span>완료</span></div>
+            <div className="metric"><strong>{analyzeWorkers}</strong><span>동시 작업</span></div>
           </div>
         </div>
         <div className="section ocr-log-section">
           <div className="side-section-head">
-            <h2>OCR Log</h2>
-            <span>{ocrBusy ? "running" : "idle"}</span>
+            <h2>작업 기록</h2>
+            <span>{ocrBusy ? "실행 중" : "대기"}</span>
           </div>
           <div className="log side-log">{ocrLog || status || "대기 중"}</div>
         </div>
@@ -3249,45 +3257,45 @@ export default function App() {
         {activeTab === "export" ? <>
         <div className="section export-log-section">
           <div className="side-section-head">
-            <h2>Export Log</h2>
-            <span>{exportBusy ? "running" : "idle"}</span>
+            <h2>내보내기 기록</h2>
+            <span>{exportBusy ? "실행 중" : "대기"}</span>
           </div>
           <div className="log side-log">{exportLog || status || "대기 중"}</div>
         </div>
         <div className="section export-config-section">
           <div className="side-section-head">
-            <h2>AI Recovery</h2>
+            <h2>AI 이미지 생성</h2>
             <span>{selectedExportMissingIds.length}/{missingFinalImages.length}</span>
           </div>
           <div className="export-side-config">
             <label className="field compact-field">
-              <span>Image model</span>
+              <span>이미지 모델</span>
               <input value={exportImageModel} onChange={(event) => setExportImageModel(event.target.value)} />
             </label>
             <div className="export-side-options">
               <label className="field compact-field">
-                <span>Quality</span>
+                <span>품질</span>
                 <select value={exportImageQuality} onChange={(event) => setExportImageQuality(event.target.value)}>
                   {["low", "medium", "high", "auto"].map((value) => <option key={value} value={value}>{value}</option>)}
                 </select>
               </label>
               <label className="field compact-field">
-                <span>Size</span>
+                <span>크기</span>
                 <select value={exportImageSize} onChange={(event) => setExportImageSize(event.target.value)}>
-                  <option value="match_input">Match input 16px</option>
+                  <option value="match_input">원본 크기에 맞춤 (16px 단위)</option>
                   {["auto", "1024x1024", "1024x1536", "1536x1024", "2048x2048", "2048x1152", "3840x2160", "2160x3840"].map((value) => (
                     <option key={value} value={value}>{value}</option>
                   ))}
                 </select>
               </label>
               <label className="field compact-field">
-                <span>Format</span>
+                <span>형식</span>
                 <select value={exportOutputFormat} onChange={(event) => setExportOutputFormat(event.target.value)}>
                   {["jpeg", "png", "webp"].map((value) => <option key={value} value={value}>{value}</option>)}
                 </select>
               </label>
               <label className="field compact-field">
-                <span>Compression</span>
+                <span>압축률</span>
                 <input
                   type="number"
                   min="0"
@@ -3299,7 +3307,7 @@ export default function App() {
               </label>
             </div>
             <label className="field compact-field">
-              <span>Text guide model</span>
+              <span>번역 가이드 모델</span>
               <input value={exportTextModel} onChange={(event) => setExportTextModel(event.target.value)} disabled={!exportAnalyzeFirst} />
             </label>
             <label className="auto-preview-toggle">
@@ -3311,7 +3319,7 @@ export default function App() {
               <span>번역/레이아웃 가이드 추출</span>
             </label>
             <label className="field compact-field">
-              <span>Prompt guide</span>
+              <span>추가 지시</span>
               <textarea
                 className="export-prompt-guide"
                 value={exportPromptGuide}
@@ -3325,28 +3333,28 @@ export default function App() {
               disabled={anyBusy || !selectedExportMissingIds.length}
               title={selectedExportMissingIds.length ? "선택한 후보만 이미지 생성" : "왼쪽 후보를 먼저 선택하세요"}
             >
-              Generate Selected {selectedExportMissingIds.length ? `(${selectedExportMissingIds.length})` : ""}
+              선택한 {selectedExportMissingIds.length || ""}장 생성<span className="paid-tag">유료</span>
             </button>
           </div>
         </div>
         <div className="section">
-          <h2>Selected Fallback</h2>
+          <h2>선택한 페이지</h2>
           <div className="image-status-list">
             {selectedExportMissingIds.length ? missingFinalImages.filter((img) => selectedExportMissingIds.includes(img.id)).map((img) => (
               <button key={img.id} className="image-status warning" onClick={() => { selectImage(img); setActiveTab("overlay"); }}>
                 <span>{img.name || img.id}</span>
-                <strong>selected</strong>
+                <strong>선택됨</strong>
               </button>
             )) : <div className="empty compact-empty">선택된 후보 없음</div>}
           </div>
         </div>
         <div className="section compact-section export-summary-section">
-          <h2>Export Summary</h2>
+          <h2>요약</h2>
           <div className="metric-grid">
-            <div className="metric"><strong>{finalImages.length}</strong><span>ready</span></div>
-            <div className="metric"><strong>{unresolvedFinalImages.length}</strong><span>missing final</span></div>
-            <div className="metric"><strong>{missingFinalImages.length}</strong><span>fallback candidates</span></div>
-            <div className="metric"><strong>{selectedExportMissingIds.length}</strong><span>selected</span></div>
+            <div className="metric"><strong>{finalImages.length}</strong><span>결과 있음</span></div>
+            <div className="metric"><strong>{unresolvedFinalImages.length}</strong><span>결과 없음</span></div>
+            <div className="metric"><strong>{missingFinalImages.length}</strong><span>생성 후보</span></div>
+            <div className="metric"><strong>{selectedExportMissingIds.length}</strong><span>선택</span></div>
           </div>
         </div>
         </> : null}
@@ -3355,14 +3363,15 @@ export default function App() {
 
       <footer className="status-bar">
         {activeTab === "ocr"
-          ? `System Status: ${ocrBusy ? "Active" : "Idle"} | Workers: ${analyzeWorkers} | Needs Attention: ${needsAttentionImages.length} | Success: ${successImages.length}`
+          ? `상태: ${ocrBusy ? "실행 중" : "대기"} | 동시 작업: ${analyzeWorkers} | 실패: ${needsAttentionImages.length} | 완료: ${successImages.length}`
           : activeTab === "overlay"
-            ? `System Status: ${overlayBusy ? "Rendering" : "Idle"} | File: ${selected?.name || "-"} | Region: ${selectedRegion ? overlayItemLabel(selectedRegion) : "-"}`
+            ? `상태: ${overlayBusy ? "그리는 중" : "대기"} | 파일: ${selected?.name || "-"} | 영역: ${selectedRegion ? overlayItemLabel(selectedRegion) : "-"}`
             : activeTab === "export"
-              ? `System Status: ${anyBusy ? "Active" : "Idle"} | Final: ${finalImages.length}/${images.length} | Session: ${sessionId || "-"}`
-            : `System Status: ${guidanceBusy || analyzeBusy ? "Active" : "Idle"} | Tool: ${TOOL_LABELS.find(([id]) => id === tool)?.[1] || tool} | File: ${selected?.name || "-"}${prefetchingId ? ` | 미리 분석: ${images.find((img) => img.id === prefetchingId)?.name || prefetchingId}` : ""}`}
+              ? `상태: ${anyBusy ? "실행 중" : "대기"} | 결과: ${finalImages.length}/${images.length} | 프로젝트: ${sessionId || "-"}`
+            : `상태: ${guidanceBusy || analyzeBusy ? "실행 중" : "대기"} | 도구: ${TOOL_LABELS.find(([id]) => id === tool)?.[1] || tool} | 파일: ${selected?.name || "-"}${prefetchingId ? ` | 미리 분석: ${images.find((img) => img.id === prefetchingId)?.name || prefetchingId}` : ""}`}
       </footer>
       {shortcutToast ? <div className="shortcut-toast" role="status" aria-live="polite">{shortcutToast}</div> : null}
+      <DialogHost />
       <SpeakerPicker
         open={speakerPickerOpen}
         characters={allSpeakerCharacters}

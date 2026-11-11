@@ -112,7 +112,7 @@ export const KEYMAP = [
 
   // 적용
   { id: "guidance.apply", context: "guidance", group: "적용", label: "변경사항 적용 (그어 둔 가이드로 영역 다시 계산)", kind: "key", keys: [["Ctrl", "Enter"]], allowInInput: true, match: { code: ["Enter", "NumpadEnter"], mod: true }, action: "apply" },
-  { id: "overlay.apply", context: "overlay", group: "적용", label: "Overlay 적용 (Apply Overlay)", kind: "key", keys: [["Ctrl", "Enter"]], allowInInput: true, when: ["notInFloatingEditor"], match: { code: ["Enter", "NumpadEnter"], mod: true }, action: "apply" },
+  { id: "overlay.apply", context: "overlay", group: "적용", label: "글자 입히기 적용", kind: "key", keys: [["Ctrl", "Enter"]], allowInInput: true, when: ["notInFloatingEditor"], match: { code: ["Enter", "NumpadEnter"], mod: true }, action: "apply" },
 
   // 대사 편집 팝업
   { id: "editor.commit", context: "floatingEditor", group: "대사 편집", label: "대사 반영 후 overlay render, 확인으로 표시하고 다음 대사로", kind: "key", keys: [["Ctrl", "Enter"]], allowInInput: true, when: ["inFloatingEditor"], match: { code: ["Enter", "NumpadEnter"], mod: true }, action: "editor.commit" },
