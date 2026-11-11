@@ -2125,6 +2125,624 @@ def _reading_order_key(item: Dict[str, Any]) -> Tuple[float, float, float]:
     return (sort_group_index, float(region.get("split_order", 0)), 0.0)
 
 
+def _prefilter_text_group(
+    cluster: Dict[str, Any],
+    rect: List[int],
+    fallback_rect: List[int],
+    cluster_id: int,
+    gray: np.ndarray,
+    img_w: int,
+    img_h: int,
+    dark_bg_mean_threshold: int,
+    diagnostics: List[Dict[str, Any]],
+    skipped: List[Dict[str, Any]],
+    noise_like_anchors: List[Dict[str, Any]],
+) -> Optional[Tuple[bool, bool]]:
+    """Probe 전 필터: 각주·메타데이터·가로 어두운 배경·SFX·기호 TG를 skipped에 기록하고 None, 통과하면 (is_dark_bg, is_horizontal_tg)."""
+    is_symbol_only = _is_symbol_only_text(_cluster_text(cluster))
+    is_short_non_jp_noise = _is_short_non_japanese_noise_text(_cluster_text(cluster))
+    is_english_only = _is_english_only_text(_cluster_text(cluster))
+    is_large_single_glyph_sfx = _is_large_single_glyph_sfx_like(cluster, rect)
+    is_large_short_kana_sfx = _is_large_short_kana_sfx_like(cluster, rect)
+
+    is_dark_bg = _is_dark_bg_text(gray, rect, dark_bg_mean_threshold)
+    is_horizontal_tg = _is_horizontal_text_group(cluster, rect)
+
+    # 이미지 하단 근처(하위 8%) 가로 텍스트: 챕터 엔드 표기·페이지 캡션 등
+    # 말풍선이 아닌 인쇄 레이아웃 텍스트이므로 bubble 감지 대상에서 제외
+    # orientation 필드가 'vertical'이어도 AR이 명확히 가로형이면 landscape로 판단
+    _rx, _ry, _rw, _rh = rect
+    _is_landscape_by_ar = _rh > 0 and (_rw / _rh) >= 1.15
+    if (is_horizontal_tg or _is_landscape_by_ar) and (_ry + _rh) > img_h * 0.92:
+        diagnostics.append({"cluster_id": cluster_id, "method": "bottom_landscape_footer", "is_valid": False})
+        skipped.append({
+            "cluster_id": cluster_id,
+            "anchor_bbox": rect,
+            "fallback_bbox": fallback_rect,
+            "reason": "bottom_landscape_footer",
+            "method": "noise_like",
+            "region_type": "noise_like",
+            "quality_flags": ["bottom_landscape_footer"],
+        })
+        return None
+
+    _tiny_landscape_noise = (
+        _is_landscape_by_ar
+        and _rh <= max(14, int(img_h * 0.014))
+        and (_rw * _rh) <= max(700, int(img_w * img_h * 0.00075))
+    )
+    if _tiny_landscape_noise:
+        diagnostics.append({"cluster_id": cluster_id, "method": "tiny_landscape_text_noise", "is_valid": False})
+        skipped.append({
+            "cluster_id": cluster_id,
+            "anchor_bbox": rect,
+            "fallback_bbox": fallback_rect,
+            "reason": "tiny_landscape_text_noise",
+            "method": "noise_like",
+            "region_type": "noise_like",
+            "quality_flags": ["tiny_landscape_text_noise"],
+        })
+        return None
+
+    # 이미지 좌/우 끝에 바싹 붙은 매우 좁은 세로 텍스트: 면책 문구·저작권 표기 등 인쇄 메타데이터
+    _narrow_meta = _is_edge_narrow_metadata_rect(rect, img_w)
+    if _narrow_meta:
+        diagnostics.append({"cluster_id": cluster_id, "method": "edge_narrow_metadata", "is_valid": False})
+        skipped.append({
+            "cluster_id": cluster_id,
+            "anchor_bbox": rect,
+            "fallback_bbox": fallback_rect,
+            "reason": "edge_narrow_metadata",
+            "method": "metadata",
+            "region_type": "metadata",
+            "quality_flags": ["edge_narrow_metadata"],
+        })
+        return None
+
+    if is_dark_bg and is_horizontal_tg:
+        diagnostics.append({"cluster_id": cluster_id, "method": "dark_bg_text", "is_valid": False})
+        skipped.append({
+            "cluster_id": cluster_id,
+            "anchor_bbox": rect,
+            "fallback_bbox": fallback_rect,
+            "reason": "dark_bg_text",
+            "method": "dark_bg_text",
+            "region_type": "dark_bg_text",
+            "quality_flags": ["dark_background", "horizontal_dark_bg_skip"],
+        })
+        return None
+    if is_dark_bg:
+        diagnostics.append({
+            "cluster_id": cluster_id,
+            "method": "dark_bg_vertical_allowed",
+            "is_valid": True,
+            "quality_flags": ["dark_background", "dark_flood_candidate", "vertical_dark_bg_allowed"],
+        })
+
+    if is_large_single_glyph_sfx:
+        diagnostics.append({"cluster_id": cluster_id, "method": "large_single_glyph_sfx_like", "is_valid": False})
+        skipped.append({
+            "cluster_id": cluster_id,
+            "anchor_bbox": rect,
+            "fallback_bbox": fallback_rect,
+            "reason": "large_single_glyph_sfx_like",
+            "method": "noise_like",
+            "region_type": "noise_like",
+        })
+        noise_like_anchors.append({
+            "cluster_id": cluster_id,
+            "anchor_bbox": rect,
+            "fallback_bbox": fallback_rect,
+            "reason": "large_single_glyph_sfx_like",
+        })
+        return None
+
+    if is_large_short_kana_sfx:
+        diagnostics.append({"cluster_id": cluster_id, "method": "large_short_kana_sfx_like", "is_valid": False})
+        skipped.append({
+            "cluster_id": cluster_id,
+            "anchor_bbox": rect,
+            "fallback_bbox": fallback_rect,
+            "reason": "large_short_kana_sfx_like",
+            "method": "noise_like",
+            "region_type": "noise_like",
+        })
+        noise_like_anchors.append({
+            "cluster_id": cluster_id,
+            "anchor_bbox": rect,
+            "fallback_bbox": fallback_rect,
+            "reason": "large_short_kana_sfx_like",
+        })
+        return None
+
+    if is_symbol_only or is_short_non_jp_noise or is_english_only:
+        reason = "symbol_only_text" if is_symbol_only else "short_non_japanese_noise_text" if is_short_non_jp_noise else "english_only_text"
+        diagnostics.append({"cluster_id": cluster_id, "method": reason, "is_valid": False})
+        if is_symbol_only:
+            noise_like_anchors.append({
+                "cluster_id": cluster_id,
+                "anchor_bbox": rect,
+                "fallback_bbox": fallback_rect,
+                "reason": reason,
+            })
+        skipped.append({
+            "cluster_id": cluster_id,
+            "anchor_bbox": rect,
+            "fallback_bbox": fallback_rect,
+            "reason": reason,
+            "method": "noise_like",
+            "region_type": "noise_like",
+        })
+        return None
+
+    return is_dark_bg, is_horizontal_tg
+
+
+def _validate_flood_candidate(
+    cluster: Dict[str, Any],
+    gray: np.ndarray,
+    mask: np.ndarray,
+    candidate_rect: List[int],
+    erode_pixels: int,
+    bubble_page_ratio: float,
+    bubble_tg_ratio: float,
+    touches_border: bool,
+    quality_flags: List[str],
+    _page_black_contour: Callable[[], np.ndarray],
+    is_valid: bool,
+    bubble_mask: np.ndarray,
+    bubble_rect: List[int],
+    method: str,
+    region_type: str,
+) -> Tuple[np.ndarray, bool, bool, bool, np.ndarray, List[int], str, str]:
+    """Strict Validation: bounds를 통과한 flood mask의 모양·경계 증거를 판정해 quality_flags에 기록하고 갱신된 후보 상태를 돌려준다."""
+    filled_mask = _fill_mask_holes(mask)
+    candidate_mask = _erode_mask(filled_mask, pixels=erode_pixels)
+
+    bimodality = _compute_flood_bimodality(filled_mask, gray)
+    is_bimodal = (bimodality >= 0.88)
+
+    # Solidity Check
+    # _is_bubble_shaped internally checks solidity >= min_solidity
+    # raw mask check
+    raw_binary = np.where(mask > 0, 255, 0).astype(np.uint8)
+    raw_contours, _ = cv2.findContours(raw_binary, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    raw_solid = 0.0
+    raw_round = 0.0
+    if raw_contours:
+        rcnt = max(raw_contours, key=cv2.contourArea)
+        rarea = cv2.contourArea(rcnt)
+        rhull = cv2.contourArea(cv2.convexHull(rcnt))
+        if rhull > 0: raw_solid = rarea / rhull
+        rperi = cv2.arcLength(rcnt, True)
+        if rperi > 0: raw_round = 4 * np.pi * rarea / (rperi ** 2)
+
+    binary = np.where(candidate_mask > 0, 255, 0).astype(np.uint8)
+    contours, _ = cv2.findContours(binary, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    solidity = 0.0
+    roundness = 0.0
+    if contours:
+        cnt = max(contours, key=cv2.contourArea)
+        area_cnt = cv2.contourArea(cnt)
+        hull_area = cv2.contourArea(cv2.convexHull(cnt))
+        if hull_area > 0:
+            solidity = area_cnt / hull_area
+
+        peri = cv2.arcLength(cnt, True)
+        if peri > 0:
+            roundness = 4 * np.pi * area_cnt / (peri ** 2)
+
+    _SOLID_THR = 0.82
+    # aspect ratio 기반 roundness 정규화
+    # 이상적 직사각형 roundness = π*ar/(ar+1)²로 정규화하면
+    # 직사각형≈1.0, 타원>1.0으로 두 타입 점수가 비슷해짐
+
+
+    _bw = int(candidate_rect[2]) if len(candidate_rect) >= 3 else 1
+    _bh = int(candidate_rect[3]) if len(candidate_rect) >= 4 else 1
+    _ar = max(_bw, _bh) / max(min(_bw, _bh), 1)
+    _rect_round_ideal = math.pi * _ar / (_ar + 1) ** 2
+    _rect_round_ideal = max(_rect_round_ideal, 0.10)
+    # raw_round < rect_ideal 구간은 sqrt로 완화:
+    # 직사각형 오버랩처럼 이상값 아래로 떨어지는 케이스를 선형보다 덜 페널티.
+    # raw_round >= rect_ideal (타원/원)은 그대로 linear.
+    _rr_ratio = raw_round / _rect_round_ideal
+    type_round = math.sqrt(_rr_ratio) if _rr_ratio < 1.0 else _rr_ratio
+
+    shape_score = (solidity / _SOLID_THR) * type_round
+
+    # Gate 1: 모양 점수
+    _SHAPE_THR = 0.58
+    is_shape_gate = shape_score >= _SHAPE_THR
+
+    # Gate 2: 크기 페널티 (flood 탈출 차단)
+    # tg_ratio는 anchor bbox 크기에 따라 왜곡되므로 제외.
+    _BASE_PAGE   = 0.07
+    _BORDER_MULT = 0.80
+    page_penalty   = _BASE_PAGE / max(bubble_page_ratio, _BASE_PAGE)
+    border_penalty = _BORDER_MULT if touches_border else 1.0
+    adjusted_score = shape_score * page_penalty * border_penalty
+    is_size_gate = adjusted_score >= 0.50
+
+    # border_rescue: page_penalty가 이미 적용 중인(page > BASE) 큰 region에서
+    # border_penalty까지 중첩돼 탈락하는 경우만 구제.
+    adj_no_border = shape_score * page_penalty
+    is_border_rescue = (
+        is_shape_gate
+        and touches_border
+        and not is_size_gate
+        and bubble_page_ratio > _BASE_PAGE
+        and adj_no_border >= 0.50
+    )
+
+    is_shape_ok = is_shape_gate and (is_size_gate or is_border_rescue)
+    boundary_sides, boundary_ratios = _boundary_evidence(gray, list(candidate_rect[:4]))
+    has_boundary_evidence = boundary_sides >= 3
+    center_offset = _text_center_offset_ratio(list(candidate_rect[:4]), _tight_text_group_rect(cluster))
+    rect_like = raw_solid >= 0.85 and 0.38 <= raw_round <= 0.62 and shape_score >= 0.78
+    ellipse_like = raw_solid >= 0.93 and raw_round >= 0.63 and shape_score >= 1.00
+    dual_rect_profile = _dual_rect_profile_signal(filled_mask)
+    closed_contour_probe = _black_contour_probe(
+        gray,
+        list(candidate_rect[:4]),
+        filled_mask,
+        black=_page_black_contour(),
+    )
+    closed_boundary_like = (
+        closed_contour_probe.get("status") == "closed"
+        and float(closed_contour_probe.get("coverage", 0.0)) >= 0.90
+        and int(closed_contour_probe.get("quadrants", 0)) == 4
+        and float(closed_contour_probe.get("max_gap", 1.0)) <= 0.12
+        and float(closed_contour_probe.get("distance_cv", 1.0)) <= 0.20
+        and boundary_sides == 4
+        and shape_score >= 0.58
+    )
+    dual_rect_like, dual_rect_score, dual_rect_parts = _dual_rect_validation_score(
+        raw_solid,
+        raw_round,
+        shape_score,
+        boundary_sides,
+        closed_contour_probe,
+        dual_rect_profile,
+        bubble_page_ratio,
+        touches_border,
+    )
+    distance_peaks = _distance_peak_signal(filled_mask)
+    dual_ellipse_tail_like = (
+        raw_solid >= 0.78
+        and 0.32 <= raw_round <= 0.58
+        and shape_score >= 0.68
+        and distance_peaks["ok"] >= 1.0
+    )
+    direct_shape_class = (
+        "rect"
+        if rect_like
+        else (
+            "ellipse"
+            if ellipse_like
+            else (
+            "dual_rect"
+            if dual_rect_like
+                else (
+                    "closed_boundary"
+                    if closed_boundary_like
+                    else ("dual_ellipse_tail" if dual_ellipse_tail_like else "none")
+                )
+            )
+        )
+    )
+    direct_shape_ok = has_boundary_evidence and direct_shape_class != "none"
+
+    # 로그 추가
+    quality_flags.append(
+        f"raw_solid={round(raw_solid,3)}, raw_round={round(raw_round,3)}, "
+        f"solid={round(solidity,3)}, round={round(roundness,3)}, "
+        f"shape={round(shape_score,3)}, adj={round(adjusted_score,3)}, "
+        f"tg={round(bubble_tg_ratio,2)}, page={round(bubble_page_ratio,4)}, "
+        f"border={'Y' if touches_border else 'N'}"
+    )
+    quality_flags.append(
+        "boundary="
+        f"sides={boundary_sides},"
+        f"t={boundary_ratios['top']:.2f},b={boundary_ratios['bottom']:.2f},"
+        f"l={boundary_ratios['left']:.2f},r={boundary_ratios['right']:.2f}"
+    )
+    quality_flags.append(f"shape_class={direct_shape_class}")
+    if dual_rect_like:
+        quality_flags.append(
+            "dual_rect_profile="
+            f"axis={dual_rect_profile['axis']},"
+            f"score={dual_rect_profile['score']:.2f},"
+            f"shift={dual_rect_profile['center_shift']:.2f},"
+            f"neck={dual_rect_profile['neck_ratio']:.2f},"
+            f"floor={dual_rect_profile['width_floor']:.2f}"
+        )
+        quality_flags.append(
+            "dual_rect_score="
+            f"{dual_rect_score:.2f},"
+            f"p={dual_rect_parts['profile']:.2f},"
+            f"c={dual_rect_parts['contour']:.2f},"
+            f"b={dual_rect_parts['boundary']:.2f},"
+            f"s={dual_rect_parts['solid']:.2f},"
+            f"r={dual_rect_parts['round']:.2f},"
+            f"sh={dual_rect_parts['shape']:.2f},"
+            f"pen={dual_rect_parts['penalty']:.2f}"
+        )
+        quality_flags.append(
+            "dual_rect_contour="
+            f"{closed_contour_probe['status']},"
+            f"cov={closed_contour_probe['coverage']:.2f},"
+            f"quad={closed_contour_probe['quadrants']},"
+            f"gap={closed_contour_probe['max_gap']:.2f},"
+            f"cv={closed_contour_probe['distance_cv']:.2f}"
+        )
+    if closed_boundary_like:
+        quality_flags.append(
+            "closed_boundary="
+            f"{closed_contour_probe['status']},"
+            f"cov={closed_contour_probe['coverage']:.2f},"
+            f"quad={closed_contour_probe['quadrants']},"
+            f"gap={closed_contour_probe['max_gap']:.2f},"
+            f"cv={closed_contour_probe['distance_cv']:.2f}"
+        )
+    if dual_ellipse_tail_like:
+        quality_flags.append(
+            "dual_ellipse_tail="
+            f"peaks={int(distance_peaks['count'])},"
+            f"score={distance_peaks.get('score', 0.0):.2f},"
+            f"sep={distance_peaks.get('sep_ratio', 0.0):.2f},"
+            f"balance={distance_peaks.get('balance', 0.0):.2f}"
+        )
+    quality_flags.append(f"center_offset={center_offset:.2f}")
+
+    if direct_shape_ok:
+        is_valid = True
+        # 3px 침식 마스크(candidate_mask)는 모양 판정용이다. 테두리 보호는 흰칠 단계의 침식
+        # (dialogue_extractor bubble_mask_erode)이 맡으므로 영역 마스크는 침식 전 것을 쓴다(이중 침식 방지).
+        bubble_mask = filled_mask
+        bubble_rect = [int(v) for v in candidate_rect[:4]]
+        method = "flood"
+
+        # Determine basic features for region_type
+        _ft, _ff, _ = _classify_anchor_region(
+            cluster, list(bubble_rect), int(np.count_nonzero(bubble_mask)),
+            touches_border, True
+        )
+        quality_flags.extend(_ff)
+
+        # valid flood는 후단에서 모두 bubble crop으로 처리한다.
+        # bubble 검증 실패 후보만 unboxed inpaint 대상으로 남긴다.
+        region_type = "bubble"
+    else:
+        quality_flags.append("failed_validation")
+        if not has_boundary_evidence:
+            quality_flags.append("weak_boundary_evidence")
+
+    return (
+        candidate_mask, is_bimodal, is_shape_ok, is_valid,
+        bubble_mask, bubble_rect, method, region_type,
+    )
+
+
+def _probe_text_group(
+    idx: int,
+    cluster: Dict[str, Any],
+    image: np.ndarray,
+    gray: np.ndarray,
+    img_w: int,
+    img_h: int,
+    image_area: int,
+    erode_pixels: int,
+    max_area_ratio: float,
+    min_bubble_tg_ratio: float,
+    max_bubble_tg_ratio: float,
+    dark_bg_mean_threshold: int,
+    _page_black_contour: Callable[[], np.ndarray],
+    grouped: Dict[Tuple[Any, ...], Dict[str, Any]],
+    diagnostics: List[Dict[str, Any]],
+    skipped: List[Dict[str, Any]],
+    noise_like_anchors: List[Dict[str, Any]],
+) -> None:
+    """Primary Probe: TG 하나를 필터·dark flood·flood probe·검증한 뒤 결과를 grouped(유효 bubble 또는 bbox fallback)와 진단 목록에 넣는다."""
+    rect = _tight_text_group_rect(cluster)
+    fallback_rect = _fallback_text_group_rect(cluster)
+    if len(rect) < 4:
+        return
+
+    cluster_id = _text_group_id(cluster, idx)
+
+    prefilter = _prefilter_text_group(
+        cluster, rect, fallback_rect, cluster_id, gray, img_w, img_h,
+        dark_bg_mean_threshold, diagnostics, skipped, noise_like_anchors,
+    )
+    if prefilter is None:
+        return
+    is_dark_bg, is_horizontal_tg = prefilter
+
+    x, y, w, h = _unpack_rect(rect)
+    seed: Optional[Point] = None
+    mask = np.zeros((img_h, img_w), dtype=np.uint8)
+    area = 0
+    candidate_rect = [0, 0, 0, 0]
+
+    is_valid = False
+    method = "bbox_fallback"
+    region_type = "bbox_fallback"
+    bubble_mask = np.zeros((img_h, img_w), dtype=np.uint8)
+    bubble_rect = list(_unpack_rect(fallback_rect))
+    bubble_page_ratio = 0.0
+    bubble_tg_ratio = 0.0
+    touches_border = False
+    quality_flags = (
+        ["dark_background", "dark_flood_candidate", "vertical_dark_bg_allowed"]
+        if is_dark_bg and not is_horizontal_tg
+        else []
+    )
+    candidate_mask = np.zeros((img_h, img_w), dtype=np.uint8)
+    is_bimodal = False
+    is_shape_ok = False
+
+    if is_dark_bg and not is_horizontal_tg:
+        seed, mask, area, candidate_rect = _dark_flood_with_fallback(image, gray, rect)
+        if seed is not None:
+            bubble_page_ratio = area / image_area
+            touches_border = _touches_image_border(mask)
+            fx, fy, fw, fh = _unpack_rect(candidate_rect)
+            bubble_rect = [fx, fy, fw, fh]
+            anchor_area = max(1, w * h)
+            bubble_tg_ratio = (fw * fh) / anchor_area
+            center = _bbox_center(rect)
+            center_inside = (fx <= center[0] <= fx + fw and fy <= center[1] <= fy + fh)
+            solidity, roundness = _mask_solidity_roundness(mask)
+            dark_shape_ok = solidity >= 0.88 and roundness >= 0.20
+            dark_max_tg_ratio = min(max_bubble_tg_ratio, 8.0)
+            dark_size_ok = (
+                bubble_page_ratio <= min(max_area_ratio, 0.07)
+                and 1.2 <= bubble_tg_ratio <= dark_max_tg_ratio
+                and center_inside
+                and not touches_border
+            )
+            quality_flags.append(
+                f"dark_flood solid={round(solidity,3)}, round={round(roundness,3)}, "
+                f"tg={round(bubble_tg_ratio,2)}, page={round(bubble_page_ratio,4)}, "
+                f"border={'Y' if touches_border else 'N'}"
+            )
+            if dark_shape_ok and dark_size_ok:
+                is_valid = True
+                candidate_mask = _fill_mask_holes(mask)
+                bubble_mask = candidate_mask
+                method = "dark_flood"
+                region_type = "bubble"
+                is_shape_ok = True
+                is_bimodal = True
+                quality_flags.extend(["dark_flood_success", "skip_edge_barrier_for_dark_bg"])
+            else:
+                quality_flags.append("dark_flood_failed_validation")
+
+    # Step 1: Primary Probe
+    if not is_valid:
+        seed, mask, area, candidate_rect = _flood_with_fallback(image, gray, rect)
+
+    if not is_valid and seed is not None:
+        # Step 2: Strict Validation
+        bubble_page_ratio = area / image_area
+        touches_border = _touches_image_border(mask)
+        fx, fy, fw, fh = _unpack_rect(candidate_rect)
+        bubble_rect = [fx, fy, fw, fh]
+        anchor_area = max(1, w * h)
+        bubble_tg_ratio = (fw * fh) / anchor_area
+        center = _bbox_center(rect)
+        center_inside = (fx <= center[0] <= fx + fw and fy <= center[1] <= fy + fh)
+
+        valid_area = (bubble_page_ratio <= max_area_ratio)
+        valid_ratio = (bubble_tg_ratio >= min_bubble_tg_ratio)
+
+        if valid_area and valid_ratio and center_inside:
+            (
+                candidate_mask, is_bimodal, is_shape_ok, is_valid,
+                bubble_mask, bubble_rect, method, region_type,
+            ) = _validate_flood_candidate(
+                cluster, gray, mask, candidate_rect, erode_pixels,
+                bubble_page_ratio, bubble_tg_ratio, touches_border,
+                quality_flags, _page_black_contour,
+                is_valid, bubble_mask, bubble_rect, method, region_type,
+            )
+        else:
+            quality_flags.append(f"failed_bounds: area={valid_area}, ratio={valid_ratio}(tg_ratio={round(bubble_tg_ratio,2)}), center={center_inside}")
+
+        # Step 3: Rescue Probe
+        if not is_valid:
+            # To be implemented in next plan. For now, remains failed candidate.
+            method = "failed_candidate"
+
+    diagnostics.append({
+        "cluster_id": cluster_id,
+        "method": method,
+        "is_valid": is_valid,
+        "region_type": region_type,
+        "bubble_page_ratio": round(float(bubble_page_ratio), 5),
+        "bubble_tg_ratio": round(float(bubble_tg_ratio), 2),
+        "touches_border": touches_border,
+        # 이후 grouped region에 붙는 flag가 진단 기록으로 새지 않도록 복사본을 둔다.
+        "quality_flags": list(quality_flags)
+    })
+
+    fail_tag = "failed"
+    if not is_valid:
+        qf_str = " ".join(quality_flags)
+        if "tiny_text_large_ratio" in qf_str:
+            fail_tag = "Tiny"
+        elif "solid=" in qf_str:
+            if not is_bimodal:
+                fail_tag = "Bimodal"
+            elif not is_shape_ok:
+                fail_tag = "Shape"
+            else:
+                fail_tag = "Val"
+        elif "failed_bounds" in qf_str:
+            if "area=False" in qf_str: fail_tag = "Area"
+            elif "ratio=False" in qf_str: fail_tag = "Ratio"
+            elif "center=False" in qf_str: fail_tag = "Center"
+            else: fail_tag = "Bnds"
+
+        skipped.append({
+            "cluster_id": cluster_id,
+            "anchor_bbox": rect,
+            "fallback_bbox": fallback_rect,
+            "bubble_rect": bubble_rect,
+            "reason": "failed_candidate",
+            "method": method,
+            "region_type": region_type,
+            "quality_flags": list(quality_flags)
+        })
+        # fallback to bbox crop for OCR
+        rect_key = [int(v) for v in bubble_rect[:4]]
+        key = ("fallback", *rect_key)
+        if key not in grouped:
+            grouped[key] = {
+                "anchor_ids": [cluster_id],
+                "seed_points": [],
+                "bubble_rect": rect_key,
+                "mask": candidate_mask,
+                "bubble_page_ratio": 0.0,
+                "bubble_tg_ratio": 0.0,
+                "touches_image_border": False,
+                "method": "bbox_fallback",
+                "region_type": "bbox_fallback",
+                "quality_flags": quality_flags,
+                "is_valid": False,
+                "fail_tag": fail_tag
+            }
+        else:
+            grouped[key]["anchor_ids"].append(cluster_id)
+        return
+
+    # Group valid bubbles
+    rect_key = [int(v) for v in bubble_rect[:4]]
+    key = ("valid", *rect_key)
+    if key not in grouped:
+        grouped[key] = {
+            "anchor_ids": [cluster_id],
+            "seed_points": [list(seed)],
+            "bubble_rect": rect_key,
+            "mask": bubble_mask,
+            "bubble_page_ratio": bubble_page_ratio,
+            "bubble_tg_ratio": bubble_tg_ratio,
+            "touches_image_border": touches_border,
+            "method": method,
+            "region_type": region_type,
+            "quality_flags": quality_flags,
+            "is_valid": is_valid
+        }
+    else:
+        grouped[key]["mask"] = cv2.bitwise_or(grouped[key]["mask"], bubble_mask)
+        grouped[key]["anchor_ids"].append(cluster_id)
+        grouped[key]["seed_points"].append(list(seed))
+        grouped[key]["is_valid"] = True
+        grouped[key]["method"] = method
+        grouped[key]["region_type"] = region_type
+
+
 def build_ocr_region_sheet(
     image_path: str,
     clusters_json: str,
@@ -2168,543 +2786,12 @@ def build_ocr_region_sheet(
         return page_black_contour[0]
 
     for idx, cluster in enumerate(clusters, start=1):
-        rect = _tight_text_group_rect(cluster)
-        fallback_rect = _fallback_text_group_rect(cluster)
-        if len(rect) < 4:
-            continue
-
-        cluster_id = _text_group_id(cluster, idx)
-
-        is_symbol_only = _is_symbol_only_text(_cluster_text(cluster))
-        is_short_non_jp_noise = _is_short_non_japanese_noise_text(_cluster_text(cluster))
-        is_english_only = _is_english_only_text(_cluster_text(cluster))
-        is_large_single_glyph_sfx = _is_large_single_glyph_sfx_like(cluster, rect)
-        is_large_short_kana_sfx = _is_large_short_kana_sfx_like(cluster, rect)
-
-        is_dark_bg = _is_dark_bg_text(gray, rect, dark_bg_mean_threshold)
-        is_horizontal_tg = _is_horizontal_text_group(cluster, rect)
-
-        # 이미지 하단 근처(하위 8%) 가로 텍스트: 챕터 엔드 표기·페이지 캡션 등
-        # 말풍선이 아닌 인쇄 레이아웃 텍스트이므로 bubble 감지 대상에서 제외
-        # orientation 필드가 'vertical'이어도 AR이 명확히 가로형이면 landscape로 판단
-        _rx, _ry, _rw, _rh = rect
-        _is_landscape_by_ar = _rh > 0 and (_rw / _rh) >= 1.15
-        if (is_horizontal_tg or _is_landscape_by_ar) and (_ry + _rh) > img_h * 0.92:
-            diagnostics.append({"cluster_id": cluster_id, "method": "bottom_landscape_footer", "is_valid": False})
-            skipped.append({
-                "cluster_id": cluster_id,
-                "anchor_bbox": rect,
-                "fallback_bbox": fallback_rect,
-                "reason": "bottom_landscape_footer",
-                "method": "noise_like",
-                "region_type": "noise_like",
-                "quality_flags": ["bottom_landscape_footer"],
-            })
-            continue
-
-        _tiny_landscape_noise = (
-            _is_landscape_by_ar
-            and _rh <= max(14, int(img_h * 0.014))
-            and (_rw * _rh) <= max(700, int(img_w * img_h * 0.00075))
+        _probe_text_group(
+            idx, cluster, image, gray, img_w, img_h, image_area,
+            erode_pixels, max_area_ratio, min_bubble_tg_ratio, max_bubble_tg_ratio,
+            dark_bg_mean_threshold, _page_black_contour,
+            grouped, diagnostics, skipped, noise_like_anchors,
         )
-        if _tiny_landscape_noise:
-            diagnostics.append({"cluster_id": cluster_id, "method": "tiny_landscape_text_noise", "is_valid": False})
-            skipped.append({
-                "cluster_id": cluster_id,
-                "anchor_bbox": rect,
-                "fallback_bbox": fallback_rect,
-                "reason": "tiny_landscape_text_noise",
-                "method": "noise_like",
-                "region_type": "noise_like",
-                "quality_flags": ["tiny_landscape_text_noise"],
-            })
-            continue
-
-        # 이미지 좌/우 끝에 바싹 붙은 매우 좁은 세로 텍스트: 면책 문구·저작권 표기 등 인쇄 메타데이터
-        _narrow_meta = _is_edge_narrow_metadata_rect(rect, img_w)
-        if _narrow_meta:
-            diagnostics.append({"cluster_id": cluster_id, "method": "edge_narrow_metadata", "is_valid": False})
-            skipped.append({
-                "cluster_id": cluster_id,
-                "anchor_bbox": rect,
-                "fallback_bbox": fallback_rect,
-                "reason": "edge_narrow_metadata",
-                "method": "metadata",
-                "region_type": "metadata",
-                "quality_flags": ["edge_narrow_metadata"],
-            })
-            continue
-
-        if is_dark_bg and is_horizontal_tg:
-            diagnostics.append({"cluster_id": cluster_id, "method": "dark_bg_text", "is_valid": False})
-            skipped.append({
-                "cluster_id": cluster_id,
-                "anchor_bbox": rect,
-                "fallback_bbox": fallback_rect,
-                "reason": "dark_bg_text",
-                "method": "dark_bg_text",
-                "region_type": "dark_bg_text",
-                "quality_flags": ["dark_background", "horizontal_dark_bg_skip"],
-            })
-            continue
-        if is_dark_bg:
-            diagnostics.append({
-                "cluster_id": cluster_id,
-                "method": "dark_bg_vertical_allowed",
-                "is_valid": True,
-                "quality_flags": ["dark_background", "dark_flood_candidate", "vertical_dark_bg_allowed"],
-            })
-
-        if is_large_single_glyph_sfx:
-            diagnostics.append({"cluster_id": cluster_id, "method": "large_single_glyph_sfx_like", "is_valid": False})
-            skipped.append({
-                "cluster_id": cluster_id,
-                "anchor_bbox": rect,
-                "fallback_bbox": fallback_rect,
-                "reason": "large_single_glyph_sfx_like",
-                "method": "noise_like",
-                "region_type": "noise_like",
-            })
-            noise_like_anchors.append({
-                "cluster_id": cluster_id,
-                "anchor_bbox": rect,
-                "fallback_bbox": fallback_rect,
-                "reason": "large_single_glyph_sfx_like",
-            })
-            continue
-
-        if is_large_short_kana_sfx:
-            diagnostics.append({"cluster_id": cluster_id, "method": "large_short_kana_sfx_like", "is_valid": False})
-            skipped.append({
-                "cluster_id": cluster_id,
-                "anchor_bbox": rect,
-                "fallback_bbox": fallback_rect,
-                "reason": "large_short_kana_sfx_like",
-                "method": "noise_like",
-                "region_type": "noise_like",
-            })
-            noise_like_anchors.append({
-                "cluster_id": cluster_id,
-                "anchor_bbox": rect,
-                "fallback_bbox": fallback_rect,
-                "reason": "large_short_kana_sfx_like",
-            })
-            continue
-
-        if is_symbol_only or is_short_non_jp_noise or is_english_only:
-            reason = "symbol_only_text" if is_symbol_only else "short_non_japanese_noise_text" if is_short_non_jp_noise else "english_only_text"
-            diagnostics.append({"cluster_id": cluster_id, "method": reason, "is_valid": False})
-            if is_symbol_only:
-                noise_like_anchors.append({
-                    "cluster_id": cluster_id,
-                    "anchor_bbox": rect,
-                    "fallback_bbox": fallback_rect,
-                    "reason": reason,
-                })
-            skipped.append({
-                "cluster_id": cluster_id,
-                "anchor_bbox": rect,
-                "fallback_bbox": fallback_rect,
-                "reason": reason,
-                "method": "noise_like",
-                "region_type": "noise_like",
-            })
-            continue
-
-        x, y, w, h = _unpack_rect(rect)
-        seed: Optional[Point] = None
-        mask = np.zeros((img_h, img_w), dtype=np.uint8)
-        area = 0
-        candidate_rect = [0, 0, 0, 0]
-
-        is_valid = False
-        method = "bbox_fallback"
-        region_type = "bbox_fallback"
-        bubble_mask = np.zeros((img_h, img_w), dtype=np.uint8)
-        bubble_rect = list(_unpack_rect(fallback_rect))
-        bubble_page_ratio = 0.0
-        bubble_tg_ratio = 0.0
-        touches_border = False
-        quality_flags = (
-            ["dark_background", "dark_flood_candidate", "vertical_dark_bg_allowed"]
-            if is_dark_bg and not is_horizontal_tg
-            else []
-        )
-        candidate_mask = np.zeros((img_h, img_w), dtype=np.uint8)
-        is_bimodal = False
-        is_shape_ok = False
-
-        if is_dark_bg and not is_horizontal_tg:
-            seed, mask, area, candidate_rect = _dark_flood_with_fallback(image, gray, rect)
-            if seed is not None:
-                bubble_page_ratio = area / image_area
-                touches_border = _touches_image_border(mask)
-                fx, fy, fw, fh = _unpack_rect(candidate_rect)
-                bubble_rect = [fx, fy, fw, fh]
-                anchor_area = max(1, w * h)
-                bubble_tg_ratio = (fw * fh) / anchor_area
-                center = _bbox_center(rect)
-                center_inside = (fx <= center[0] <= fx + fw and fy <= center[1] <= fy + fh)
-                solidity, roundness = _mask_solidity_roundness(mask)
-                dark_shape_ok = solidity >= 0.88 and roundness >= 0.20
-                dark_max_tg_ratio = min(max_bubble_tg_ratio, 8.0)
-                dark_size_ok = (
-                    bubble_page_ratio <= min(max_area_ratio, 0.07)
-                    and 1.2 <= bubble_tg_ratio <= dark_max_tg_ratio
-                    and center_inside
-                    and not touches_border
-                )
-                quality_flags.append(
-                    f"dark_flood solid={round(solidity,3)}, round={round(roundness,3)}, "
-                    f"tg={round(bubble_tg_ratio,2)}, page={round(bubble_page_ratio,4)}, "
-                    f"border={'Y' if touches_border else 'N'}"
-                )
-                if dark_shape_ok and dark_size_ok:
-                    is_valid = True
-                    candidate_mask = _fill_mask_holes(mask)
-                    bubble_mask = candidate_mask
-                    method = "dark_flood"
-                    region_type = "bubble"
-                    is_shape_ok = True
-                    is_bimodal = True
-                    quality_flags.extend(["dark_flood_success", "skip_edge_barrier_for_dark_bg"])
-                else:
-                    quality_flags.append("dark_flood_failed_validation")
-
-        # Step 1: Primary Probe
-        if not is_valid:
-            seed, mask, area, candidate_rect = _flood_with_fallback(image, gray, rect)
-
-        if not is_valid and seed is not None:
-            # Step 2: Strict Validation
-            bubble_page_ratio = area / image_area
-            touches_border = _touches_image_border(mask)
-            fx, fy, fw, fh = _unpack_rect(candidate_rect)
-            bubble_rect = [fx, fy, fw, fh]
-            anchor_area = max(1, w * h)
-            bubble_tg_ratio = (fw * fh) / anchor_area
-            center = _bbox_center(rect)
-            center_inside = (fx <= center[0] <= fx + fw and fy <= center[1] <= fy + fh)
-            
-            valid_area = (bubble_page_ratio <= max_area_ratio)
-            valid_ratio = (bubble_tg_ratio >= min_bubble_tg_ratio)
-
-            if valid_area and valid_ratio and center_inside:
-                filled_mask = _fill_mask_holes(mask)
-                candidate_mask = _erode_mask(filled_mask, pixels=erode_pixels)
-                
-                bimodality = _compute_flood_bimodality(filled_mask, gray)
-                is_bimodal = (bimodality >= 0.88)
-                
-                # Solidity Check
-                # _is_bubble_shaped internally checks solidity >= min_solidity
-                # raw mask check
-                raw_binary = np.where(mask > 0, 255, 0).astype(np.uint8)
-                raw_contours, _ = cv2.findContours(raw_binary, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-                raw_solid = 0.0
-                raw_round = 0.0
-                if raw_contours:
-                    rcnt = max(raw_contours, key=cv2.contourArea)
-                    rarea = cv2.contourArea(rcnt)
-                    rhull = cv2.contourArea(cv2.convexHull(rcnt))
-                    if rhull > 0: raw_solid = rarea / rhull
-                    rperi = cv2.arcLength(rcnt, True)
-                    if rperi > 0: raw_round = 4 * np.pi * rarea / (rperi ** 2)
-                    
-                binary = np.where(candidate_mask > 0, 255, 0).astype(np.uint8)
-                contours, _ = cv2.findContours(binary, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-                solidity = 0.0
-                roundness = 0.0
-                if contours:
-                    cnt = max(contours, key=cv2.contourArea)
-                    area_cnt = cv2.contourArea(cnt)
-                    hull_area = cv2.contourArea(cv2.convexHull(cnt))
-                    if hull_area > 0:
-                        solidity = area_cnt / hull_area
-                    
-                    peri = cv2.arcLength(cnt, True)
-                    if peri > 0:
-                        roundness = 4 * np.pi * area_cnt / (peri ** 2)
-                
-                _SOLID_THR = 0.82
-                # aspect ratio 기반 roundness 정규화
-                # 이상적 직사각형 roundness = π*ar/(ar+1)²로 정규화하면
-                # 직사각형≈1.0, 타원>1.0으로 두 타입 점수가 비슷해짐
-
-
-                _bw = int(candidate_rect[2]) if len(candidate_rect) >= 3 else 1
-                _bh = int(candidate_rect[3]) if len(candidate_rect) >= 4 else 1
-                _ar = max(_bw, _bh) / max(min(_bw, _bh), 1)
-                _rect_round_ideal = math.pi * _ar / (_ar + 1) ** 2
-                _rect_round_ideal = max(_rect_round_ideal, 0.10)
-                # raw_round < rect_ideal 구간은 sqrt로 완화:
-                # 직사각형 오버랩처럼 이상값 아래로 떨어지는 케이스를 선형보다 덜 페널티.
-                # raw_round >= rect_ideal (타원/원)은 그대로 linear.
-                _rr_ratio = raw_round / _rect_round_ideal
-                type_round = math.sqrt(_rr_ratio) if _rr_ratio < 1.0 else _rr_ratio
-
-                shape_score = (solidity / _SOLID_THR) * type_round
-
-                # Gate 1: 모양 점수
-                _SHAPE_THR = 0.58
-                is_shape_gate = shape_score >= _SHAPE_THR
-
-                # Gate 2: 크기 페널티 (flood 탈출 차단)
-                # tg_ratio는 anchor bbox 크기에 따라 왜곡되므로 제외.
-                _BASE_PAGE   = 0.07
-                _BORDER_MULT = 0.80
-                page_penalty   = _BASE_PAGE / max(bubble_page_ratio, _BASE_PAGE)
-                border_penalty = _BORDER_MULT if touches_border else 1.0
-                adjusted_score = shape_score * page_penalty * border_penalty
-                is_size_gate = adjusted_score >= 0.50
-
-                # border_rescue: page_penalty가 이미 적용 중인(page > BASE) 큰 region에서
-                # border_penalty까지 중첩돼 탈락하는 경우만 구제.
-                adj_no_border = shape_score * page_penalty
-                is_border_rescue = (
-                    is_shape_gate
-                    and touches_border
-                    and not is_size_gate
-                    and bubble_page_ratio > _BASE_PAGE
-                    and adj_no_border >= 0.50
-                )
-
-                is_shape_ok = is_shape_gate and (is_size_gate or is_border_rescue)
-                boundary_sides, boundary_ratios = _boundary_evidence(gray, list(candidate_rect[:4]))
-                has_boundary_evidence = boundary_sides >= 3
-                center_offset = _text_center_offset_ratio(list(candidate_rect[:4]), _tight_text_group_rect(cluster))
-                rect_like = raw_solid >= 0.85 and 0.38 <= raw_round <= 0.62 and shape_score >= 0.78
-                ellipse_like = raw_solid >= 0.93 and raw_round >= 0.63 and shape_score >= 1.00
-                dual_rect_profile = _dual_rect_profile_signal(filled_mask)
-                closed_contour_probe = _black_contour_probe(
-                    gray,
-                    list(candidate_rect[:4]),
-                    filled_mask,
-                    black=_page_black_contour(),
-                )
-                closed_boundary_like = (
-                    closed_contour_probe.get("status") == "closed"
-                    and float(closed_contour_probe.get("coverage", 0.0)) >= 0.90
-                    and int(closed_contour_probe.get("quadrants", 0)) == 4
-                    and float(closed_contour_probe.get("max_gap", 1.0)) <= 0.12
-                    and float(closed_contour_probe.get("distance_cv", 1.0)) <= 0.20
-                    and boundary_sides == 4
-                    and shape_score >= 0.58
-                )
-                dual_rect_like, dual_rect_score, dual_rect_parts = _dual_rect_validation_score(
-                    raw_solid,
-                    raw_round,
-                    shape_score,
-                    boundary_sides,
-                    closed_contour_probe,
-                    dual_rect_profile,
-                    bubble_page_ratio,
-                    touches_border,
-                )
-                distance_peaks = _distance_peak_signal(filled_mask)
-                dual_ellipse_tail_like = (
-                    raw_solid >= 0.78
-                    and 0.32 <= raw_round <= 0.58
-                    and shape_score >= 0.68
-                    and distance_peaks["ok"] >= 1.0
-                )
-                direct_shape_class = (
-                    "rect"
-                    if rect_like
-                    else (
-                        "ellipse"
-                        if ellipse_like
-                        else (
-                        "dual_rect"
-                        if dual_rect_like
-                            else (
-                                "closed_boundary"
-                                if closed_boundary_like
-                                else ("dual_ellipse_tail" if dual_ellipse_tail_like else "none")
-                            )
-                        )
-                    )
-                )
-                direct_shape_ok = has_boundary_evidence and direct_shape_class != "none"
-
-                # 로그 추가
-                quality_flags.append(
-                    f"raw_solid={round(raw_solid,3)}, raw_round={round(raw_round,3)}, "
-                    f"solid={round(solidity,3)}, round={round(roundness,3)}, "
-                    f"shape={round(shape_score,3)}, adj={round(adjusted_score,3)}, "
-                    f"tg={round(bubble_tg_ratio,2)}, page={round(bubble_page_ratio,4)}, "
-                    f"border={'Y' if touches_border else 'N'}"
-                )
-                quality_flags.append(
-                    "boundary="
-                    f"sides={boundary_sides},"
-                    f"t={boundary_ratios['top']:.2f},b={boundary_ratios['bottom']:.2f},"
-                    f"l={boundary_ratios['left']:.2f},r={boundary_ratios['right']:.2f}"
-                )
-                quality_flags.append(f"shape_class={direct_shape_class}")
-                if dual_rect_like:
-                    quality_flags.append(
-                        "dual_rect_profile="
-                        f"axis={dual_rect_profile['axis']},"
-                        f"score={dual_rect_profile['score']:.2f},"
-                        f"shift={dual_rect_profile['center_shift']:.2f},"
-                        f"neck={dual_rect_profile['neck_ratio']:.2f},"
-                        f"floor={dual_rect_profile['width_floor']:.2f}"
-                    )
-                    quality_flags.append(
-                        "dual_rect_score="
-                        f"{dual_rect_score:.2f},"
-                        f"p={dual_rect_parts['profile']:.2f},"
-                        f"c={dual_rect_parts['contour']:.2f},"
-                        f"b={dual_rect_parts['boundary']:.2f},"
-                        f"s={dual_rect_parts['solid']:.2f},"
-                        f"r={dual_rect_parts['round']:.2f},"
-                        f"sh={dual_rect_parts['shape']:.2f},"
-                        f"pen={dual_rect_parts['penalty']:.2f}"
-                    )
-                    quality_flags.append(
-                        "dual_rect_contour="
-                        f"{closed_contour_probe['status']},"
-                        f"cov={closed_contour_probe['coverage']:.2f},"
-                        f"quad={closed_contour_probe['quadrants']},"
-                        f"gap={closed_contour_probe['max_gap']:.2f},"
-                        f"cv={closed_contour_probe['distance_cv']:.2f}"
-                    )
-                if closed_boundary_like:
-                    quality_flags.append(
-                        "closed_boundary="
-                        f"{closed_contour_probe['status']},"
-                        f"cov={closed_contour_probe['coverage']:.2f},"
-                        f"quad={closed_contour_probe['quadrants']},"
-                        f"gap={closed_contour_probe['max_gap']:.2f},"
-                        f"cv={closed_contour_probe['distance_cv']:.2f}"
-                    )
-                if dual_ellipse_tail_like:
-                    quality_flags.append(
-                        "dual_ellipse_tail="
-                        f"peaks={int(distance_peaks['count'])},"
-                        f"score={distance_peaks.get('score', 0.0):.2f},"
-                        f"sep={distance_peaks.get('sep_ratio', 0.0):.2f},"
-                        f"balance={distance_peaks.get('balance', 0.0):.2f}"
-                    )
-                quality_flags.append(f"center_offset={center_offset:.2f}")
-
-                if direct_shape_ok:
-                    is_valid = True
-                    # 3px 침식 마스크(candidate_mask)는 모양 판정용이다. 테두리 보호는 흰칠 단계의 침식
-                    # (dialogue_extractor bubble_mask_erode)이 맡으므로 영역 마스크는 침식 전 것을 쓴다(이중 침식 방지).
-                    bubble_mask = filled_mask
-                    bubble_rect = [int(v) for v in candidate_rect[:4]]
-                    method = "flood"
-
-                    # Determine basic features for region_type
-                    _ft, _ff, _ = _classify_anchor_region(
-                        cluster, list(bubble_rect), int(np.count_nonzero(bubble_mask)),
-                        touches_border, True
-                    )
-                    quality_flags.extend(_ff)
-
-                    # valid flood는 후단에서 모두 bubble crop으로 처리한다.
-                    # bubble 검증 실패 후보만 unboxed inpaint 대상으로 남긴다.
-                    region_type = "bubble"
-                else:
-                    quality_flags.append("failed_validation")
-                    if not has_boundary_evidence:
-                        quality_flags.append("weak_boundary_evidence")
-            else:
-                quality_flags.append(f"failed_bounds: area={valid_area}, ratio={valid_ratio}(tg_ratio={round(bubble_tg_ratio,2)}), center={center_inside}")
-
-            # Step 3: Rescue Probe
-            if not is_valid:
-                # To be implemented in next plan. For now, remains failed candidate.
-                method = "failed_candidate"
-
-        diagnostics.append({
-            "cluster_id": cluster_id,
-            "method": method,
-            "is_valid": is_valid,
-            "region_type": region_type,
-            "bubble_page_ratio": round(float(bubble_page_ratio), 5),
-            "bubble_tg_ratio": round(float(bubble_tg_ratio), 2),
-            "touches_border": touches_border,
-            # 이후 grouped region에 붙는 flag가 진단 기록으로 새지 않도록 복사본을 둔다.
-            "quality_flags": list(quality_flags)
-        })
-
-        fail_tag = "failed"
-        if not is_valid:
-            qf_str = " ".join(quality_flags)
-            if "tiny_text_large_ratio" in qf_str:
-                fail_tag = "Tiny"
-            elif "solid=" in qf_str:
-                if not is_bimodal:
-                    fail_tag = "Bimodal"
-                elif not is_shape_ok:
-                    fail_tag = "Shape"
-                else:
-                    fail_tag = "Val"
-            elif "failed_bounds" in qf_str:
-                if "area=False" in qf_str: fail_tag = "Area"
-                elif "ratio=False" in qf_str: fail_tag = "Ratio"
-                elif "center=False" in qf_str: fail_tag = "Center"
-                else: fail_tag = "Bnds"
-                
-            skipped.append({
-                "cluster_id": cluster_id,
-                "anchor_bbox": rect,
-                "fallback_bbox": fallback_rect,
-                "bubble_rect": bubble_rect,
-                "reason": "failed_candidate",
-                "method": method,
-                "region_type": region_type,
-                "quality_flags": list(quality_flags)
-            })
-            # fallback to bbox crop for OCR
-            rect_key = [int(v) for v in bubble_rect[:4]]
-            key = ("fallback", *rect_key)
-            if key not in grouped:
-                grouped[key] = {
-                    "anchor_ids": [cluster_id],
-                    "seed_points": [],
-                    "bubble_rect": rect_key,
-                    "mask": candidate_mask,
-                    "bubble_page_ratio": 0.0,
-                    "bubble_tg_ratio": 0.0,
-                    "touches_image_border": False,
-                    "method": "bbox_fallback",
-                    "region_type": "bbox_fallback",
-                    "quality_flags": quality_flags,
-                    "is_valid": False,
-                    "fail_tag": fail_tag
-                }
-            else:
-                grouped[key]["anchor_ids"].append(cluster_id)
-            continue
-
-        # Group valid bubbles
-        rect_key = [int(v) for v in bubble_rect[:4]]
-        key = ("valid", *rect_key)
-        if key not in grouped:
-            grouped[key] = {
-                "anchor_ids": [cluster_id],
-                "seed_points": [list(seed)],
-                "bubble_rect": rect_key,
-                "mask": bubble_mask,
-                "bubble_page_ratio": bubble_page_ratio,
-                "bubble_tg_ratio": bubble_tg_ratio,
-                "touches_image_border": touches_border,
-                "method": method,
-                "region_type": region_type,
-                "quality_flags": quality_flags,
-                "is_valid": is_valid
-            }
-        else:
-            grouped[key]["mask"] = cv2.bitwise_or(grouped[key]["mask"], bubble_mask)
-            grouped[key]["anchor_ids"].append(cluster_id)
-            grouped[key]["seed_points"].append(list(seed))
-            grouped[key]["is_valid"] = True
-            grouped[key]["method"] = method
-            grouped[key]["region_type"] = region_type
 
     # 같은 bubble rect를 공유하는 fallback TG는 valid bubble group에 합류시킨다.
     # 그래야 한 말풍선 안의 여러 TG가 split 단계에서 함께 고려된다.
