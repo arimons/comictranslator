@@ -125,3 +125,5 @@ OpenAI 전환(2026-10-20): OCR·번역 및 URL 자료의 용어 정리는 OpenAI
 <!-- 변경 검토(2026-10-30): 지우기 보정(custom_masks) 가이드 키 추가, 이 문서 내용 영향 없음 -->
 
 <!-- 2026-10-29 review: region_refs.py·app.py·render_text_overlay.py TG digest를 원본 TG 기준으로 변경. 이 문서 내용 영향 없음 -->
+
+<!-- 변경 검토(2026-11-12): ServerStatus.jsx의 재시작 확인을 브라우저 기본 창에서 앱 내 확인창으로 교체, 이 문서 내용 영향 없음 -->
