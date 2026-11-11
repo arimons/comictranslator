@@ -60,7 +60,8 @@ export function api(path, options = {}) {
   return fetch(path, { ...options, headers: { ...headers, ...(options.headers || {}) } }).then(async (res) => {
     if (!res.ok) {
       const text = await res.text();
-      throw new Error(text);
+      // 404(없는 프로젝트 등)를 구분할 수 있게 상태 코드를 붙인다
+      throw Object.assign(new Error(text), { status: res.status });
     }
     return res.json();
   });

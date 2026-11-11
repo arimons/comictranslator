@@ -146,7 +146,7 @@ def build_router(app_module) -> APIRouter:
 
     @router.post("/api/analyze")
     def analyze(req: app_module.AnalyzeRequest) -> dict[str, Any]:
-        data = app_module.ensure_session(req.session_id)
+        data = app_module.load_session(req.session_id)
         targets = app_module.sorted_image_records(data.get("images", [])) if req.image_id == "all" else [app_module.get_image(req.session_id, req.image_id)]
         logs: list[str] = []
         for item in targets:

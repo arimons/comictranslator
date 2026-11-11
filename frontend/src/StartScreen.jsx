@@ -28,7 +28,7 @@ export default function StartScreen({
   folderPath, setFolderPath, fileRef, uploadFiles, uploadFromInput, importPath,
   inputBusy, analyzeBusy, analyzeWorkers, setAnalyzeWorkers, analysisPolicy, setAnalysisPolicy,
   startRegionAnalysis, splitLandscape, setSplitLandscape, removeLoadedImage, openRecentSession, openSessionForSetup, recentMenuId, setRecentMenuId,
-  renameRecentSession, deleteRecentSession, status, setStatus, ocrModelLabel,
+  renameRecentSession, deleteRecentSession, status, setStatus, homeNotice = "", onDismissHomeNotice, ocrModelLabel,
   ocrModels = [], ocrModel = "", ocrDefaultModel = "", ocrKeyReady = {}, onOcrModelChange,
 }) {
   const recentEndRef = useRef(null);
@@ -73,6 +73,7 @@ export default function StartScreen({
             <h1>어떤 작품을 작업할까요?</h1>
             <p>새 이미지를 불러오거나, 최근 프로젝트를 이어서 작업하세요.</p>
           </div>
+          {homeNotice && <div className="home-notice" role="status"><span>{homeNotice}</span><button className="icon-button" onClick={onDismissHomeNotice} aria-label="안내 닫기" title="닫기">×</button></div>}
           <div className="import-screen">
             <section className="import-primary" aria-label="이미지 불러오기 및 최근 프로젝트">
               <section className="import-card" aria-labelledby="import-heading">

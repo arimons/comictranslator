@@ -165,7 +165,7 @@ python3 app.py            # http://127.0.0.1:7870
 python3 app.py --no-browser --port 7870
 ```
 
-**세션 구조** — 이미지를 불러오면 `~/ComicTranslator/projects/{session_id}/`에 `input/`, `work/`, `output/` 하위 폴더가 생기고, `project.json`이 이미지 목록·guidance·프로젝트명을 기록한다.
+**세션 구조** — 이미지를 불러오면 `~/ComicTranslator/projects/{session_id}/`에 `input/`, `work/`, `output/` 하위 폴더가 생기고, `project.json`이 이미지 목록·guidance·프로젝트명을 기록한다. 폴더와 `project.json`을 새로 만드는 것은 `ensure_session()`이고 새로 만들기(`POST /api/sessions/new`)·올리기·서버 폴더 가져오기만 쓴다. 그 밖의 조회·수정은 `load_session()`을 써서, 없는 프로젝트 ID면 아무것도 만들지 않고 404를 준다(분석·번역 스트림은 오류 이벤트). 화면은 기억해 둔 프로젝트가 404이면 기억을 지우고 안내와 함께 홈으로 간다.
 
 **캐시 구조** — 이미지 `sha256` 해시를 키로 3단계 캐시를 둔다. 같은 이미지를 여러 세션에서 다시 불러와도 재계산하지 않는다.
 

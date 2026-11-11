@@ -42,12 +42,13 @@ export default function useWorkspaceResume({
       try {
         // 홈에서 재시작했으면 편집기로 들어가지 않는다. 나누기·제외를 고르기 전에 분석이 시작되지 않게 한다.
         if (resume.home) {
-          await openSessionForSetup({ session_id: resume.session_id });
+          // 프로젝트가 없으면(false) openSessionForSetup이 기억을 지우고 안내를 띄운다
+          if (!await openSessionForSetup({ session_id: resume.session_id })) return;
           if (!cancelled) setStatus("서버를 재시작하고 준비 화면으로 다시 불러왔습니다");
           return;
         }
-        await openRecentSession({ session_id: resume.session_id });
-        if (cancelled) return;
+        const opened = await openRecentSession({ session_id: resume.session_id });
+        if (cancelled || !opened) return;
         if (resume.image_id) { setSelectedId(resume.image_id); selectedIdRef.current = resume.image_id; }
         if (resume.tab) setActiveTab(resume.tab);
         if (!reopened) setStatus("서버를 재시작하고 프로젝트를 다시 불러왔습니다");

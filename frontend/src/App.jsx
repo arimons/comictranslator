@@ -104,6 +104,8 @@ const MASK_BRUSH_STEPS = [2, 4, 6, 8, 12, 16, 24, 32, 48, 64];
 
 export default function App() {
   const [sessionId, setSessionId] = useState("");
+  // 홈 화면 위쪽에 잠깐 띄우는 안내(예: 기억해 둔 프로젝트를 찾지 못함)
+  const [homeNotice, setHomeNotice] = useState("");
   const [projectName, setProjectName] = useState("");
   const [images, setImages] = useState([]);
   // 선택한 페이지의 전체 레코드(regions, integrated 등). 목록(images)은 요약만 담는다.
@@ -1409,14 +1411,45 @@ export default function App() {
     setSelectedId, setActiveTab, setStatus, openSessionForSetup, openRecentSession,
   });
 
+  // 기억해 둔 프로젝트가 지워졌거나 다른 기기에 있으면(서버 404) 기억을 지우고 안내와 함께 홈으로 간다.
+  function leaveMissingSession(sid) {
+    if (sessionIdRef.current === sid) {
+      setSessionTracked("");
+      setProjectName("");
+      setImages([]);
+      setSelectedId("");
+      selectedIdRef.current = "";
+    }
+    setWorkspaceStarted(false);
+    forgetOpenWorkspace();
+    setActiveTab("guidance");
+    refreshRecentSessions();
+    setHomeNotice("프로젝트를 찾을 수 없어 홈으로 돌아왔습니다. 삭제됐거나 다른 기기에 있는 프로젝트일 수 있습니다.");
+    setStatus("프로젝트를 찾을 수 없습니다.");
+  }
+
+  // 프로젝트 목록을 받아 온다. 없는 프로젝트면 홈으로 보내고 null을 돌려준다.
+  async function refreshOrLeaveMissing(sid) {
+    try {
+      return await refresh(sid);
+    } catch (err) {
+      if (err?.status !== 404) throw err;
+      leaveMissingSession(sid);
+      return null;
+    }
+  }
+
+  // 열었으면 true, 프로젝트가 없어 홈으로 갔으면 false
   async function openRecentSession(recent) {
-    if (!recent?.session_id) return;
+    if (!recent?.session_id) return false;
+    setHomeNotice("");
     // 세션을 바꾸기 전에 읽어야 이전 세션 선택이 저장돼도 영향받지 않는다
     const lastImageId = readSessionSettings(recent.session_id).lastImageId;
     setSessionTracked(recent.session_id);
     selectedIdRef.current = "";
-    const imgs = await refresh(recent.session_id);
-    if (sessionIdRef.current !== recent.session_id) return;
+    const imgs = await refreshOrLeaveMissing(recent.session_id);
+    if (imgs === null) return false;
+    if (sessionIdRef.current !== recent.session_id) return false;
     scheduleLazyRefresh(recent.session_id);
     const lastIndex = imgs?.length ? imgs.findIndex((img) => img.id === lastImageId) : -1;
     if (imgs?.length) {
@@ -1427,21 +1460,24 @@ export default function App() {
     setWorkspaceStarted(true);
     setActiveTab("guidance");
     setStatus(lastIndex > 0 ? `${recent.session_id} 세션 열기 · 마지막으로 보던 ${lastIndex + 1}페이지` : `${recent.session_id} 세션 열기`);
+    return true;
   }
 
   // 편집기로 들어가지 않고 홈의 준비 화면(이미지 확인·제외, 가로 이미지 나누기)에 프로젝트를 불러온다.
   async function openSessionForSetup(recent) {
-    if (!recent?.session_id) return;
+    if (!recent?.session_id) return false;
     setRecentMenuId("");
+    setHomeNotice("");
     setSessionTracked(recent.session_id);
     selectedIdRef.current = "";
     setImageStatuses({});
-    await refresh(recent.session_id);
-    if (sessionIdRef.current !== recent.session_id) return;
+    if (await refreshOrLeaveMissing(recent.session_id) === null) return false;
+    if (sessionIdRef.current !== recent.session_id) return false;
     scheduleLazyRefresh(recent.session_id);
     setWorkspaceStarted(false);
     forgetOpenWorkspace();
     setStatus("준비 화면에서 열었습니다. 나누기·제외를 확인한 뒤 ‘분석하고 작업 시작’을 누르세요.");
+    return true;
   }
 
   async function renameRecentSession(recent) {
@@ -2308,8 +2344,8 @@ export default function App() {
     let cancelled = false;
     (async () => {
       try {
-        await openRecentSession({ session_id: reviewSession });
-        if (!cancelled && query.get("image_id")) setSelectedId(query.get("image_id"));
+        const opened = await openRecentSession({ session_id: reviewSession });
+        if (!cancelled && opened && query.get("image_id")) setSelectedId(query.get("image_id"));
       } catch (error) { if (!cancelled) setStatus(error.message); }
     })();
     return () => { cancelled = true; };
@@ -2342,7 +2378,7 @@ export default function App() {
       renameRecentSession={renameRecentSession} deleteRecentSession={deleteRecentSession}
       ocrModels={ocrModels} ocrModel={effectiveOcrModel} ocrDefaultModel={ocrDefaultModel} ocrKeyReady={ocrKeyReady}
       onOcrModelChange={changeOcrRoute}
-      status={status} setStatus={setStatus}
+      status={status} setStatus={setStatus} homeNotice={homeNotice} onDismissHomeNotice={() => setHomeNotice("")}
     />;
   }
 

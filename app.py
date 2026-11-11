@@ -228,7 +228,7 @@ def split_wide_pages_in_session(session_id: str, include_worked: bool = False) -
 
     원본 파일은 그대로 두고 프로젝트에 나눈 PNG를 저장한다. 작업 흔적이 있는 페이지는 기본으로 건너뛴다.
     """
-    data = ensure_session(session_id)
+    data = load_session(session_id)
     candidates = [item for item in sorted_image_records(data.get("images", [])) if not is_split_page(item)]
     plan = build_plan(candidates, numbered=False)
     by_id = {item["id"]: item for item in candidates}
@@ -482,6 +482,10 @@ def session_file(session_id: str) -> Path:
 
 
 def ensure_session(session_id: str | None = None) -> dict[str, Any]:
+    """프로젝트를 읽고, 없으면 만든다. 새 프로젝트를 만드는 경로(새로 만들기·올리기·가져오기)만 쓴다.
+
+    조회·수정은 load_session을 쓴다. 지워졌거나 다른 기기에 있는 프로젝트를 조회만 해도 빈 프로젝트가 생기지 않게 하려는 것이다.
+    """
     sid = session_id or now_id()
     base = session_dir(sid)
     base.mkdir(parents=True, exist_ok=True)
@@ -494,6 +498,13 @@ def ensure_session(session_id: str | None = None) -> dict[str, Any]:
         data = {"session_id": sid, "created_at": dt.datetime.now().isoformat(timespec="seconds"), "images": []}
         write_json(path, data)
     return source_library().refresh(data, base)
+
+
+def load_session(session_id: str) -> dict[str, Any]:
+    """있는 프로젝트만 읽는다. 없으면 아무것도 만들지 않고 404를 낸다(구 session.json도 있는 것으로 본다)."""
+    if not session_id or not session_file(session_id).is_file():
+        raise HTTPException(status_code=404, detail="프로젝트를 찾을 수 없습니다.")
+    return ensure_session(session_id)
 
 
 def save_session(data: dict[str, Any]) -> None:
@@ -1300,7 +1311,7 @@ def start_background_load_cache_hydration(session_id: str, records: list[dict[st
 
     def run() -> None:
         try:
-            data = ensure_session(session_id)
+            data = load_session(session_id)
             by_id = {item.get("id"): item for item in data.get("images", [])}
             changed = False
             for item in items:
@@ -1914,7 +1925,7 @@ def session_images(session_id: str, include_detail: bool = True) -> list[dict[st
     캐시 연결(hydrate)은 멱등이라 이미 연결된 정상 상태에서는 아무것도 쓰지 않는다.
     guidance 재적용(Step 3 재실행)이 필요한 페이지는 여기서 돌리지 않고 백그라운드 hydration으로 넘긴다.
     """
-    data = ensure_session(session_id)
+    data = load_session(session_id)
     changed = False
     images = []
     pending_reapply: list[dict[str, Any]] = []
@@ -2064,7 +2075,7 @@ def stream_analyze(req: AnalyzeRequest):
 
     def run() -> None:
         try:
-            data = ensure_session(req.session_id)
+            data = load_session(req.session_id)
             if req.image_id == "all":
                 targets = sorted_image_records(data.get("images", []))
             elif req.image_id == "failed":
@@ -2111,7 +2122,7 @@ def stream_analyze(req: AnalyzeRequest):
 
 
 def get_image(session_id: str, image_id: str) -> dict[str, Any]:
-    data = ensure_session(session_id)
+    data = load_session(session_id)
     for item in data.get("images", []):
         if item.get("id") == image_id:
             return item
@@ -2119,7 +2130,7 @@ def get_image(session_id: str, image_id: str) -> dict[str, Any]:
 
 
 def remove_session_image(session_id: str, image_id: str) -> list[dict[str, Any]]:
-    data = ensure_session(session_id)
+    data = load_session(session_id)
     images = data.get("images", [])
     target = next((item for item in images if item.get("id") == image_id), None)
     if target is None:
@@ -2599,7 +2610,7 @@ def stream_run_final(req: RunFinalRequest):
         nonlocal glossary_context
         try:
             # 같은 배치 안에서는 조사/검토 시점에 따라 페이지별 용어가 달라지지 않는다.
-            data = ensure_session(req.session_id)
+            data = load_session(req.session_id)
             if req.image_id == "all":
                 targets = sorted_image_records(data.get("images", []))
             elif req.image_id == "batch":
@@ -2695,7 +2706,7 @@ def clear_guidance_outputs(session_id: str, image_id: str) -> dict[str, Any]:
 
 
 def build_session_export_zip(session_id: str) -> Path:
-    data = ensure_session(session_id)
+    data = load_session(session_id)
     export_dir = export_directory() / data["session_id"]
     export_dir.mkdir(parents=True, exist_ok=True)
     zip_path = export_dir / export_zip_filename(data.get("project_name", ""), data["session_id"])
@@ -2729,7 +2740,7 @@ def build_session_export_zip(session_id: str) -> Path:
 
 
 def generate_missing_finals_with_openai(req: GenerateMissingFinalRequest) -> dict[str, Any]:
-    data = ensure_session(req.session_id)
+    data = load_session(req.session_id)
     requested_ids = set(req.image_ids or [])
     targets = [
         item for item in sorted_image_records(data.get("images", []))
@@ -2797,7 +2808,7 @@ def stream_generate_missing_finals(req: GenerateMissingFinalRequest):
 
     def run() -> None:
         try:
-            data = ensure_session(req.session_id)
+            data = load_session(req.session_id)
             requested_ids = set(req.image_ids or [])
             targets = [
                 item for item in sorted_image_records(data.get("images", []))

@@ -23,7 +23,7 @@ MCP는 이 통로를 도구와 데이터 형식으로 공개하는 규약이다.
 | 목적 | 기존 경로 | 연결 시 주의점 |
 |---|---|---|
 | 프로젝트 목록 | `GET /api/sessions/recent` | 이미지 hash의 포함 관계로 프로젝트가 합쳐져 숨겨질 수 있다. 전체 목록 API로 간주하지 않는다. |
-| 프로젝트와 페이지 목록 | `GET /api/session/{session_id}` | 내부에서 `ensure_session()`을 호출한다. 존재하지 않는 ID의 조회는 폴더를 만들 수 있으므로 어댑터가 기존 ID인지 먼저 검사한다. |
+| 프로젝트와 페이지 목록 | `GET /api/session/{session_id}` | 내부에서 `load_session()`을 호출한다. 존재하지 않는 ID는 폴더를 만들지 않고 404를 준다(2026-11-11부터). |
 | 선택 페이지 상세 | `GET /api/session/{session_id}/page/{image_id}` | TG, regions, guidance, integrated, overlay layout, 이미지 URL 등을 얻을 수 있다. |
 | 이미지 | `GET /api/file?path=…` | 반환된 파일 URL을 이용한다. 현재 코드는 세션·입력 캐시·분석 캐시 아래 이미지 확장자만 허용한다. 새 도구에는 임의 파일 경로보다 artifact 종류를 받는 편이 적합하다. |
 | Guidance 적용 | `POST /api/guidance` | Step 3를 실행하고 guidance·산출물 캐시까지 저장한다. 미리보기 전용 API가 아니다. |

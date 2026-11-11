@@ -53,7 +53,7 @@ def build_router(app_module) -> APIRouter:
         preparation_source(req.session_id)
         if req.mode not in {"auto", "keep", "split"} or (req.mode == "split" and req.split_x is None):
             raise HTTPException(status_code=400, detail="나누기 방식이 올바르지 않습니다.")
-        data = app_module.ensure_session(req.session_id)
+        data = app_module.load_session(req.session_id)
         item = next((image for image in data.get("images", []) if image["id"] == req.image_id), None)
         if item is None or app_module.is_split_page(item):
             raise HTTPException(status_code=404, detail="나눌 수 있는 원본 페이지가 아닙니다.")
@@ -83,7 +83,7 @@ def build_router(app_module) -> APIRouter:
     @router.get("/api/session/{session_id}")
     def read_session(session_id: str) -> dict[str, Any]:
         # 목록용 요약만 돌려준다. 페이지 상세(regions, integrated 등)는 /page/{image_id}로 받는다.
-        data = app_module.ensure_session(session_id)
+        data = app_module.load_session(session_id)
         images = app_module.session_image_summaries(session_id)
         return {"session": data, "images": images, "hydration_pending": app_module.load_hydration_pending(session_id)}
 
@@ -93,7 +93,7 @@ def build_router(app_module) -> APIRouter:
 
     @router.post("/api/session/meta")
     def update_session_meta(req: app_module.SessionMetaRequest) -> dict[str, Any]:
-        data = app_module.ensure_session(req.session_id)
+        data = app_module.load_session(req.session_id)
         data["project_name"] = req.project_name.strip()[:120]
         app_module.save_session(data)
         return {"session": data}
@@ -105,7 +105,7 @@ def build_router(app_module) -> APIRouter:
         value = (req.ocr_model or "").strip()
         if value and value not in {item["id"] for item in SUPPORTED_OCR_MODELS}:
             raise HTTPException(status_code=400, detail=f"지원하지 않는 OCR·번역 모델입니다: {value}")
-        data = app_module.ensure_session(req.session_id)
+        data = app_module.load_session(req.session_id)
         if value:
             data["ocr_model"] = value
         else:
@@ -121,7 +121,7 @@ def build_router(app_module) -> APIRouter:
     @router.get("/api/sources/{session_id}")
     def input_sources(session_id: str):
         if not app_module.session_file(session_id).is_file():raise HTTPException(status_code=404,detail="프로젝트가 없습니다")
-        data=app_module.ensure_session(session_id)
+        data=app_module.load_session(session_id)
         pages=data.get("images",[])
         return {"session_id":session_id,"total":len(pages),
             "connected":sum(p.get("source_status")=="connected" for p in pages),
@@ -134,7 +134,7 @@ def build_router(app_module) -> APIRouter:
         req=req.model_dump()
         if not app_module.session_file(req["session_id"]).is_file():raise HTTPException(status_code=404,detail="프로젝트가 없습니다")
         try:
-            return app_module.source_library().preview(app_module.ensure_session(req["session_id"]), req["folder"])
+            return app_module.source_library().preview(app_module.load_session(req["session_id"]), req["folder"])
         except (OSError,ValueError,KeyError) as exc:
             raise HTTPException(status_code=400,detail=str(exc)) from exc
 
@@ -143,7 +143,7 @@ def build_router(app_module) -> APIRouter:
         req=req.model_dump()
         if not app_module.session_file(req["session_id"]).is_file():raise HTTPException(status_code=404,detail="프로젝트가 없습니다")
         try:
-            data=app_module.ensure_session(req["session_id"])
+            data=app_module.load_session(req["session_id"])
             plan=app_module.source_library().preview(data, req["folder"])
             if not req.get("revision") or req["revision"]!=plan["revision"]:
                 raise HTTPException(status_code=409,detail="원본 또는 프로젝트가 변경됐습니다. 다시 확인하세요")
@@ -215,6 +215,6 @@ def build_router(app_module) -> APIRouter:
     @router.post("/api/image/remove")
     def remove_image(req: app_module.RemoveImageRequest) -> dict[str, Any]:
         images = app_module.remove_session_image(req.session_id, req.image_id)
-        return {"ok": True, "session": app_module.ensure_session(req.session_id), "images": images, "sessions": app_module.list_recent_sessions()}
+        return {"ok": True, "session": app_module.load_session(req.session_id), "images": images, "sessions": app_module.list_recent_sessions()}
 
     return router
