@@ -2817,6 +2817,505 @@ def _attach_english_anchors_to_bubbles(
             assigned_anchor_ids.add(aid)
 
 
+def _edge_subset_source_rect(
+    clusters_by_id: Dict[int, Dict[str, Any]],
+    img_w: int,
+    img_h: int,
+    anchor_subset: List[int],
+) -> List[int]:
+    subset_groups = [clusters_by_id[aid] for aid in anchor_subset]
+    source_rect = _union_rect([
+        _fallback_text_group_rect(group)
+        for group in subset_groups
+    ])
+    pad = max(40, min(90, int(max(source_rect[2], source_rect[3]) * 0.30)))
+    return _pad_rect_to_image(source_rect, pad, img_w, img_h)
+
+
+def _build_edge_rescued_region(
+    base_region: Dict[str, Any],
+    anchor_subset: List[int],
+    rescue: Dict[str, Any],
+    marker_flag: str,
+) -> Optional[Dict[str, Any]]:
+    score = rescue.get("score", {})
+    rescue_rect = [int(v) for v in rescue.get("rescue_rect", [0, 0, 0, 0])[:4]]
+    if rescue_rect[2] <= 0 or rescue_rect[3] <= 0:
+        return None
+
+    rescue_mask = rescue["mask"]
+    quality_flags = list(base_region.get("quality_flags", [])) + [
+        "edge_barrier_rescue",
+        marker_flag,
+        f"edge_best={rescue.get('best_label')}",
+        f"edge_guard={rescue.get('guard_mode')}_{rescue.get('guard_margin')}",
+        f"edge_score={round(float(score.get('rank_score', 0.0)), 3)}",
+        f"edge_ratio={round(float(score.get('rect_anchor_ratio', 0.0)), 2)}",
+        f"edge_page={round(float(score.get('mask_page_ratio', 0.0)), 4)}",
+    ]
+    if len(anchor_subset) >= 2:
+        quality_flags.append("edge_group_after_split")
+
+    return {
+        **base_region,
+        "anchor_ids": list(anchor_subset),
+        "seed_points": [rescue["seed"]] if rescue.get("seed") else [],
+        "bubble_rect": rescue_rect,
+        "mask": rescue_mask,
+        "bubble_page_ratio": float(score.get("mask_page_ratio", 0.0)),
+        "bubble_tg_ratio": float(score.get("rect_anchor_ratio", 0.0)),
+        "touches_image_border": _touches_image_border(rescue_mask),
+        "method": "edge_barrier_rescue",
+        "region_type": "bubble",
+        "quality_flags": quality_flags,
+        "is_valid": True,
+    }
+
+
+def _best_edge_partition(
+    image: np.ndarray,
+    gray: np.ndarray,
+    img_w: int,
+    img_h: int,
+    region: Dict[str, Any],
+    anchor_ids: List[int],
+    clusters_by_id: Dict[int, Dict[str, Any]],
+    manual_virtual_walls: Optional[List[Dict[str, Any]]],
+    run_edge_barrier_rescue_auto: Callable[..., Dict[str, Any]],
+    _page_black_contour: Callable[[], np.ndarray],
+) -> Optional[Tuple[float, List[Dict[str, Any]]]]:
+    """Edge 분할 구제: 앵커 3개 이상인 실패 그룹을 (단일 앵커, 나머지)로 나눠 둘 다 구제되는 분할 중 점수가 가장 높은 것을 돌려준다. 없으면 None."""
+    best_partition: Optional[Tuple[float, List[Dict[str, Any]]]] = None
+    for single_aid in anchor_ids:
+        single_ids = [single_aid]
+        rest_ids = [aid for aid in anchor_ids if aid != single_aid]
+        partition_regions: List[Dict[str, Any]] = []
+        total_score = 0.0
+        partition_failed = False
+
+        for subset_ids, marker in (
+            (single_ids, "edge_partition_single"),
+            (rest_ids, "edge_partition_group"),
+        ):
+            subset_groups = [clusters_by_id[aid] for aid in subset_ids]
+            subset_source_rect = _edge_subset_source_rect(clusters_by_id, img_w, img_h, subset_ids)
+            subset_rescue = run_edge_barrier_rescue_auto(
+                image,
+                subset_groups,
+                subset_source_rect,
+                virtual_walls=manual_virtual_walls or None,
+            )
+            subset_score = subset_rescue.get("score", {})
+            subset_reject = None if subset_rescue.get("manual_guided") else (
+                _edge_rescue_reject_reason(gray, _page_black_contour, region, subset_rescue, subset_groups)
+                if subset_rescue.get("success") else None
+            )
+            if not subset_rescue.get("success") or subset_reject is not None:
+                partition_failed = True
+                break
+            rescued_region = _build_edge_rescued_region(
+                region,
+                subset_ids,
+                subset_rescue,
+                marker,
+            )
+            if rescued_region is None:
+                partition_failed = True
+                break
+            partition_regions.append(rescued_region)
+            total_score += float(subset_score.get("rank_score", -99.0))
+
+        if partition_failed or len(partition_regions) != 2:
+            continue
+        if best_partition is None or total_score > best_partition[0]:
+            best_partition = (total_score, partition_regions)
+
+    return best_partition
+
+
+def _edge_rescue_failed_regions(
+    image: np.ndarray,
+    gray: np.ndarray,
+    grouped: Dict[Tuple[Any, ...], Dict[str, Any]],
+    diagnostics: List[Dict[str, Any]],
+    clusters_by_id: Dict[int, Dict[str, Any]],
+    manual_virtual_walls: Optional[List[Dict[str, Any]]],
+    run_edge_barrier_rescue_auto: Callable[..., Dict[str, Any]],
+    _page_black_contour: Callable[[], np.ndarray],
+) -> None:
+    """Edge rescue 1단계: bbox fallback 그룹 전체를 edge barrier flood로 구제하고, 통과하면 그 그룹을 유효 bubble로 바꾼다(grouped 제자리 수정)."""
+    for region in grouped.values():
+        if region.get("is_valid"):
+            continue
+        if region.get("region_type") != "bbox_fallback":
+            continue
+        _qf_str = " ".join(str(flag) for flag in region.get("quality_flags", []))
+        if "dark_flood_candidate" in _qf_str and "dark_flood_failed_validation" not in _qf_str:
+            # dark_flood 가 성공했거나 아직 시도하지 않은 dark 후보는 edge_barrier 스킵
+            # dark_flood 가 명시적으로 실패한 경우에는 edge_barrier 허용
+            region["quality_flags"].append("edge_barrier_skipped_dark_flood_candidate")
+            continue
+
+        anchor_ids = [aid for aid in region.get("anchor_ids", []) if aid in clusters_by_id]
+        if not anchor_ids:
+            continue
+        target_groups = [clusters_by_id[aid] for aid in anchor_ids]
+        rescue = run_edge_barrier_rescue_auto(
+            image,
+            target_groups,
+            region["bubble_rect"],
+            virtual_walls=manual_virtual_walls or None,
+        )
+        score = rescue.get("score", {})
+        reject_reason = None if rescue.get("manual_guided") else (
+            _edge_rescue_reject_reason(gray, _page_black_contour, region, rescue, target_groups)
+            if rescue.get("success") else None
+        )
+        if not rescue.get("success"):
+            region["quality_flags"].append(
+                "edge_barrier_rescue_failed="
+                f"{rescue.get('reason')}, score={round(float(score.get('rank_score', -99.0)), 3)}"
+            )
+            continue
+        if reject_reason is not None:
+            region["quality_flags"].append(reject_reason)
+            continue
+
+        rescue_rect = [int(v) for v in rescue.get("rescue_rect", [0, 0, 0, 0])[:4]]
+        if rescue_rect[2] <= 0 or rescue_rect[3] <= 0:
+            continue
+
+        rescue_mask = rescue["mask"]
+        region["is_valid"] = True
+        region["method"] = "edge_barrier_rescue"
+        region["region_type"] = "bubble"
+        region["bubble_rect"] = rescue_rect
+        region["mask"] = rescue_mask
+        region["seed_points"] = [rescue["seed"]] if rescue.get("seed") else []
+        region["bubble_page_ratio"] = float(score.get("mask_page_ratio", 0.0))
+        region["bubble_tg_ratio"] = float(score.get("rect_anchor_ratio", 0.0))
+        region["touches_image_border"] = _touches_image_border(rescue_mask)
+        region["quality_flags"].extend([
+            "edge_barrier_rescue",
+            f"edge_best={rescue.get('best_label')}",
+            f"edge_guard={rescue.get('guard_mode')}_{rescue.get('guard_margin')}",
+            "edge_manual_guided" if rescue.get("manual_guided") else "edge_auto_guided",
+            f"edge_score={round(float(score.get('rank_score', 0.0)), 3)}",
+            f"edge_ratio={round(float(score.get('rect_anchor_ratio', 0.0)), 2)}",
+            f"edge_page={round(float(score.get('mask_page_ratio', 0.0)), 4)}",
+        ])
+        diagnostics.append({
+            "cluster_id": anchor_ids,
+            "method": "edge_barrier_rescue",
+            "is_valid": True,
+            "region_type": "bubble",
+            "bubble_page_ratio": round(float(score.get("mask_page_ratio", 0.0)), 5),
+            "bubble_tg_ratio": round(float(score.get("rect_anchor_ratio", 0.0)), 2),
+            "quality_flags": region["quality_flags"],
+        })
+
+
+def _edge_rescue_split_failed_groups(
+    image: np.ndarray,
+    gray: np.ndarray,
+    img_w: int,
+    img_h: int,
+    grouped: Dict[Tuple[Any, ...], Dict[str, Any]],
+    clusters_by_id: Dict[int, Dict[str, Any]],
+    manual_virtual_walls: Optional[List[Dict[str, Any]]],
+    run_edge_barrier_rescue_auto: Callable[..., Dict[str, Any]],
+    _page_black_contour: Callable[[], np.ndarray],
+) -> None:
+    """Edge rescue 2단계: 여전히 실패한 다중 앵커 그룹을 분할(partition)·앵커별로 다시 구제하고 grouped의 키를 교체한다(제자리 수정)."""
+    split_rescued: Dict[Tuple[Any, ...], Dict[str, Any]] = {}
+    split_remove_keys: List[Tuple[Any, ...]] = []
+    for key, region in list(grouped.items()):
+        if region.get("is_valid"):
+            continue
+        anchor_ids = [aid for aid in region.get("anchor_ids", []) if aid in clusters_by_id]
+        if len(anchor_ids) < 2:
+            continue
+
+        if len(anchor_ids) >= 3:
+            best_partition = _best_edge_partition(
+                image, gray, img_w, img_h, region, anchor_ids, clusters_by_id,
+                manual_virtual_walls, run_edge_barrier_rescue_auto, _page_black_contour,
+            )
+
+            if best_partition is not None:
+                for rescued_region in best_partition[1]:
+                    rect = rescued_region["bubble_rect"]
+                    ids = rescued_region["anchor_ids"]
+                    split_rescued[("edge_partition", *ids, *rect)] = rescued_region
+                split_remove_keys.append(key)
+                continue
+
+        remaining_anchor_ids: List[int] = []
+        rejected_reasons_by_anchor: Dict[int, str] = {}
+        single_rescued_keys: List[Tuple[Tuple[Any, ...], int]] = []
+        current_rescued = 0
+        _combined_has_border = any(
+            str(flag) == "border=Y" or str(flag).endswith("border=Y")
+            for flag in region.get("quality_flags", [])
+        )
+        _img_h, _img_w = image.shape[:2]
+        _border_margin = 200  # px: 앵커가 이 거리 안쪽 엣지에 있어야 border 차단 적용
+        for aid in anchor_ids:
+            # combined region 의 border=Y 는 merged 영역 기준 — 개별 앵커가 실제로
+            # 엣지에 가까운지 별도 확인해서 멀리 떨어진 앵커는 구제 시도 허용
+            if _combined_has_border:
+                _ar = _tight_text_group_rect(clusters_by_id[aid])
+                _ax, _ay, _aw, _ah = _ar
+                _anchor_near_border = (
+                    _ax < _border_margin
+                    or _ay < _border_margin
+                    or (_ax + _aw) > (_img_w - _border_margin)
+                    or (_ay + _ah) > (_img_h - _border_margin)
+                )
+                if _anchor_near_border:
+                    reject_reason = "edge_reject_split_border_candidate"
+                    region["quality_flags"].append(f"{reject_reason}:A{aid}")
+                    rejected_reasons_by_anchor[aid] = reject_reason
+                    remaining_anchor_ids.append(aid)
+                    continue
+            rescue = run_edge_barrier_rescue_auto(
+                image,
+                [clusters_by_id[aid]],
+                region["bubble_rect"],
+                virtual_walls=manual_virtual_walls or None,
+            )
+            score = rescue.get("score", {})
+            reject_reason = None if rescue.get("manual_guided") else (
+                _edge_rescue_reject_reason(gray, _page_black_contour, region, rescue, [clusters_by_id[aid]])
+                if rescue.get("success") else None
+            )
+            if not rescue.get("success"):
+                remaining_anchor_ids.append(aid)
+                continue
+            if reject_reason is not None:
+                region["quality_flags"].append(f"{reject_reason}:A{aid}")
+                rejected_reasons_by_anchor[aid] = reject_reason
+                remaining_anchor_ids.append(aid)
+                continue
+            rescue_rect = [int(v) for v in rescue.get("rescue_rect", [0, 0, 0, 0])[:4]]
+            if rescue_rect[2] <= 0 or rescue_rect[3] <= 0:
+                remaining_anchor_ids.append(aid)
+                continue
+
+            rescue_mask = rescue["mask"]
+            new_region = {
+                **region,
+                "anchor_ids": [aid],
+                "seed_points": [rescue["seed"]] if rescue.get("seed") else [],
+                "bubble_rect": rescue_rect,
+                "mask": rescue_mask,
+                "bubble_page_ratio": float(score.get("mask_page_ratio", 0.0)),
+                "bubble_tg_ratio": float(score.get("rect_anchor_ratio", 0.0)),
+                "touches_image_border": _touches_image_border(rescue_mask),
+                "method": "edge_barrier_rescue",
+                "region_type": "bubble",
+                "quality_flags": list(region.get("quality_flags", [])) + [
+                    "edge_barrier_rescue",
+                    "edge_split_from_failed_group",
+                    f"edge_best={rescue.get('best_label')}",
+                    f"edge_guard={rescue.get('guard_mode')}_{rescue.get('guard_margin')}",
+                    f"edge_score={round(float(score.get('rank_score', 0.0)), 3)}",
+                    f"edge_ratio={round(float(score.get('rect_anchor_ratio', 0.0)), 2)}",
+                    f"edge_page={round(float(score.get('mask_page_ratio', 0.0)), 4)}",
+                ],
+                "is_valid": True,
+            }
+            single_key = ("edge_single", aid, *rescue_rect)
+            split_rescued[single_key] = new_region
+            single_rescued_keys.append((single_key, aid))
+            current_rescued += 1
+
+        if _should_demote_lone_edge_split_rescue(
+            [aid for _key, aid in single_rescued_keys],
+            rejected_reasons_by_anchor,
+        ):
+            demoted_ids = {aid for _key, aid in single_rescued_keys}
+            for single_key, aid in single_rescued_keys:
+                split_rescued.pop(single_key, None)
+                region["quality_flags"].append(
+                    f"edge_demote_lone_split_rescue_sibling_unboxed_like:A{aid}"
+                )
+
+            split_remove_keys.append(key)
+            for aid in anchor_ids:
+                fallback_rect = _fallback_text_group_rect(clusters_by_id[aid])
+                child_region = {
+                    **region,
+                    "anchor_ids": [aid],
+                    "bubble_rect": fallback_rect,
+                    "mask": np.zeros((img_h, img_w), dtype=np.uint8),
+                    "seed_points": [],
+                    "bubble_page_ratio": 0.0,
+                    "bubble_tg_ratio": 1.0,
+                    "touches_image_border": False,
+                    "method": "bbox_fallback",
+                    "region_type": "bbox_fallback",
+                    "quality_flags": list(region.get("quality_flags", [])) + [
+                        f"edge_split_consensus_unboxed:A{aid}",
+                    ],
+                    "is_valid": False,
+                }
+                if aid in demoted_ids and aid not in rejected_reasons_by_anchor:
+                    child_region["quality_flags"].append("edge_demoted_lone_rescue")
+                split_rescued[("edge_consensus_unboxed", aid, *fallback_rect)] = child_region
+            continue
+
+        if current_rescued > 0:
+            if remaining_anchor_ids:
+                if len(remaining_anchor_ids) >= 2:
+                    remaining_groups = [clusters_by_id[aid] for aid in remaining_anchor_ids]
+                    remaining_rect = _union_rect([
+                        _fallback_text_group_rect(group)
+                        for group in remaining_groups
+                    ])
+                    pad = max(40, min(80, int(max(remaining_rect[2], remaining_rect[3]) * 0.25)))
+                    remaining_source_rect = _pad_rect_to_image(remaining_rect, pad, img_w, img_h)
+                    group_rescue = run_edge_barrier_rescue_auto(
+                        image,
+                        remaining_groups,
+                        remaining_source_rect,
+                        virtual_walls=manual_virtual_walls or None,
+                    )
+                    group_score = group_rescue.get("score", {})
+                    group_reject_reason = None if group_rescue.get("manual_guided") else (
+                        _edge_rescue_reject_reason(gray, _page_black_contour, region, group_rescue, remaining_groups)
+                        if group_rescue.get("success") else None
+                    )
+                    if group_rescue.get("success") and group_reject_reason is None:
+                        group_rect = [
+                            int(v) for v in group_rescue.get("rescue_rect", [0, 0, 0, 0])[:4]
+                        ]
+                        group_mask = group_rescue["mask"]
+                        region["anchor_ids"] = remaining_anchor_ids
+                        region["seed_points"] = [group_rescue["seed"]] if group_rescue.get("seed") else []
+                        region["bubble_rect"] = group_rect
+                        region["mask"] = group_mask
+                        region["bubble_page_ratio"] = float(group_score.get("mask_page_ratio", 0.0))
+                        region["bubble_tg_ratio"] = float(group_score.get("rect_anchor_ratio", 0.0))
+                        region["touches_image_border"] = _touches_image_border(group_mask)
+                        region["method"] = "edge_barrier_rescue"
+                        region["region_type"] = "bubble"
+                        region["quality_flags"].extend([
+                            "edge_barrier_rescue",
+                            "edge_group_after_split",
+                            f"edge_best={group_rescue.get('best_label')}",
+                            f"edge_guard={group_rescue.get('guard_mode')}_{group_rescue.get('guard_margin')}",
+                            f"edge_score={round(float(group_score.get('rank_score', 0.0)), 3)}",
+                            f"edge_ratio={round(float(group_score.get('rect_anchor_ratio', 0.0)), 2)}",
+                            f"edge_page={round(float(group_score.get('mask_page_ratio', 0.0)), 4)}",
+                        ])
+                        region["is_valid"] = True
+                    else:
+                        region["anchor_ids"] = remaining_anchor_ids
+                        if group_reject_reason is not None:
+                            region["quality_flags"].append(f"{group_reject_reason}:remaining_group")
+                        region["quality_flags"].append("edge_split_partial_remaining")
+                else:
+                    region["anchor_ids"] = remaining_anchor_ids
+                    region["quality_flags"].append("edge_split_partial_remaining")
+            else:
+                split_remove_keys.append(key)
+
+    for key in split_remove_keys:
+        grouped.pop(key, None)
+    grouped.update(split_rescued)
+
+
+def _edge_rescue_postprocess(
+    grouped: Dict[Tuple[Any, ...], Dict[str, Any]],
+    noise_like_anchors: List[Dict[str, Any]],
+    clusters_by_id: Dict[int, Dict[str, Any]],
+) -> None:
+    """Edge rescue 3단계: 구제 bubble 안의 기호 앵커를 합치고, 짧은 손글씨 묶음 같은 구제 결과를 다시 fallback으로 내린다(제자리 수정)."""
+    for noise_anchor in noise_like_anchors:
+        if noise_anchor.get("reason") in {"large_single_glyph_sfx_like", "large_short_kana_sfx_like"}:
+            continue
+        aid = noise_anchor["cluster_id"]
+        rect = noise_anchor["fallback_bbox"]
+        cx, cy = _bbox_center(rect)
+        for region in grouped.values():
+            if not region.get("is_valid"):
+                continue
+            if region.get("method") != "edge_barrier_rescue":
+                continue
+            rx, ry, rw, rh = [int(v) for v in region.get("bubble_rect", [0, 0, 0, 0])[:4]]
+            pad = 12
+            if rx - pad <= cx <= rx + rw + pad and ry - pad <= cy <= ry + rh + pad:
+                if aid not in region["anchor_ids"]:
+                    region["anchor_ids"].append(aid)
+                    region["quality_flags"].append(
+                        f"merged_symbol_anchor_after_edge_rescue:A{aid}"
+                    )
+                break
+
+    for region in grouped.values():
+        if not region.get("is_valid"):
+            continue
+        if region.get("method") != "edge_barrier_rescue":
+            continue
+        flags = region.get("quality_flags", [])
+        if any("border=Y" in str(flag) for flag in flags):
+            continue
+        if any(str(flag).startswith("merged_symbol_anchor_after_edge_rescue") for flag in flags):
+            continue
+        anchor_groups = [
+            clusters_by_id[aid]
+            for aid in region.get("anchor_ids", [])
+            if aid in clusters_by_id
+        ]
+        raw_round = _extract_quality_float(flags, "raw_round")
+        post_reject = _edge_anchor_text_reject_reason(anchor_groups, raw_round)
+        if post_reject is None:
+            continue
+        region["is_valid"] = False
+        region["method"] = "bbox_fallback"
+        region["region_type"] = "bbox_fallback"
+        region["quality_flags"].append(post_reject)
+
+
+def _run_edge_barrier_rescue(
+    image: np.ndarray,
+    gray: np.ndarray,
+    img_w: int,
+    img_h: int,
+    grouped: Dict[Tuple[Any, ...], Dict[str, Any]],
+    diagnostics: List[Dict[str, Any]],
+    noise_like_anchors: List[Dict[str, Any]],
+    clusters_by_id: Dict[int, Dict[str, Any]],
+    manual_virtual_walls: Optional[List[Dict[str, Any]]],
+    _page_black_contour: Callable[[], np.ndarray],
+) -> None:
+    """Rescue: probe에서 실패한 그룹을 edge barrier flood로 구제한다. 모듈을 못 읽으면 진단만 남긴다(grouped·diagnostics 제자리 수정)."""
+    try:
+        try:
+            from pipeline.edge_barrier_flood_rescue import run_edge_barrier_rescue_auto
+        except ImportError:
+            from edge_barrier_flood_rescue import run_edge_barrier_rescue_auto
+    except Exception as exc:
+        diagnostics.append({
+            "method": "edge_barrier_rescue_import_failed",
+            "is_valid": False,
+            "reason": str(exc),
+        })
+        run_edge_barrier_rescue_auto = None
+
+    if run_edge_barrier_rescue_auto is not None:
+        _edge_rescue_failed_regions(
+            image, gray, grouped, diagnostics, clusters_by_id,
+            manual_virtual_walls, run_edge_barrier_rescue_auto, _page_black_contour,
+        )
+        _edge_rescue_split_failed_groups(
+            image, gray, img_w, img_h, grouped, clusters_by_id,
+            manual_virtual_walls, run_edge_barrier_rescue_auto, _page_black_contour,
+        )
+        _edge_rescue_postprocess(grouped, noise_like_anchors, clusters_by_id)
+
+
 def build_ocr_region_sheet(
     image_path: str,
     clusters_json: str,
@@ -2873,420 +3372,10 @@ def build_ocr_region_sheet(
     clusters_by_id = {_text_group_id(c, i + 1): c for i, c in enumerate(clusters)}
 
     if enable_edge_barrier_rescue:
-        try:
-            try:
-                from pipeline.edge_barrier_flood_rescue import run_edge_barrier_rescue_auto
-            except ImportError:
-                from edge_barrier_flood_rescue import run_edge_barrier_rescue_auto
-        except Exception as exc:
-            diagnostics.append({
-                "method": "edge_barrier_rescue_import_failed",
-                "is_valid": False,
-                "reason": str(exc),
-            })
-            run_edge_barrier_rescue_auto = None
-
-        if run_edge_barrier_rescue_auto is not None:
-            def _edge_subset_source_rect(anchor_subset: List[int]) -> List[int]:
-                subset_groups = [clusters_by_id[aid] for aid in anchor_subset]
-                source_rect = _union_rect([
-                    _fallback_text_group_rect(group)
-                    for group in subset_groups
-                ])
-                pad = max(40, min(90, int(max(source_rect[2], source_rect[3]) * 0.30)))
-                return _pad_rect_to_image(source_rect, pad, img_w, img_h)
-
-            def _build_edge_rescued_region(
-                base_region: Dict[str, Any],
-                anchor_subset: List[int],
-                rescue: Dict[str, Any],
-                marker_flag: str,
-            ) -> Optional[Dict[str, Any]]:
-                score = rescue.get("score", {})
-                rescue_rect = [int(v) for v in rescue.get("rescue_rect", [0, 0, 0, 0])[:4]]
-                if rescue_rect[2] <= 0 or rescue_rect[3] <= 0:
-                    return None
-
-                rescue_mask = rescue["mask"]
-                quality_flags = list(base_region.get("quality_flags", [])) + [
-                    "edge_barrier_rescue",
-                    marker_flag,
-                    f"edge_best={rescue.get('best_label')}",
-                    f"edge_guard={rescue.get('guard_mode')}_{rescue.get('guard_margin')}",
-                    f"edge_score={round(float(score.get('rank_score', 0.0)), 3)}",
-                    f"edge_ratio={round(float(score.get('rect_anchor_ratio', 0.0)), 2)}",
-                    f"edge_page={round(float(score.get('mask_page_ratio', 0.0)), 4)}",
-                ]
-                if len(anchor_subset) >= 2:
-                    quality_flags.append("edge_group_after_split")
-
-                return {
-                    **base_region,
-                    "anchor_ids": list(anchor_subset),
-                    "seed_points": [rescue["seed"]] if rescue.get("seed") else [],
-                    "bubble_rect": rescue_rect,
-                    "mask": rescue_mask,
-                    "bubble_page_ratio": float(score.get("mask_page_ratio", 0.0)),
-                    "bubble_tg_ratio": float(score.get("rect_anchor_ratio", 0.0)),
-                    "touches_image_border": _touches_image_border(rescue_mask),
-                    "method": "edge_barrier_rescue",
-                    "region_type": "bubble",
-                    "quality_flags": quality_flags,
-                    "is_valid": True,
-                }
-
-            for region in grouped.values():
-                if region.get("is_valid"):
-                    continue
-                if region.get("region_type") != "bbox_fallback":
-                    continue
-                _qf_str = " ".join(str(flag) for flag in region.get("quality_flags", []))
-                if "dark_flood_candidate" in _qf_str and "dark_flood_failed_validation" not in _qf_str:
-                    # dark_flood 가 성공했거나 아직 시도하지 않은 dark 후보는 edge_barrier 스킵
-                    # dark_flood 가 명시적으로 실패한 경우에는 edge_barrier 허용
-                    region["quality_flags"].append("edge_barrier_skipped_dark_flood_candidate")
-                    continue
-
-                anchor_ids = [aid for aid in region.get("anchor_ids", []) if aid in clusters_by_id]
-                if not anchor_ids:
-                    continue
-                target_groups = [clusters_by_id[aid] for aid in anchor_ids]
-                rescue = run_edge_barrier_rescue_auto(
-                    image,
-                    target_groups,
-                    region["bubble_rect"],
-                    virtual_walls=manual_virtual_walls or None,
-                )
-                score = rescue.get("score", {})
-                reject_reason = None if rescue.get("manual_guided") else (
-                    _edge_rescue_reject_reason(gray, _page_black_contour, region, rescue, target_groups)
-                    if rescue.get("success") else None
-                )
-                if not rescue.get("success"):
-                    region["quality_flags"].append(
-                        "edge_barrier_rescue_failed="
-                        f"{rescue.get('reason')}, score={round(float(score.get('rank_score', -99.0)), 3)}"
-                    )
-                    continue
-                if reject_reason is not None:
-                    region["quality_flags"].append(reject_reason)
-                    continue
-
-                rescue_rect = [int(v) for v in rescue.get("rescue_rect", [0, 0, 0, 0])[:4]]
-                if rescue_rect[2] <= 0 or rescue_rect[3] <= 0:
-                    continue
-
-                rescue_mask = rescue["mask"]
-                region["is_valid"] = True
-                region["method"] = "edge_barrier_rescue"
-                region["region_type"] = "bubble"
-                region["bubble_rect"] = rescue_rect
-                region["mask"] = rescue_mask
-                region["seed_points"] = [rescue["seed"]] if rescue.get("seed") else []
-                region["bubble_page_ratio"] = float(score.get("mask_page_ratio", 0.0))
-                region["bubble_tg_ratio"] = float(score.get("rect_anchor_ratio", 0.0))
-                region["touches_image_border"] = _touches_image_border(rescue_mask)
-                region["quality_flags"].extend([
-                    "edge_barrier_rescue",
-                    f"edge_best={rescue.get('best_label')}",
-                    f"edge_guard={rescue.get('guard_mode')}_{rescue.get('guard_margin')}",
-                    "edge_manual_guided" if rescue.get("manual_guided") else "edge_auto_guided",
-                    f"edge_score={round(float(score.get('rank_score', 0.0)), 3)}",
-                    f"edge_ratio={round(float(score.get('rect_anchor_ratio', 0.0)), 2)}",
-                    f"edge_page={round(float(score.get('mask_page_ratio', 0.0)), 4)}",
-                ])
-                diagnostics.append({
-                    "cluster_id": anchor_ids,
-                    "method": "edge_barrier_rescue",
-                    "is_valid": True,
-                    "region_type": "bubble",
-                    "bubble_page_ratio": round(float(score.get("mask_page_ratio", 0.0)), 5),
-                    "bubble_tg_ratio": round(float(score.get("rect_anchor_ratio", 0.0)), 2),
-                    "quality_flags": region["quality_flags"],
-                })
-
-            split_rescued: Dict[Tuple[Any, ...], Dict[str, Any]] = {}
-            split_remove_keys: List[Tuple[Any, ...]] = []
-            for key, region in list(grouped.items()):
-                if region.get("is_valid"):
-                    continue
-                anchor_ids = [aid for aid in region.get("anchor_ids", []) if aid in clusters_by_id]
-                if len(anchor_ids) < 2:
-                    continue
-
-                if len(anchor_ids) >= 3:
-                    best_partition: Optional[Tuple[float, List[Dict[str, Any]]]] = None
-                    for single_aid in anchor_ids:
-                        single_ids = [single_aid]
-                        rest_ids = [aid for aid in anchor_ids if aid != single_aid]
-                        partition_regions: List[Dict[str, Any]] = []
-                        total_score = 0.0
-                        partition_failed = False
-
-                        for subset_ids, marker in (
-                            (single_ids, "edge_partition_single"),
-                            (rest_ids, "edge_partition_group"),
-                        ):
-                            subset_groups = [clusters_by_id[aid] for aid in subset_ids]
-                            subset_source_rect = _edge_subset_source_rect(subset_ids)
-                            subset_rescue = run_edge_barrier_rescue_auto(
-                                image,
-                                subset_groups,
-                                subset_source_rect,
-                                virtual_walls=manual_virtual_walls or None,
-                            )
-                            subset_score = subset_rescue.get("score", {})
-                            subset_reject = None if subset_rescue.get("manual_guided") else (
-                                _edge_rescue_reject_reason(gray, _page_black_contour, region, subset_rescue, subset_groups)
-                                if subset_rescue.get("success") else None
-                            )
-                            if not subset_rescue.get("success") or subset_reject is not None:
-                                partition_failed = True
-                                break
-                            rescued_region = _build_edge_rescued_region(
-                                region,
-                                subset_ids,
-                                subset_rescue,
-                                marker,
-                            )
-                            if rescued_region is None:
-                                partition_failed = True
-                                break
-                            partition_regions.append(rescued_region)
-                            total_score += float(subset_score.get("rank_score", -99.0))
-
-                        if partition_failed or len(partition_regions) != 2:
-                            continue
-                        if best_partition is None or total_score > best_partition[0]:
-                            best_partition = (total_score, partition_regions)
-
-                    if best_partition is not None:
-                        for rescued_region in best_partition[1]:
-                            rect = rescued_region["bubble_rect"]
-                            ids = rescued_region["anchor_ids"]
-                            split_rescued[("edge_partition", *ids, *rect)] = rescued_region
-                        split_remove_keys.append(key)
-                        continue
-
-                remaining_anchor_ids: List[int] = []
-                rejected_reasons_by_anchor: Dict[int, str] = {}
-                single_rescued_keys: List[Tuple[Tuple[Any, ...], int]] = []
-                current_rescued = 0
-                _combined_has_border = any(
-                    str(flag) == "border=Y" or str(flag).endswith("border=Y")
-                    for flag in region.get("quality_flags", [])
-                )
-                _img_h, _img_w = image.shape[:2]
-                _border_margin = 200  # px: 앵커가 이 거리 안쪽 엣지에 있어야 border 차단 적용
-                for aid in anchor_ids:
-                    # combined region 의 border=Y 는 merged 영역 기준 — 개별 앵커가 실제로
-                    # 엣지에 가까운지 별도 확인해서 멀리 떨어진 앵커는 구제 시도 허용
-                    if _combined_has_border:
-                        _ar = _tight_text_group_rect(clusters_by_id[aid])
-                        _ax, _ay, _aw, _ah = _ar
-                        _anchor_near_border = (
-                            _ax < _border_margin
-                            or _ay < _border_margin
-                            or (_ax + _aw) > (_img_w - _border_margin)
-                            or (_ay + _ah) > (_img_h - _border_margin)
-                        )
-                        if _anchor_near_border:
-                            reject_reason = "edge_reject_split_border_candidate"
-                            region["quality_flags"].append(f"{reject_reason}:A{aid}")
-                            rejected_reasons_by_anchor[aid] = reject_reason
-                            remaining_anchor_ids.append(aid)
-                            continue
-                    rescue = run_edge_barrier_rescue_auto(
-                        image,
-                        [clusters_by_id[aid]],
-                        region["bubble_rect"],
-                        virtual_walls=manual_virtual_walls or None,
-                    )
-                    score = rescue.get("score", {})
-                    reject_reason = None if rescue.get("manual_guided") else (
-                        _edge_rescue_reject_reason(gray, _page_black_contour, region, rescue, [clusters_by_id[aid]])
-                        if rescue.get("success") else None
-                    )
-                    if not rescue.get("success"):
-                        remaining_anchor_ids.append(aid)
-                        continue
-                    if reject_reason is not None:
-                        region["quality_flags"].append(f"{reject_reason}:A{aid}")
-                        rejected_reasons_by_anchor[aid] = reject_reason
-                        remaining_anchor_ids.append(aid)
-                        continue
-                    rescue_rect = [int(v) for v in rescue.get("rescue_rect", [0, 0, 0, 0])[:4]]
-                    if rescue_rect[2] <= 0 or rescue_rect[3] <= 0:
-                        remaining_anchor_ids.append(aid)
-                        continue
-
-                    rescue_mask = rescue["mask"]
-                    new_region = {
-                        **region,
-                        "anchor_ids": [aid],
-                        "seed_points": [rescue["seed"]] if rescue.get("seed") else [],
-                        "bubble_rect": rescue_rect,
-                        "mask": rescue_mask,
-                        "bubble_page_ratio": float(score.get("mask_page_ratio", 0.0)),
-                        "bubble_tg_ratio": float(score.get("rect_anchor_ratio", 0.0)),
-                        "touches_image_border": _touches_image_border(rescue_mask),
-                        "method": "edge_barrier_rescue",
-                        "region_type": "bubble",
-                        "quality_flags": list(region.get("quality_flags", [])) + [
-                            "edge_barrier_rescue",
-                            "edge_split_from_failed_group",
-                            f"edge_best={rescue.get('best_label')}",
-                            f"edge_guard={rescue.get('guard_mode')}_{rescue.get('guard_margin')}",
-                            f"edge_score={round(float(score.get('rank_score', 0.0)), 3)}",
-                            f"edge_ratio={round(float(score.get('rect_anchor_ratio', 0.0)), 2)}",
-                            f"edge_page={round(float(score.get('mask_page_ratio', 0.0)), 4)}",
-                        ],
-                        "is_valid": True,
-                    }
-                    single_key = ("edge_single", aid, *rescue_rect)
-                    split_rescued[single_key] = new_region
-                    single_rescued_keys.append((single_key, aid))
-                    current_rescued += 1
-
-                if _should_demote_lone_edge_split_rescue(
-                    [aid for _key, aid in single_rescued_keys],
-                    rejected_reasons_by_anchor,
-                ):
-                    demoted_ids = {aid for _key, aid in single_rescued_keys}
-                    for single_key, aid in single_rescued_keys:
-                        split_rescued.pop(single_key, None)
-                        region["quality_flags"].append(
-                            f"edge_demote_lone_split_rescue_sibling_unboxed_like:A{aid}"
-                        )
-
-                    split_remove_keys.append(key)
-                    for aid in anchor_ids:
-                        fallback_rect = _fallback_text_group_rect(clusters_by_id[aid])
-                        child_region = {
-                            **region,
-                            "anchor_ids": [aid],
-                            "bubble_rect": fallback_rect,
-                            "mask": np.zeros((img_h, img_w), dtype=np.uint8),
-                            "seed_points": [],
-                            "bubble_page_ratio": 0.0,
-                            "bubble_tg_ratio": 1.0,
-                            "touches_image_border": False,
-                            "method": "bbox_fallback",
-                            "region_type": "bbox_fallback",
-                            "quality_flags": list(region.get("quality_flags", [])) + [
-                                f"edge_split_consensus_unboxed:A{aid}",
-                            ],
-                            "is_valid": False,
-                        }
-                        if aid in demoted_ids and aid not in rejected_reasons_by_anchor:
-                            child_region["quality_flags"].append("edge_demoted_lone_rescue")
-                        split_rescued[("edge_consensus_unboxed", aid, *fallback_rect)] = child_region
-                    continue
-
-                if current_rescued > 0:
-                    if remaining_anchor_ids:
-                        if len(remaining_anchor_ids) >= 2:
-                            remaining_groups = [clusters_by_id[aid] for aid in remaining_anchor_ids]
-                            remaining_rect = _union_rect([
-                                _fallback_text_group_rect(group)
-                                for group in remaining_groups
-                            ])
-                            pad = max(40, min(80, int(max(remaining_rect[2], remaining_rect[3]) * 0.25)))
-                            remaining_source_rect = _pad_rect_to_image(remaining_rect, pad, img_w, img_h)
-                            group_rescue = run_edge_barrier_rescue_auto(
-                                image,
-                                remaining_groups,
-                                remaining_source_rect,
-                                virtual_walls=manual_virtual_walls or None,
-                            )
-                            group_score = group_rescue.get("score", {})
-                            group_reject_reason = None if group_rescue.get("manual_guided") else (
-                                _edge_rescue_reject_reason(gray, _page_black_contour, region, group_rescue, remaining_groups)
-                                if group_rescue.get("success") else None
-                            )
-                            if group_rescue.get("success") and group_reject_reason is None:
-                                group_rect = [
-                                    int(v) for v in group_rescue.get("rescue_rect", [0, 0, 0, 0])[:4]
-                                ]
-                                group_mask = group_rescue["mask"]
-                                region["anchor_ids"] = remaining_anchor_ids
-                                region["seed_points"] = [group_rescue["seed"]] if group_rescue.get("seed") else []
-                                region["bubble_rect"] = group_rect
-                                region["mask"] = group_mask
-                                region["bubble_page_ratio"] = float(group_score.get("mask_page_ratio", 0.0))
-                                region["bubble_tg_ratio"] = float(group_score.get("rect_anchor_ratio", 0.0))
-                                region["touches_image_border"] = _touches_image_border(group_mask)
-                                region["method"] = "edge_barrier_rescue"
-                                region["region_type"] = "bubble"
-                                region["quality_flags"].extend([
-                                    "edge_barrier_rescue",
-                                    "edge_group_after_split",
-                                    f"edge_best={group_rescue.get('best_label')}",
-                                    f"edge_guard={group_rescue.get('guard_mode')}_{group_rescue.get('guard_margin')}",
-                                    f"edge_score={round(float(group_score.get('rank_score', 0.0)), 3)}",
-                                    f"edge_ratio={round(float(group_score.get('rect_anchor_ratio', 0.0)), 2)}",
-                                    f"edge_page={round(float(group_score.get('mask_page_ratio', 0.0)), 4)}",
-                                ])
-                                region["is_valid"] = True
-                            else:
-                                region["anchor_ids"] = remaining_anchor_ids
-                                if group_reject_reason is not None:
-                                    region["quality_flags"].append(f"{group_reject_reason}:remaining_group")
-                                region["quality_flags"].append("edge_split_partial_remaining")
-                        else:
-                            region["anchor_ids"] = remaining_anchor_ids
-                            region["quality_flags"].append("edge_split_partial_remaining")
-                    else:
-                        split_remove_keys.append(key)
-
-            for key in split_remove_keys:
-                grouped.pop(key, None)
-            grouped.update(split_rescued)
-
-            for noise_anchor in noise_like_anchors:
-                if noise_anchor.get("reason") in {"large_single_glyph_sfx_like", "large_short_kana_sfx_like"}:
-                    continue
-                aid = noise_anchor["cluster_id"]
-                rect = noise_anchor["fallback_bbox"]
-                cx, cy = _bbox_center(rect)
-                for region in grouped.values():
-                    if not region.get("is_valid"):
-                        continue
-                    if region.get("method") != "edge_barrier_rescue":
-                        continue
-                    rx, ry, rw, rh = [int(v) for v in region.get("bubble_rect", [0, 0, 0, 0])[:4]]
-                    pad = 12
-                    if rx - pad <= cx <= rx + rw + pad and ry - pad <= cy <= ry + rh + pad:
-                        if aid not in region["anchor_ids"]:
-                            region["anchor_ids"].append(aid)
-                            region["quality_flags"].append(
-                                f"merged_symbol_anchor_after_edge_rescue:A{aid}"
-                            )
-                        break
-
-            for region in grouped.values():
-                if not region.get("is_valid"):
-                    continue
-                if region.get("method") != "edge_barrier_rescue":
-                    continue
-                flags = region.get("quality_flags", [])
-                if any("border=Y" in str(flag) for flag in flags):
-                    continue
-                if any(str(flag).startswith("merged_symbol_anchor_after_edge_rescue") for flag in flags):
-                    continue
-                anchor_groups = [
-                    clusters_by_id[aid]
-                    for aid in region.get("anchor_ids", [])
-                    if aid in clusters_by_id
-                ]
-                raw_round = _extract_quality_float(flags, "raw_round")
-                post_reject = _edge_anchor_text_reject_reason(anchor_groups, raw_round)
-                if post_reject is None:
-                    continue
-                region["is_valid"] = False
-                region["method"] = "bbox_fallback"
-                region["region_type"] = "bbox_fallback"
-                region["quality_flags"].append(post_reject)
+        _run_edge_barrier_rescue(
+            image, gray, img_w, img_h, grouped, diagnostics, noise_like_anchors,
+            clusters_by_id, manual_virtual_walls, _page_black_contour,
+        )
 
     # edge_barrier_rescue 결과 중 인접한 단일-앵커 region을 합친다.
     # 동일 말풍선에서 시작점이 달라 flood_rect가 달랐던 TG들은 각자 rescue를 받아
