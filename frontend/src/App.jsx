@@ -1528,6 +1528,8 @@ export default function App() {
     if (!recent?.session_id) return;
     const label = recent.project_name || recent.session_id;
     if (!window.confirm(`${label} 프로젝트를 삭제하시겠습니까? 이 작업은 되돌릴 수 없습니다.`)) return;
+    // 지우려는 프로젝트의 등록 직후 미리 분석을 먼저 멈춘다. 그래야 진행 중인 한 장이 끝나도 다음 쪽 요청이 나가지 않는다.
+    if (recent.session_id === sessionIdRef.current) startEarlyAnalysis("");
     // 미리 분석 중인 한 장이 있으면 끝난 뒤 지운다. 지운 폴더에 분석 결과가 다시 쓰여 빈 프로젝트가 남지 않게 한다.
     if (prefetchPromiseRef.current) {
       setStatus("진행 중인 미리 분석 한 장이 끝나면 삭제합니다…");
