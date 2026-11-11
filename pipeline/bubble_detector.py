@@ -52,7 +52,7 @@ review_tags         Rescue 이후에도 미확정인 후보에 붙는 후단 처
 import json
 import math
 import sys
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 import cv2
 import numpy as np
@@ -1651,564 +1651,940 @@ def visualize_anchor_floodfill(
 
 
 
-def build_ocr_region_sheet(
-    image_path: str,
-    clusters_json: str,
-    output_masked_path: str = None,
-    output_sheet_path: str = None,
-    output_json_path: str = None,
-    indexed_output_sheet_path: Optional[str] = None,
-    output_regions_only_path: Optional[str] = None,
-    output_vis_path: Optional[str] = None,
-    debug_mode: bool = False,
-    erode_pixels: int = 3,
-    max_area_ratio: float = MAX_SAFE_AREA_RATIO,
-    min_bubble_tg_ratio: float = 1.0,
-    max_bubble_tg_ratio: float = 20.0,
-    indexed_label_gutter: int = 48,
-    dark_bg_mean_threshold: int = 130,
-    enable_edge_barrier_rescue: bool = True,
-    image: Optional[np.ndarray] = None,
-    gray: Optional[np.ndarray] = None,
-    manual_virtual_walls: Optional[List[Dict[str, Any]]] = None,
-) -> Dict[str, Any]:
-    # 호출자가 이미지를 미리 읽어 넘겨준 경우 재독(disk I/O) 생략
-    if image is None or gray is None:
-        image, gray, img_h, img_w = _load_image_and_gray(image_path)
-    else:
-        img_h, img_w = image.shape[:2]
-    clusters = _load_json(clusters_json)
-    image_area = img_w * img_h
+def _extract_quality_float(flags: List[str], name: str) -> Optional[float]:
+    prefix = f"{name}="
+    for flag in flags:
+        for part in str(flag).replace(",", " ").split():
+            if part.startswith(prefix):
+                try:
+                    return float(part[len(prefix):])
+                except ValueError:
+                    return None
+    return None
 
-    grouped: Dict[Tuple[Any, ...], Dict[str, Any]] = {}
-    diagnostics: List[Dict[str, Any]] = []
-    skipped: List[Dict[str, Any]] = []
-    noise_like_anchors: List[Dict[str, Any]] = []
 
-    # black contour probe용 페이지 mask는 이 호출 안에서 한 번만 만든다(호출 간 공유 없음).
-    page_black_contour: List[np.ndarray] = []
-
-    def _page_black_contour() -> np.ndarray:
-        if not page_black_contour:
-            page_black_contour.append(_black_contour_binary(gray))
-        return page_black_contour[0]
-
-    def _extract_quality_float(flags: List[str], name: str) -> Optional[float]:
-        prefix = f"{name}="
-        for flag in flags:
-            for part in str(flag).replace(",", " ").split():
-                if part.startswith(prefix):
-                    try:
-                        return float(part[len(prefix):])
-                    except ValueError:
-                        return None
+def _edge_anchor_text_reject_reason(
+    anchor_groups: Optional[List[Dict[str, Any]]],
+    raw_round: Optional[float],
+) -> Optional[str]:
+    if not anchor_groups or raw_round is None or raw_round >= 0.06:
+        return None
+    if len(anchor_groups) < 2:
         return None
 
-    def _edge_anchor_text_reject_reason(
-        anchor_groups: Optional[List[Dict[str, Any]]],
-        raw_round: Optional[float],
-    ) -> Optional[str]:
-        if not anchor_groups or raw_round is None or raw_round >= 0.06:
-            return None
-        if len(anchor_groups) < 2:
-            return None
+    texts = [_cluster_text(group).replace(" ", "").replace("\n", "") for group in anchor_groups]
+    total_chars = sum(len(text) for text in texts)
+    max_lines = max((len(group.get("lines", [])) for group in anchor_groups), default=0)
+    max_height = max((_tight_text_group_rect(group)[3] for group in anchor_groups), default=0)
+    if total_chars <= 6 and max_lines <= 1 and max_height <= 140:
+        return "edge_reject_short_handwritten_group_unboxed_like"
+    return None
 
-        texts = [_cluster_text(group).replace(" ", "").replace("\n", "") for group in anchor_groups]
-        total_chars = sum(len(text) for text in texts)
-        max_lines = max((len(group.get("lines", [])) for group in anchor_groups), default=0)
-        max_height = max((_tight_text_group_rect(group)[3] for group in anchor_groups), default=0)
-        if total_chars <= 6 and max_lines <= 1 and max_height <= 140:
-            return "edge_reject_short_handwritten_group_unboxed_like"
-        return None
 
-    def _edge_rescue_reject_reason(
-        region: Dict[str, Any],
-        rescue: Dict[str, Any],
-        anchor_groups: Optional[List[Dict[str, Any]]] = None,
-    ) -> Optional[str]:
-        flags = region.get("quality_flags", [])
-        raw_solid = _extract_quality_float(flags, "raw_solid")
-        raw_round = _extract_quality_float(flags, "raw_round")
-        shape_score = _extract_quality_float(flags, "shape_score")
-        if shape_score is None:
-            shape_score = _extract_quality_float(flags, "shape")
-        score = rescue.get("score", {})
-        original_touches_border = any("border=Y" in str(flag) for flag in flags)
-        failed_bounds = any("failed_bounds" in str(flag) for flag in flags)
-        edge_page = float(score.get("mask_page_ratio", 0.0))
-        edge_ratio = float(score.get("rect_anchor_ratio", 0.0))
-        guard_mode = str(rescue.get("guard_mode", "none"))
-        anchor_texts = [
-            _cluster_text(group).replace(" ", "").replace("\n", "")
-            for group in (anchor_groups or [])
-        ]
-        anchor_total_chars = sum(len(text) for text in anchor_texts)
-        anchor_max_lines = max((len(group.get("lines", [])) for group in (anchor_groups or [])), default=0)
-        anchor_reject = _edge_anchor_text_reject_reason(anchor_groups, raw_round)
-        if anchor_reject is not None:
-            return anchor_reject
+def _edge_rescue_reject_reason(
+    gray: np.ndarray,
+    page_black_contour: Callable[[], np.ndarray],
+    region: Dict[str, Any],
+    rescue: Dict[str, Any],
+    anchor_groups: Optional[List[Dict[str, Any]]] = None,
+) -> Optional[str]:
+    flags = region.get("quality_flags", [])
+    raw_solid = _extract_quality_float(flags, "raw_solid")
+    raw_round = _extract_quality_float(flags, "raw_round")
+    shape_score = _extract_quality_float(flags, "shape_score")
+    if shape_score is None:
+        shape_score = _extract_quality_float(flags, "shape")
+    score = rescue.get("score", {})
+    original_touches_border = any("border=Y" in str(flag) for flag in flags)
+    failed_bounds = any("failed_bounds" in str(flag) for flag in flags)
+    edge_page = float(score.get("mask_page_ratio", 0.0))
+    edge_ratio = float(score.get("rect_anchor_ratio", 0.0))
+    guard_mode = str(rescue.get("guard_mode", "none"))
+    anchor_texts = [
+        _cluster_text(group).replace(" ", "").replace("\n", "")
+        for group in (anchor_groups or [])
+    ]
+    anchor_total_chars = sum(len(text) for text in anchor_texts)
+    anchor_max_lines = max((len(group.get("lines", [])) for group in (anchor_groups or [])), default=0)
+    anchor_reject = _edge_anchor_text_reject_reason(anchor_groups, raw_round)
+    if anchor_reject is not None:
+        return anchor_reject
 
-        if (
-            anchor_groups
-            and anchor_total_chars <= 4
-            and anchor_max_lines <= 1
-            and guard_mode in {"vertical", "all"}
-            and edge_ratio >= 4.0
-            and edge_page <= 0.012
-        ):
-            return "edge_reject_short_virtual_guard_sfx_like"
-        rescue_rect = [int(v) for v in rescue.get("rescue_rect", [0, 0, 0, 0])[:4]]
-        boundary_sides, boundary_ratios = _boundary_evidence(gray, rescue_rect)
-        if boundary_sides < 3:
-            return (
-                "edge_reject_weak_boundary_evidence"
-                f"(sides={boundary_sides},"
-                f"t={boundary_ratios['top']:.2f},b={boundary_ratios['bottom']:.2f},"
-                f"l={boundary_ratios['left']:.2f},r={boundary_ratios['right']:.2f})"
-            )
-        if (
-            raw_solid is not None
-            and raw_round is not None
-            and shape_score is not None
-            and raw_solid < 0.82
-            and raw_round < 0.34
-            and shape_score < 0.70
-        ):
-            return "edge_reject_low_shape_class_none"
-        if shape_score is not None and shape_score < 0.05:
-            return "edge_reject_too_fragmented_original_shape"
-        if failed_bounds and guard_mode == "all":
-            return "edge_reject_all_guard_failed_bounds_unboxed_like"
-        if edge_page > 0.08:
-            return "edge_reject_large_unboxed_like"
-        if failed_bounds and edge_page > 0.045:
-            return "edge_reject_large_failed_bounds_unboxed_like"
-        if failed_bounds and edge_ratio < 1.2:
-            return "edge_reject_tight_failed_bounds_unboxed_like"
-        # rescue 결과가 TG bbox 를 거의 벗어나지 않은 경우 — 실제 말풍선 없음
-        if edge_ratio < 1.2:
-            return "edge_reject_too_tight_rescue"
-        # 극도로 얇은 세로 텍스트(낮은 roundness) + 적은 확장 비율은 나레이션 오탐 후보.
-        # 다만 방사형 말풍선도 원본 flood roundness가 낮게 나오므로 rescue/contour 증거가 약할 때만 자른다.
-        if (
-            raw_round is not None
-            and raw_round < 0.06
-            and edge_ratio < 2.5
-        ):
-            contour_probe = _black_contour_probe(gray, rescue_rect, rescue.get("mask"), black=_page_black_contour())
-            weak_evidence_count = sum([
-                contour_probe.get("status") != "closed",
-                boundary_sides < 4,
-                float(score.get("shape_score", 0.0)) < 0.86,
-                float(score.get("anchor_coverage", 0.0)) < 0.92,
-                float(score.get("bimodality", 0.0)) < 0.92,
-            ])
-            if weak_evidence_count >= 3:
-                return "edge_reject_thin_small_ratio_narration_like"
-        if raw_solid is not None and raw_solid < 0.60 and float(score.get("shape_score", 0.0)) < 0.85:
-            return "edge_reject_low_original_solidity"
-        if (
-            float(score.get("borderline_open_bubble", 0.0)) > 0.0
-            and raw_solid is not None
-            and raw_round is not None
-            and raw_solid < 0.80
-            and raw_round >= 0.18
-        ):
-            return "edge_reject_borderline_low_original_solidity"
-        if (
-            raw_solid is not None
-            and raw_solid < 0.60
-            and edge_page > 0.01
-        ):
-            return "edge_reject_low_original_solidity"
-        if (
-            raw_solid is not None
-            and raw_round is not None
-            and not original_touches_border
-            and raw_solid < 0.66
-            and raw_round < 0.055
-        ):
-            return "edge_reject_low_original_solidity"
-        if (
-            raw_solid is not None
-            and raw_round is not None
-            and not original_touches_border
-            and raw_solid < 0.68
-            and raw_round >= 0.06
-        ):
-            return "edge_reject_low_original_solidity"
-        if raw_solid is not None and raw_round is not None and raw_solid >= 0.82 and 0.16 <= raw_round < 0.30:
-            return "edge_reject_simple_mid_round_unboxed_like"
-        if (
-            raw_solid is not None
-            and raw_round is not None
-            and raw_solid >= 0.82
-            and raw_round < 0.09
-            and edge_ratio > 4.8
-        ):
-            return "edge_reject_thin_large_ratio_unboxed_like"
-        if raw_round is not None and raw_round < 0.10 and guard_mode == "all":
-            return "edge_reject_all_guard_thin_unboxed_like"
-        if (
-            raw_solid is not None
-            and raw_round is not None
-            and 0.80 <= raw_solid <= 0.86
-            and raw_round >= 0.35
-            and edge_page > 0.025
-        ):
-            return "edge_reject_mid_solid_large_unboxed_like"
-        if (
-            raw_solid is not None
-            and raw_round is not None
-            and 0.76 <= raw_solid <= 0.82
-            and 0.10 <= raw_round <= 0.16
-            and edge_ratio >= 4.5
-            and edge_page >= 0.02
-        ):
-            return "edge_reject_rect_narration_like"
-        if (
-            raw_solid is not None
-            and raw_round is not None
-            and raw_solid < 0.70
-            and raw_round < 0.10
-            and edge_page > 0.03
-        ):
-            return "edge_reject_low_solid_large_thin_unboxed_like"
-        if (
-            raw_round is not None
-            and raw_round < 0.10
-            and edge_page > 0.055
-        ):
-            return "edge_reject_large_thin_unboxed_like"
-        if (
-            raw_solid is not None
-            and raw_round is not None
-            and original_touches_border
-            and raw_solid <= 0.72
-            and raw_round < 0.18
-            and edge_page > 0.03
-        ):
-            return "edge_reject_border_large_low_shape_unboxed_like"
-        if (
-            raw_solid is not None
-            and raw_round is not None
-            and original_touches_border
-            and shape_score is not None
-            and shape_score < 0.45
-            and raw_round < 0.08
-            and edge_ratio >= 3.5
-            and edge_page >= 0.012
-            and guard_mode in {"both", "all", "vertical"}
-        ):
-            return "edge_reject_border_shape_none_thin_rescue"
-        if (
-            raw_solid is not None
-            and raw_round is not None
-            and original_touches_border
-            and raw_solid >= 0.80
-            and raw_solid <= 0.86
-            and 0.08 <= raw_round <= 0.16
-        ):
-            return "edge_reject_border_low_round_unboxed_like"
-        if (
-            raw_round is not None
-            and original_touches_border
-            and guard_mode == "all"
-            and raw_round >= 0.25
-            and edge_page > 0.018
-        ):
-            return "edge_reject_all_guard_border_narration_like"
-        if (
-            raw_solid is not None
-            and raw_round is not None
-            and original_touches_border
-            and raw_solid >= 0.90
-            and 0.30 <= raw_round <= 0.45
-            and edge_ratio < 3.0
-            and edge_page > 0.02
-        ):
-            return "edge_reject_border_rect_unboxed_like"
-        if raw_solid is not None and raw_round is not None and raw_solid > 0.90 and raw_round < 0.18:
-            return "edge_reject_solid_low_round_unboxed_like"
-        if float(score.get("anchor_coverage", 0.0)) < 0.65:
-            return "edge_reject_low_anchor_coverage"
-        if (
-            raw_solid is not None
-            and raw_round is not None
-            and 0.82 <= raw_solid <= 0.90
-            and 0.30 <= raw_round <= 0.36
-        ):
-            return "edge_reject_simple_mid_round_unboxed_like"
-        return None
+    if (
+        anchor_groups
+        and anchor_total_chars <= 4
+        and anchor_max_lines <= 1
+        and guard_mode in {"vertical", "all"}
+        and edge_ratio >= 4.0
+        and edge_page <= 0.012
+    ):
+        return "edge_reject_short_virtual_guard_sfx_like"
+    rescue_rect = [int(v) for v in rescue.get("rescue_rect", [0, 0, 0, 0])[:4]]
+    boundary_sides, boundary_ratios = _boundary_evidence(gray, rescue_rect)
+    if boundary_sides < 3:
+        return (
+            "edge_reject_weak_boundary_evidence"
+            f"(sides={boundary_sides},"
+            f"t={boundary_ratios['top']:.2f},b={boundary_ratios['bottom']:.2f},"
+            f"l={boundary_ratios['left']:.2f},r={boundary_ratios['right']:.2f})"
+        )
+    if (
+        raw_solid is not None
+        and raw_round is not None
+        and shape_score is not None
+        and raw_solid < 0.82
+        and raw_round < 0.34
+        and shape_score < 0.70
+    ):
+        return "edge_reject_low_shape_class_none"
+    if shape_score is not None and shape_score < 0.05:
+        return "edge_reject_too_fragmented_original_shape"
+    if failed_bounds and guard_mode == "all":
+        return "edge_reject_all_guard_failed_bounds_unboxed_like"
+    if edge_page > 0.08:
+        return "edge_reject_large_unboxed_like"
+    if failed_bounds and edge_page > 0.045:
+        return "edge_reject_large_failed_bounds_unboxed_like"
+    if failed_bounds and edge_ratio < 1.2:
+        return "edge_reject_tight_failed_bounds_unboxed_like"
+    # rescue 결과가 TG bbox 를 거의 벗어나지 않은 경우 — 실제 말풍선 없음
+    if edge_ratio < 1.2:
+        return "edge_reject_too_tight_rescue"
+    # 극도로 얇은 세로 텍스트(낮은 roundness) + 적은 확장 비율은 나레이션 오탐 후보.
+    # 다만 방사형 말풍선도 원본 flood roundness가 낮게 나오므로 rescue/contour 증거가 약할 때만 자른다.
+    if (
+        raw_round is not None
+        and raw_round < 0.06
+        and edge_ratio < 2.5
+    ):
+        contour_probe = _black_contour_probe(gray, rescue_rect, rescue.get("mask"), black=page_black_contour())
+        weak_evidence_count = sum([
+            contour_probe.get("status") != "closed",
+            boundary_sides < 4,
+            float(score.get("shape_score", 0.0)) < 0.86,
+            float(score.get("anchor_coverage", 0.0)) < 0.92,
+            float(score.get("bimodality", 0.0)) < 0.92,
+        ])
+        if weak_evidence_count >= 3:
+            return "edge_reject_thin_small_ratio_narration_like"
+    if raw_solid is not None and raw_solid < 0.60 and float(score.get("shape_score", 0.0)) < 0.85:
+        return "edge_reject_low_original_solidity"
+    if (
+        float(score.get("borderline_open_bubble", 0.0)) > 0.0
+        and raw_solid is not None
+        and raw_round is not None
+        and raw_solid < 0.80
+        and raw_round >= 0.18
+    ):
+        return "edge_reject_borderline_low_original_solidity"
+    if (
+        raw_solid is not None
+        and raw_solid < 0.60
+        and edge_page > 0.01
+    ):
+        return "edge_reject_low_original_solidity"
+    if (
+        raw_solid is not None
+        and raw_round is not None
+        and not original_touches_border
+        and raw_solid < 0.66
+        and raw_round < 0.055
+    ):
+        return "edge_reject_low_original_solidity"
+    if (
+        raw_solid is not None
+        and raw_round is not None
+        and not original_touches_border
+        and raw_solid < 0.68
+        and raw_round >= 0.06
+    ):
+        return "edge_reject_low_original_solidity"
+    if raw_solid is not None and raw_round is not None and raw_solid >= 0.82 and 0.16 <= raw_round < 0.30:
+        return "edge_reject_simple_mid_round_unboxed_like"
+    if (
+        raw_solid is not None
+        and raw_round is not None
+        and raw_solid >= 0.82
+        and raw_round < 0.09
+        and edge_ratio > 4.8
+    ):
+        return "edge_reject_thin_large_ratio_unboxed_like"
+    if raw_round is not None and raw_round < 0.10 and guard_mode == "all":
+        return "edge_reject_all_guard_thin_unboxed_like"
+    if (
+        raw_solid is not None
+        and raw_round is not None
+        and 0.80 <= raw_solid <= 0.86
+        and raw_round >= 0.35
+        and edge_page > 0.025
+    ):
+        return "edge_reject_mid_solid_large_unboxed_like"
+    if (
+        raw_solid is not None
+        and raw_round is not None
+        and 0.76 <= raw_solid <= 0.82
+        and 0.10 <= raw_round <= 0.16
+        and edge_ratio >= 4.5
+        and edge_page >= 0.02
+    ):
+        return "edge_reject_rect_narration_like"
+    if (
+        raw_solid is not None
+        and raw_round is not None
+        and raw_solid < 0.70
+        and raw_round < 0.10
+        and edge_page > 0.03
+    ):
+        return "edge_reject_low_solid_large_thin_unboxed_like"
+    if (
+        raw_round is not None
+        and raw_round < 0.10
+        and edge_page > 0.055
+    ):
+        return "edge_reject_large_thin_unboxed_like"
+    if (
+        raw_solid is not None
+        and raw_round is not None
+        and original_touches_border
+        and raw_solid <= 0.72
+        and raw_round < 0.18
+        and edge_page > 0.03
+    ):
+        return "edge_reject_border_large_low_shape_unboxed_like"
+    if (
+        raw_solid is not None
+        and raw_round is not None
+        and original_touches_border
+        and shape_score is not None
+        and shape_score < 0.45
+        and raw_round < 0.08
+        and edge_ratio >= 3.5
+        and edge_page >= 0.012
+        and guard_mode in {"both", "all", "vertical"}
+    ):
+        return "edge_reject_border_shape_none_thin_rescue"
+    if (
+        raw_solid is not None
+        and raw_round is not None
+        and original_touches_border
+        and raw_solid >= 0.80
+        and raw_solid <= 0.86
+        and 0.08 <= raw_round <= 0.16
+    ):
+        return "edge_reject_border_low_round_unboxed_like"
+    if (
+        raw_round is not None
+        and original_touches_border
+        and guard_mode == "all"
+        and raw_round >= 0.25
+        and edge_page > 0.018
+    ):
+        return "edge_reject_all_guard_border_narration_like"
+    if (
+        raw_solid is not None
+        and raw_round is not None
+        and original_touches_border
+        and raw_solid >= 0.90
+        and 0.30 <= raw_round <= 0.45
+        and edge_ratio < 3.0
+        and edge_page > 0.02
+    ):
+        return "edge_reject_border_rect_unboxed_like"
+    if raw_solid is not None and raw_round is not None and raw_solid > 0.90 and raw_round < 0.18:
+        return "edge_reject_solid_low_round_unboxed_like"
+    if float(score.get("anchor_coverage", 0.0)) < 0.65:
+        return "edge_reject_low_anchor_coverage"
+    if (
+        raw_solid is not None
+        and raw_round is not None
+        and 0.82 <= raw_solid <= 0.90
+        and 0.30 <= raw_round <= 0.36
+    ):
+        return "edge_reject_simple_mid_round_unboxed_like"
+    return None
 
-    def _derive_review_tags(region: Dict[str, Any]) -> List[str]:
-        flags = [str(flag) for flag in region.get("quality_flags", [])]
-        flag_text = " ".join(flags)
-        tags: List[str] = []
 
-        def add(tag: str) -> None:
-            if tag not in tags:
-                tags.append(tag)
+def _derive_review_tags(region: Dict[str, Any]) -> List[str]:
+    flags = [str(flag) for flag in region.get("quality_flags", [])]
+    flag_text = " ".join(flags)
+    tags: List[str] = []
 
-        if region.get("method") == "edge_barrier_rescue":
-            add("edge_rescue")
+    def add(tag: str) -> None:
+        if tag not in tags:
+            tags.append(tag)
 
-        if region.get("is_valid"):
-            return tags
+    if region.get("method") == "edge_barrier_rescue":
+        add("edge_rescue")
 
-        if "edge_barrier_rescue_failed=" in flag_text:
-            add("edge_no_safe_mask")
-            add("image_gen_review_candidate")
-        if "edge_reject_low_original_solidity" in flag_text:
-            add("edge_rejected_low_solidity")
-            add("unboxed_text_candidate")
-        if "edge_reject_low_anchor_coverage" in flag_text:
-            add("edge_rejected_low_anchor_coverage")
-            add("image_gen_review_candidate")
-        if "edge_reject_short_virtual_guard_sfx_like" in flag_text:
-            add("edge_rejected_sfx_like")
-            add("handwrite_or_sfx_candidate")
-        if "edge_reject_short_handwritten_group_unboxed_like" in flag_text:
-            add("handwrite_or_sfx_candidate")
-        if "edge_reject_simple_mid_round_unboxed_like" in flag_text:
-            add("edge_rejected_simple_mid_round")
-            raw_solid = _extract_quality_float(flags, "raw_solid")
-            raw_round = _extract_quality_float(flags, "raw_round")
-            if raw_solid is not None and raw_round is not None and raw_solid >= 0.90 and raw_round >= 0.16:
-                add("image_gen_review_candidate")
-            else:
-                add("unboxed_text_candidate")
-        if "unboxed_like" in flag_text:
-            add("edge_rejected_unboxed_like")
-            add("unboxed_text_candidate")
-        if "narration_like" in flag_text:
-            add("edge_rejected_narration_like")
-            add("unboxed_text_candidate")
-        if "black_contour=closed" in flag_text:
-            add("contour_probe_closed_candidate")
-        elif "black_contour=partial" in flag_text:
-            add("contour_probe_partial_candidate")
-
+    if region.get("is_valid"):
         return tags
 
-    def _pad_rect_to_image(rect: List[int], pad: int) -> List[int]:
-        x, y, w, h = [int(v) for v in rect[:4]]
-        x1 = max(0, x - pad)
-        y1 = max(0, y - pad)
-        x2 = min(img_w, x + w + pad)
-        y2 = min(img_h, y + h + pad)
-        return [x1, y1, max(0, x2 - x1), max(0, y2 - y1)]
+    if "edge_barrier_rescue_failed=" in flag_text:
+        add("edge_no_safe_mask")
+        add("image_gen_review_candidate")
+    if "edge_reject_low_original_solidity" in flag_text:
+        add("edge_rejected_low_solidity")
+        add("unboxed_text_candidate")
+    if "edge_reject_low_anchor_coverage" in flag_text:
+        add("edge_rejected_low_anchor_coverage")
+        add("image_gen_review_candidate")
+    if "edge_reject_short_virtual_guard_sfx_like" in flag_text:
+        add("edge_rejected_sfx_like")
+        add("handwrite_or_sfx_candidate")
+    if "edge_reject_short_handwritten_group_unboxed_like" in flag_text:
+        add("handwrite_or_sfx_candidate")
+    if "edge_reject_simple_mid_round_unboxed_like" in flag_text:
+        add("edge_rejected_simple_mid_round")
+        raw_solid = _extract_quality_float(flags, "raw_solid")
+        raw_round = _extract_quality_float(flags, "raw_round")
+        if raw_solid is not None and raw_round is not None and raw_solid >= 0.90 and raw_round >= 0.16:
+            add("image_gen_review_candidate")
+        else:
+            add("unboxed_text_candidate")
+    if "unboxed_like" in flag_text:
+        add("edge_rejected_unboxed_like")
+        add("unboxed_text_candidate")
+    if "narration_like" in flag_text:
+        add("edge_rejected_narration_like")
+        add("unboxed_text_candidate")
+    if "black_contour=closed" in flag_text:
+        add("contour_probe_closed_candidate")
+    elif "black_contour=partial" in flag_text:
+        add("contour_probe_partial_candidate")
 
-    for idx, cluster in enumerate(clusters, start=1):
-        rect = _tight_text_group_rect(cluster)
-        fallback_rect = _fallback_text_group_rect(cluster)
-        if len(rect) < 4:
-            continue
+    return tags
 
-        cluster_id = _text_group_id(cluster, idx)
 
-        is_symbol_only = _is_symbol_only_text(_cluster_text(cluster))
-        is_short_non_jp_noise = _is_short_non_japanese_noise_text(_cluster_text(cluster))
-        is_english_only = _is_english_only_text(_cluster_text(cluster))
-        is_large_single_glyph_sfx = _is_large_single_glyph_sfx_like(cluster, rect)
-        is_large_short_kana_sfx = _is_large_short_kana_sfx_like(cluster, rect)
+def _pad_rect_to_image(rect: List[int], pad: int, img_w: int, img_h: int) -> List[int]:
+    x, y, w, h = [int(v) for v in rect[:4]]
+    x1 = max(0, x - pad)
+    y1 = max(0, y - pad)
+    x2 = min(img_w, x + w + pad)
+    y2 = min(img_h, y + h + pad)
+    return [x1, y1, max(0, x2 - x1), max(0, y2 - y1)]
 
-        is_dark_bg = _is_dark_bg_text(gray, rect, dark_bg_mean_threshold)
-        is_horizontal_tg = _is_horizontal_text_group(cluster, rect)
 
-        # 이미지 하단 근처(하위 8%) 가로 텍스트: 챕터 엔드 표기·페이지 캡션 등
-        # 말풍선이 아닌 인쇄 레이아웃 텍스트이므로 bubble 감지 대상에서 제외
-        # orientation 필드가 'vertical'이어도 AR이 명확히 가로형이면 landscape로 판단
-        _rx, _ry, _rw, _rh = rect
-        _is_landscape_by_ar = _rh > 0 and (_rw / _rh) >= 1.15
-        if (is_horizontal_tg or _is_landscape_by_ar) and (_ry + _rh) > img_h * 0.92:
-            diagnostics.append({"cluster_id": cluster_id, "method": "bottom_landscape_footer", "is_valid": False})
-            skipped.append({
-                "cluster_id": cluster_id,
-                "anchor_bbox": rect,
-                "fallback_bbox": fallback_rect,
-                "reason": "bottom_landscape_footer",
-                "method": "noise_like",
-                "region_type": "noise_like",
-                "quality_flags": ["bottom_landscape_footer"],
-            })
-            continue
+def _pre_split_reading_key(region: Dict[str, Any]) -> Tuple[float, float]:
+    rect = region["bubble_rect"]
+    cx = rect[0] + rect[2] / 2
+    cy = rect[1] + rect[3] / 2
+    return (-cx, cy)
 
-        _tiny_landscape_noise = (
-            _is_landscape_by_ar
-            and _rh <= max(14, int(img_h * 0.014))
-            and (_rw * _rh) <= max(700, int(img_w * img_h * 0.00075))
-        )
-        if _tiny_landscape_noise:
-            diagnostics.append({"cluster_id": cluster_id, "method": "tiny_landscape_text_noise", "is_valid": False})
-            skipped.append({
-                "cluster_id": cluster_id,
-                "anchor_bbox": rect,
-                "fallback_bbox": fallback_rect,
-                "reason": "tiny_landscape_text_noise",
-                "method": "noise_like",
-                "region_type": "noise_like",
-                "quality_flags": ["tiny_landscape_text_noise"],
-            })
-            continue
 
-        # 이미지 좌/우 끝에 바싹 붙은 매우 좁은 세로 텍스트: 면책 문구·저작권 표기 등 인쇄 메타데이터
-        _narrow_meta = _is_edge_narrow_metadata_rect(rect, img_w)
-        if _narrow_meta:
-            diagnostics.append({"cluster_id": cluster_id, "method": "edge_narrow_metadata", "is_valid": False})
-            skipped.append({
-                "cluster_id": cluster_id,
-                "anchor_bbox": rect,
-                "fallback_bbox": fallback_rect,
-                "reason": "edge_narrow_metadata",
-                "method": "metadata",
-                "region_type": "metadata",
-                "quality_flags": ["edge_narrow_metadata"],
-            })
-            continue
+def _split_child_reading_key(sub: Dict[str, Any]) -> Tuple[float, float]:
+    rect = sub.get("bubble_rect", sub.get("flood_rect"))
+    cx = rect[0] + rect[2] / 2
+    cy = rect[1] + rect[3] / 2
+    return (-cx, cy)
 
-        if is_dark_bg and is_horizontal_tg:
-            diagnostics.append({"cluster_id": cluster_id, "method": "dark_bg_text", "is_valid": False})
-            skipped.append({
-                "cluster_id": cluster_id,
-                "anchor_bbox": rect,
-                "fallback_bbox": fallback_rect,
-                "reason": "dark_bg_text",
-                "method": "dark_bg_text",
-                "region_type": "dark_bg_text",
-                "quality_flags": ["dark_background", "horizontal_dark_bg_skip"],
-            })
-            continue
-        if is_dark_bg:
-            diagnostics.append({
-                "cluster_id": cluster_id,
-                "method": "dark_bg_vertical_allowed",
-                "is_valid": True,
-                "quality_flags": ["dark_background", "dark_flood_candidate", "vertical_dark_bg_allowed"],
-            })
 
-        if is_large_single_glyph_sfx:
-            diagnostics.append({"cluster_id": cluster_id, "method": "large_single_glyph_sfx_like", "is_valid": False})
-            skipped.append({
-                "cluster_id": cluster_id,
-                "anchor_bbox": rect,
-                "fallback_bbox": fallback_rect,
-                "reason": "large_single_glyph_sfx_like",
-                "method": "noise_like",
-                "region_type": "noise_like",
-            })
+def _expanded_split_ocr_rect(
+    child_rect: List[int],
+    parent_rect: List[int],
+    anchor_rects: Optional[List[List[int]]] = None,
+    pad: int = 2,
+) -> List[int]:
+    """split child OCR crop은 child bbox를 기본으로, 잘린 TG bbox만 최소 보정한다."""
+    cx, cy, cw, ch = [int(v) for v in child_rect[:4]]
+    px, py, pw, ph = [int(v) for v in parent_rect[:4]]
+    x1, y1 = cx, cy
+    x2, y2 = cx + cw, cy + ch
+    for rect in anchor_rects or []:
+        ax, ay, aw, ah = [int(v) for v in rect[:4]]
+        x1 = min(x1, ax - pad)
+        y1 = min(y1, ay - pad)
+        x2 = max(x2, ax + aw + pad)
+        y2 = max(y2, ay + ah + pad)
+    x1 = max(px, x1)
+    y1 = max(py, y1)
+    x2 = min(px + pw, x2)
+    y2 = min(py + ph, y2)
+    return [x1, y1, max(1, x2 - x1), max(1, y2 - y1)]
+
+
+def _padded_text_restore_rects(
+    anchor_rects: List[List[int]],
+    parent_rect: List[int],
+    pad: int = 2,
+) -> List[List[int]]:
+    """split OCR에서 복원할 TG 주변 원본 픽셀 영역만 반환한다."""
+    px, py, pw, ph = [int(v) for v in parent_rect[:4]]
+    out: List[List[int]] = []
+    for rect in anchor_rects:
+        ax, ay, aw, ah = [int(v) for v in rect[:4]]
+        x1 = max(px, ax - pad)
+        y1 = max(py, ay - pad)
+        x2 = min(px + pw, ax + aw + pad)
+        y2 = min(py + ph, ay + ah + pad)
+        if x2 > x1 and y2 > y1:
+            out.append([x1, y1, x2 - x1, y2 - y1])
+    return out
+
+
+def _is_stable_edge_rescue_region(region: Dict[str, Any]) -> bool:
+    """안정적인 edge barrier rescue bubble은 후단 split으로 다시 찢지 않는다."""
+    if region.get("method") != "edge_barrier_rescue":
+        return False
+    flags = region.get("quality_flags", [])
+    solid = _extract_quality_float(flags, "solid")
+    edge_score = _extract_quality_float(flags, "edge_score")
+    edge_ratio = _extract_quality_float(flags, "edge_ratio")
+    if solid is None or edge_score is None or edge_ratio is None:
+        return False
+    return solid >= 0.88 and edge_score >= 4.0 and edge_ratio <= 2.3
+
+
+def _should_keep_parent_for_continuation_columns(
+    clusters_by_id: Dict[int, Dict[str, Any]],
+    anchor_ids: List[int],
+    split_result: List[Dict[str, Any]],
+) -> bool:
+    """같은 말풍선 안의 우→좌 이어쓰기 칼럼이면 split을 폐기한다."""
+    if len(anchor_ids) != 2 or len(split_result) != 2:
+        return False
+    split_anchor_ids = [
+        [int(aid) for aid in sub.get("anchor_ids", []) if int(aid) in clusters_by_id]
+        for sub in split_result
+    ]
+    if any(len(ids) != 1 for ids in split_anchor_ids):
+        return False
+
+    aid_a, aid_b = split_anchor_ids[0][0], split_anchor_ids[1][0]
+    rect_a = _tight_text_group_rect(clusters_by_id[aid_a])
+    rect_b = _tight_text_group_rect(clusters_by_id[aid_b])
+
+    def _center_x(rect: List[int]) -> float:
+        return rect[0] + rect[2] / 2
+
+    right_id, right_rect, left_id, left_rect = (
+        (aid_a, rect_a, aid_b, rect_b)
+        if _center_x(rect_a) >= _center_x(rect_b)
+        else (aid_b, rect_b, aid_a, rect_a)
+    )
+
+    _ = right_id
+    ry1, ry2 = right_rect[1], right_rect[1] + right_rect[3]
+    ly1, ly2 = left_rect[1], left_rect[1] + left_rect[3]
+    overlap_y = max(0, min(ry2, ly2) - max(ry1, ly1))
+    min_h = max(1, min(right_rect[3], left_rect[3]))
+    overlap_ratio = overlap_y / min_h
+    align_tol = max(45, int(min_h * 0.55))
+    vertically_aligned = (
+        abs(ry1 - ly1) <= align_tol
+        or abs(ry2 - ly2) <= align_tol
+        or (ry1 <= ly1 and ly2 <= ry2)
+        or (ly1 <= ry1 and ry2 <= ly2)
+    )
+    if overlap_ratio < 0.65:
+        return False
+    if not vertically_aligned:
+        return False
+
+    right_x1 = right_rect[0]
+    left_x2 = left_rect[0] + left_rect[2]
+    x_gap = max(0, right_x1 - left_x2)
+    if x_gap > max(80, int(max(right_rect[2], left_rect[2]) * 1.2)):
+        return False
+
+    left_text = "".join(ch for ch in _cluster_text(clusters_by_id[left_id]) if not ch.isspace())
+    starts_like_continuation = bool(left_text) and left_text[0] in "-ー…‥っッ、。！？!?"
+    left_is_short = len(left_text) <= 4 or left_rect[2] <= right_rect[2] * 0.85
+    return bool(left_is_short or starts_like_continuation)
+
+
+def _edge_split_anchor_coverage_ok(
+    clusters_by_id: Dict[int, Dict[str, Any]],
+    split_result: List[Dict[str, Any]],
+) -> bool:
+    """edge rescue split child가 배정된 TG bbox를 충분히 포함하는지 확인한다."""
+    for sub in split_result:
+        sub_mask = sub.get("sub_mask")
+        if not isinstance(sub_mask, np.ndarray):
+            return False
+        for aid in sub.get("anchor_ids", []):
+            if aid not in clusters_by_id:
+                return False
+            ax, ay, aw, ah = _tight_text_group_rect(clusters_by_id[aid])
+            if aw <= 0 or ah <= 0:
+                return False
+            x1 = max(0, ax)
+            y1 = max(0, ay)
+            x2 = min(sub_mask.shape[1], ax + aw)
+            y2 = min(sub_mask.shape[0], ay + ah)
+            if x2 <= x1 or y2 <= y1:
+                return False
+            coverage = float(np.count_nonzero(sub_mask[y1:y2, x1:x2] > 0)) / max(1, aw * ah)
+            if coverage < 0.82:
+                return False
+    return True
+
+
+def _reading_order_key(item: Dict[str, Any]) -> Tuple[float, float, float]:
+    region = item["region"]
+    sort_group_index = float(region.get("sort_group_index", 0))
+    return (sort_group_index, float(region.get("split_order", 0)), 0.0)
+
+
+def _prefilter_text_group(
+    cluster: Dict[str, Any],
+    rect: List[int],
+    fallback_rect: List[int],
+    cluster_id: int,
+    gray: np.ndarray,
+    img_w: int,
+    img_h: int,
+    dark_bg_mean_threshold: int,
+    diagnostics: List[Dict[str, Any]],
+    skipped: List[Dict[str, Any]],
+    noise_like_anchors: List[Dict[str, Any]],
+) -> Optional[Tuple[bool, bool]]:
+    """Probe 전 필터: 각주·메타데이터·가로 어두운 배경·SFX·기호 TG를 skipped에 기록하고 None, 통과하면 (is_dark_bg, is_horizontal_tg)."""
+    is_symbol_only = _is_symbol_only_text(_cluster_text(cluster))
+    is_short_non_jp_noise = _is_short_non_japanese_noise_text(_cluster_text(cluster))
+    is_english_only = _is_english_only_text(_cluster_text(cluster))
+    is_large_single_glyph_sfx = _is_large_single_glyph_sfx_like(cluster, rect)
+    is_large_short_kana_sfx = _is_large_short_kana_sfx_like(cluster, rect)
+
+    is_dark_bg = _is_dark_bg_text(gray, rect, dark_bg_mean_threshold)
+    is_horizontal_tg = _is_horizontal_text_group(cluster, rect)
+
+    # 이미지 하단 근처(하위 8%) 가로 텍스트: 챕터 엔드 표기·페이지 캡션 등
+    # 말풍선이 아닌 인쇄 레이아웃 텍스트이므로 bubble 감지 대상에서 제외
+    # orientation 필드가 'vertical'이어도 AR이 명확히 가로형이면 landscape로 판단
+    _rx, _ry, _rw, _rh = rect
+    _is_landscape_by_ar = _rh > 0 and (_rw / _rh) >= 1.15
+    if (is_horizontal_tg or _is_landscape_by_ar) and (_ry + _rh) > img_h * 0.92:
+        diagnostics.append({"cluster_id": cluster_id, "method": "bottom_landscape_footer", "is_valid": False})
+        skipped.append({
+            "cluster_id": cluster_id,
+            "anchor_bbox": rect,
+            "fallback_bbox": fallback_rect,
+            "reason": "bottom_landscape_footer",
+            "method": "noise_like",
+            "region_type": "noise_like",
+            "quality_flags": ["bottom_landscape_footer"],
+        })
+        return None
+
+    _tiny_landscape_noise = (
+        _is_landscape_by_ar
+        and _rh <= max(14, int(img_h * 0.014))
+        and (_rw * _rh) <= max(700, int(img_w * img_h * 0.00075))
+    )
+    if _tiny_landscape_noise:
+        diagnostics.append({"cluster_id": cluster_id, "method": "tiny_landscape_text_noise", "is_valid": False})
+        skipped.append({
+            "cluster_id": cluster_id,
+            "anchor_bbox": rect,
+            "fallback_bbox": fallback_rect,
+            "reason": "tiny_landscape_text_noise",
+            "method": "noise_like",
+            "region_type": "noise_like",
+            "quality_flags": ["tiny_landscape_text_noise"],
+        })
+        return None
+
+    # 이미지 좌/우 끝에 바싹 붙은 매우 좁은 세로 텍스트: 면책 문구·저작권 표기 등 인쇄 메타데이터
+    _narrow_meta = _is_edge_narrow_metadata_rect(rect, img_w)
+    if _narrow_meta:
+        diagnostics.append({"cluster_id": cluster_id, "method": "edge_narrow_metadata", "is_valid": False})
+        skipped.append({
+            "cluster_id": cluster_id,
+            "anchor_bbox": rect,
+            "fallback_bbox": fallback_rect,
+            "reason": "edge_narrow_metadata",
+            "method": "metadata",
+            "region_type": "metadata",
+            "quality_flags": ["edge_narrow_metadata"],
+        })
+        return None
+
+    if is_dark_bg and is_horizontal_tg:
+        diagnostics.append({"cluster_id": cluster_id, "method": "dark_bg_text", "is_valid": False})
+        skipped.append({
+            "cluster_id": cluster_id,
+            "anchor_bbox": rect,
+            "fallback_bbox": fallback_rect,
+            "reason": "dark_bg_text",
+            "method": "dark_bg_text",
+            "region_type": "dark_bg_text",
+            "quality_flags": ["dark_background", "horizontal_dark_bg_skip"],
+        })
+        return None
+    if is_dark_bg:
+        diagnostics.append({
+            "cluster_id": cluster_id,
+            "method": "dark_bg_vertical_allowed",
+            "is_valid": True,
+            "quality_flags": ["dark_background", "dark_flood_candidate", "vertical_dark_bg_allowed"],
+        })
+
+    if is_large_single_glyph_sfx:
+        diagnostics.append({"cluster_id": cluster_id, "method": "large_single_glyph_sfx_like", "is_valid": False})
+        skipped.append({
+            "cluster_id": cluster_id,
+            "anchor_bbox": rect,
+            "fallback_bbox": fallback_rect,
+            "reason": "large_single_glyph_sfx_like",
+            "method": "noise_like",
+            "region_type": "noise_like",
+        })
+        noise_like_anchors.append({
+            "cluster_id": cluster_id,
+            "anchor_bbox": rect,
+            "fallback_bbox": fallback_rect,
+            "reason": "large_single_glyph_sfx_like",
+        })
+        return None
+
+    if is_large_short_kana_sfx:
+        diagnostics.append({"cluster_id": cluster_id, "method": "large_short_kana_sfx_like", "is_valid": False})
+        skipped.append({
+            "cluster_id": cluster_id,
+            "anchor_bbox": rect,
+            "fallback_bbox": fallback_rect,
+            "reason": "large_short_kana_sfx_like",
+            "method": "noise_like",
+            "region_type": "noise_like",
+        })
+        noise_like_anchors.append({
+            "cluster_id": cluster_id,
+            "anchor_bbox": rect,
+            "fallback_bbox": fallback_rect,
+            "reason": "large_short_kana_sfx_like",
+        })
+        return None
+
+    if is_symbol_only or is_short_non_jp_noise or is_english_only:
+        reason = "symbol_only_text" if is_symbol_only else "short_non_japanese_noise_text" if is_short_non_jp_noise else "english_only_text"
+        diagnostics.append({"cluster_id": cluster_id, "method": reason, "is_valid": False})
+        if is_symbol_only:
             noise_like_anchors.append({
-                "cluster_id": cluster_id,
-                "anchor_bbox": rect,
-                "fallback_bbox": fallback_rect,
-                "reason": "large_single_glyph_sfx_like",
-            })
-            continue
-
-        if is_large_short_kana_sfx:
-            diagnostics.append({"cluster_id": cluster_id, "method": "large_short_kana_sfx_like", "is_valid": False})
-            skipped.append({
-                "cluster_id": cluster_id,
-                "anchor_bbox": rect,
-                "fallback_bbox": fallback_rect,
-                "reason": "large_short_kana_sfx_like",
-                "method": "noise_like",
-                "region_type": "noise_like",
-            })
-            noise_like_anchors.append({
-                "cluster_id": cluster_id,
-                "anchor_bbox": rect,
-                "fallback_bbox": fallback_rect,
-                "reason": "large_short_kana_sfx_like",
-            })
-            continue
-
-        if is_symbol_only or is_short_non_jp_noise or is_english_only:
-            reason = "symbol_only_text" if is_symbol_only else "short_non_japanese_noise_text" if is_short_non_jp_noise else "english_only_text"
-            diagnostics.append({"cluster_id": cluster_id, "method": reason, "is_valid": False})
-            if is_symbol_only:
-                noise_like_anchors.append({
-                    "cluster_id": cluster_id,
-                    "anchor_bbox": rect,
-                    "fallback_bbox": fallback_rect,
-                    "reason": reason,
-                })
-            skipped.append({
                 "cluster_id": cluster_id,
                 "anchor_bbox": rect,
                 "fallback_bbox": fallback_rect,
                 "reason": reason,
-                "method": "noise_like",
-                "region_type": "noise_like",
             })
-            continue
+        skipped.append({
+            "cluster_id": cluster_id,
+            "anchor_bbox": rect,
+            "fallback_bbox": fallback_rect,
+            "reason": reason,
+            "method": "noise_like",
+            "region_type": "noise_like",
+        })
+        return None
 
-        x, y, w, h = _unpack_rect(rect)
-        seed: Optional[Point] = None
-        mask = np.zeros((img_h, img_w), dtype=np.uint8)
-        area = 0
-        candidate_rect = [0, 0, 0, 0]
+    return is_dark_bg, is_horizontal_tg
 
-        is_valid = False
-        method = "bbox_fallback"
-        region_type = "bbox_fallback"
-        bubble_mask = np.zeros((img_h, img_w), dtype=np.uint8)
-        bubble_rect = list(_unpack_rect(fallback_rect))
-        bubble_page_ratio = 0.0
-        bubble_tg_ratio = 0.0
-        touches_border = False
-        quality_flags = (
-            ["dark_background", "dark_flood_candidate", "vertical_dark_bg_allowed"]
-            if is_dark_bg and not is_horizontal_tg
-            else []
+
+def _validate_flood_candidate(
+    cluster: Dict[str, Any],
+    gray: np.ndarray,
+    mask: np.ndarray,
+    candidate_rect: List[int],
+    erode_pixels: int,
+    bubble_page_ratio: float,
+    bubble_tg_ratio: float,
+    touches_border: bool,
+    quality_flags: List[str],
+    _page_black_contour: Callable[[], np.ndarray],
+    is_valid: bool,
+    bubble_mask: np.ndarray,
+    bubble_rect: List[int],
+    method: str,
+    region_type: str,
+) -> Tuple[np.ndarray, bool, bool, bool, np.ndarray, List[int], str, str]:
+    """Strict Validation: bounds를 통과한 flood mask의 모양·경계 증거를 판정해 quality_flags에 기록하고 갱신된 후보 상태를 돌려준다."""
+    filled_mask = _fill_mask_holes(mask)
+    candidate_mask = _erode_mask(filled_mask, pixels=erode_pixels)
+
+    bimodality = _compute_flood_bimodality(filled_mask, gray)
+    is_bimodal = (bimodality >= 0.88)
+
+    # Solidity Check
+    # _is_bubble_shaped internally checks solidity >= min_solidity
+    # raw mask check
+    raw_binary = np.where(mask > 0, 255, 0).astype(np.uint8)
+    raw_contours, _ = cv2.findContours(raw_binary, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    raw_solid = 0.0
+    raw_round = 0.0
+    if raw_contours:
+        rcnt = max(raw_contours, key=cv2.contourArea)
+        rarea = cv2.contourArea(rcnt)
+        rhull = cv2.contourArea(cv2.convexHull(rcnt))
+        if rhull > 0: raw_solid = rarea / rhull
+        rperi = cv2.arcLength(rcnt, True)
+        if rperi > 0: raw_round = 4 * np.pi * rarea / (rperi ** 2)
+
+    binary = np.where(candidate_mask > 0, 255, 0).astype(np.uint8)
+    contours, _ = cv2.findContours(binary, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    solidity = 0.0
+    roundness = 0.0
+    if contours:
+        cnt = max(contours, key=cv2.contourArea)
+        area_cnt = cv2.contourArea(cnt)
+        hull_area = cv2.contourArea(cv2.convexHull(cnt))
+        if hull_area > 0:
+            solidity = area_cnt / hull_area
+
+        peri = cv2.arcLength(cnt, True)
+        if peri > 0:
+            roundness = 4 * np.pi * area_cnt / (peri ** 2)
+
+    _SOLID_THR = 0.82
+    # aspect ratio 기반 roundness 정규화
+    # 이상적 직사각형 roundness = π*ar/(ar+1)²로 정규화하면
+    # 직사각형≈1.0, 타원>1.0으로 두 타입 점수가 비슷해짐
+
+
+    _bw = int(candidate_rect[2]) if len(candidate_rect) >= 3 else 1
+    _bh = int(candidate_rect[3]) if len(candidate_rect) >= 4 else 1
+    _ar = max(_bw, _bh) / max(min(_bw, _bh), 1)
+    _rect_round_ideal = math.pi * _ar / (_ar + 1) ** 2
+    _rect_round_ideal = max(_rect_round_ideal, 0.10)
+    # raw_round < rect_ideal 구간은 sqrt로 완화:
+    # 직사각형 오버랩처럼 이상값 아래로 떨어지는 케이스를 선형보다 덜 페널티.
+    # raw_round >= rect_ideal (타원/원)은 그대로 linear.
+    _rr_ratio = raw_round / _rect_round_ideal
+    type_round = math.sqrt(_rr_ratio) if _rr_ratio < 1.0 else _rr_ratio
+
+    shape_score = (solidity / _SOLID_THR) * type_round
+
+    # Gate 1: 모양 점수
+    _SHAPE_THR = 0.58
+    is_shape_gate = shape_score >= _SHAPE_THR
+
+    # Gate 2: 크기 페널티 (flood 탈출 차단)
+    # tg_ratio는 anchor bbox 크기에 따라 왜곡되므로 제외.
+    _BASE_PAGE   = 0.07
+    _BORDER_MULT = 0.80
+    page_penalty   = _BASE_PAGE / max(bubble_page_ratio, _BASE_PAGE)
+    border_penalty = _BORDER_MULT if touches_border else 1.0
+    adjusted_score = shape_score * page_penalty * border_penalty
+    is_size_gate = adjusted_score >= 0.50
+
+    # border_rescue: page_penalty가 이미 적용 중인(page > BASE) 큰 region에서
+    # border_penalty까지 중첩돼 탈락하는 경우만 구제.
+    adj_no_border = shape_score * page_penalty
+    is_border_rescue = (
+        is_shape_gate
+        and touches_border
+        and not is_size_gate
+        and bubble_page_ratio > _BASE_PAGE
+        and adj_no_border >= 0.50
+    )
+
+    is_shape_ok = is_shape_gate and (is_size_gate or is_border_rescue)
+    boundary_sides, boundary_ratios = _boundary_evidence(gray, list(candidate_rect[:4]))
+    has_boundary_evidence = boundary_sides >= 3
+    center_offset = _text_center_offset_ratio(list(candidate_rect[:4]), _tight_text_group_rect(cluster))
+    rect_like = raw_solid >= 0.85 and 0.38 <= raw_round <= 0.62 and shape_score >= 0.78
+    ellipse_like = raw_solid >= 0.93 and raw_round >= 0.63 and shape_score >= 1.00
+    dual_rect_profile = _dual_rect_profile_signal(filled_mask)
+    closed_contour_probe = _black_contour_probe(
+        gray,
+        list(candidate_rect[:4]),
+        filled_mask,
+        black=_page_black_contour(),
+    )
+    closed_boundary_like = (
+        closed_contour_probe.get("status") == "closed"
+        and float(closed_contour_probe.get("coverage", 0.0)) >= 0.90
+        and int(closed_contour_probe.get("quadrants", 0)) == 4
+        and float(closed_contour_probe.get("max_gap", 1.0)) <= 0.12
+        and float(closed_contour_probe.get("distance_cv", 1.0)) <= 0.20
+        and boundary_sides == 4
+        and shape_score >= 0.58
+    )
+    dual_rect_like, dual_rect_score, dual_rect_parts = _dual_rect_validation_score(
+        raw_solid,
+        raw_round,
+        shape_score,
+        boundary_sides,
+        closed_contour_probe,
+        dual_rect_profile,
+        bubble_page_ratio,
+        touches_border,
+    )
+    distance_peaks = _distance_peak_signal(filled_mask)
+    dual_ellipse_tail_like = (
+        raw_solid >= 0.78
+        and 0.32 <= raw_round <= 0.58
+        and shape_score >= 0.68
+        and distance_peaks["ok"] >= 1.0
+    )
+    direct_shape_class = (
+        "rect"
+        if rect_like
+        else (
+            "ellipse"
+            if ellipse_like
+            else (
+            "dual_rect"
+            if dual_rect_like
+                else (
+                    "closed_boundary"
+                    if closed_boundary_like
+                    else ("dual_ellipse_tail" if dual_ellipse_tail_like else "none")
+                )
+            )
         )
-        candidate_mask = np.zeros((img_h, img_w), dtype=np.uint8)
-        is_bimodal = False
-        is_shape_ok = False
+    )
+    direct_shape_ok = has_boundary_evidence and direct_shape_class != "none"
 
-        if is_dark_bg and not is_horizontal_tg:
-            seed, mask, area, candidate_rect = _dark_flood_with_fallback(image, gray, rect)
-            if seed is not None:
-                bubble_page_ratio = area / image_area
-                touches_border = _touches_image_border(mask)
-                fx, fy, fw, fh = _unpack_rect(candidate_rect)
-                bubble_rect = [fx, fy, fw, fh]
-                anchor_area = max(1, w * h)
-                bubble_tg_ratio = (fw * fh) / anchor_area
-                center = _bbox_center(rect)
-                center_inside = (fx <= center[0] <= fx + fw and fy <= center[1] <= fy + fh)
-                solidity, roundness = _mask_solidity_roundness(mask)
-                dark_shape_ok = solidity >= 0.88 and roundness >= 0.20
-                dark_max_tg_ratio = min(max_bubble_tg_ratio, 8.0)
-                dark_size_ok = (
-                    bubble_page_ratio <= min(max_area_ratio, 0.07)
-                    and 1.2 <= bubble_tg_ratio <= dark_max_tg_ratio
-                    and center_inside
-                    and not touches_border
-                )
-                quality_flags.append(
-                    f"dark_flood solid={round(solidity,3)}, round={round(roundness,3)}, "
-                    f"tg={round(bubble_tg_ratio,2)}, page={round(bubble_page_ratio,4)}, "
-                    f"border={'Y' if touches_border else 'N'}"
-                )
-                if dark_shape_ok and dark_size_ok:
-                    is_valid = True
-                    candidate_mask = _fill_mask_holes(mask)
-                    bubble_mask = candidate_mask
-                    method = "dark_flood"
-                    region_type = "bubble"
-                    is_shape_ok = True
-                    is_bimodal = True
-                    quality_flags.extend(["dark_flood_success", "skip_edge_barrier_for_dark_bg"])
-                else:
-                    quality_flags.append("dark_flood_failed_validation")
+    # 로그 추가
+    quality_flags.append(
+        f"raw_solid={round(raw_solid,3)}, raw_round={round(raw_round,3)}, "
+        f"solid={round(solidity,3)}, round={round(roundness,3)}, "
+        f"shape={round(shape_score,3)}, adj={round(adjusted_score,3)}, "
+        f"tg={round(bubble_tg_ratio,2)}, page={round(bubble_page_ratio,4)}, "
+        f"border={'Y' if touches_border else 'N'}"
+    )
+    quality_flags.append(
+        "boundary="
+        f"sides={boundary_sides},"
+        f"t={boundary_ratios['top']:.2f},b={boundary_ratios['bottom']:.2f},"
+        f"l={boundary_ratios['left']:.2f},r={boundary_ratios['right']:.2f}"
+    )
+    quality_flags.append(f"shape_class={direct_shape_class}")
+    if dual_rect_like:
+        quality_flags.append(
+            "dual_rect_profile="
+            f"axis={dual_rect_profile['axis']},"
+            f"score={dual_rect_profile['score']:.2f},"
+            f"shift={dual_rect_profile['center_shift']:.2f},"
+            f"neck={dual_rect_profile['neck_ratio']:.2f},"
+            f"floor={dual_rect_profile['width_floor']:.2f}"
+        )
+        quality_flags.append(
+            "dual_rect_score="
+            f"{dual_rect_score:.2f},"
+            f"p={dual_rect_parts['profile']:.2f},"
+            f"c={dual_rect_parts['contour']:.2f},"
+            f"b={dual_rect_parts['boundary']:.2f},"
+            f"s={dual_rect_parts['solid']:.2f},"
+            f"r={dual_rect_parts['round']:.2f},"
+            f"sh={dual_rect_parts['shape']:.2f},"
+            f"pen={dual_rect_parts['penalty']:.2f}"
+        )
+        quality_flags.append(
+            "dual_rect_contour="
+            f"{closed_contour_probe['status']},"
+            f"cov={closed_contour_probe['coverage']:.2f},"
+            f"quad={closed_contour_probe['quadrants']},"
+            f"gap={closed_contour_probe['max_gap']:.2f},"
+            f"cv={closed_contour_probe['distance_cv']:.2f}"
+        )
+    if closed_boundary_like:
+        quality_flags.append(
+            "closed_boundary="
+            f"{closed_contour_probe['status']},"
+            f"cov={closed_contour_probe['coverage']:.2f},"
+            f"quad={closed_contour_probe['quadrants']},"
+            f"gap={closed_contour_probe['max_gap']:.2f},"
+            f"cv={closed_contour_probe['distance_cv']:.2f}"
+        )
+    if dual_ellipse_tail_like:
+        quality_flags.append(
+            "dual_ellipse_tail="
+            f"peaks={int(distance_peaks['count'])},"
+            f"score={distance_peaks.get('score', 0.0):.2f},"
+            f"sep={distance_peaks.get('sep_ratio', 0.0):.2f},"
+            f"balance={distance_peaks.get('balance', 0.0):.2f}"
+        )
+    quality_flags.append(f"center_offset={center_offset:.2f}")
 
-        # Step 1: Primary Probe
-        if not is_valid:
-            seed, mask, area, candidate_rect = _flood_with_fallback(image, gray, rect)
+    if direct_shape_ok:
+        is_valid = True
+        # 3px 침식 마스크(candidate_mask)는 모양 판정용이다. 테두리 보호는 흰칠 단계의 침식
+        # (dialogue_extractor bubble_mask_erode)이 맡으므로 영역 마스크는 침식 전 것을 쓴다(이중 침식 방지).
+        bubble_mask = filled_mask
+        bubble_rect = [int(v) for v in candidate_rect[:4]]
+        method = "flood"
 
-        if not is_valid and seed is not None:
-            # Step 2: Strict Validation
+        # Determine basic features for region_type
+        _ft, _ff, _ = _classify_anchor_region(
+            cluster, list(bubble_rect), int(np.count_nonzero(bubble_mask)),
+            touches_border, True
+        )
+        quality_flags.extend(_ff)
+
+        # valid flood는 후단에서 모두 bubble crop으로 처리한다.
+        # bubble 검증 실패 후보만 unboxed inpaint 대상으로 남긴다.
+        region_type = "bubble"
+    else:
+        quality_flags.append("failed_validation")
+        if not has_boundary_evidence:
+            quality_flags.append("weak_boundary_evidence")
+
+    return (
+        candidate_mask, is_bimodal, is_shape_ok, is_valid,
+        bubble_mask, bubble_rect, method, region_type,
+    )
+
+
+def _probe_text_group(
+    idx: int,
+    cluster: Dict[str, Any],
+    image: np.ndarray,
+    gray: np.ndarray,
+    img_w: int,
+    img_h: int,
+    image_area: int,
+    erode_pixels: int,
+    max_area_ratio: float,
+    min_bubble_tg_ratio: float,
+    max_bubble_tg_ratio: float,
+    dark_bg_mean_threshold: int,
+    _page_black_contour: Callable[[], np.ndarray],
+    grouped: Dict[Tuple[Any, ...], Dict[str, Any]],
+    diagnostics: List[Dict[str, Any]],
+    skipped: List[Dict[str, Any]],
+    noise_like_anchors: List[Dict[str, Any]],
+) -> None:
+    """Primary Probe: TG 하나를 필터·dark flood·flood probe·검증한 뒤 결과를 grouped(유효 bubble 또는 bbox fallback)와 진단 목록에 넣는다."""
+    rect = _tight_text_group_rect(cluster)
+    fallback_rect = _fallback_text_group_rect(cluster)
+    if len(rect) < 4:
+        return
+
+    cluster_id = _text_group_id(cluster, idx)
+
+    prefilter = _prefilter_text_group(
+        cluster, rect, fallback_rect, cluster_id, gray, img_w, img_h,
+        dark_bg_mean_threshold, diagnostics, skipped, noise_like_anchors,
+    )
+    if prefilter is None:
+        return
+    is_dark_bg, is_horizontal_tg = prefilter
+
+    x, y, w, h = _unpack_rect(rect)
+    seed: Optional[Point] = None
+    mask = np.zeros((img_h, img_w), dtype=np.uint8)
+    area = 0
+    candidate_rect = [0, 0, 0, 0]
+
+    is_valid = False
+    method = "bbox_fallback"
+    region_type = "bbox_fallback"
+    bubble_mask = np.zeros((img_h, img_w), dtype=np.uint8)
+    bubble_rect = list(_unpack_rect(fallback_rect))
+    bubble_page_ratio = 0.0
+    bubble_tg_ratio = 0.0
+    touches_border = False
+    quality_flags = (
+        ["dark_background", "dark_flood_candidate", "vertical_dark_bg_allowed"]
+        if is_dark_bg and not is_horizontal_tg
+        else []
+    )
+    candidate_mask = np.zeros((img_h, img_w), dtype=np.uint8)
+    is_bimodal = False
+    is_shape_ok = False
+
+    if is_dark_bg and not is_horizontal_tg:
+        seed, mask, area, candidate_rect = _dark_flood_with_fallback(image, gray, rect)
+        if seed is not None:
             bubble_page_ratio = area / image_area
             touches_border = _touches_image_border(mask)
             fx, fy, fw, fh = _unpack_rect(candidate_rect)
@@ -2217,327 +2593,160 @@ def build_ocr_region_sheet(
             bubble_tg_ratio = (fw * fh) / anchor_area
             center = _bbox_center(rect)
             center_inside = (fx <= center[0] <= fx + fw and fy <= center[1] <= fy + fh)
-            
-            valid_area = (bubble_page_ratio <= max_area_ratio)
-            valid_ratio = (bubble_tg_ratio >= min_bubble_tg_ratio)
-
-            if valid_area and valid_ratio and center_inside:
-                filled_mask = _fill_mask_holes(mask)
-                candidate_mask = _erode_mask(filled_mask, pixels=erode_pixels)
-                
-                bimodality = _compute_flood_bimodality(filled_mask, gray)
-                is_bimodal = (bimodality >= 0.88)
-                
-                # Solidity Check
-                # _is_bubble_shaped internally checks solidity >= min_solidity
-                # raw mask check
-                raw_binary = np.where(mask > 0, 255, 0).astype(np.uint8)
-                raw_contours, _ = cv2.findContours(raw_binary, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-                raw_solid = 0.0
-                raw_round = 0.0
-                if raw_contours:
-                    rcnt = max(raw_contours, key=cv2.contourArea)
-                    rarea = cv2.contourArea(rcnt)
-                    rhull = cv2.contourArea(cv2.convexHull(rcnt))
-                    if rhull > 0: raw_solid = rarea / rhull
-                    rperi = cv2.arcLength(rcnt, True)
-                    if rperi > 0: raw_round = 4 * np.pi * rarea / (rperi ** 2)
-                    
-                binary = np.where(candidate_mask > 0, 255, 0).astype(np.uint8)
-                contours, _ = cv2.findContours(binary, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-                solidity = 0.0
-                roundness = 0.0
-                if contours:
-                    cnt = max(contours, key=cv2.contourArea)
-                    area_cnt = cv2.contourArea(cnt)
-                    hull_area = cv2.contourArea(cv2.convexHull(cnt))
-                    if hull_area > 0:
-                        solidity = area_cnt / hull_area
-                    
-                    peri = cv2.arcLength(cnt, True)
-                    if peri > 0:
-                        roundness = 4 * np.pi * area_cnt / (peri ** 2)
-                
-                _SOLID_THR = 0.82
-                # aspect ratio 기반 roundness 정규화
-                # 이상적 직사각형 roundness = π*ar/(ar+1)²로 정규화하면
-                # 직사각형≈1.0, 타원>1.0으로 두 타입 점수가 비슷해짐
-
-
-                _bw = int(candidate_rect[2]) if len(candidate_rect) >= 3 else 1
-                _bh = int(candidate_rect[3]) if len(candidate_rect) >= 4 else 1
-                _ar = max(_bw, _bh) / max(min(_bw, _bh), 1)
-                _rect_round_ideal = math.pi * _ar / (_ar + 1) ** 2
-                _rect_round_ideal = max(_rect_round_ideal, 0.10)
-                # raw_round < rect_ideal 구간은 sqrt로 완화:
-                # 직사각형 오버랩처럼 이상값 아래로 떨어지는 케이스를 선형보다 덜 페널티.
-                # raw_round >= rect_ideal (타원/원)은 그대로 linear.
-                _rr_ratio = raw_round / _rect_round_ideal
-                type_round = math.sqrt(_rr_ratio) if _rr_ratio < 1.0 else _rr_ratio
-
-                shape_score = (solidity / _SOLID_THR) * type_round
-
-                # Gate 1: 모양 점수
-                _SHAPE_THR = 0.58
-                is_shape_gate = shape_score >= _SHAPE_THR
-
-                # Gate 2: 크기 페널티 (flood 탈출 차단)
-                # tg_ratio는 anchor bbox 크기에 따라 왜곡되므로 제외.
-                _BASE_PAGE   = 0.07
-                _BORDER_MULT = 0.80
-                page_penalty   = _BASE_PAGE / max(bubble_page_ratio, _BASE_PAGE)
-                border_penalty = _BORDER_MULT if touches_border else 1.0
-                adjusted_score = shape_score * page_penalty * border_penalty
-                is_size_gate = adjusted_score >= 0.50
-
-                # border_rescue: page_penalty가 이미 적용 중인(page > BASE) 큰 region에서
-                # border_penalty까지 중첩돼 탈락하는 경우만 구제.
-                adj_no_border = shape_score * page_penalty
-                is_border_rescue = (
-                    is_shape_gate
-                    and touches_border
-                    and not is_size_gate
-                    and bubble_page_ratio > _BASE_PAGE
-                    and adj_no_border >= 0.50
-                )
-
-                is_shape_ok = is_shape_gate and (is_size_gate or is_border_rescue)
-                boundary_sides, boundary_ratios = _boundary_evidence(gray, list(candidate_rect[:4]))
-                has_boundary_evidence = boundary_sides >= 3
-                center_offset = _text_center_offset_ratio(list(candidate_rect[:4]), _tight_text_group_rect(cluster))
-                rect_like = raw_solid >= 0.85 and 0.38 <= raw_round <= 0.62 and shape_score >= 0.78
-                ellipse_like = raw_solid >= 0.93 and raw_round >= 0.63 and shape_score >= 1.00
-                dual_rect_profile = _dual_rect_profile_signal(filled_mask)
-                closed_contour_probe = _black_contour_probe(
-                    gray,
-                    list(candidate_rect[:4]),
-                    filled_mask,
-                    black=_page_black_contour(),
-                )
-                closed_boundary_like = (
-                    closed_contour_probe.get("status") == "closed"
-                    and float(closed_contour_probe.get("coverage", 0.0)) >= 0.90
-                    and int(closed_contour_probe.get("quadrants", 0)) == 4
-                    and float(closed_contour_probe.get("max_gap", 1.0)) <= 0.12
-                    and float(closed_contour_probe.get("distance_cv", 1.0)) <= 0.20
-                    and boundary_sides == 4
-                    and shape_score >= 0.58
-                )
-                dual_rect_like, dual_rect_score, dual_rect_parts = _dual_rect_validation_score(
-                    raw_solid,
-                    raw_round,
-                    shape_score,
-                    boundary_sides,
-                    closed_contour_probe,
-                    dual_rect_profile,
-                    bubble_page_ratio,
-                    touches_border,
-                )
-                distance_peaks = _distance_peak_signal(filled_mask)
-                dual_ellipse_tail_like = (
-                    raw_solid >= 0.78
-                    and 0.32 <= raw_round <= 0.58
-                    and shape_score >= 0.68
-                    and distance_peaks["ok"] >= 1.0
-                )
-                direct_shape_class = (
-                    "rect"
-                    if rect_like
-                    else (
-                        "ellipse"
-                        if ellipse_like
-                        else (
-                        "dual_rect"
-                        if dual_rect_like
-                            else (
-                                "closed_boundary"
-                                if closed_boundary_like
-                                else ("dual_ellipse_tail" if dual_ellipse_tail_like else "none")
-                            )
-                        )
-                    )
-                )
-                direct_shape_ok = has_boundary_evidence and direct_shape_class != "none"
-
-                # 로그 추가
-                quality_flags.append(
-                    f"raw_solid={round(raw_solid,3)}, raw_round={round(raw_round,3)}, "
-                    f"solid={round(solidity,3)}, round={round(roundness,3)}, "
-                    f"shape={round(shape_score,3)}, adj={round(adjusted_score,3)}, "
-                    f"tg={round(bubble_tg_ratio,2)}, page={round(bubble_page_ratio,4)}, "
-                    f"border={'Y' if touches_border else 'N'}"
-                )
-                quality_flags.append(
-                    "boundary="
-                    f"sides={boundary_sides},"
-                    f"t={boundary_ratios['top']:.2f},b={boundary_ratios['bottom']:.2f},"
-                    f"l={boundary_ratios['left']:.2f},r={boundary_ratios['right']:.2f}"
-                )
-                quality_flags.append(f"shape_class={direct_shape_class}")
-                if dual_rect_like:
-                    quality_flags.append(
-                        "dual_rect_profile="
-                        f"axis={dual_rect_profile['axis']},"
-                        f"score={dual_rect_profile['score']:.2f},"
-                        f"shift={dual_rect_profile['center_shift']:.2f},"
-                        f"neck={dual_rect_profile['neck_ratio']:.2f},"
-                        f"floor={dual_rect_profile['width_floor']:.2f}"
-                    )
-                    quality_flags.append(
-                        "dual_rect_score="
-                        f"{dual_rect_score:.2f},"
-                        f"p={dual_rect_parts['profile']:.2f},"
-                        f"c={dual_rect_parts['contour']:.2f},"
-                        f"b={dual_rect_parts['boundary']:.2f},"
-                        f"s={dual_rect_parts['solid']:.2f},"
-                        f"r={dual_rect_parts['round']:.2f},"
-                        f"sh={dual_rect_parts['shape']:.2f},"
-                        f"pen={dual_rect_parts['penalty']:.2f}"
-                    )
-                    quality_flags.append(
-                        "dual_rect_contour="
-                        f"{closed_contour_probe['status']},"
-                        f"cov={closed_contour_probe['coverage']:.2f},"
-                        f"quad={closed_contour_probe['quadrants']},"
-                        f"gap={closed_contour_probe['max_gap']:.2f},"
-                        f"cv={closed_contour_probe['distance_cv']:.2f}"
-                    )
-                if closed_boundary_like:
-                    quality_flags.append(
-                        "closed_boundary="
-                        f"{closed_contour_probe['status']},"
-                        f"cov={closed_contour_probe['coverage']:.2f},"
-                        f"quad={closed_contour_probe['quadrants']},"
-                        f"gap={closed_contour_probe['max_gap']:.2f},"
-                        f"cv={closed_contour_probe['distance_cv']:.2f}"
-                    )
-                if dual_ellipse_tail_like:
-                    quality_flags.append(
-                        "dual_ellipse_tail="
-                        f"peaks={int(distance_peaks['count'])},"
-                        f"score={distance_peaks.get('score', 0.0):.2f},"
-                        f"sep={distance_peaks.get('sep_ratio', 0.0):.2f},"
-                        f"balance={distance_peaks.get('balance', 0.0):.2f}"
-                    )
-                quality_flags.append(f"center_offset={center_offset:.2f}")
-
-                if direct_shape_ok:
-                    is_valid = True
-                    # 3px 침식 마스크(candidate_mask)는 모양 판정용이다. 테두리 보호는 흰칠 단계의 침식
-                    # (dialogue_extractor bubble_mask_erode)이 맡으므로 영역 마스크는 침식 전 것을 쓴다(이중 침식 방지).
-                    bubble_mask = filled_mask
-                    bubble_rect = [int(v) for v in candidate_rect[:4]]
-                    method = "flood"
-
-                    # Determine basic features for region_type
-                    _ft, _ff, _ = _classify_anchor_region(
-                        cluster, list(bubble_rect), int(np.count_nonzero(bubble_mask)),
-                        touches_border, True
-                    )
-                    quality_flags.extend(_ff)
-
-                    # valid flood는 후단에서 모두 bubble crop으로 처리한다.
-                    # bubble 검증 실패 후보만 unboxed inpaint 대상으로 남긴다.
-                    region_type = "bubble"
-                else:
-                    quality_flags.append("failed_validation")
-                    if not has_boundary_evidence:
-                        quality_flags.append("weak_boundary_evidence")
+            solidity, roundness = _mask_solidity_roundness(mask)
+            dark_shape_ok = solidity >= 0.88 and roundness >= 0.20
+            dark_max_tg_ratio = min(max_bubble_tg_ratio, 8.0)
+            dark_size_ok = (
+                bubble_page_ratio <= min(max_area_ratio, 0.07)
+                and 1.2 <= bubble_tg_ratio <= dark_max_tg_ratio
+                and center_inside
+                and not touches_border
+            )
+            quality_flags.append(
+                f"dark_flood solid={round(solidity,3)}, round={round(roundness,3)}, "
+                f"tg={round(bubble_tg_ratio,2)}, page={round(bubble_page_ratio,4)}, "
+                f"border={'Y' if touches_border else 'N'}"
+            )
+            if dark_shape_ok and dark_size_ok:
+                is_valid = True
+                candidate_mask = _fill_mask_holes(mask)
+                bubble_mask = candidate_mask
+                method = "dark_flood"
+                region_type = "bubble"
+                is_shape_ok = True
+                is_bimodal = True
+                quality_flags.extend(["dark_flood_success", "skip_edge_barrier_for_dark_bg"])
             else:
-                quality_flags.append(f"failed_bounds: area={valid_area}, ratio={valid_ratio}(tg_ratio={round(bubble_tg_ratio,2)}), center={center_inside}")
+                quality_flags.append("dark_flood_failed_validation")
 
-            # Step 3: Rescue Probe
-            if not is_valid:
-                # To be implemented in next plan. For now, remains failed candidate.
-                method = "failed_candidate"
+    # Step 1: Primary Probe
+    if not is_valid:
+        seed, mask, area, candidate_rect = _flood_with_fallback(image, gray, rect)
 
-        diagnostics.append({
+    if not is_valid and seed is not None:
+        # Step 2: Strict Validation
+        bubble_page_ratio = area / image_area
+        touches_border = _touches_image_border(mask)
+        fx, fy, fw, fh = _unpack_rect(candidate_rect)
+        bubble_rect = [fx, fy, fw, fh]
+        anchor_area = max(1, w * h)
+        bubble_tg_ratio = (fw * fh) / anchor_area
+        center = _bbox_center(rect)
+        center_inside = (fx <= center[0] <= fx + fw and fy <= center[1] <= fy + fh)
+
+        valid_area = (bubble_page_ratio <= max_area_ratio)
+        valid_ratio = (bubble_tg_ratio >= min_bubble_tg_ratio)
+
+        if valid_area and valid_ratio and center_inside:
+            (
+                candidate_mask, is_bimodal, is_shape_ok, is_valid,
+                bubble_mask, bubble_rect, method, region_type,
+            ) = _validate_flood_candidate(
+                cluster, gray, mask, candidate_rect, erode_pixels,
+                bubble_page_ratio, bubble_tg_ratio, touches_border,
+                quality_flags, _page_black_contour,
+                is_valid, bubble_mask, bubble_rect, method, region_type,
+            )
+        else:
+            quality_flags.append(f"failed_bounds: area={valid_area}, ratio={valid_ratio}(tg_ratio={round(bubble_tg_ratio,2)}), center={center_inside}")
+
+        # Step 3: Rescue Probe
+        if not is_valid:
+            # To be implemented in next plan. For now, remains failed candidate.
+            method = "failed_candidate"
+
+    diagnostics.append({
+        "cluster_id": cluster_id,
+        "method": method,
+        "is_valid": is_valid,
+        "region_type": region_type,
+        "bubble_page_ratio": round(float(bubble_page_ratio), 5),
+        "bubble_tg_ratio": round(float(bubble_tg_ratio), 2),
+        "touches_border": touches_border,
+        # 이후 grouped region에 붙는 flag가 진단 기록으로 새지 않도록 복사본을 둔다.
+        "quality_flags": list(quality_flags)
+    })
+
+    fail_tag = "failed"
+    if not is_valid:
+        qf_str = " ".join(quality_flags)
+        if "tiny_text_large_ratio" in qf_str:
+            fail_tag = "Tiny"
+        elif "solid=" in qf_str:
+            if not is_bimodal:
+                fail_tag = "Bimodal"
+            elif not is_shape_ok:
+                fail_tag = "Shape"
+            else:
+                fail_tag = "Val"
+        elif "failed_bounds" in qf_str:
+            if "area=False" in qf_str: fail_tag = "Area"
+            elif "ratio=False" in qf_str: fail_tag = "Ratio"
+            elif "center=False" in qf_str: fail_tag = "Center"
+            else: fail_tag = "Bnds"
+
+        skipped.append({
             "cluster_id": cluster_id,
+            "anchor_bbox": rect,
+            "fallback_bbox": fallback_rect,
+            "bubble_rect": bubble_rect,
+            "reason": "failed_candidate",
             "method": method,
-            "is_valid": is_valid,
             "region_type": region_type,
-            "bubble_page_ratio": round(float(bubble_page_ratio), 5),
-            "bubble_tg_ratio": round(float(bubble_tg_ratio), 2),
-            "touches_border": touches_border,
-            # 이후 grouped region에 붙는 flag가 진단 기록으로 새지 않도록 복사본을 둔다.
             "quality_flags": list(quality_flags)
         })
-
-        fail_tag = "failed"
-        if not is_valid:
-            qf_str = " ".join(quality_flags)
-            if "tiny_text_large_ratio" in qf_str:
-                fail_tag = "Tiny"
-            elif "solid=" in qf_str:
-                if not is_bimodal:
-                    fail_tag = "Bimodal"
-                elif not is_shape_ok:
-                    fail_tag = "Shape"
-                else:
-                    fail_tag = "Val"
-            elif "failed_bounds" in qf_str:
-                if "area=False" in qf_str: fail_tag = "Area"
-                elif "ratio=False" in qf_str: fail_tag = "Ratio"
-                elif "center=False" in qf_str: fail_tag = "Center"
-                else: fail_tag = "Bnds"
-                
-            skipped.append({
-                "cluster_id": cluster_id,
-                "anchor_bbox": rect,
-                "fallback_bbox": fallback_rect,
-                "bubble_rect": bubble_rect,
-                "reason": "failed_candidate",
-                "method": method,
-                "region_type": region_type,
-                "quality_flags": list(quality_flags)
-            })
-            # fallback to bbox crop for OCR
-            rect_key = [int(v) for v in bubble_rect[:4]]
-            key = ("fallback", *rect_key)
-            if key not in grouped:
-                grouped[key] = {
-                    "anchor_ids": [cluster_id],
-                    "seed_points": [],
-                    "bubble_rect": rect_key,
-                    "mask": candidate_mask,
-                    "bubble_page_ratio": 0.0,
-                    "bubble_tg_ratio": 0.0,
-                    "touches_image_border": False,
-                    "method": "bbox_fallback",
-                    "region_type": "bbox_fallback",
-                    "quality_flags": quality_flags,
-                    "is_valid": False,
-                    "fail_tag": fail_tag
-                }
-            else:
-                grouped[key]["anchor_ids"].append(cluster_id)
-            continue
-
-        # Group valid bubbles
+        # fallback to bbox crop for OCR
         rect_key = [int(v) for v in bubble_rect[:4]]
-        key = ("valid", *rect_key)
+        key = ("fallback", *rect_key)
         if key not in grouped:
             grouped[key] = {
                 "anchor_ids": [cluster_id],
-                "seed_points": [list(seed)],
+                "seed_points": [],
                 "bubble_rect": rect_key,
-                "mask": bubble_mask,
-                "bubble_page_ratio": bubble_page_ratio,
-                "bubble_tg_ratio": bubble_tg_ratio,
-                "touches_image_border": touches_border,
-                "method": method,
-                "region_type": region_type,
+                "mask": candidate_mask,
+                "bubble_page_ratio": 0.0,
+                "bubble_tg_ratio": 0.0,
+                "touches_image_border": False,
+                "method": "bbox_fallback",
+                "region_type": "bbox_fallback",
                 "quality_flags": quality_flags,
-                "is_valid": is_valid
+                "is_valid": False,
+                "fail_tag": fail_tag
             }
         else:
-            grouped[key]["mask"] = cv2.bitwise_or(grouped[key]["mask"], bubble_mask)
             grouped[key]["anchor_ids"].append(cluster_id)
-            grouped[key]["seed_points"].append(list(seed))
-            grouped[key]["is_valid"] = True
-            grouped[key]["method"] = method
-            grouped[key]["region_type"] = region_type
+        return
 
+    # Group valid bubbles
+    rect_key = [int(v) for v in bubble_rect[:4]]
+    key = ("valid", *rect_key)
+    if key not in grouped:
+        grouped[key] = {
+            "anchor_ids": [cluster_id],
+            "seed_points": [list(seed)],
+            "bubble_rect": rect_key,
+            "mask": bubble_mask,
+            "bubble_page_ratio": bubble_page_ratio,
+            "bubble_tg_ratio": bubble_tg_ratio,
+            "touches_image_border": touches_border,
+            "method": method,
+            "region_type": region_type,
+            "quality_flags": quality_flags,
+            "is_valid": is_valid
+        }
+    else:
+        grouped[key]["mask"] = cv2.bitwise_or(grouped[key]["mask"], bubble_mask)
+        grouped[key]["anchor_ids"].append(cluster_id)
+        grouped[key]["seed_points"].append(list(seed))
+        grouped[key]["is_valid"] = True
+        grouped[key]["method"] = method
+        grouped[key]["region_type"] = region_type
+
+
+def _merge_fallback_anchors_into_valid(
+    grouped: Dict[Tuple[Any, ...], Dict[str, Any]],
+) -> None:
+    """Probe 뒤 정리: 유효 bubble과 같은 rect를 가진 fallback 그룹의 앵커를 유효 그룹에 합치고 fallback 그룹을 지운다(grouped 제자리 수정)."""
     # 같은 bubble rect를 공유하는 fallback TG는 valid bubble group에 합류시킨다.
     # 그래야 한 말풍선 안의 여러 TG가 split 단계에서 함께 고려된다.
     valid_by_rect = {
@@ -2561,6 +2770,12 @@ def build_ocr_region_sheet(
     for key in keys_to_remove:
         grouped.pop(key, None)
 
+
+def _attach_english_anchors_to_bubbles(
+    grouped: Dict[Tuple[Any, ...], Dict[str, Any]],
+    skipped: List[Dict[str, Any]],
+) -> None:
+    """Probe 뒤 정리: 건너뛴 영어-only TG가 유효 bubble 안에 충분히 겹치면 split용 앵커로 붙인다(grouped 제자리 수정)."""
     # 영어-only 텍스트는 독립 bubble 후보에서는 제외하지만, 이미 잡힌 bubble 안에 있으면
     # split anchor로 필요하다. 예: 일본어 설명 옆 영문 타이틀이 같은 bubble crop 안에 있는 경우.
     assigned_anchor_ids = {
@@ -2601,424 +2816,511 @@ def build_ocr_region_sheet(
             best_region.setdefault("quality_flags", []).append(f"merged_english_anchor_for_split:A{aid}")
             assigned_anchor_ids.add(aid)
 
-    clusters_by_id = {_text_group_id(c, i + 1): c for i, c in enumerate(clusters)}
 
-    if enable_edge_barrier_rescue:
-        try:
-            try:
-                from pipeline.edge_barrier_flood_rescue import run_edge_barrier_rescue_auto
-            except ImportError:
-                from edge_barrier_flood_rescue import run_edge_barrier_rescue_auto
-        except Exception as exc:
-            diagnostics.append({
-                "method": "edge_barrier_rescue_import_failed",
-                "is_valid": False,
-                "reason": str(exc),
-            })
-            run_edge_barrier_rescue_auto = None
+def _edge_subset_source_rect(
+    clusters_by_id: Dict[int, Dict[str, Any]],
+    img_w: int,
+    img_h: int,
+    anchor_subset: List[int],
+) -> List[int]:
+    subset_groups = [clusters_by_id[aid] for aid in anchor_subset]
+    source_rect = _union_rect([
+        _fallback_text_group_rect(group)
+        for group in subset_groups
+    ])
+    pad = max(40, min(90, int(max(source_rect[2], source_rect[3]) * 0.30)))
+    return _pad_rect_to_image(source_rect, pad, img_w, img_h)
 
-        if run_edge_barrier_rescue_auto is not None:
-            def _edge_subset_source_rect(anchor_subset: List[int]) -> List[int]:
-                subset_groups = [clusters_by_id[aid] for aid in anchor_subset]
-                source_rect = _union_rect([
-                    _fallback_text_group_rect(group)
-                    for group in subset_groups
-                ])
-                pad = max(40, min(90, int(max(source_rect[2], source_rect[3]) * 0.30)))
-                return _pad_rect_to_image(source_rect, pad)
 
-            def _build_edge_rescued_region(
-                base_region: Dict[str, Any],
-                anchor_subset: List[int],
-                rescue: Dict[str, Any],
-                marker_flag: str,
-            ) -> Optional[Dict[str, Any]]:
-                score = rescue.get("score", {})
-                rescue_rect = [int(v) for v in rescue.get("rescue_rect", [0, 0, 0, 0])[:4]]
-                if rescue_rect[2] <= 0 or rescue_rect[3] <= 0:
-                    return None
+def _build_edge_rescued_region(
+    base_region: Dict[str, Any],
+    anchor_subset: List[int],
+    rescue: Dict[str, Any],
+    marker_flag: str,
+) -> Optional[Dict[str, Any]]:
+    score = rescue.get("score", {})
+    rescue_rect = [int(v) for v in rescue.get("rescue_rect", [0, 0, 0, 0])[:4]]
+    if rescue_rect[2] <= 0 or rescue_rect[3] <= 0:
+        return None
 
-                rescue_mask = rescue["mask"]
-                quality_flags = list(base_region.get("quality_flags", [])) + [
+    rescue_mask = rescue["mask"]
+    quality_flags = list(base_region.get("quality_flags", [])) + [
+        "edge_barrier_rescue",
+        marker_flag,
+        f"edge_best={rescue.get('best_label')}",
+        f"edge_guard={rescue.get('guard_mode')}_{rescue.get('guard_margin')}",
+        f"edge_score={round(float(score.get('rank_score', 0.0)), 3)}",
+        f"edge_ratio={round(float(score.get('rect_anchor_ratio', 0.0)), 2)}",
+        f"edge_page={round(float(score.get('mask_page_ratio', 0.0)), 4)}",
+    ]
+    if len(anchor_subset) >= 2:
+        quality_flags.append("edge_group_after_split")
+
+    return {
+        **base_region,
+        "anchor_ids": list(anchor_subset),
+        "seed_points": [rescue["seed"]] if rescue.get("seed") else [],
+        "bubble_rect": rescue_rect,
+        "mask": rescue_mask,
+        "bubble_page_ratio": float(score.get("mask_page_ratio", 0.0)),
+        "bubble_tg_ratio": float(score.get("rect_anchor_ratio", 0.0)),
+        "touches_image_border": _touches_image_border(rescue_mask),
+        "method": "edge_barrier_rescue",
+        "region_type": "bubble",
+        "quality_flags": quality_flags,
+        "is_valid": True,
+    }
+
+
+def _best_edge_partition(
+    image: np.ndarray,
+    gray: np.ndarray,
+    img_w: int,
+    img_h: int,
+    region: Dict[str, Any],
+    anchor_ids: List[int],
+    clusters_by_id: Dict[int, Dict[str, Any]],
+    manual_virtual_walls: Optional[List[Dict[str, Any]]],
+    run_edge_barrier_rescue_auto: Callable[..., Dict[str, Any]],
+    _page_black_contour: Callable[[], np.ndarray],
+) -> Optional[Tuple[float, List[Dict[str, Any]]]]:
+    """Edge 분할 구제: 앵커 3개 이상인 실패 그룹을 (단일 앵커, 나머지)로 나눠 둘 다 구제되는 분할 중 점수가 가장 높은 것을 돌려준다. 없으면 None."""
+    best_partition: Optional[Tuple[float, List[Dict[str, Any]]]] = None
+    for single_aid in anchor_ids:
+        single_ids = [single_aid]
+        rest_ids = [aid for aid in anchor_ids if aid != single_aid]
+        partition_regions: List[Dict[str, Any]] = []
+        total_score = 0.0
+        partition_failed = False
+
+        for subset_ids, marker in (
+            (single_ids, "edge_partition_single"),
+            (rest_ids, "edge_partition_group"),
+        ):
+            subset_groups = [clusters_by_id[aid] for aid in subset_ids]
+            subset_source_rect = _edge_subset_source_rect(clusters_by_id, img_w, img_h, subset_ids)
+            subset_rescue = run_edge_barrier_rescue_auto(
+                image,
+                subset_groups,
+                subset_source_rect,
+                virtual_walls=manual_virtual_walls or None,
+            )
+            subset_score = subset_rescue.get("score", {})
+            subset_reject = None if subset_rescue.get("manual_guided") else (
+                _edge_rescue_reject_reason(gray, _page_black_contour, region, subset_rescue, subset_groups)
+                if subset_rescue.get("success") else None
+            )
+            if not subset_rescue.get("success") or subset_reject is not None:
+                partition_failed = True
+                break
+            rescued_region = _build_edge_rescued_region(
+                region,
+                subset_ids,
+                subset_rescue,
+                marker,
+            )
+            if rescued_region is None:
+                partition_failed = True
+                break
+            partition_regions.append(rescued_region)
+            total_score += float(subset_score.get("rank_score", -99.0))
+
+        if partition_failed or len(partition_regions) != 2:
+            continue
+        if best_partition is None or total_score > best_partition[0]:
+            best_partition = (total_score, partition_regions)
+
+    return best_partition
+
+
+def _edge_rescue_failed_regions(
+    image: np.ndarray,
+    gray: np.ndarray,
+    grouped: Dict[Tuple[Any, ...], Dict[str, Any]],
+    diagnostics: List[Dict[str, Any]],
+    clusters_by_id: Dict[int, Dict[str, Any]],
+    manual_virtual_walls: Optional[List[Dict[str, Any]]],
+    run_edge_barrier_rescue_auto: Callable[..., Dict[str, Any]],
+    _page_black_contour: Callable[[], np.ndarray],
+) -> None:
+    """Edge rescue 1단계: bbox fallback 그룹 전체를 edge barrier flood로 구제하고, 통과하면 그 그룹을 유효 bubble로 바꾼다(grouped 제자리 수정)."""
+    for region in grouped.values():
+        if region.get("is_valid"):
+            continue
+        if region.get("region_type") != "bbox_fallback":
+            continue
+        _qf_str = " ".join(str(flag) for flag in region.get("quality_flags", []))
+        if "dark_flood_candidate" in _qf_str and "dark_flood_failed_validation" not in _qf_str:
+            # dark_flood 가 성공했거나 아직 시도하지 않은 dark 후보는 edge_barrier 스킵
+            # dark_flood 가 명시적으로 실패한 경우에는 edge_barrier 허용
+            region["quality_flags"].append("edge_barrier_skipped_dark_flood_candidate")
+            continue
+
+        anchor_ids = [aid for aid in region.get("anchor_ids", []) if aid in clusters_by_id]
+        if not anchor_ids:
+            continue
+        target_groups = [clusters_by_id[aid] for aid in anchor_ids]
+        rescue = run_edge_barrier_rescue_auto(
+            image,
+            target_groups,
+            region["bubble_rect"],
+            virtual_walls=manual_virtual_walls or None,
+        )
+        score = rescue.get("score", {})
+        reject_reason = None if rescue.get("manual_guided") else (
+            _edge_rescue_reject_reason(gray, _page_black_contour, region, rescue, target_groups)
+            if rescue.get("success") else None
+        )
+        if not rescue.get("success"):
+            region["quality_flags"].append(
+                "edge_barrier_rescue_failed="
+                f"{rescue.get('reason')}, score={round(float(score.get('rank_score', -99.0)), 3)}"
+            )
+            continue
+        if reject_reason is not None:
+            region["quality_flags"].append(reject_reason)
+            continue
+
+        rescue_rect = [int(v) for v in rescue.get("rescue_rect", [0, 0, 0, 0])[:4]]
+        if rescue_rect[2] <= 0 or rescue_rect[3] <= 0:
+            continue
+
+        rescue_mask = rescue["mask"]
+        region["is_valid"] = True
+        region["method"] = "edge_barrier_rescue"
+        region["region_type"] = "bubble"
+        region["bubble_rect"] = rescue_rect
+        region["mask"] = rescue_mask
+        region["seed_points"] = [rescue["seed"]] if rescue.get("seed") else []
+        region["bubble_page_ratio"] = float(score.get("mask_page_ratio", 0.0))
+        region["bubble_tg_ratio"] = float(score.get("rect_anchor_ratio", 0.0))
+        region["touches_image_border"] = _touches_image_border(rescue_mask)
+        region["quality_flags"].extend([
+            "edge_barrier_rescue",
+            f"edge_best={rescue.get('best_label')}",
+            f"edge_guard={rescue.get('guard_mode')}_{rescue.get('guard_margin')}",
+            "edge_manual_guided" if rescue.get("manual_guided") else "edge_auto_guided",
+            f"edge_score={round(float(score.get('rank_score', 0.0)), 3)}",
+            f"edge_ratio={round(float(score.get('rect_anchor_ratio', 0.0)), 2)}",
+            f"edge_page={round(float(score.get('mask_page_ratio', 0.0)), 4)}",
+        ])
+        diagnostics.append({
+            "cluster_id": anchor_ids,
+            "method": "edge_barrier_rescue",
+            "is_valid": True,
+            "region_type": "bubble",
+            "bubble_page_ratio": round(float(score.get("mask_page_ratio", 0.0)), 5),
+            "bubble_tg_ratio": round(float(score.get("rect_anchor_ratio", 0.0)), 2),
+            "quality_flags": region["quality_flags"],
+        })
+
+
+def _edge_rescue_split_failed_groups(
+    image: np.ndarray,
+    gray: np.ndarray,
+    img_w: int,
+    img_h: int,
+    grouped: Dict[Tuple[Any, ...], Dict[str, Any]],
+    clusters_by_id: Dict[int, Dict[str, Any]],
+    manual_virtual_walls: Optional[List[Dict[str, Any]]],
+    run_edge_barrier_rescue_auto: Callable[..., Dict[str, Any]],
+    _page_black_contour: Callable[[], np.ndarray],
+) -> None:
+    """Edge rescue 2단계: 여전히 실패한 다중 앵커 그룹을 분할(partition)·앵커별로 다시 구제하고 grouped의 키를 교체한다(제자리 수정)."""
+    split_rescued: Dict[Tuple[Any, ...], Dict[str, Any]] = {}
+    split_remove_keys: List[Tuple[Any, ...]] = []
+    for key, region in list(grouped.items()):
+        if region.get("is_valid"):
+            continue
+        anchor_ids = [aid for aid in region.get("anchor_ids", []) if aid in clusters_by_id]
+        if len(anchor_ids) < 2:
+            continue
+
+        if len(anchor_ids) >= 3:
+            best_partition = _best_edge_partition(
+                image, gray, img_w, img_h, region, anchor_ids, clusters_by_id,
+                manual_virtual_walls, run_edge_barrier_rescue_auto, _page_black_contour,
+            )
+
+            if best_partition is not None:
+                for rescued_region in best_partition[1]:
+                    rect = rescued_region["bubble_rect"]
+                    ids = rescued_region["anchor_ids"]
+                    split_rescued[("edge_partition", *ids, *rect)] = rescued_region
+                split_remove_keys.append(key)
+                continue
+
+        remaining_anchor_ids: List[int] = []
+        rejected_reasons_by_anchor: Dict[int, str] = {}
+        single_rescued_keys: List[Tuple[Tuple[Any, ...], int]] = []
+        current_rescued = 0
+        _combined_has_border = any(
+            str(flag) == "border=Y" or str(flag).endswith("border=Y")
+            for flag in region.get("quality_flags", [])
+        )
+        _img_h, _img_w = image.shape[:2]
+        _border_margin = 200  # px: 앵커가 이 거리 안쪽 엣지에 있어야 border 차단 적용
+        for aid in anchor_ids:
+            # combined region 의 border=Y 는 merged 영역 기준 — 개별 앵커가 실제로
+            # 엣지에 가까운지 별도 확인해서 멀리 떨어진 앵커는 구제 시도 허용
+            if _combined_has_border:
+                _ar = _tight_text_group_rect(clusters_by_id[aid])
+                _ax, _ay, _aw, _ah = _ar
+                _anchor_near_border = (
+                    _ax < _border_margin
+                    or _ay < _border_margin
+                    or (_ax + _aw) > (_img_w - _border_margin)
+                    or (_ay + _ah) > (_img_h - _border_margin)
+                )
+                if _anchor_near_border:
+                    reject_reason = "edge_reject_split_border_candidate"
+                    region["quality_flags"].append(f"{reject_reason}:A{aid}")
+                    rejected_reasons_by_anchor[aid] = reject_reason
+                    remaining_anchor_ids.append(aid)
+                    continue
+            rescue = run_edge_barrier_rescue_auto(
+                image,
+                [clusters_by_id[aid]],
+                region["bubble_rect"],
+                virtual_walls=manual_virtual_walls or None,
+            )
+            score = rescue.get("score", {})
+            reject_reason = None if rescue.get("manual_guided") else (
+                _edge_rescue_reject_reason(gray, _page_black_contour, region, rescue, [clusters_by_id[aid]])
+                if rescue.get("success") else None
+            )
+            if not rescue.get("success"):
+                remaining_anchor_ids.append(aid)
+                continue
+            if reject_reason is not None:
+                region["quality_flags"].append(f"{reject_reason}:A{aid}")
+                rejected_reasons_by_anchor[aid] = reject_reason
+                remaining_anchor_ids.append(aid)
+                continue
+            rescue_rect = [int(v) for v in rescue.get("rescue_rect", [0, 0, 0, 0])[:4]]
+            if rescue_rect[2] <= 0 or rescue_rect[3] <= 0:
+                remaining_anchor_ids.append(aid)
+                continue
+
+            rescue_mask = rescue["mask"]
+            new_region = {
+                **region,
+                "anchor_ids": [aid],
+                "seed_points": [rescue["seed"]] if rescue.get("seed") else [],
+                "bubble_rect": rescue_rect,
+                "mask": rescue_mask,
+                "bubble_page_ratio": float(score.get("mask_page_ratio", 0.0)),
+                "bubble_tg_ratio": float(score.get("rect_anchor_ratio", 0.0)),
+                "touches_image_border": _touches_image_border(rescue_mask),
+                "method": "edge_barrier_rescue",
+                "region_type": "bubble",
+                "quality_flags": list(region.get("quality_flags", [])) + [
                     "edge_barrier_rescue",
-                    marker_flag,
+                    "edge_split_from_failed_group",
                     f"edge_best={rescue.get('best_label')}",
                     f"edge_guard={rescue.get('guard_mode')}_{rescue.get('guard_margin')}",
                     f"edge_score={round(float(score.get('rank_score', 0.0)), 3)}",
                     f"edge_ratio={round(float(score.get('rect_anchor_ratio', 0.0)), 2)}",
                     f"edge_page={round(float(score.get('mask_page_ratio', 0.0)), 4)}",
-                ]
-                if len(anchor_subset) >= 2:
-                    quality_flags.append("edge_group_after_split")
+                ],
+                "is_valid": True,
+            }
+            single_key = ("edge_single", aid, *rescue_rect)
+            split_rescued[single_key] = new_region
+            single_rescued_keys.append((single_key, aid))
+            current_rescued += 1
 
-                return {
-                    **base_region,
-                    "anchor_ids": list(anchor_subset),
-                    "seed_points": [rescue["seed"]] if rescue.get("seed") else [],
-                    "bubble_rect": rescue_rect,
-                    "mask": rescue_mask,
-                    "bubble_page_ratio": float(score.get("mask_page_ratio", 0.0)),
-                    "bubble_tg_ratio": float(score.get("rect_anchor_ratio", 0.0)),
-                    "touches_image_border": _touches_image_border(rescue_mask),
-                    "method": "edge_barrier_rescue",
-                    "region_type": "bubble",
-                    "quality_flags": quality_flags,
-                    "is_valid": True,
+        if _should_demote_lone_edge_split_rescue(
+            [aid for _key, aid in single_rescued_keys],
+            rejected_reasons_by_anchor,
+        ):
+            demoted_ids = {aid for _key, aid in single_rescued_keys}
+            for single_key, aid in single_rescued_keys:
+                split_rescued.pop(single_key, None)
+                region["quality_flags"].append(
+                    f"edge_demote_lone_split_rescue_sibling_unboxed_like:A{aid}"
+                )
+
+            split_remove_keys.append(key)
+            for aid in anchor_ids:
+                fallback_rect = _fallback_text_group_rect(clusters_by_id[aid])
+                child_region = {
+                    **region,
+                    "anchor_ids": [aid],
+                    "bubble_rect": fallback_rect,
+                    "mask": np.zeros((img_h, img_w), dtype=np.uint8),
+                    "seed_points": [],
+                    "bubble_page_ratio": 0.0,
+                    "bubble_tg_ratio": 1.0,
+                    "touches_image_border": False,
+                    "method": "bbox_fallback",
+                    "region_type": "bbox_fallback",
+                    "quality_flags": list(region.get("quality_flags", [])) + [
+                        f"edge_split_consensus_unboxed:A{aid}",
+                    ],
+                    "is_valid": False,
                 }
+                if aid in demoted_ids and aid not in rejected_reasons_by_anchor:
+                    child_region["quality_flags"].append("edge_demoted_lone_rescue")
+                split_rescued[("edge_consensus_unboxed", aid, *fallback_rect)] = child_region
+            continue
 
-            for region in grouped.values():
-                if region.get("is_valid"):
-                    continue
-                if region.get("region_type") != "bbox_fallback":
-                    continue
-                _qf_str = " ".join(str(flag) for flag in region.get("quality_flags", []))
-                if "dark_flood_candidate" in _qf_str and "dark_flood_failed_validation" not in _qf_str:
-                    # dark_flood 가 성공했거나 아직 시도하지 않은 dark 후보는 edge_barrier 스킵
-                    # dark_flood 가 명시적으로 실패한 경우에는 edge_barrier 허용
-                    region["quality_flags"].append("edge_barrier_skipped_dark_flood_candidate")
-                    continue
-
-                anchor_ids = [aid for aid in region.get("anchor_ids", []) if aid in clusters_by_id]
-                if not anchor_ids:
-                    continue
-                target_groups = [clusters_by_id[aid] for aid in anchor_ids]
-                rescue = run_edge_barrier_rescue_auto(
-                    image,
-                    target_groups,
-                    region["bubble_rect"],
-                    virtual_walls=manual_virtual_walls or None,
-                )
-                score = rescue.get("score", {})
-                reject_reason = None if rescue.get("manual_guided") else (
-                    _edge_rescue_reject_reason(region, rescue, target_groups)
-                    if rescue.get("success") else None
-                )
-                if not rescue.get("success"):
-                    region["quality_flags"].append(
-                        "edge_barrier_rescue_failed="
-                        f"{rescue.get('reason')}, score={round(float(score.get('rank_score', -99.0)), 3)}"
-                    )
-                    continue
-                if reject_reason is not None:
-                    region["quality_flags"].append(reject_reason)
-                    continue
-
-                rescue_rect = [int(v) for v in rescue.get("rescue_rect", [0, 0, 0, 0])[:4]]
-                if rescue_rect[2] <= 0 or rescue_rect[3] <= 0:
-                    continue
-
-                rescue_mask = rescue["mask"]
-                region["is_valid"] = True
-                region["method"] = "edge_barrier_rescue"
-                region["region_type"] = "bubble"
-                region["bubble_rect"] = rescue_rect
-                region["mask"] = rescue_mask
-                region["seed_points"] = [rescue["seed"]] if rescue.get("seed") else []
-                region["bubble_page_ratio"] = float(score.get("mask_page_ratio", 0.0))
-                region["bubble_tg_ratio"] = float(score.get("rect_anchor_ratio", 0.0))
-                region["touches_image_border"] = _touches_image_border(rescue_mask)
-                region["quality_flags"].extend([
-                    "edge_barrier_rescue",
-                    f"edge_best={rescue.get('best_label')}",
-                    f"edge_guard={rescue.get('guard_mode')}_{rescue.get('guard_margin')}",
-                    "edge_manual_guided" if rescue.get("manual_guided") else "edge_auto_guided",
-                    f"edge_score={round(float(score.get('rank_score', 0.0)), 3)}",
-                    f"edge_ratio={round(float(score.get('rect_anchor_ratio', 0.0)), 2)}",
-                    f"edge_page={round(float(score.get('mask_page_ratio', 0.0)), 4)}",
-                ])
-                diagnostics.append({
-                    "cluster_id": anchor_ids,
-                    "method": "edge_barrier_rescue",
-                    "is_valid": True,
-                    "region_type": "bubble",
-                    "bubble_page_ratio": round(float(score.get("mask_page_ratio", 0.0)), 5),
-                    "bubble_tg_ratio": round(float(score.get("rect_anchor_ratio", 0.0)), 2),
-                    "quality_flags": region["quality_flags"],
-                })
-
-            split_rescued: Dict[Tuple[Any, ...], Dict[str, Any]] = {}
-            split_remove_keys: List[Tuple[Any, ...]] = []
-            for key, region in list(grouped.items()):
-                if region.get("is_valid"):
-                    continue
-                anchor_ids = [aid for aid in region.get("anchor_ids", []) if aid in clusters_by_id]
-                if len(anchor_ids) < 2:
-                    continue
-
-                if len(anchor_ids) >= 3:
-                    best_partition: Optional[Tuple[float, List[Dict[str, Any]]]] = None
-                    for single_aid in anchor_ids:
-                        single_ids = [single_aid]
-                        rest_ids = [aid for aid in anchor_ids if aid != single_aid]
-                        partition_regions: List[Dict[str, Any]] = []
-                        total_score = 0.0
-                        partition_failed = False
-
-                        for subset_ids, marker in (
-                            (single_ids, "edge_partition_single"),
-                            (rest_ids, "edge_partition_group"),
-                        ):
-                            subset_groups = [clusters_by_id[aid] for aid in subset_ids]
-                            subset_source_rect = _edge_subset_source_rect(subset_ids)
-                            subset_rescue = run_edge_barrier_rescue_auto(
-                                image,
-                                subset_groups,
-                                subset_source_rect,
-                                virtual_walls=manual_virtual_walls or None,
-                            )
-                            subset_score = subset_rescue.get("score", {})
-                            subset_reject = None if subset_rescue.get("manual_guided") else (
-                                _edge_rescue_reject_reason(region, subset_rescue, subset_groups)
-                                if subset_rescue.get("success") else None
-                            )
-                            if not subset_rescue.get("success") or subset_reject is not None:
-                                partition_failed = True
-                                break
-                            rescued_region = _build_edge_rescued_region(
-                                region,
-                                subset_ids,
-                                subset_rescue,
-                                marker,
-                            )
-                            if rescued_region is None:
-                                partition_failed = True
-                                break
-                            partition_regions.append(rescued_region)
-                            total_score += float(subset_score.get("rank_score", -99.0))
-
-                        if partition_failed or len(partition_regions) != 2:
-                            continue
-                        if best_partition is None or total_score > best_partition[0]:
-                            best_partition = (total_score, partition_regions)
-
-                    if best_partition is not None:
-                        for rescued_region in best_partition[1]:
-                            rect = rescued_region["bubble_rect"]
-                            ids = rescued_region["anchor_ids"]
-                            split_rescued[("edge_partition", *ids, *rect)] = rescued_region
-                        split_remove_keys.append(key)
-                        continue
-
-                remaining_anchor_ids: List[int] = []
-                rejected_reasons_by_anchor: Dict[int, str] = {}
-                single_rescued_keys: List[Tuple[Tuple[Any, ...], int]] = []
-                current_rescued = 0
-                _combined_has_border = any(
-                    str(flag) == "border=Y" or str(flag).endswith("border=Y")
-                    for flag in region.get("quality_flags", [])
-                )
-                _img_h, _img_w = image.shape[:2]
-                _border_margin = 200  # px: 앵커가 이 거리 안쪽 엣지에 있어야 border 차단 적용
-                for aid in anchor_ids:
-                    # combined region 의 border=Y 는 merged 영역 기준 — 개별 앵커가 실제로
-                    # 엣지에 가까운지 별도 확인해서 멀리 떨어진 앵커는 구제 시도 허용
-                    if _combined_has_border:
-                        _ar = _tight_text_group_rect(clusters_by_id[aid])
-                        _ax, _ay, _aw, _ah = _ar
-                        _anchor_near_border = (
-                            _ax < _border_margin
-                            or _ay < _border_margin
-                            or (_ax + _aw) > (_img_w - _border_margin)
-                            or (_ay + _ah) > (_img_h - _border_margin)
-                        )
-                        if _anchor_near_border:
-                            reject_reason = "edge_reject_split_border_candidate"
-                            region["quality_flags"].append(f"{reject_reason}:A{aid}")
-                            rejected_reasons_by_anchor[aid] = reject_reason
-                            remaining_anchor_ids.append(aid)
-                            continue
-                    rescue = run_edge_barrier_rescue_auto(
+        if current_rescued > 0:
+            if remaining_anchor_ids:
+                if len(remaining_anchor_ids) >= 2:
+                    remaining_groups = [clusters_by_id[aid] for aid in remaining_anchor_ids]
+                    remaining_rect = _union_rect([
+                        _fallback_text_group_rect(group)
+                        for group in remaining_groups
+                    ])
+                    pad = max(40, min(80, int(max(remaining_rect[2], remaining_rect[3]) * 0.25)))
+                    remaining_source_rect = _pad_rect_to_image(remaining_rect, pad, img_w, img_h)
+                    group_rescue = run_edge_barrier_rescue_auto(
                         image,
-                        [clusters_by_id[aid]],
-                        region["bubble_rect"],
+                        remaining_groups,
+                        remaining_source_rect,
                         virtual_walls=manual_virtual_walls or None,
                     )
-                    score = rescue.get("score", {})
-                    reject_reason = None if rescue.get("manual_guided") else (
-                        _edge_rescue_reject_reason(region, rescue, [clusters_by_id[aid]])
-                        if rescue.get("success") else None
+                    group_score = group_rescue.get("score", {})
+                    group_reject_reason = None if group_rescue.get("manual_guided") else (
+                        _edge_rescue_reject_reason(gray, _page_black_contour, region, group_rescue, remaining_groups)
+                        if group_rescue.get("success") else None
                     )
-                    if not rescue.get("success"):
-                        remaining_anchor_ids.append(aid)
-                        continue
-                    if reject_reason is not None:
-                        region["quality_flags"].append(f"{reject_reason}:A{aid}")
-                        rejected_reasons_by_anchor[aid] = reject_reason
-                        remaining_anchor_ids.append(aid)
-                        continue
-                    rescue_rect = [int(v) for v in rescue.get("rescue_rect", [0, 0, 0, 0])[:4]]
-                    if rescue_rect[2] <= 0 or rescue_rect[3] <= 0:
-                        remaining_anchor_ids.append(aid)
-                        continue
-
-                    rescue_mask = rescue["mask"]
-                    new_region = {
-                        **region,
-                        "anchor_ids": [aid],
-                        "seed_points": [rescue["seed"]] if rescue.get("seed") else [],
-                        "bubble_rect": rescue_rect,
-                        "mask": rescue_mask,
-                        "bubble_page_ratio": float(score.get("mask_page_ratio", 0.0)),
-                        "bubble_tg_ratio": float(score.get("rect_anchor_ratio", 0.0)),
-                        "touches_image_border": _touches_image_border(rescue_mask),
-                        "method": "edge_barrier_rescue",
-                        "region_type": "bubble",
-                        "quality_flags": list(region.get("quality_flags", [])) + [
+                    if group_rescue.get("success") and group_reject_reason is None:
+                        group_rect = [
+                            int(v) for v in group_rescue.get("rescue_rect", [0, 0, 0, 0])[:4]
+                        ]
+                        group_mask = group_rescue["mask"]
+                        region["anchor_ids"] = remaining_anchor_ids
+                        region["seed_points"] = [group_rescue["seed"]] if group_rescue.get("seed") else []
+                        region["bubble_rect"] = group_rect
+                        region["mask"] = group_mask
+                        region["bubble_page_ratio"] = float(group_score.get("mask_page_ratio", 0.0))
+                        region["bubble_tg_ratio"] = float(group_score.get("rect_anchor_ratio", 0.0))
+                        region["touches_image_border"] = _touches_image_border(group_mask)
+                        region["method"] = "edge_barrier_rescue"
+                        region["region_type"] = "bubble"
+                        region["quality_flags"].extend([
                             "edge_barrier_rescue",
-                            "edge_split_from_failed_group",
-                            f"edge_best={rescue.get('best_label')}",
-                            f"edge_guard={rescue.get('guard_mode')}_{rescue.get('guard_margin')}",
-                            f"edge_score={round(float(score.get('rank_score', 0.0)), 3)}",
-                            f"edge_ratio={round(float(score.get('rect_anchor_ratio', 0.0)), 2)}",
-                            f"edge_page={round(float(score.get('mask_page_ratio', 0.0)), 4)}",
-                        ],
-                        "is_valid": True,
-                    }
-                    single_key = ("edge_single", aid, *rescue_rect)
-                    split_rescued[single_key] = new_region
-                    single_rescued_keys.append((single_key, aid))
-                    current_rescued += 1
-
-                if _should_demote_lone_edge_split_rescue(
-                    [aid for _key, aid in single_rescued_keys],
-                    rejected_reasons_by_anchor,
-                ):
-                    demoted_ids = {aid for _key, aid in single_rescued_keys}
-                    for single_key, aid in single_rescued_keys:
-                        split_rescued.pop(single_key, None)
-                        region["quality_flags"].append(
-                            f"edge_demote_lone_split_rescue_sibling_unboxed_like:A{aid}"
-                        )
-
-                    split_remove_keys.append(key)
-                    for aid in anchor_ids:
-                        fallback_rect = _fallback_text_group_rect(clusters_by_id[aid])
-                        child_region = {
-                            **region,
-                            "anchor_ids": [aid],
-                            "bubble_rect": fallback_rect,
-                            "mask": np.zeros((img_h, img_w), dtype=np.uint8),
-                            "seed_points": [],
-                            "bubble_page_ratio": 0.0,
-                            "bubble_tg_ratio": 1.0,
-                            "touches_image_border": False,
-                            "method": "bbox_fallback",
-                            "region_type": "bbox_fallback",
-                            "quality_flags": list(region.get("quality_flags", [])) + [
-                                f"edge_split_consensus_unboxed:A{aid}",
-                            ],
-                            "is_valid": False,
-                        }
-                        if aid in demoted_ids and aid not in rejected_reasons_by_anchor:
-                            child_region["quality_flags"].append("edge_demoted_lone_rescue")
-                        split_rescued[("edge_consensus_unboxed", aid, *fallback_rect)] = child_region
-                    continue
-
-                if current_rescued > 0:
-                    if remaining_anchor_ids:
-                        if len(remaining_anchor_ids) >= 2:
-                            remaining_groups = [clusters_by_id[aid] for aid in remaining_anchor_ids]
-                            remaining_rect = _union_rect([
-                                _fallback_text_group_rect(group)
-                                for group in remaining_groups
-                            ])
-                            pad = max(40, min(80, int(max(remaining_rect[2], remaining_rect[3]) * 0.25)))
-                            remaining_source_rect = _pad_rect_to_image(remaining_rect, pad)
-                            group_rescue = run_edge_barrier_rescue_auto(
-                                image,
-                                remaining_groups,
-                                remaining_source_rect,
-                                virtual_walls=manual_virtual_walls or None,
-                            )
-                            group_score = group_rescue.get("score", {})
-                            group_reject_reason = None if group_rescue.get("manual_guided") else (
-                                _edge_rescue_reject_reason(region, group_rescue, remaining_groups)
-                                if group_rescue.get("success") else None
-                            )
-                            if group_rescue.get("success") and group_reject_reason is None:
-                                group_rect = [
-                                    int(v) for v in group_rescue.get("rescue_rect", [0, 0, 0, 0])[:4]
-                                ]
-                                group_mask = group_rescue["mask"]
-                                region["anchor_ids"] = remaining_anchor_ids
-                                region["seed_points"] = [group_rescue["seed"]] if group_rescue.get("seed") else []
-                                region["bubble_rect"] = group_rect
-                                region["mask"] = group_mask
-                                region["bubble_page_ratio"] = float(group_score.get("mask_page_ratio", 0.0))
-                                region["bubble_tg_ratio"] = float(group_score.get("rect_anchor_ratio", 0.0))
-                                region["touches_image_border"] = _touches_image_border(group_mask)
-                                region["method"] = "edge_barrier_rescue"
-                                region["region_type"] = "bubble"
-                                region["quality_flags"].extend([
-                                    "edge_barrier_rescue",
-                                    "edge_group_after_split",
-                                    f"edge_best={group_rescue.get('best_label')}",
-                                    f"edge_guard={group_rescue.get('guard_mode')}_{group_rescue.get('guard_margin')}",
-                                    f"edge_score={round(float(group_score.get('rank_score', 0.0)), 3)}",
-                                    f"edge_ratio={round(float(group_score.get('rect_anchor_ratio', 0.0)), 2)}",
-                                    f"edge_page={round(float(group_score.get('mask_page_ratio', 0.0)), 4)}",
-                                ])
-                                region["is_valid"] = True
-                            else:
-                                region["anchor_ids"] = remaining_anchor_ids
-                                if group_reject_reason is not None:
-                                    region["quality_flags"].append(f"{group_reject_reason}:remaining_group")
-                                region["quality_flags"].append("edge_split_partial_remaining")
-                        else:
-                            region["anchor_ids"] = remaining_anchor_ids
-                            region["quality_flags"].append("edge_split_partial_remaining")
+                            "edge_group_after_split",
+                            f"edge_best={group_rescue.get('best_label')}",
+                            f"edge_guard={group_rescue.get('guard_mode')}_{group_rescue.get('guard_margin')}",
+                            f"edge_score={round(float(group_score.get('rank_score', 0.0)), 3)}",
+                            f"edge_ratio={round(float(group_score.get('rect_anchor_ratio', 0.0)), 2)}",
+                            f"edge_page={round(float(group_score.get('mask_page_ratio', 0.0)), 4)}",
+                        ])
+                        region["is_valid"] = True
                     else:
-                        split_remove_keys.append(key)
+                        region["anchor_ids"] = remaining_anchor_ids
+                        if group_reject_reason is not None:
+                            region["quality_flags"].append(f"{group_reject_reason}:remaining_group")
+                        region["quality_flags"].append("edge_split_partial_remaining")
+                else:
+                    region["anchor_ids"] = remaining_anchor_ids
+                    region["quality_flags"].append("edge_split_partial_remaining")
+            else:
+                split_remove_keys.append(key)
 
-            for key in split_remove_keys:
-                grouped.pop(key, None)
-            grouped.update(split_rescued)
+    for key in split_remove_keys:
+        grouped.pop(key, None)
+    grouped.update(split_rescued)
 
-            for noise_anchor in noise_like_anchors:
-                if noise_anchor.get("reason") in {"large_single_glyph_sfx_like", "large_short_kana_sfx_like"}:
-                    continue
-                aid = noise_anchor["cluster_id"]
-                rect = noise_anchor["fallback_bbox"]
-                cx, cy = _bbox_center(rect)
-                for region in grouped.values():
-                    if not region.get("is_valid"):
-                        continue
-                    if region.get("method") != "edge_barrier_rescue":
-                        continue
-                    rx, ry, rw, rh = [int(v) for v in region.get("bubble_rect", [0, 0, 0, 0])[:4]]
-                    pad = 12
-                    if rx - pad <= cx <= rx + rw + pad and ry - pad <= cy <= ry + rh + pad:
-                        if aid not in region["anchor_ids"]:
-                            region["anchor_ids"].append(aid)
-                            region["quality_flags"].append(
-                                f"merged_symbol_anchor_after_edge_rescue:A{aid}"
-                            )
-                        break
 
-            for region in grouped.values():
-                if not region.get("is_valid"):
-                    continue
-                if region.get("method") != "edge_barrier_rescue":
-                    continue
-                flags = region.get("quality_flags", [])
-                if any("border=Y" in str(flag) for flag in flags):
-                    continue
-                if any(str(flag).startswith("merged_symbol_anchor_after_edge_rescue") for flag in flags):
-                    continue
-                anchor_groups = [
-                    clusters_by_id[aid]
-                    for aid in region.get("anchor_ids", [])
-                    if aid in clusters_by_id
-                ]
-                raw_round = _extract_quality_float(flags, "raw_round")
-                post_reject = _edge_anchor_text_reject_reason(anchor_groups, raw_round)
-                if post_reject is None:
-                    continue
-                region["is_valid"] = False
-                region["method"] = "bbox_fallback"
-                region["region_type"] = "bbox_fallback"
-                region["quality_flags"].append(post_reject)
+def _edge_rescue_postprocess(
+    grouped: Dict[Tuple[Any, ...], Dict[str, Any]],
+    noise_like_anchors: List[Dict[str, Any]],
+    clusters_by_id: Dict[int, Dict[str, Any]],
+) -> None:
+    """Edge rescue 3단계: 구제 bubble 안의 기호 앵커를 합치고, 짧은 손글씨 묶음 같은 구제 결과를 다시 fallback으로 내린다(제자리 수정)."""
+    for noise_anchor in noise_like_anchors:
+        if noise_anchor.get("reason") in {"large_single_glyph_sfx_like", "large_short_kana_sfx_like"}:
+            continue
+        aid = noise_anchor["cluster_id"]
+        rect = noise_anchor["fallback_bbox"]
+        cx, cy = _bbox_center(rect)
+        for region in grouped.values():
+            if not region.get("is_valid"):
+                continue
+            if region.get("method") != "edge_barrier_rescue":
+                continue
+            rx, ry, rw, rh = [int(v) for v in region.get("bubble_rect", [0, 0, 0, 0])[:4]]
+            pad = 12
+            if rx - pad <= cx <= rx + rw + pad and ry - pad <= cy <= ry + rh + pad:
+                if aid not in region["anchor_ids"]:
+                    region["anchor_ids"].append(aid)
+                    region["quality_flags"].append(
+                        f"merged_symbol_anchor_after_edge_rescue:A{aid}"
+                    )
+                break
 
+    for region in grouped.values():
+        if not region.get("is_valid"):
+            continue
+        if region.get("method") != "edge_barrier_rescue":
+            continue
+        flags = region.get("quality_flags", [])
+        if any("border=Y" in str(flag) for flag in flags):
+            continue
+        if any(str(flag).startswith("merged_symbol_anchor_after_edge_rescue") for flag in flags):
+            continue
+        anchor_groups = [
+            clusters_by_id[aid]
+            for aid in region.get("anchor_ids", [])
+            if aid in clusters_by_id
+        ]
+        raw_round = _extract_quality_float(flags, "raw_round")
+        post_reject = _edge_anchor_text_reject_reason(anchor_groups, raw_round)
+        if post_reject is None:
+            continue
+        region["is_valid"] = False
+        region["method"] = "bbox_fallback"
+        region["region_type"] = "bbox_fallback"
+        region["quality_flags"].append(post_reject)
+
+
+def _run_edge_barrier_rescue(
+    image: np.ndarray,
+    gray: np.ndarray,
+    img_w: int,
+    img_h: int,
+    grouped: Dict[Tuple[Any, ...], Dict[str, Any]],
+    diagnostics: List[Dict[str, Any]],
+    noise_like_anchors: List[Dict[str, Any]],
+    clusters_by_id: Dict[int, Dict[str, Any]],
+    manual_virtual_walls: Optional[List[Dict[str, Any]]],
+    _page_black_contour: Callable[[], np.ndarray],
+) -> None:
+    """Rescue: probe에서 실패한 그룹을 edge barrier flood로 구제한다. 모듈을 못 읽으면 진단만 남긴다(grouped·diagnostics 제자리 수정)."""
+    try:
+        try:
+            from pipeline.edge_barrier_flood_rescue import run_edge_barrier_rescue_auto
+        except ImportError:
+            from edge_barrier_flood_rescue import run_edge_barrier_rescue_auto
+    except Exception as exc:
+        diagnostics.append({
+            "method": "edge_barrier_rescue_import_failed",
+            "is_valid": False,
+            "reason": str(exc),
+        })
+        run_edge_barrier_rescue_auto = None
+
+    if run_edge_barrier_rescue_auto is not None:
+        _edge_rescue_failed_regions(
+            image, gray, grouped, diagnostics, clusters_by_id,
+            manual_virtual_walls, run_edge_barrier_rescue_auto, _page_black_contour,
+        )
+        _edge_rescue_split_failed_groups(
+            image, gray, img_w, img_h, grouped, clusters_by_id,
+            manual_virtual_walls, run_edge_barrier_rescue_auto, _page_black_contour,
+        )
+        _edge_rescue_postprocess(grouped, noise_like_anchors, clusters_by_id)
+
+
+def _merge_nearby_rescue_regions(
+    grouped: Dict[Tuple[Any, ...], Dict[str, Any]],
+    clusters_by_id: Dict[int, Dict[str, Any]],
+) -> None:
+    """Rescue 뒤 병합: 앵커 중심이 다른 구제 bubble의 100px 확장 rect 안에 들면 같은 말풍선으로 보고 합친다(grouped 제자리 수정)."""
     # edge_barrier_rescue 결과 중 인접한 단일-앵커 region을 합친다.
     # 동일 말풍선에서 시작점이 달라 flood_rect가 달랐던 TG들은 각자 rescue를 받아
     # 서로 근접한 bubble_rect를 갖게 된다. 앵커 center가 상대 bubble_rect 100px 확장 안에
@@ -3079,6 +3381,11 @@ def build_ocr_region_sheet(
     for kj in _merged_into:
         grouped.pop(kj, None)
 
+
+def _merge_same_rect_regions(
+    grouped: Dict[Tuple[Any, ...], Dict[str, Any]],
+) -> Dict[Tuple[Any, ...], Dict[str, Any]]:
+    """Rescue 뒤 병합: 같은 bubble rect로 수렴한 유효 region을 하나로 합친 새 grouped를 돌려준다."""
     # rescue 이후 같은 bubble rect로 수렴한 region은 다시 하나로 합친다.
     # 열린 말풍선은 TG별 flood 시작점이 달라도 같은 mask로 수렴하는 경우가 흔하다.
     merged_grouped: Dict[Tuple[Any, ...], Dict[str, Any]] = {}
@@ -3104,8 +3411,16 @@ def build_ocr_region_sheet(
             target["method"] = region.get("method", target["method"])
         if target["is_valid"] and target.get("region_type") == "bbox_fallback":
             target["region_type"] = region.get("region_type", target["region_type"])
-    grouped = merged_grouped
 
+    return merged_grouped
+
+
+def _finalize_region_validity(
+    grouped: Dict[Tuple[Any, ...], Dict[str, Any]],
+    gray: np.ndarray,
+    _page_black_contour: Callable[[], np.ndarray],
+) -> None:
+    """Finalize 검증: 옆면이 파고든 flood bubble을 fallback으로 내리고, 실패 region에 검은 윤곽 probe 결과를 붙인다(제자리 수정)."""
     for region in grouped.values():
         if not region.get("is_valid") or region.get("method") != "flood":
             continue
@@ -3137,157 +3452,13 @@ def build_ocr_region_sheet(
             f"cv={probe['distance_cv']:.2f}"
         )
 
-    # Cross-split and rescue merging is omitted or simplified for valid bubbles.
-    # We just group overlapping valid bubbles directly by their identical bounding rects.
 
-    def _pre_split_reading_key(region: Dict[str, Any]) -> Tuple[float, float]:
-        rect = region["bubble_rect"]
-        cx = rect[0] + rect[2] / 2
-        cy = rect[1] + rect[3] / 2
-        return (-cx, cy)
-
-    regions = sorted(grouped.values(), key=_pre_split_reading_key)
-    for sort_group_index, region in enumerate(regions):
-        region["sort_group_index"] = sort_group_index
-
-    def _split_child_reading_key(sub: Dict[str, Any]) -> Tuple[float, float]:
-        rect = sub.get("bubble_rect", sub.get("flood_rect"))
-        cx = rect[0] + rect[2] / 2
-        cy = rect[1] + rect[3] / 2
-        return (-cx, cy)
-
-    def _expanded_split_ocr_rect(
-        child_rect: List[int],
-        parent_rect: List[int],
-        anchor_rects: Optional[List[List[int]]] = None,
-        pad: int = 2,
-    ) -> List[int]:
-        """split child OCR crop은 child bbox를 기본으로, 잘린 TG bbox만 최소 보정한다."""
-        cx, cy, cw, ch = [int(v) for v in child_rect[:4]]
-        px, py, pw, ph = [int(v) for v in parent_rect[:4]]
-        x1, y1 = cx, cy
-        x2, y2 = cx + cw, cy + ch
-        for rect in anchor_rects or []:
-            ax, ay, aw, ah = [int(v) for v in rect[:4]]
-            x1 = min(x1, ax - pad)
-            y1 = min(y1, ay - pad)
-            x2 = max(x2, ax + aw + pad)
-            y2 = max(y2, ay + ah + pad)
-        x1 = max(px, x1)
-        y1 = max(py, y1)
-        x2 = min(px + pw, x2)
-        y2 = min(py + ph, y2)
-        return [x1, y1, max(1, x2 - x1), max(1, y2 - y1)]
-
-    def _padded_text_restore_rects(
-        anchor_rects: List[List[int]],
-        parent_rect: List[int],
-        pad: int = 2,
-    ) -> List[List[int]]:
-        """split OCR에서 복원할 TG 주변 원본 픽셀 영역만 반환한다."""
-        px, py, pw, ph = [int(v) for v in parent_rect[:4]]
-        out: List[List[int]] = []
-        for rect in anchor_rects:
-            ax, ay, aw, ah = [int(v) for v in rect[:4]]
-            x1 = max(px, ax - pad)
-            y1 = max(py, ay - pad)
-            x2 = min(px + pw, ax + aw + pad)
-            y2 = min(py + ph, ay + ah + pad)
-            if x2 > x1 and y2 > y1:
-                out.append([x1, y1, x2 - x1, y2 - y1])
-        return out
-
-    def _is_stable_edge_rescue_region(region: Dict[str, Any]) -> bool:
-        """안정적인 edge barrier rescue bubble은 후단 split으로 다시 찢지 않는다."""
-        if region.get("method") != "edge_barrier_rescue":
-            return False
-        flags = region.get("quality_flags", [])
-        solid = _extract_quality_float(flags, "solid")
-        edge_score = _extract_quality_float(flags, "edge_score")
-        edge_ratio = _extract_quality_float(flags, "edge_ratio")
-        if solid is None or edge_score is None or edge_ratio is None:
-            return False
-        return solid >= 0.88 and edge_score >= 4.0 and edge_ratio <= 2.3
-
-    def _should_keep_parent_for_continuation_columns(
-        anchor_ids: List[int],
-        split_result: List[Dict[str, Any]],
-    ) -> bool:
-        """같은 말풍선 안의 우→좌 이어쓰기 칼럼이면 split을 폐기한다."""
-        if len(anchor_ids) != 2 or len(split_result) != 2:
-            return False
-        split_anchor_ids = [
-            [int(aid) for aid in sub.get("anchor_ids", []) if int(aid) in clusters_by_id]
-            for sub in split_result
-        ]
-        if any(len(ids) != 1 for ids in split_anchor_ids):
-            return False
-
-        aid_a, aid_b = split_anchor_ids[0][0], split_anchor_ids[1][0]
-        rect_a = _tight_text_group_rect(clusters_by_id[aid_a])
-        rect_b = _tight_text_group_rect(clusters_by_id[aid_b])
-
-        def _center_x(rect: List[int]) -> float:
-            return rect[0] + rect[2] / 2
-
-        right_id, right_rect, left_id, left_rect = (
-            (aid_a, rect_a, aid_b, rect_b)
-            if _center_x(rect_a) >= _center_x(rect_b)
-            else (aid_b, rect_b, aid_a, rect_a)
-        )
-
-        _ = right_id
-        ry1, ry2 = right_rect[1], right_rect[1] + right_rect[3]
-        ly1, ly2 = left_rect[1], left_rect[1] + left_rect[3]
-        overlap_y = max(0, min(ry2, ly2) - max(ry1, ly1))
-        min_h = max(1, min(right_rect[3], left_rect[3]))
-        overlap_ratio = overlap_y / min_h
-        align_tol = max(45, int(min_h * 0.55))
-        vertically_aligned = (
-            abs(ry1 - ly1) <= align_tol
-            or abs(ry2 - ly2) <= align_tol
-            or (ry1 <= ly1 and ly2 <= ry2)
-            or (ly1 <= ry1 and ry2 <= ly2)
-        )
-        if overlap_ratio < 0.65:
-            return False
-        if not vertically_aligned:
-            return False
-
-        right_x1 = right_rect[0]
-        left_x2 = left_rect[0] + left_rect[2]
-        x_gap = max(0, right_x1 - left_x2)
-        if x_gap > max(80, int(max(right_rect[2], left_rect[2]) * 1.2)):
-            return False
-
-        left_text = "".join(ch for ch in _cluster_text(clusters_by_id[left_id]) if not ch.isspace())
-        starts_like_continuation = bool(left_text) and left_text[0] in "-ー…‥っッ、。！？!?"
-        left_is_short = len(left_text) <= 4 or left_rect[2] <= right_rect[2] * 0.85
-        return bool(left_is_short or starts_like_continuation)
-
-    def _edge_split_anchor_coverage_ok(split_result: List[Dict[str, Any]]) -> bool:
-        """edge rescue split child가 배정된 TG bbox를 충분히 포함하는지 확인한다."""
-        for sub in split_result:
-            sub_mask = sub.get("sub_mask")
-            if not isinstance(sub_mask, np.ndarray):
-                return False
-            for aid in sub.get("anchor_ids", []):
-                if aid not in clusters_by_id:
-                    return False
-                ax, ay, aw, ah = _tight_text_group_rect(clusters_by_id[aid])
-                if aw <= 0 or ah <= 0:
-                    return False
-                x1 = max(0, ax)
-                y1 = max(0, ay)
-                x2 = min(sub_mask.shape[1], ax + aw)
-                y2 = min(sub_mask.shape[0], ay + ah)
-                if x2 <= x1 or y2 <= y1:
-                    return False
-                coverage = float(np.count_nonzero(sub_mask[y1:y2, x1:x2] > 0)) / max(1, aw * ah)
-                if coverage < 0.82:
-                    return False
-        return True
-
+def _split_and_crop_regions(
+    image: np.ndarray,
+    regions: List[Dict[str, Any]],
+    clusters_by_id: Dict[int, Dict[str, Any]],
+) -> Tuple[List[Dict[str, Any]], int, int]:
+    """Split·crop: 읽기 순서로 정렬된 region을 다중 앵커·단일 TG split으로 나누고 OCR crop 목록과 시트 크기(total_width, max_height)를 돌려준다."""
     crops: List[Dict[str, Any]] = []
     total_width = 0
     max_height = 0
@@ -3356,7 +3527,7 @@ def build_ocr_region_sheet(
                 if (
                     split_result is not None
                     and region.get("method") == "edge_barrier_rescue"
-                    and not _edge_split_anchor_coverage_ok(split_result)
+                    and not _edge_split_anchor_coverage_ok(clusters_by_id, split_result)
                 ):
                     split_result = None
                     region["quality_flags"].append("edge_split_rejected_low_anchor_coverage")
@@ -3507,17 +3678,21 @@ def build_ocr_region_sheet(
         max_height = max(max_height, h)
         region_id_counter += 1
 
-    # 원본 bubble 순서를 먼저 고정하고, split 자식만 그 자리에서 연속으로 펼친다.
-    def _reading_order_key(item: Dict[str, Any]) -> Tuple[float, float, float]:
-        region = item["region"]
-        sort_group_index = float(region.get("sort_group_index", 0))
-        return (sort_group_index, float(region.get("split_order", 0)), 0.0)
+    return crops, total_width, max_height
 
-    crops.sort(key=_reading_order_key)
-    for idx, item in enumerate(crops, start=1):
-        item["region_id"] = idx
-        item["region"]["review_tags"] = _derive_review_tags(item["region"])
 
+def _write_masked_outputs(
+    image: np.ndarray,
+    crops: List[Dict[str, Any]],
+    img_w: int,
+    img_h: int,
+    output_masked_path: Optional[str],
+    output_vis_path: Optional[str],
+    output_regions_only_path: Optional[str],
+    clusters: List[Dict[str, Any]],
+    skipped: List[Dict[str, Any]],
+) -> None:
+    """Finalize 출력: 유효 region mask를 합쳐 흰칠 이미지·후보 검토 vis·region-only 이미지를 경로가 있을 때만 쓴다."""
     combined_mask = np.zeros((img_h, img_w), dtype=np.uint8)
     for item in crops:
         if item["region"]["is_valid"]:
@@ -3542,6 +3717,13 @@ def build_ocr_region_sheet(
         regions_only[combined_mask > 0] = image[combined_mask > 0]
         cv2.imwrite(output_regions_only_path, regions_only)
 
+
+def _pack_ocr_sheet(
+    crops: List[Dict[str, Any]],
+    total_width: int,
+    max_height: int,
+) -> Tuple[np.ndarray, List[Dict[str, Any]]]:
+    """Sheet packing: crop을 가로로 이어 붙인 OCR 시트와 시트 좌표가 담긴 출력 region 목록을 돌려준다."""
     sheet = np.full((max_height or 1, total_width or 1, 3), 255, dtype=np.uint8)
     sheet_x = 0
     output_regions: List[Dict[str, Any]] = []
@@ -3584,27 +3766,127 @@ def build_ocr_region_sheet(
         output_regions.append(region_data)
         sheet_x += w
 
+    return sheet, output_regions
+
+
+def _write_indexed_sheet(
+    sheet: np.ndarray,
+    output_regions: List[Dict[str, Any]],
+    indexed_label_gutter: int,
+    indexed_output_sheet_path: str,
+) -> None:
+    """Indexed sheet: 시트 위에 R·A 번호 라벨 여백을 붙여 저장하고 각 region에 indexed_sheet_rect를 기록한다."""
+    gutter = max(0, indexed_label_gutter)
+    indexed = np.full((sheet.shape[0] + gutter, sheet.shape[1], 3), 255, dtype=np.uint8)
+    indexed[gutter:gutter + sheet.shape[0], 0:sheet.shape[1]] = sheet
+    for region in output_regions:
+        sx, sy, sw, sh = region["sheet_rect"]
+        region["indexed_sheet_rect"] = [sx, sy + gutter, sw, sh]
+        color = (0, 150, 0) if region["is_valid"] else (0, 0, 210)
+
+        cv2.rectangle(indexed, (sx, gutter + sy), (sx + sw - 1, gutter + sy + sh - 1), (225, 225, 225), 1)
+        if sx > 0:
+            cv2.line(indexed, (sx, 0), (sx, indexed.shape[0] - 1), (238, 238, 238), 1)
+
+        label = f"R{region['region_id']}"
+        aids = "A" + ",".join(str(a) for a in region["anchor_ids"]) if region["anchor_ids"] else "A-"
+        cv2.putText(indexed, label, (sx + 4, 20), cv2.FONT_HERSHEY_SIMPLEX, 0.58, color, 2, cv2.LINE_AA)
+        cv2.putText(indexed, aids, (sx + 4, 39), cv2.FONT_HERSHEY_SIMPLEX, 0.46, (130, 80, 0), 1, cv2.LINE_AA)
+    cv2.imwrite(indexed_output_sheet_path, indexed)
+
+
+def build_ocr_region_sheet(
+    image_path: str,
+    clusters_json: str,
+    output_masked_path: str = None,
+    output_sheet_path: str = None,
+    output_json_path: str = None,
+    indexed_output_sheet_path: Optional[str] = None,
+    output_regions_only_path: Optional[str] = None,
+    output_vis_path: Optional[str] = None,
+    debug_mode: bool = False,
+    erode_pixels: int = 3,
+    max_area_ratio: float = MAX_SAFE_AREA_RATIO,
+    min_bubble_tg_ratio: float = 1.0,
+    max_bubble_tg_ratio: float = 20.0,
+    indexed_label_gutter: int = 48,
+    dark_bg_mean_threshold: int = 130,
+    enable_edge_barrier_rescue: bool = True,
+    image: Optional[np.ndarray] = None,
+    gray: Optional[np.ndarray] = None,
+    manual_virtual_walls: Optional[List[Dict[str, Any]]] = None,
+) -> Dict[str, Any]:
+    # 호출자가 이미지를 미리 읽어 넘겨준 경우 재독(disk I/O) 생략
+    if image is None or gray is None:
+        image, gray, img_h, img_w = _load_image_and_gray(image_path)
+    else:
+        img_h, img_w = image.shape[:2]
+    clusters = _load_json(clusters_json)
+    image_area = img_w * img_h
+
+    grouped: Dict[Tuple[Any, ...], Dict[str, Any]] = {}
+    diagnostics: List[Dict[str, Any]] = []
+    skipped: List[Dict[str, Any]] = []
+    noise_like_anchors: List[Dict[str, Any]] = []
+
+    # black contour probe용 페이지 mask는 이 호출 안에서 한 번만 만든다(호출 간 공유 없음).
+    page_black_contour: List[np.ndarray] = []
+
+    def _page_black_contour() -> np.ndarray:
+        if not page_black_contour:
+            page_black_contour.append(_black_contour_binary(gray))
+        return page_black_contour[0]
+
+    for idx, cluster in enumerate(clusters, start=1):
+        _probe_text_group(
+            idx, cluster, image, gray, img_w, img_h, image_area,
+            erode_pixels, max_area_ratio, min_bubble_tg_ratio, max_bubble_tg_ratio,
+            dark_bg_mean_threshold, _page_black_contour,
+            grouped, diagnostics, skipped, noise_like_anchors,
+        )
+
+    _merge_fallback_anchors_into_valid(grouped)
+    _attach_english_anchors_to_bubbles(grouped, skipped)
+
+    clusters_by_id = {_text_group_id(c, i + 1): c for i, c in enumerate(clusters)}
+
+    if enable_edge_barrier_rescue:
+        _run_edge_barrier_rescue(
+            image, gray, img_w, img_h, grouped, diagnostics, noise_like_anchors,
+            clusters_by_id, manual_virtual_walls, _page_black_contour,
+        )
+
+    _merge_nearby_rescue_regions(grouped, clusters_by_id)
+    grouped = _merge_same_rect_regions(grouped)
+    _finalize_region_validity(grouped, gray, _page_black_contour)
+
+    # Cross-split and rescue merging is omitted or simplified for valid bubbles.
+    # We just group overlapping valid bubbles directly by their identical bounding rects.
+
+    regions = sorted(grouped.values(), key=_pre_split_reading_key)
+    for sort_group_index, region in enumerate(regions):
+        region["sort_group_index"] = sort_group_index
+
+    crops, total_width, max_height = _split_and_crop_regions(image, regions, clusters_by_id)
+
+    # 원본 bubble 순서를 먼저 고정하고, split 자식만 그 자리에서 연속으로 펼친다.
+    crops.sort(key=_reading_order_key)
+    for idx, item in enumerate(crops, start=1):
+        item["region_id"] = idx
+        item["region"]["review_tags"] = _derive_review_tags(item["region"])
+
+    _write_masked_outputs(
+        image, crops, img_w, img_h, output_masked_path, output_vis_path,
+        output_regions_only_path, clusters, skipped,
+    )
+
+    sheet, output_regions = _pack_ocr_sheet(crops, total_width, max_height)
+
     if output_sheet_path:
         cv2.imwrite(output_sheet_path, sheet)
 
     if indexed_output_sheet_path:
-        gutter = max(0, indexed_label_gutter)
-        indexed = np.full((sheet.shape[0] + gutter, sheet.shape[1], 3), 255, dtype=np.uint8)
-        indexed[gutter:gutter + sheet.shape[0], 0:sheet.shape[1]] = sheet
-        for region in output_regions:
-            sx, sy, sw, sh = region["sheet_rect"]
-            region["indexed_sheet_rect"] = [sx, sy + gutter, sw, sh]
-            color = (0, 150, 0) if region["is_valid"] else (0, 0, 210)
-
-            cv2.rectangle(indexed, (sx, gutter + sy), (sx + sw - 1, gutter + sy + sh - 1), (225, 225, 225), 1)
-            if sx > 0:
-                cv2.line(indexed, (sx, 0), (sx, indexed.shape[0] - 1), (238, 238, 238), 1)
-
-            label = f"R{region['region_id']}"
-            aids = "A" + ",".join(str(a) for a in region["anchor_ids"]) if region["anchor_ids"] else "A-"
-            cv2.putText(indexed, label, (sx + 4, 20), cv2.FONT_HERSHEY_SIMPLEX, 0.58, color, 2, cv2.LINE_AA)
-            cv2.putText(indexed, aids, (sx + 4, 39), cv2.FONT_HERSHEY_SIMPLEX, 0.46, (130, 80, 0), 1, cv2.LINE_AA)
-        cv2.imwrite(indexed_output_sheet_path, indexed)
+        _write_indexed_sheet(sheet, output_regions, indexed_label_gutter, indexed_output_sheet_path)
 
     output = {
         "image": image_path,

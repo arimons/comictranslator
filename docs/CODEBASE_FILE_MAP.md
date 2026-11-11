@@ -334,6 +334,7 @@ Step 3 진입점이다. `pipeline_runner`가 `python -m pipeline.dialogue_extrac
 
 - `build_dialogue_sheet()`: ① `bubble_detector.build_ocr_region_sheet()`로 경계 기반 검출·마스킹 → ② 텍스트 기반 영역의 글자를 LaMa(`simple_lama_inpainting`)로 지움 → ③ 두 종류 crop을 읽기 순서(`reading_order.reading_sequence`, 칸 여백 기반)로 모아 indexed OCR sheet + `regions.json` 저장
 - 편집기 guidance(`manual_regions`, `manual_seed_points`, `virtual_walls`, `split_guides`, suppressed region)를 인자로 받아 반영한다.
+- 단계 함수(2026-11-11 분할, 동작 변경 없음): 검출·가이드 반영 `_detect_and_apply_guides` → 마스킹 준비 `_init_masking_state` → 경계 기반 crop `_build_bubble_crops` → 수동 텍스트 박스 `_add_manual_unboxed_crops` → 텍스트 기반 후보 `_eligible_unboxed_groups` → 글자 지우기 `_erase_unboxed_clusters` → 마스크 마무리·저장 `_finalize_masked_image` → 출력 region `_build_output_regions` → indexed sheet `_write_dialogue_indexed_sheet`. `build_dialogue_sheet()`는 이 순서로 부르고 읽기 순서 정렬·지우기 보정 OCR 반영·`regions.json` 저장만 직접 한다.
 - 수동 분할선(`split_guides`, `_split_region_variants`): 사용자가 그은 선은 TG와 상관없이 그대로 가르고 모든 조각을 남긴다. TG는 놓인 쪽 조각에 붙고, TG 없는 조각도 영역으로 남는다(필요 없으면 사용자가 지운다). 선을 가장자리에 걸쳐 그어 생긴 자투리(짧은 변 6px 미만 또는 부모 넓이 1.5% 미만, TG 없음)만 버린다(`_is_split_sliver`).
 - region별 `safe_text_rect`(`_compute_safe_text_rect`)와 `mask_centroid`(`_compute_mask_centroid`)를 계산해 `regions.json`에 기록한다. Step 5 배치의 기준값이다.
 - LaMa 실행 장치(`_lama_device`): `LAMA_DEVICE`(cpu|mps|cuda)가 없으면 cuda → mps → cpu 순으로 고른다. M3 Pro에서 MPS는 첫 호출(GPU 준비)이 CPU보다 조금 느리고 이후 호출은 약 3배 빠르며, 결과 차이는 최대 수 단계(0〜255)다. MPS 초기화가 실패하면 CPU로 돈다. 상주 서버는 모델을 프로세스 안에 올리지 않는다. `app.create_app()`이 `set_lama_provider`로 작업 프로세스 대리 객체(`pipeline/lama_worker.py`)를 등록하고, Step 3 재적용과 `background_restore`가 그 작업 프로세스 하나를 같이 쓴다. Step 3 서브프로세스·CLI는 등록하지 않으므로 `_load_lama_in_process`로 직접 올린다.
@@ -356,6 +357,7 @@ Step 3 진입점이다. `pipeline_runner`가 `python -m pipeline.dialogue_extrac
 **공개 함수:**
 
 - `build_ocr_region_sheet()`: 표준 경로. flood 판정 + split + 흰색 마스킹 + region 메타 생성. `dialogue_extractor`와 `run_masked_vis`가 호출한다.
+  단계 함수(2026-11-11 분할, 동작 변경 없음): Probe·Validation `_probe_text_group`(사전 필터 `_prefilter_text_group`, 모양 검증 `_validate_flood_candidate`) → 앵커 정리 `_merge_fallback_anchors_into_valid`·`_attach_english_anchors_to_bubbles` → Rescue `_run_edge_barrier_rescue`(`_edge_rescue_failed_regions`, `_edge_rescue_split_failed_groups`+`_best_edge_partition`, `_edge_rescue_postprocess`; 거절 판정 `_edge_rescue_reject_reason`) → 병합 `_merge_nearby_rescue_regions`·`_merge_same_rect_regions` → Finalize 검증 `_finalize_region_validity` → split·crop `_split_and_crop_regions` → 출력 `_write_masked_outputs`·`_pack_ocr_sheet`·`_write_indexed_sheet`.
 - `visualize_anchor_floodfill()`: flood 결과와 region_type 분류 디버그 시각화 (CLI 4인자 모드 전용)
 
 **내부 주요 함수:**

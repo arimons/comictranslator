@@ -3279,65 +3279,21 @@ def _detect_regions_cached(image_path: str, clusters_json: str, image: np.ndarra
     return sheet
 
 
-def build_dialogue_sheet(
+def _detect_and_apply_guides(
     image_path: str,
     clusters_json: str,
-    output_masked_path: str,
-    output_json_path: str,
-    indexed_output_sheet_path: str,
-    output_vis_path: str | None = None,
-    manual_regions: List[Dict[str, Any]] | None = None,
-    manual_seed_points: List[Dict[str, Any]] | None = None,
-    manual_virtual_walls: List[Dict[str, Any]] | None = None,
-    manual_split_guides: List[Dict[str, Any]] | None = None,
-    suppressed_regions: List[Dict[str, Any]] | None = None,
-    pad: int = 60,
-    lane_pad: int = 20,
-    dark_threshold: int = 214,
-    min_mask_pixels: int = 80,
-    bubble_protect_pad: int = 10,
-    bubble_mask_erode: int = 2,
-    indexed_label_gutter: int = 48,
-    base_masked_path: str | None = None,
-    reuse_existing_unboxed_inpaint: bool = False,
-    inpaint_engine_overrides: List[Dict[str, Any]] | None = None,
-    force_standard: bool = False,
-    custom_masks: List[Dict[str, Any]] | None = None,
-) -> Dict[str, Any]:
-    """
-    1. Bubble 영역 검출 → 흰색 마스킹
-    2. Unboxed 텍스트 검출 → LaMa inpaint로 제거
-    3. 두 종류 crop을 모아 indexed OCR sheet 생성
-
-    Returns: regions JSON dict
-    """
-    image = cv2.imread(image_path)
-    if image is None:
-        raise FileNotFoundError(image_path)
-    img_h, img_w = image.shape[:2]
-    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-
-    if _is_cover_image_path(image_path) and not force_standard:
-        return _write_cover_skip_outputs(
-            image,
-            image_path,
-            clusters_json,
-            output_masked_path,
-            output_json_path,
-            indexed_output_sheet_path,
-            output_vis_path,
-        )
-
-    groups = _load_json(Path(clusters_json))
-    mask_artifact_dir = Path(output_json_path).parent.parent / "masks"
-    manual_guidance_report: Dict[str, Any] = {"edge_boxes": []}
-    style_baseline = _compute_page_style_baseline(image, groups)
-    style_decisions_by_tg: Dict[int, Dict[str, Any]] = {}
-    for idx, group in enumerate(groups, start=1):
-        tid = _tg_id(group, idx)
-        style = _compute_text_group_style(image, group)
-        style_decisions_by_tg[tid] = _classify_text_group_style(style, style_baseline)
-
+    image: np.ndarray,
+    gray: np.ndarray,
+    output_vis_path: str | None,
+    groups: List[Dict[str, Any]],
+    manual_regions: List[Dict[str, Any]] | None,
+    manual_seed_points: List[Dict[str, Any]] | None,
+    manual_virtual_walls: List[Dict[str, Any]] | None,
+    manual_split_guides: List[Dict[str, Any]] | None,
+    suppressed_regions: List[Dict[str, Any]] | None,
+    manual_guidance_report: Dict[str, Any],
+) -> Tuple[Dict[str, Any], List[Dict[str, Any]], set[int], Dict[int, Dict[str, Any]]]:
+    """Bubble 검출: 자동 영역 검출(캐시) 결과에 수동 영역·seed·Edge 가이드·분리선·제외를 반영해 (sheet, regions, 제외 TG id, 앵커별 원본 region)을 돌려준다."""
     # ── 1. Bubble Detection ──
     # image/gray를 미리 읽었으므로 build_ocr_region_sheet에 넘겨 재독 방지
     sheet = _detect_regions_cached(image_path, clusters_json, image, gray, output_vis_path)
@@ -3370,6 +3326,16 @@ def build_dialogue_sheet(
     # (flood-fill이 패널 전체를 채우는 경우 발생 — 포함하는 쪽을 탈락시켜 unboxed로 재처리)
     _invalidate_containing_bubbles(regions)
 
+    return sheet, regions, suppressed_tg_ids, source_meta_by_anchor
+
+
+def _init_masking_state(
+    image: np.ndarray,
+    reuse_existing_unboxed_inpaint: bool,
+    base_masked_path: str | None,
+    inpaint_engine_overrides: List[Dict[str, Any]] | None,
+) -> Tuple[np.ndarray, Dict[str, str], bool, np.ndarray, np.ndarray, Dict[Tuple[int, int, int, int], np.ndarray]]:
+    """마스킹 준비: 작업 이미지(필요하면 이전 지우기 결과 재사용), 고정 엔진 표, 말풍선·보호 마스크, split 부모 마스크 표를 만든다."""
     masked_image = image.copy()
     forced_engines = _forced_engine_by_key(inpaint_engine_overrides)
     reused_unboxed_inpaint = False
@@ -3382,18 +3348,18 @@ def build_dialogue_sheet(
     protected_mask = np.zeros(image.shape[:2], dtype=np.uint8)
     split_parent_masks: Dict[Tuple[int, int, int, int], np.ndarray] = {}
 
-    # 출력 사각형은 마스크 경계로 줄어든다. 화면은 그 출력 사각형으로 제외 키를 저장하므로,
-    # 사각형을 맞춘 뒤 제외를 한 번 더 판정해야 제외한 영역이 마스크·OCR·중복 판정에 남지 않는다.
-    for region in regions:
-        if not region.get("is_valid") or region.get("split_parent_rect"):
-            continue
-        trimmed = _mask_bounding_rect(region.get("mask") if isinstance(region.get("mask"), np.ndarray) else _polygon_to_mask(region.get("polygon"), image.shape))
-        if trimmed is not None:
-            region["bubble_rect"] = trimmed
-    _invalidate_suppressed_regions(regions, [item for item in suppressed_regions or [] if item.get("target_key") or item.get("instance_ref")])
-    suppressed_tg_ids.update(_suppressed_text_group_ids(groups, regions, suppressed_regions or []))
+    return masked_image, forced_engines, reused_unboxed_inpaint, bubble_base_mask, protected_mask, split_parent_masks
 
-    valid_regions = [r for r in regions if r.get("is_valid")]
+
+def _build_bubble_crops(
+    image: np.ndarray,
+    masked_image: np.ndarray,
+    groups: List[Dict[str, Any]],
+    valid_regions: List[Dict[str, Any]],
+    bubble_base_mask: np.ndarray,
+    split_parent_masks: Dict[Tuple[int, int, int, int], np.ndarray],
+) -> Tuple[List[Dict[str, Any]], int]:
+    """Bubble crop: 유효 경계 기반 region마다 흰칠 마스크를 쌓고 OCR crop을 만든다. 어두운 flood는 글자만 지운다. (crops, 다음 region 번호)를 돌려준다."""
     crops: List[Dict[str, Any]] = []
     region_id_counter = 1
 
@@ -3484,6 +3450,23 @@ def build_dialogue_sheet(
         })
         region_id_counter += 1
 
+    return crops, region_id_counter
+
+
+def _add_manual_unboxed_crops(
+    image: np.ndarray,
+    masked_image: np.ndarray,
+    crops: List[Dict[str, Any]],
+    manual_regions: List[Dict[str, Any]] | None,
+    groups: List[Dict[str, Any]],
+    img_w: int,
+    img_h: int,
+    suppressed_regions: List[Dict[str, Any]] | None,
+    inpaint_engine_overrides: List[Dict[str, Any]] | None,
+    forced_engines: Dict[str, str],
+    region_id_counter: int,
+) -> Tuple[set[int], int]:
+    """수동 텍스트 박스: 제외되지 않은 수동 텍스트 기반 crop을 crops에 넣고 LaMa로 지운다. (수동 박스가 차지한 TG id, 다음 region 번호)를 돌려준다."""
     manual_unboxed_crops = _manual_unboxed_crops(image, manual_regions or [], groups, img_w, img_h)
     manual_unboxed_tg_ids: set[int] = set()
     group_by_id = {_tg_id(group, idx): group for idx, group in enumerate(groups, start=1)}
@@ -3502,8 +3485,18 @@ def build_dialogue_sheet(
             ))
         region_id_counter += 1
 
-    protected_mask[_expand_mask(bubble_base_mask, bubble_protect_pad) > 0] = 255
+    return manual_unboxed_tg_ids, region_id_counter
 
+
+def _eligible_unboxed_groups(
+    groups: List[Dict[str, Any]],
+    valid_regions: List[Dict[str, Any]],
+    sheet: Dict[str, Any],
+    suppressed_tg_ids: set[int],
+    manual_unboxed_tg_ids: set[int],
+    style_decisions_by_tg: Dict[int, Dict[str, Any]],
+) -> List[Tuple[int, Dict]]:
+    """Unboxed 후보: bubble·제외·수동 박스·OCR 제외 사유·노이즈·스타일 제외에 걸리지 않은 TG를 (id, group) 목록으로 돌려준다."""
     # ── 2. Unboxed Text Erase (LaMa) ──
     # valid 버블에 속한 TG는 이미 bubble crop으로 처리됨 → unboxed 후보에서 제외
     valid_bubble_tg_ids: set[int] = set()
@@ -3540,6 +3533,30 @@ def build_dialogue_sheet(
             continue
         eligible.append((tid, group))
 
+    return eligible
+
+
+def _erase_unboxed_clusters(
+    image: np.ndarray,
+    gray: np.ndarray,
+    masked_image: np.ndarray,
+    crops: List[Dict[str, Any]],
+    eligible: List[Tuple[int, Dict]],
+    img_w: int,
+    img_h: int,
+    source_meta_by_anchor: Dict[int, Dict[str, Any]],
+    protected_mask: np.ndarray,
+    style_decisions_by_tg: Dict[int, Dict[str, Any]],
+    inpaint_engine_overrides: List[Dict[str, Any]] | None,
+    forced_engines: Dict[str, str],
+    reused_unboxed_inpaint: bool,
+    pad: int,
+    lane_pad: int,
+    dark_threshold: int,
+    min_mask_pixels: int,
+    region_id_counter: int,
+) -> int:
+    """Unboxed 지우기: 인접 TG 묶음마다 글자 마스크를 뽑아 보호 범위 밖만 LaMa·Telea·stripe로 지우고 텍스트 기반 crop을 넣는다. 다음 region 번호를 돌려준다."""
     def _style_meta_for_cluster(cluster: List[Tuple[int, Dict]]) -> Dict[str, Any]:
         decisions = [
             style_decisions_by_tg[int(tid)]
@@ -3640,6 +3657,20 @@ def build_dialogue_sheet(
         crops.append(unboxed_crop)
         region_id_counter += 1
 
+    return region_id_counter
+
+
+def _finalize_masked_image(
+    image: np.ndarray,
+    masked_image: np.ndarray,
+    bubble_base_mask: np.ndarray,
+    protected_mask: np.ndarray,
+    split_parent_masks: Dict[Tuple[int, int, int, int], np.ndarray],
+    bubble_mask_erode: int,
+    custom_masks: List[Dict[str, Any]] | None,
+    output_masked_path: str,
+) -> Tuple[int, List[Dict[str, Any]], Dict[str, Any] | None]:
+    """마스킹 마무리: split 이음매를 메우고 보호 범위를 복원한 뒤 말풍선 흰칠·지우기 보정을 칠해 masked 이미지를 쓴다. (침식 px, 보정 도형, 보정 보고)를 돌려준다."""
     for parent_rect, split_mask in split_parent_masks.items():
         x, y, w, h = parent_rect
         if w <= 0 or h <= 0:
@@ -3672,30 +3703,17 @@ def build_dialogue_sheet(
 
     cv2.imwrite(output_masked_path, masked_image)
 
-    # ── 3. OCR Sheet 조립 ──
-    crops = _apply_manual_unboxed_overrides(image, crops, img_w, img_h)
-    crops = _dedupe_dialogue_crops(crops)
+    return scaled_bubble_mask_erode, custom_shapes, custom_mask_report
 
-    # 읽기 순서: 칸 사이 흰 여백으로 칸을 나눠 위→아래, 오른쪽→왼쪽 칸 순서로 보고,
-    # 칸 안에서는 세로로 겹치는 말풍선을 한 줄로 묶어 줄은 위→아래, 줄 안은 오른쪽→왼쪽으로 번호를 붙인다.
-    # 가로로 긴(2p 스프레드) 이미지는 오른쪽 절반(1p)을 모두 끝내고 왼쪽 절반(2p)으로 넘어간다.
-    def _order_entry(item: Dict[str, Any]) -> Dict[str, Any]:
-        source_order = item.get("source_order")
-        split_order = float(item.get("split_order") or 0)
-        # source_order가 있는 분할 서브리전은 미세 offset으로 같은 부모끼리 인접 보장
-        sub = (float(source_order) * 1e-4 + split_order * 1e-5) if source_order is not None else (split_order * 1e-5)
-        return {"rect": item.get("sort_rect") or item["source_rect"], "sub": sub, "item": item}
 
-    _is_wide_spread = img_h > 0 and (img_w / img_h) >= 1.25
-    crops = [entry["item"] for entry in reading_sequence([_order_entry(item) for item in crops], gray, _is_wide_spread)]
-    for i, item in enumerate(crops):
-        item["region_id"] = i + 1
-
-    _SHEET_GAP = 10
-
-    n_crops = len(crops)
-    max_height = max((c["crop"].shape[0] for c in crops), default=1)
-
+def _build_output_regions(
+    crops: List[Dict[str, Any]],
+    image_path: str,
+    mask_artifact_dir: Path,
+    n_crops: int,
+    _SHEET_GAP: int,
+) -> List[Dict[str, Any]]:
+    """OCR sheet 조립: 읽기 순서로 정렬된 crop마다 시트 좌표·타입·좌표·마스크 파일을 담은 출력 region을 만든다."""
     sheet_x = 0
     output_regions = []
 
@@ -3762,25 +3780,19 @@ def build_dialogue_sheet(
         output_regions.append(region_data)
         sheet_x += w + (_SHEET_GAP if i < n_crops - 1 else 0)
 
-    # 영역 참조(region_ref): 번호가 아니라 TG 집합·가이드 id로 번역/수동값/화자를 영역에 붙이기 위한 덧붙임 필드.
-    # 기존 키(region_id, type, 좌표 등)는 바꾸지 않는다.
-    for region_data, annotated in zip(output_regions, annotate_regions(output_regions)):
-        for key in ("region_origin", "region_ref", "region_instance_ref", "region_ref_weak", "region_ref_collision"):
-            if key in annotated:
-                region_data[key] = annotated[key]
+    return output_regions
 
-    # 지우기 보정을 OCR crop에 합친다. 영역 참조가 붙은 뒤라야 R 지정 기록을 처리 인스턴스로 찾을 수 있다.
-    custom_ocr_report = _attach_custom_masks_to_ocr(image, crops, output_regions, custom_shapes)
-    if custom_ocr_report and custom_ocr_report["ocr_regions"]:
-        sheet_x = 0
-        for i, (item, region_data) in enumerate(zip(crops, output_regions)):
-            h, w = item["crop"].shape[:2]
-            region_data["sheet_rect"] = [sheet_x, 0, w, h]
-            sheet_x += w + (_SHEET_GAP if i < n_crops - 1 else 0)
-        max_height = max((c["crop"].shape[0] for c in crops), default=1)
-    if custom_mask_report is not None and custom_ocr_report is not None:
-        custom_mask_report.update(custom_ocr_report)
 
+def _write_dialogue_indexed_sheet(
+    crops: List[Dict[str, Any]],
+    output_regions: List[Dict[str, Any]],
+    indexed_label_gutter: int,
+    max_height: int,
+    n_crops: int,
+    _SHEET_GAP: int,
+    indexed_output_sheet_path: str,
+) -> Tuple[int, int]:
+    """Indexed sheet: crop 왼쪽에 R/U 번호·TG 라벨 열을 붙인 시트를 쓰고 각 region에 indexed_sheet_rect를 기록한다. 시트 (너비, 높이)를 돌려준다."""
     # Indexed sheet — 각 crop 왼쪽에 라벨 컬럼 배치 (상단 gutter 제거)
     _LABEL_W = max(0, indexed_label_gutter)  # 좌측 라벨 열 너비 (기존 파라미터 재활용)
     idx_total_w = max(1, sum(_LABEL_W + c["crop"].shape[1] for c in crops) + _SHEET_GAP * max(0, n_crops - 1))
@@ -3821,6 +3833,166 @@ def build_dialogue_sheet(
         idx_x += _LABEL_W + w + (_SHEET_GAP if i < n_crops - 1 else 0)
 
     cv2.imwrite(indexed_output_sheet_path, indexed)
+
+    return idx_total_w, idx_total_h
+
+
+def build_dialogue_sheet(
+    image_path: str,
+    clusters_json: str,
+    output_masked_path: str,
+    output_json_path: str,
+    indexed_output_sheet_path: str,
+    output_vis_path: str | None = None,
+    manual_regions: List[Dict[str, Any]] | None = None,
+    manual_seed_points: List[Dict[str, Any]] | None = None,
+    manual_virtual_walls: List[Dict[str, Any]] | None = None,
+    manual_split_guides: List[Dict[str, Any]] | None = None,
+    suppressed_regions: List[Dict[str, Any]] | None = None,
+    pad: int = 60,
+    lane_pad: int = 20,
+    dark_threshold: int = 214,
+    min_mask_pixels: int = 80,
+    bubble_protect_pad: int = 10,
+    bubble_mask_erode: int = 2,
+    indexed_label_gutter: int = 48,
+    base_masked_path: str | None = None,
+    reuse_existing_unboxed_inpaint: bool = False,
+    inpaint_engine_overrides: List[Dict[str, Any]] | None = None,
+    force_standard: bool = False,
+    custom_masks: List[Dict[str, Any]] | None = None,
+) -> Dict[str, Any]:
+    """
+    1. Bubble 영역 검출 → 흰색 마스킹
+    2. Unboxed 텍스트 검출 → LaMa inpaint로 제거
+    3. 두 종류 crop을 모아 indexed OCR sheet 생성
+
+    Returns: regions JSON dict
+    """
+    image = cv2.imread(image_path)
+    if image is None:
+        raise FileNotFoundError(image_path)
+    img_h, img_w = image.shape[:2]
+    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+
+    if _is_cover_image_path(image_path) and not force_standard:
+        return _write_cover_skip_outputs(
+            image,
+            image_path,
+            clusters_json,
+            output_masked_path,
+            output_json_path,
+            indexed_output_sheet_path,
+            output_vis_path,
+        )
+
+    groups = _load_json(Path(clusters_json))
+    mask_artifact_dir = Path(output_json_path).parent.parent / "masks"
+    manual_guidance_report: Dict[str, Any] = {"edge_boxes": []}
+    style_baseline = _compute_page_style_baseline(image, groups)
+    style_decisions_by_tg: Dict[int, Dict[str, Any]] = {}
+    for idx, group in enumerate(groups, start=1):
+        tid = _tg_id(group, idx)
+        style = _compute_text_group_style(image, group)
+        style_decisions_by_tg[tid] = _classify_text_group_style(style, style_baseline)
+
+    sheet, regions, suppressed_tg_ids, source_meta_by_anchor = _detect_and_apply_guides(
+        image_path, clusters_json, image, gray, output_vis_path, groups,
+        manual_regions, manual_seed_points, manual_virtual_walls, manual_split_guides,
+        suppressed_regions, manual_guidance_report,
+    )
+
+    (
+        masked_image, forced_engines, reused_unboxed_inpaint,
+        bubble_base_mask, protected_mask, split_parent_masks,
+    ) = _init_masking_state(image, reuse_existing_unboxed_inpaint, base_masked_path, inpaint_engine_overrides)
+
+    # 출력 사각형은 마스크 경계로 줄어든다. 화면은 그 출력 사각형으로 제외 키를 저장하므로,
+    # 사각형을 맞춘 뒤 제외를 한 번 더 판정해야 제외한 영역이 마스크·OCR·중복 판정에 남지 않는다.
+    for region in regions:
+        if not region.get("is_valid") or region.get("split_parent_rect"):
+            continue
+        trimmed = _mask_bounding_rect(region.get("mask") if isinstance(region.get("mask"), np.ndarray) else _polygon_to_mask(region.get("polygon"), image.shape))
+        if trimmed is not None:
+            region["bubble_rect"] = trimmed
+    _invalidate_suppressed_regions(regions, [item for item in suppressed_regions or [] if item.get("target_key") or item.get("instance_ref")])
+    suppressed_tg_ids.update(_suppressed_text_group_ids(groups, regions, suppressed_regions or []))
+
+    valid_regions = [r for r in regions if r.get("is_valid")]
+    crops, region_id_counter = _build_bubble_crops(
+        image, masked_image, groups, valid_regions, bubble_base_mask, split_parent_masks,
+    )
+
+    manual_unboxed_tg_ids, region_id_counter = _add_manual_unboxed_crops(
+        image, masked_image, crops, manual_regions, groups, img_w, img_h,
+        suppressed_regions, inpaint_engine_overrides, forced_engines, region_id_counter,
+    )
+
+    protected_mask[_expand_mask(bubble_base_mask, bubble_protect_pad) > 0] = 255
+
+    eligible = _eligible_unboxed_groups(
+        groups, valid_regions, sheet, suppressed_tg_ids, manual_unboxed_tg_ids, style_decisions_by_tg,
+    )
+
+    region_id_counter = _erase_unboxed_clusters(
+        image, gray, masked_image, crops, eligible, img_w, img_h, source_meta_by_anchor,
+        protected_mask, style_decisions_by_tg, inpaint_engine_overrides, forced_engines,
+        reused_unboxed_inpaint, pad, lane_pad, dark_threshold, min_mask_pixels, region_id_counter,
+    )
+
+    scaled_bubble_mask_erode, custom_shapes, custom_mask_report = _finalize_masked_image(
+        image, masked_image, bubble_base_mask, protected_mask, split_parent_masks,
+        bubble_mask_erode, custom_masks, output_masked_path,
+    )
+
+    # ── 3. OCR Sheet 조립 ──
+    crops = _apply_manual_unboxed_overrides(image, crops, img_w, img_h)
+    crops = _dedupe_dialogue_crops(crops)
+
+    # 읽기 순서: 칸 사이 흰 여백으로 칸을 나눠 위→아래, 오른쪽→왼쪽 칸 순서로 보고,
+    # 칸 안에서는 세로로 겹치는 말풍선을 한 줄로 묶어 줄은 위→아래, 줄 안은 오른쪽→왼쪽으로 번호를 붙인다.
+    # 가로로 긴(2p 스프레드) 이미지는 오른쪽 절반(1p)을 모두 끝내고 왼쪽 절반(2p)으로 넘어간다.
+    def _order_entry(item: Dict[str, Any]) -> Dict[str, Any]:
+        source_order = item.get("source_order")
+        split_order = float(item.get("split_order") or 0)
+        # source_order가 있는 분할 서브리전은 미세 offset으로 같은 부모끼리 인접 보장
+        sub = (float(source_order) * 1e-4 + split_order * 1e-5) if source_order is not None else (split_order * 1e-5)
+        return {"rect": item.get("sort_rect") or item["source_rect"], "sub": sub, "item": item}
+
+    _is_wide_spread = img_h > 0 and (img_w / img_h) >= 1.25
+    crops = [entry["item"] for entry in reading_sequence([_order_entry(item) for item in crops], gray, _is_wide_spread)]
+    for i, item in enumerate(crops):
+        item["region_id"] = i + 1
+
+    _SHEET_GAP = 10
+
+    n_crops = len(crops)
+    max_height = max((c["crop"].shape[0] for c in crops), default=1)
+
+    output_regions = _build_output_regions(crops, image_path, mask_artifact_dir, n_crops, _SHEET_GAP)
+
+    # 영역 참조(region_ref): 번호가 아니라 TG 집합·가이드 id로 번역/수동값/화자를 영역에 붙이기 위한 덧붙임 필드.
+    # 기존 키(region_id, type, 좌표 등)는 바꾸지 않는다.
+    for region_data, annotated in zip(output_regions, annotate_regions(output_regions)):
+        for key in ("region_origin", "region_ref", "region_instance_ref", "region_ref_weak", "region_ref_collision"):
+            if key in annotated:
+                region_data[key] = annotated[key]
+
+    # 지우기 보정을 OCR crop에 합친다. 영역 참조가 붙은 뒤라야 R 지정 기록을 처리 인스턴스로 찾을 수 있다.
+    custom_ocr_report = _attach_custom_masks_to_ocr(image, crops, output_regions, custom_shapes)
+    if custom_ocr_report and custom_ocr_report["ocr_regions"]:
+        sheet_x = 0
+        for i, (item, region_data) in enumerate(zip(crops, output_regions)):
+            h, w = item["crop"].shape[:2]
+            region_data["sheet_rect"] = [sheet_x, 0, w, h]
+            sheet_x += w + (_SHEET_GAP if i < n_crops - 1 else 0)
+        max_height = max((c["crop"].shape[0] for c in crops), default=1)
+    if custom_mask_report is not None and custom_ocr_report is not None:
+        custom_mask_report.update(custom_ocr_report)
+
+    idx_total_w, idx_total_h = _write_dialogue_indexed_sheet(
+        crops, output_regions, indexed_label_gutter, max_height, n_crops, _SHEET_GAP, indexed_output_sheet_path,
+    )
     _overlay_final_unboxed_regions(image, output_vis_path, output_regions, groups)
 
     output_data = {
