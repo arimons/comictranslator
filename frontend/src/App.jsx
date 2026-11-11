@@ -2,14 +2,14 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import EditorCanvas from "./EditorCanvas.jsx";
 import OverlayCanvas from "./OverlayCanvas.jsx";
 import OriginalFocusPane from "./OriginalFocusPane.jsx";
-import { TEXT_BASED, regionProcessingBasis, regionTypeLabel, regionDetectionLabel, regionBindingKey } from "./regionTypes.js";
+import { TEXT_BASED, regionProcessingBasis, regionDetectionLabel, regionBindingKey } from "./regionTypes.js";
 import ShortcutHelp from "./ShortcutHelp.jsx";
 import SourceLinks from "./SourceLinks.jsx";
 import PageJump from "./PageJump.jsx";
 import StartScreen from "./StartScreen.jsx";
 import ImagePreview from "./ImagePreview.jsx";
 import GuidanceToolIcon from "./GuidanceToolIcon.jsx";
-import OcrBatchPrompt, { LastPagePrompt, OCR_PROMPT_MILESTONES } from "./OcrBatchPrompt.jsx";
+import OcrBatchPrompt, { LastPagePrompt } from "./OcrBatchPrompt.jsx";
 import ImageGenProgress from "./ImageGenProgress.jsx";
 import ImageGenerationPanel from "./ImageGenerationPanel.jsx";
 import AiErasePanel from "./AiErasePanel.jsx";
@@ -41,7 +41,6 @@ import {
   guidanceEdgeNotices,
   overlayControlItems,
   canRenderOverlayImage,
-  imageNeedsAnalysis,
   imageSummaryOf,
   overlayGuidancePayload,
   baseRegionText,
@@ -62,15 +61,25 @@ import {
   patchTargetsRegion,
 } from "./lib.js";
 import { recordTargetsRegion, regionIsExcluded } from "./regionExclusion.js";
-import { PREFETCH_SETTING_KEY, pickPrefetchTarget, prefetchRequestKey } from "./prefetchPlan.js";
+import { readStored, writeStored } from "./storage.js";
+import { normalizedFontSize, normalizeOverlayRegionOverride, normalizeOverlayGuidance } from "./overlayNormalize.js";
+import { ENGINE_NAMES, guidanceEquals, guidanceHistoryItems as buildGuidanceHistoryItems, stripGuidanceHistoryItem } from "./guidanceHistory.js";
+import { ocrStateForImage as ocrStateOf, ocrDetailForImage as ocrDetailOf, ocrProgressForImage, isImageGenerationFallback } from "./ocrStatus.js";
+import { emptyOverlayHistory, recordOverlayHistory as recordOverlayHistoryEntry, takeOverlayHistoryStep } from "./overlayHistory.js";
+import useRecentSessions from "./hooks/useRecentSessions.js";
+import useBusyTasks from "./hooks/useBusyTasks.js";
+import useAutoAnalysis from "./hooks/useAutoAnalysis.js";
+import { PREFETCH_LOOKAHEAD } from "./prefetchPlan.js";
+import useWorkspaceResume from "./hooks/useWorkspaceResume.js";
+import useExportSettings from "./hooks/useExportSettings.js";
+import useTopbarMenu from "./hooks/useTopbarMenu.js";
+import useGlobalKeyboard, { useShortcutToast } from "./hooks/useGlobalKeyboard.js";
+import useReviewProgress from "./hooks/useReviewProgress.js";
+import useSpeakerNotes from "./hooks/useSpeakerNotes.js";
 
-// 글자 입히기 편집 기록 상한과, 같은 종류의 연속 변경을 한 칸으로 묶는 시간
-const OVERLAY_HISTORY_LIMIT = 100;
-const OVERLAY_HISTORY_MERGE_MS = 1500;
 
 // OCR·번역 AI 경로 이름(홈 화면·편집기 공용)
 const ROUTE_NAMES = { openai: "OpenAI", gemini: "Gemini API", vertex: "Vertex" };
-const ENGINE_NAMES = { lama: "LaMa", telea: "Telea", stripe: "줄무늬" };
 // 텍스트 기반 영역의 지우기 방식. 처음 분석이 고른 방식이 미리 선택돼 있고, 마음에 안 들 때 다른 칸을 눌러 바꾼다.
 // 앞의 셋은 변경사항 적용 때 로컬에서 지우고, AI는 확인 후 외부 이미지 모델로 지워 바로 저장한다.
 const DEFAULT_ERASE_ENGINE = "lama";
@@ -91,26 +100,7 @@ const TOOL_HINTS = {
 };
 // 지우기 보정 붓 굵기(원본 px) 단계. [ ]로 한 단계씩 바꾼다.
 const MASK_BRUSH_STEPS = [2, 4, 6, 8, 12, 16, 24, 32, 48, 64];
-const RESUME_KEY = "comic-translator-resume-after-restart";
-// 새로고침해도 열려 있던 프로젝트로 돌아가도록 탭 단위(sessionStorage)로 기억한다.
-const OPEN_WORKSPACE_KEY = "comic-translator-open-workspace";
 
-// 브라우저 저장소는 막혀 있을 수 있어 모든 읽기·쓰기를 감싼다. 값이 없거나 올바르지 않으면 기본값을 쓴다.
-function readStored(key, fallback, valid = () => true) {
-  try {
-    const value = JSON.parse(window.localStorage.getItem(key));
-    return value !== null && valid(value) ? value : fallback;
-  } catch {
-    return fallback;
-  }
-}
-
-function writeStored(key, value) {
-  try { window.localStorage.setItem(key, JSON.stringify(value)); } catch { /* 저장소를 쓸 수 없어도 기능은 동작한다 */ }
-}
-
-// 화자·번역 메모는 영역 참조(region_ref)로 저장한다. 참조를 주지 않는 구버전 응답만 구형 영역 키를 쓴다.
-const regionStoreKey = (region) => region?.region_ref || regionBindingKey(region);
 
 export default function App() {
   const [sessionId, setSessionId] = useState("");
@@ -118,22 +108,15 @@ export default function App() {
   const [images, setImages] = useState([]);
   // 선택한 페이지의 전체 레코드(regions, integrated 등). 목록(images)은 요약만 담는다.
   const [pageDetail, setPageDetail] = useState(null);
-  const [recentSessions, setRecentSessions] = useState([]);
-  const [recentLoadState, setRecentLoadState] = useState("loading");
-  const [recentHasMore, setRecentHasMore] = useState(false);
-  const [recentLoadingMore, setRecentLoadingMore] = useState(false);
-  const recentCountRef = useRef(0);
-  const [recentSort, setRecentSort] = useState(() => {
-    try { return localStorage.getItem("recentSort") === "name" ? "name" : "recent"; } catch { return "recent"; }
-  });
-  const recentSortRef = useRef(recentSort);
+  const {
+    recentSessions, recentLoadState, recentHasMore, recentLoadingMore, recentSort, recentMenuId, setRecentMenuId,
+    loadRecentSessions, refreshRecentSessions, changeRecentSort, loadMoreRecentSessions,
+  } = useRecentSessions();
   const [selectedId, setSelectedId] = useState("");
   const [folderPath, setFolderPath] = useState("");
   const [status, setStatus] = useState("");
   const [ocrLog, setOcrLog] = useState("");
-  const [exportLog, setExportLog] = useState("");
-  const [busyTasks, setBusyTasks] = useState({});
-  const taskLocksRef = useRef(new Set());
+  const { busyTasks, setBusyTasks, taskLocksRef, runTask } = useBusyTasks(setStatus);
   const [activeTab, setActiveTab] = useState("guidance");
   const [workspaceStarted, setWorkspaceStarted] = useState(false);
   const generationReviewMode = Boolean(new URLSearchParams(window.location.search).get("generation_review"));
@@ -177,73 +160,31 @@ export default function App() {
   const [aiEraseTarget, setAiEraseTarget] = useState("region");
   // 불러온 가로 이미지를 분석 시작 때 나눌지(기본 켜짐). 표지처럼 가운데 한 장인 이미지는 가운데만 남긴다.
   const [splitLandscape, setSplitLandscape] = useState(() => readStored("ct.splitLandscape", true, (v) => typeof v === "boolean"));
-  // 확인한 페이지(영역 분석 탭에서 보고 넘어간 페이지)가 쌓이면 번역을 백그라운드로 돌릴지 묻는다.
-  const [reviewedIds, setReviewedIds] = useState(() => new Set());
-  const [ocrPromptOff, setOcrPromptOff] = useState(() => readStored("ct.ocrPromptOff", false, (v) => typeof v === "boolean"));
-  // 남은 페이지 미리 분석(기본 꺼짐). 프로젝트를 열거나 페이지를 넘기기만 해도 유료 분석이 나가지 않도록 사용자가 켤 때만 돈다.
-  const [prefetchEnabled, setPrefetchEnabled] = useState(() => readStored(PREFETCH_SETTING_KEY, false, (v) => typeof v === "boolean"));
-  // 알림을 이미 처리한 가장 높은 진행률 기준(0, 60, 80). 세션별로 기억한다.
-  const [ocrMilestone, setOcrMilestone] = useState(0);
-  // 대사 검수 상태: `${페이지 id}|${overlay 키}` -> { status: "ok"|"ask", text }. text는 검수 당시 번역문이라 번역이 바뀌면 미검수로 돌아간다.
-  const [dialogueReview, setDialogueReview] = useState({});
   const [dialogueFilter, setDialogueFilter] = useState("all");
-  // 프로젝트별 '앞으로 묻지 않고 번역' 표시. LLM 비용이 드는 일이라 다른 프로젝트로 번지지 않게 세션 단위로 둔다.
-  const [ocrAutoStart, setOcrAutoStart] = useState(false);
-  const ocrAutoStartingRef = useRef(false);
   // 대사 편집을 ⌘Enter로 확정한 영역. 반영된 새 번역문으로 확인을 다시 기록한다.
   const dialogueConfirmAfterCommitRef = useRef(null);
   const [bgOcr, setBgOcr] = useState({ running: false, total: 0, done: 0, failed: 0, ids: [], finishedIds: [] });
   // 이미지 생성 모델 통번역 진행(진행 창). 생성 중에도 다른 페이지는 편집할 수 있다.
   const [imageGen, setImageGen] = useState(null);
-  const prevPageRef = useRef({ id: null, ready: false });
   const [autoOverlayPreview, setAutoOverlayPreview] = useState(true);
-  const [exportImageModel, setExportImageModel] = useState("gpt-image-2.5-sunburst");
-  const [exportTextModel, setExportTextModel] = useState("gpt-6.1-terra");
-  const [exportImageQuality, setExportImageQuality] = useState("medium");
-  const [exportImageSize, setExportImageSize] = useState("match_input");
-  const [exportOutputFormat, setExportOutputFormat] = useState("jpeg");
-  const [exportOutputCompression, setExportOutputCompression] = useState(92);
-  const [exportPromptGuide, setExportPromptGuide] = useState("");
-  const [exportAnalyzeFirst, setExportAnalyzeFirst] = useState(true);
-  const [exportGenerateIds, setExportGenerateIds] = useState([]);
-  const [exportFocusedId, setExportFocusedId] = useState("");
   const [overlayEditVersion, setOverlayEditVersion] = useState(0);
   const [overlayApplyRequest, setOverlayApplyRequest] = useState(0);
   const [toolsOpen, setToolsOpen] = useState(true);
   const [guidanceUndoStack, setGuidanceUndoStack] = useState([]);
   const [guidanceRedoStack, setGuidanceRedoStack] = useState([]);
   const [guidanceNotice, setGuidanceNotice] = useState(null);
-  const [recentMenuId, setRecentMenuId] = useState("");
   // 글자 입히기 캔버스 도구: select | hand | eraser
   const [overlayTool, setOverlayTool] = useState("select");
   const [helpOpen, setHelpOpen] = useState(false);
-  // 작품 메모(인물 표)와 현재 페이지의 TG별 화자 지정
-  const [workMemo, setWorkMemo] = useState(null);
-  const [speakerByTg, setSpeakerByTg] = useState({});
-  const [speakerByRegion, setSpeakerByRegion] = useState({});
-  // R별 번역 메모(영역 키 → 글). 다음 OCR/번역 때 '영역별 번역 가이드'로 붙는다.
-  const [contextByRegion, setContextByRegion] = useState({});
-  const [contextDraft, setContextDraft] = useState(null);
-  const [speakerPickerOpen, setSpeakerPickerOpen] = useState(false);
   // 영역 분석 상단 바의 펼침 메뉴("history" | "more" | null). 바깥을 누르면 닫는다.
-  const [guidanceMenu, setGuidanceMenu] = useState(null);
-  const guidanceMenuRef = useRef(null);
-  useEffect(() => {
-    if (!guidanceMenu) return undefined;
-    const onDown = (event) => { if (!guidanceMenuRef.current?.contains(event.target)) setGuidanceMenu(null); };
-    const onKey = (event) => { if (event.key === "Escape") setGuidanceMenu(null); };
-    window.addEventListener("mousedown", onDown);
-    window.addEventListener("keydown", onKey);
-    return () => { window.removeEventListener("mousedown", onDown); window.removeEventListener("keydown", onKey); };
-  }, [guidanceMenu]);
-  const [shortcutToast, setShortcutToast] = useState(null);
+  const { guidanceMenu, setGuidanceMenu, guidanceMenuRef } = useTopbarMenu();
+  const { shortcutToast, showShortcutToast } = useShortcutToast(setStatus);
   const fileRef = useRef(null);
   const editorCanvasRef = useRef(null);
   const overlayCanvasRef = useRef(null);
   const keyHandlerRef = useRef(null);
-  const shortcutToastTimerRef = useRef(null);
   // 글자 입히기 편집 기록(페이지 단위). 확정된 변경마다 직전 overlayGuidance를 쌓는다.
-  const overlayHistoryRef = useRef({ undo: [], redo: [], lastKey: "", lastAt: 0 });
+  const overlayHistoryRef = useRef(emptyOverlayHistory());
   const overlayGuidanceRef = useRef(overlayGuidance);
   overlayGuidanceRef.current = overlayGuidance;
   const sessionIdRef = useRef(sessionId);
@@ -260,10 +201,6 @@ export default function App() {
   const selectedRegionIdRef = useRef(null);
   const projectNameDirtyRef = useRef(false);
   const autoAnalysisRequestedRef = useRef(new Set());
-  // 다음 페이지 미리 분석: 한 번에 한 장만, 화면을 잠그지 않고 돈다
-  const prefetchPromiseRef = useRef(null);
-  const prefetchFailedRef = useRef(new Set());
-  const [prefetchingId, setPrefetchingId] = useState("");
   const pageDetailRequestRef = useRef(0);
   const hydrationPendingRef = useRef(false);
 
@@ -288,6 +225,14 @@ export default function App() {
   const effectiveOcrModel = ocrModels.some((model) => model.id === ocrModel) ? ocrModel : ocrDefaultModel;
   // 이미지 작업(글자 지우기·통번역 재생성)은 OCR·번역 모델의 제공자를 따라간다
   const ocrProvider = ocrModels.find((model) => model.id === effectiveOcrModel)?.provider || "openai";
+  // 내보내기 탭(이미지 생성) 설정·선택·로그. 제공자 맞춤 effect가 함께 들어 있다.
+  const {
+    exportLog, setExportLog, exportImageModel, setExportImageModel, exportTextModel, setExportTextModel,
+    exportImageQuality, setExportImageQuality, exportImageSize, setExportImageSize,
+    exportOutputFormat, setExportOutputFormat, exportOutputCompression, setExportOutputCompression,
+    exportPromptGuide, setExportPromptGuide, exportAnalyzeFirst, setExportAnalyzeFirst,
+    exportGenerateIds, setExportGenerateIds, exportFocusedId, setExportFocusedId, toggleExportGenerateId,
+  } = useExportSettings({ ocrProvider, effectiveOcrModel, imageModels });
   const guidanceEditorUrl = selected?.input_url || null;
   const generatedCandidates = generationStatus?.session_id === sessionId && generationStatus?.image_id === selected?.id ? generationStatus.results || [] : [];
   const latestGeneratedCandidate = generatedCandidates.at(-1);
@@ -319,26 +264,9 @@ export default function App() {
     const item = overlayRegions.find((region) => overlayItemKey(region) === String(key));
     return item ? overlayItemLabel(item) : "R?";
   };
-  // 화자 단축키 1-8 = 작품 메모 인물 표 순서(주인공 1번), 9 = 기타(전체 목록 팝업)
-  const allSpeakerCharacters = workMemo?.characters || [];
-  const speakerCharacters = allSpeakerCharacters.slice(0, 8);
   const guidanceRegions = useMemo(() => imageRegions(selected)
     .filter((region) => !regionIsExcluded(region, guidance))
     .sort((a, b) => regionId(a) - regionId(b)), [selected, guidance]);
-  const speakerLabels = useMemo(() => {
-    const names = Object.fromEntries((workMemo?.characters || []).map((row) => [row.id, row.name]));
-    names.narration = "내레이션";
-    const lead = (workMemo?.characters || []).find((row) => row.protagonist);
-    const labels = {};
-    guidanceRegions.forEach((region) => {
-      const key = regionStoreKey(region);
-      const assigned = Object.hasOwn(speakerByRegion,key) ? speakerByRegion[key] : (region.anchor_ids || []).map((id) => speakerByTg[String(id)]).find((id) => names[id]);
-      // 텍스트 기반 영역의 자동 기본값은 괄호로 구분한다.
-      if (assigned) labels[regionId(region)] = names[assigned];
-      else if (lead && regionProcessingBasis(region) === TEXT_BASED) labels[regionId(region)] = `(${lead.name})`;
-    });
-    return labels;
-  }, [workMemo, speakerByTg, speakerByRegion, guidanceRegions]);
   const selectedGuidanceRegion = selectedGuidanceRegionId != null
     ? guidanceRegions.find(region => regionId(region) === Number(selectedGuidanceRegionId)) || null
     : null;
@@ -374,17 +302,14 @@ export default function App() {
   const selectedPageId = selected?.id || "";
   useEffect(() => { setOverlayFocusRect(null); }, [selectedPageId, activeTab]);
 
-  useEffect(() => {
-    setSpeakerByTg({});
-    setSpeakerByRegion({});
-    setContextByRegion({});
-    if (!sessionId || !selectedPageId) return undefined;
-    let alive = true;
-    api(`/api/speakers/${encodeURIComponent(sessionId)}/${encodeURIComponent(selectedPageId)}`)
-      .then((result) => { if (alive) { setSpeakerByTg(result.by_tg || {}); setSpeakerByRegion(result.by_region_ref || result.by_region || {}); setContextByRegion(result.context_by_region_ref || result.context_by_region || {}); } })
-      .catch(() => {});
-    return () => { alive = false; };
-  }, [sessionId, selectedPageId]);
+  // 화자 지정·작품 메모 인물·영역별 번역 메모. 두 effect는 이 자리에서 돈다(메모 입력칸 초기화는 원래 아래쪽에 있었다).
+  const {
+    setWorkMemo, speakerLabels, speakerCharacters, allSpeakerCharacters, speakerPickerOpen, setSpeakerPickerOpen,
+    contextDraft, setContextDraft, savedRegionContext, regionContextValue, assignSpeaker, saveRegionContext,
+  } = useSpeakerNotes({
+    sessionId, selectedPageId, guidanceRegions, selectedGuidanceRegion, selectedRegionKey, selectedIdRef,
+    setStatus, cycleGuidanceRegion,
+  });
   const selectedRegion = selectedRegionId
     ? (overlayRegions.find((region) => overlayItemKey(region) === String(selectedRegionId)) || null)
     : null;
@@ -431,64 +356,14 @@ export default function App() {
     const state = ocrStateForImage(img);
     return !img.processing_excluded && state === "idle" && Boolean(img.indexed_sheet_url) && !img.final_url;
   });
-  // 확인한 페이지: 영역 분석 탭에서 분석이 끝난 페이지를 적용하지 않은 변경 없이 넘기면 센다.
-  // 세션별로 브라우저에 기억해 새로고침해도 이어진다. 저장소를 못 쓰면 이번 화면에서만 센다.
-  useEffect(() => {
-    setReviewedIds(new Set(readStored(`ct.reviewed.${sessionId || ""}`, [], Array.isArray)));
-    setOcrAutoStart(Boolean(sessionId) && readStored(`ct.ocrAutoStart.${sessionId}`, false, (v) => typeof v === "boolean"));
-    setDialogueReview(readStored(`ct.dialogueReview.${sessionId || ""}`, {}, (v) => v && typeof v === "object" && !Array.isArray(v)));
-    setOcrMilestone(Number(readStored(`ct.ocrMilestone.${sessionId || ""}`, 0, (v) => OCR_PROMPT_MILESTONES.includes(v) || v === 0)) || 0);
-  }, [sessionId]);
-  useEffect(() => {
-    const prev = prevPageRef.current;
-    if (prev.id && prev.sid === sessionId && prev.id !== selected?.id && prev.ready) {
-      setReviewedIds((current) => {
-        if (current.has(prev.id)) return current;
-        const next = new Set(current).add(prev.id);
-        writeStored(`ct.reviewed.${sessionId || ""}`, [...next]);
-        return next;
-      });
-    }
-    prevPageRef.current = {
-      sid: sessionId,
-      id: selected?.id || null,
-      ready: Boolean(activeTab === "guidance" && selected?.detail_loaded && selected?.indexed_sheet_url && !selected?.processing_excluded && !guidanceDirty),
-    };
+  // 확인한 페이지 집계와 번역 알림(60%·80%·마지막 페이지·자동 번역), 대사 검수 상태. 네 effect는 이 자리에서 원래 순서대로 돈다.
+  const {
+    dialogueReview, setDialogueReview, ocrPromptOff, ocrAutoStart, lastPagePrompt, setLastPagePrompt,
+    ocrBatchCandidates, ocrReachedMilestone, showOcrPrompt,
+    translateRemainingFromLastPage, dismissOcrPrompt, markOcrMilestone, setProjectOcrAutoStart, changeOcrPromptOff,
+  } = useReviewProgress({
+    sessionId, selected, activeTab, guidanceDirty, images, ocrReadyImages, bgOcr, ocrBusy, startBackgroundOcr,
   });
-  const ocrBatchCandidates = ocrReadyImages.filter((img) => reviewedIds.has(img.id) && img.id !== selected?.id);
-  // 수동 작업 진행률: 처리 대상 페이지 중 확인한 페이지 비율. 60%, 80%를 넘을 때 한 번씩 묻는다.
-  const ocrTargetImages = images.filter((img) => !img.processing_excluded);
-  const ocrProgressPct = ocrTargetImages.length
-    ? Math.round((ocrTargetImages.filter((img) => reviewedIds.has(img.id)).length / ocrTargetImages.length) * 100)
-    : 0;
-  const ocrReachedMilestone = Math.max(0, ...OCR_PROMPT_MILESTONES.filter((value) => ocrProgressPct >= value));
-  const showOcrPrompt = !ocrPromptOff && !bgOcr.running && !ocrBusy
-    && ocrReachedMilestone > ocrMilestone && ocrBatchCandidates.length > 0;
-  // 마지막 페이지에 도착하면 남은 페이지를 모두 번역할지 항상 묻는다(자동 번역·알림 끄기와 상관없이).
-  const ocrTargetLastId = ocrTargetImages.length ? ocrTargetImages[ocrTargetImages.length - 1].id : null;
-  const [lastPagePrompt, setLastPagePrompt] = useState(null);
-  const lastPagePromptForRef = useRef(null);
-  useEffect(() => {
-    if (!selected?.id || selected.id !== ocrTargetLastId) { lastPagePromptForRef.current = null; setLastPagePrompt(null); return; }
-    if (lastPagePromptForRef.current === `${sessionId}:${selected.id}` || bgOcr.running || ocrBusy) return;
-    const restIds = ocrReadyImages.filter((img) => img.id !== selected.id).map((img) => img.id);
-    const selfReady = ocrReadyImages.some((img) => img.id === selected.id);
-    if (!restIds.length && !selfReady) return;
-    lastPagePromptForRef.current = `${sessionId}:${selected.id}`;
-    setLastPagePrompt({ restIds, selfId: selfReady ? selected.id : null, unanalyzed: ocrTargetImages.filter((img) => !img.indexed_sheet_url).length });
-  }, [selected?.id, ocrTargetLastId, images, bgOcr.running, ocrBusy]);
-  function translateRemainingFromLastPage(includeSelf) {
-    const prompt = lastPagePrompt;
-    setLastPagePrompt(null);
-    if (!prompt) return;
-    const ids = [...prompt.restIds, ...(includeSelf && prompt.selfId ? [prompt.selfId] : [])];
-    if (ids.length) startBackgroundOcr(ids);
-  }
-  useEffect(() => {
-    if (!ocrAutoStart || !showOcrPrompt || ocrAutoStartingRef.current) return;
-    ocrAutoStartingRef.current = true;
-    startBackgroundOcr().finally(() => { ocrAutoStartingRef.current = false; });
-  }, [ocrAutoStart, showOcrPrompt]);
   useEffect(() => {
     const rid = dialogueConfirmAfterCommitRef.current;
     if (!rid || !selected) return;
@@ -511,11 +386,6 @@ export default function App() {
     const state = ocrStateForImage(img);
     return state === "failed";
   });
-  const isImageGenerationFallback = (img) => (
-    Boolean(img?.has_image_generation_fallback)
-    || img?.export_recovery?.status === "generated"
-    || img?.export_recovery?.source === "image_generation_fallback"
-  );
   const finalImages = images.filter((img) => Boolean(img.final_url));
   const unresolvedFinalImages = images.filter((img) => !img.final_url);
   const missingFinalImages = images.filter((img) => !img.processing_excluded && (!img.final_url || isImageGenerationFallback(img)));
@@ -619,10 +489,6 @@ export default function App() {
     setExtraSelectedIds((items) => (items.includes(key) ? items.filter((item) => item !== key) : [...items, key]));
   }
 
-  function guidanceEquals(left, right) {
-    return JSON.stringify(left || {}) === JSON.stringify(right || {});
-  }
-
   function resetGuidanceHistory() {
     setGuidanceUndoStack([]);
     setGuidanceRedoStack([]);
@@ -672,104 +538,6 @@ export default function App() {
     currentGuidanceRef.current = resolved;
     setGuidance(resolved);
     setStatus(statusText);
-  }
-
-  function normalizedFontSizeDelta(value) {
-    const parsed = Number(value || 0);
-    if (!Number.isFinite(parsed)) return 0;
-    return Math.max(-30, Math.min(30, Math.round(parsed)));
-  }
-
-  function normalizedFontSize(value) {
-    const parsed = Number(value || 0);
-    if (!Number.isFinite(parsed)) return 0;
-    return Math.max(8, Math.min(160, Math.round(parsed)));
-  }
-
-  function normalizedFontWeight(value) {
-    const parsed = Number(value || 0);
-    if (!Number.isFinite(parsed) || parsed <= 0) return 0;
-    return Math.max(100, Math.min(1000, Math.round(parsed / 50) * 50));
-  }
-
-  function normalizedStrokeWidth(value) {
-    const parsed = Number(value);
-    if (!Number.isFinite(parsed)) return null;
-    return Math.max(0, Math.min(12, Math.round(parsed)));
-  }
-
-  function normalizeOverlayRegionOverride(value) {
-    if (!value || typeof value !== "object") return {};
-    const next = { ...value };
-    if ("safe_text_rect" in next) {
-      const rect = Array.isArray(next.safe_text_rect)
-        ? next.safe_text_rect.slice(0, 4).map((item) => Math.round(Number(item) || 0))
-        : null;
-      if (rect && rect.length === 4 && rect[2] >= OVERLAY_MIN_RECT_SIZE && rect[3] >= OVERLAY_MIN_RECT_SIZE) {
-        next.safe_text_rect = rect;
-      } else {
-        delete next.safe_text_rect;
-      }
-    }
-    if ("font_size" in next) {
-      const fontSize = normalizedFontSize(next.font_size);
-      if (fontSize) next.font_size = fontSize;
-      else delete next.font_size;
-      delete next.font_size_delta;
-    }
-    if ("font_size_delta" in next) {
-      const delta = normalizedFontSizeDelta(next.font_size_delta);
-      if (delta) next.font_size_delta = delta;
-      else delete next.font_size_delta;
-    }
-    if ("rotation_deg" in next) {
-      const angle = Number(next.rotation_deg || 0);
-      if (Number.isFinite(angle) && Math.abs(angle) > 0.1) {
-        next.rotation_deg = Math.max(-45, Math.min(45, Math.round(angle)));
-      } else {
-        delete next.rotation_deg;
-      }
-    }
-    if ("font_weight" in next) {
-      const fontWeight = normalizedFontWeight(next.font_weight);
-      if (fontWeight) next.font_weight = fontWeight;
-      else delete next.font_weight;
-    }
-    ["font_color", "stroke_color"].forEach((key) => {
-      if (key in next && !/^#[0-9a-fA-F]{6}$/.test(String(next[key] || ""))) delete next[key];
-    });
-    if ("stroke_width" in next) {
-      const strokeWidth = normalizedStrokeWidth(next.stroke_width);
-      if (strokeWidth !== null) next.stroke_width = strokeWidth;
-      else delete next.stroke_width;
-    }
-    if ("segment_mode" in next && !["merge", "split"].includes(next.segment_mode)) {
-      delete next.segment_mode;
-    }
-    if ("text_align" in next && !["left", "center", "right"].includes(next.text_align)) {
-      delete next.text_align;
-    }
-    if (next.font_style !== "etc") {
-      delete next.font_weight;
-    }
-    return next;
-  }
-
-  function normalizeOverlayGuidance(value) {
-    const regions = value?.regions && typeof value.regions === "object" ? value.regions : {};
-    const eraserRects = Array.isArray(value?.eraser_rects)
-      ? value.eraser_rects
-        .filter((rect) => Array.isArray(rect) && rect.length >= 4)
-        .map((rect) => rect.slice(0, 4).map((next) => Math.round(Number(next) || 0)))
-        .filter((rect) => rect[2] >= 4 && rect[3] >= 4)
-      : [];
-    return {
-      ...(value || {}),
-      eraser_rects: eraserRects,
-      regions: Object.fromEntries(
-        Object.entries(regions).map(([key, region]) => [key, normalizeOverlayRegionOverride(region)])
-      ),
-    };
   }
 
   function updateOverlayRegion(rid, patch, historyKey = null) {
@@ -867,25 +635,11 @@ export default function App() {
   }
 
   function resetOverlayHistory() {
-    overlayHistoryRef.current = { undo: [], redo: [], lastKey: "", lastAt: 0 };
+    overlayHistoryRef.current = emptyOverlayHistory();
   }
 
   function recordOverlayHistory(previous, historyKey) {
-    const history = overlayHistoryRef.current;
-    const now = Date.now();
-    const key = historyKey || "";
-    const merge = Boolean(key)
-      && history.lastKey === key
-      && (key.startsWith("rotate:") || now - history.lastAt < OVERLAY_HISTORY_MERGE_MS);
-    history.lastKey = key;
-    history.lastAt = now;
-    history.redo = [];
-    if (merge) return;
-    const snapshot = cloneJson(previous || {});
-    const top = history.undo[history.undo.length - 1];
-    // updater가 두 번 호출돼도 같은 스냅샷을 두 번 쌓지 않는다.
-    if (top && guidanceEquals(top, snapshot)) return;
-    history.undo = [...history.undo.slice(-(OVERLAY_HISTORY_LIMIT - 1)), snapshot];
+    recordOverlayHistoryEntry(overlayHistoryRef.current, previous, historyKey);
   }
 
   function stepOverlayHistory(direction) {
@@ -895,29 +649,13 @@ export default function App() {
       setStatus(direction < 0 ? "되돌릴 overlay 편집 없음" : "다시 실행할 overlay 편집 없음");
       return;
     }
-    const target = from[from.length - 1];
-    const current = cloneJson(overlayGuidanceRef.current || {});
-    if (direction < 0) {
-      history.undo = history.undo.slice(0, -1);
-      history.redo = [...history.redo, current];
-    } else {
-      history.redo = history.redo.slice(0, -1);
-      history.undo = [...history.undo, current];
-    }
-    history.lastKey = "";
+    const target = takeOverlayHistoryStep(history, direction, cloneJson(overlayGuidanceRef.current || {}));
     const next = normalizeOverlayGuidance(cloneJson(target));
     overlayGuidanceRef.current = next;
     setOverlayGuidance(next);
     // 일반 편집과 같은 경로로 auto preview가 다시 render한다.
     bumpOverlayEditVersion();
     setStatus(`${direction < 0 ? "Undo" : "Redo"} overlay (남은 undo ${history.undo.length} / redo ${history.redo.length})`);
-  }
-
-  function showShortcutToast(text) {
-    setStatus(text);
-    setShortcutToast(text);
-    if (shortcutToastTimerRef.current) window.clearTimeout(shortcutToastTimerRef.current);
-    shortcutToastTimerRef.current = window.setTimeout(() => setShortcutToast(null), 1600);
   }
 
   const WRITING_MODE_LABELS = { horizontal: "가로", vertical: "세로" };
@@ -971,54 +709,6 @@ export default function App() {
       next = step > 0 ? list[0] : list[list.length - 1];
     }
     return selectGuidanceRegion(next, list.indexOf(next), list.length);
-  }
-
-  async function assignSpeaker(slot) {
-    const region = selectedGuidanceRegion;
-    if (!region) {
-      setStatus("화자를 지정할 영역을 먼저 선택하세요");
-      return true;
-    }
-    let characterId = null;
-    let name = "자동";
-    if (slot === "narration") {
-      characterId = "narration";
-      name = "내레이션";
-    } else if (slot === 9) {
-      if (!allSpeakerCharacters.length) {
-        setStatus(workMemo ? "작품 메모에 인물이 없습니다" : "작품 메모를 먼저 연결하세요");
-        return true;
-      }
-      setSpeakerPickerOpen(true);
-      return true;
-    } else if (typeof slot === "object" && slot) {
-      characterId = slot.id;
-      name = slot.name;
-    } else if (slot > 0) {
-      const row = speakerCharacters[slot - 1];
-      if (!row) {
-        setStatus(workMemo ? `${slot}번 인물이 없습니다. 작품 메모에서 인물을 추가하세요` : "작품 메모를 먼저 연결하세요");
-        return true;
-      }
-      characterId = row.id;
-      name = row.name;
-    }
-    const pageId = selectedPageId;
-    // 화면을 먼저 갱신하고 저장은 뒤에서 한다. 실패하면 서버 값으로 되돌린다.
-    setSpeakerByRegion((current) => ({...current,[regionStoreKey(region)]:characterId || null}));
-    setStatus(`R${regionId(region)} 화자: ${name}`);
-    if (slot !== 0) cycleGuidanceRegion(1, true);
-    try {
-      const result = await api("/api/speakers", { method: "POST", body: JSON.stringify({
-        session_id: sessionId, image_id: pageId, region_id: regionId(region), region_key: regionBindingKey(region), region_ref: region.region_ref || null, character_id: characterId,
-      }) });
-      if (selectedIdRef.current === pageId || !selectedIdRef.current) { setSpeakerByTg(result.by_tg || {}); setSpeakerByRegion(result.by_region_ref || result.by_region || {}); }
-    } catch (err) {
-      setStatus(`화자 저장 실패: ${err.message}`);
-      api(`/api/speakers/${encodeURIComponent(sessionId)}/${encodeURIComponent(pageId)}`)
-        .then((result) => { setSpeakerByTg(result.by_tg || {}); setSpeakerByRegion(result.by_region_ref || result.by_region || {}); }).catch(() => {});
-    }
-    return true;
   }
 
   // 대사 리스트 행: overlayRegions 순서(읽는 순서)를 그대로 쓴다. 키는 영역 참조 기반 overlay 키다.
@@ -1297,53 +987,6 @@ export default function App() {
     refreshRecentSessions();
   }
 
-  // 홈은 12개만 먼저 받고, 목록 끝까지 스크롤하면 12개씩 이어 받는다.
-  const RECENT_PAGE_SIZE = 12;
-
-  function applyRecentSessions(sessions, hasMore) {
-    recentCountRef.current = sessions.length;
-    setRecentSessions(sessions);
-    setRecentHasMore(Boolean(hasMore));
-  }
-
-  function loadRecentSessions(sort = recentSortRef.current) {
-    setRecentLoadState("loading");
-    api(`/api/sessions/recent?limit=${RECENT_PAGE_SIZE}&offset=0&sort=${sort}`).then((data) => {
-      applyRecentSessions(data.sessions || [], data.has_more);
-      setRecentLoadState("ready");
-    }).catch(() => setRecentLoadState("error"));
-  }
-
-  // 이름 변경·삭제·홈 복귀 뒤 목록을 다시 받는다. 이미 불러온 개수만큼 받아 스크롤 위치가 줄어들지 않게 한다.
-  function refreshRecentSessions() {
-    const limit = Math.max(RECENT_PAGE_SIZE, recentCountRef.current);
-    api(`/api/sessions/recent?limit=${limit}&offset=0&sort=${recentSortRef.current}`)
-      .then((data) => applyRecentSessions(data.sessions || [], data.has_more))
-      .catch(() => {});
-  }
-
-  function changeRecentSort(sort) {
-    const next = sort === "name" ? "name" : "recent";
-    recentSortRef.current = next;
-    setRecentSort(next);
-    try { localStorage.setItem("recentSort", next); } catch { /* 저장소를 못 쓰면 이번 방문에만 적용 */ }
-    loadRecentSessions(next);
-  }
-
-  function loadMoreRecentSessions() {
-    if (recentLoadingMore || !recentHasMore) return;
-    setRecentLoadingMore(true);
-    api(`/api/sessions/recent?limit=${RECENT_PAGE_SIZE}&offset=${recentCountRef.current}&sort=${recentSortRef.current}`).then((data) => {
-      setRecentSessions((current) => {
-        const seen = new Set(current.map((item) => item.session_id));
-        const next = [...current, ...(data.sessions || []).filter((item) => !seen.has(item.session_id))];
-        recentCountRef.current = next.length;
-        return next;
-      });
-      setRecentHasMore(Boolean(data.has_more));
-    }).catch(() => {}).finally(() => setRecentLoadingMore(false));
-  }
-
   useEffect(() => {
     // 세션은 첫 import/업로드 때 서버가 만든다. 앱을 열 때마다 빈 세션이 쌓이지 않게 여기서는 만들지 않는다.
     loadRecentSessions();
@@ -1358,13 +1001,6 @@ export default function App() {
       if (data.image_models) setImageModels(data.image_models);
     }).catch(() => {});
   }, []);
-
-  // OCR·번역 제공자를 바꾸면 통번역 재생성 모델도 같은 제공자로 맞춘다(입력란에서 직접 고칠 수는 있다)
-  useEffect(() => {
-    const gemini = ocrProvider === "gemini";
-    setExportImageModel((gemini ? imageModels.gemini : imageModels.openai) || "gpt-image-2.5-sunburst");
-    setExportTextModel(gemini ? effectiveOcrModel : "gpt-6.1-terra");
-  }, [ocrProvider, effectiveOcrModel, imageModels]);
 
   useEffect(() => {
     if (!sessionId || !baseSelected?.id) return;
@@ -1431,74 +1067,12 @@ export default function App() {
     overlayEditVersionRef.current = overlayEditVersion;
   }, [overlayEditVersion]);
 
-  useEffect(() => {
-    if (
-      !workspaceStarted
-      || generationReviewMode
-      || (selected?.analysis_route !== "standard" && selected?.image_generation_recommendation?.priority === "recommended")
-      || activeTab !== "guidance"
-      || !selected
-      || inputBusy
-      || analyzeBusy
-      || guidanceBusy
-      || !imageNeedsAnalysis(selected)
-    ) {
-      return;
-    }
-    const requestKey = `${selected.id}:${selected.image_sha256 || ""}`;
-    if (prefetchingId === selected.id) {
-      setStatus(`${selected.name} 미리 분석 중입니다. 끝나면 바로 표시됩니다.`);
-      return;
-    }
-    if (autoAnalysisRequestedRef.current.has(requestKey)) return;
-    autoAnalysisRequestedRef.current.add(requestKey);
-    setStatus(`${selected.name} 분석 산출물이 없어 현재 파일 분석을 시작합니다.`);
-    // 분석 결과가 없는 페이지라 Vision 결과 캐시가 있으면 그대로 쓴다
-    analyze(selected.id, { force: false });
-  }, [workspaceStarted, generationReviewMode, activeTab, selected?.id, selected?.image_sha256, selected?.regions, selected?.has_analysis, selected?.image_generation_recommendation?.priority, selected?.analysis_route, inputBusy, analyzeBusy, guidanceBusy, prefetchingId]);
-
-  // 보고 있는 페이지 분석이 끝나고 화면 작업이 없을 때, 남은 미분석 페이지를 한 장씩 미리 분석한다.
-  // 보던 페이지 뒤부터 끝까지, 이어서 앞쪽 순서로 돈다. 번역(OCR)은 네트워크 작업이라 함께 돌아도 막지 않는다.
-  useEffect(() => {
-    // 설정이 꺼져 있으면 미리 분석 요청을 새로 보내지 않는다. 이미 진행 중인 한 장은 끝까지 두고 결과만 반영한다.
-    if (!prefetchEnabled) return;
-    if (!workspaceStarted || generationReviewMode || !sessionId || !selected || prefetchPromiseRef.current) return;
-    if (routeBusy || Object.entries(busyTasks).some(([kind, value]) => value && kind !== "export")) return;
-    const target = pickPrefetchTarget({
-      enabled: prefetchEnabled,
-      images,
-      selected,
-      requested: autoAnalysisRequestedRef.current,
-      failed: prefetchFailedRef.current,
-      needsAnalysis: imageNeedsAnalysis,
-    });
-    if (target) prefetchAnalysis(target);
-  }, [prefetchEnabled, workspaceStarted, generationReviewMode, sessionId, selected?.id, selected?.regions, selected?.has_analysis, images, routeBusy, busyTasks, prefetchingId]);
-
-  function prefetchAnalysis(target) {
-    const sid = sessionId;
-    const key = prefetchRequestKey(target);
-    // 같은 페이지를 열어도 자동 분석이 겹쳐 돌지 않게 요청 기록을 먼저 남긴다
-    autoAnalysisRequestedRef.current.add(key);
-    setPrefetchingId(target.id);
-    const run = apiStream(
-      "/api/analyze-stream",
-      { method: "POST", body: JSON.stringify({ session_id: sid, image_id: target.id, force: false, max_workers: 1 }) },
-      (event) => {
-        if (sessionIdRef.current !== sid) return;
-        if (event.type === "image_status" && event.image) applyImageRecord(event.image);
-        if (event.type === "error") throw new Error(event.message);
-      },
-    ).catch(() => {
-      // 실패한 페이지는 미리 분석에서 빼고, 사용자가 열면 평소처럼 그 자리에서 분석한다
-      autoAnalysisRequestedRef.current.delete(key);
-      prefetchFailedRef.current.add(key);
-    }).finally(() => {
-      prefetchPromiseRef.current = null;
-      setPrefetchingId("");
-    });
-    prefetchPromiseRef.current = run;
-  }
+  // 보고 있는 페이지 자동 분석과 다음 페이지 미리 분석. 두 effect는 이 자리(페이지 상태 동기화 effect 다음)에서 이 순서로 돈다.
+  const { prefetchEnabled, prefetchingId, prefetchPromiseRef, changePrefetchEnabled } = useAutoAnalysis({
+    workspaceStarted, generationReviewMode, activeTab, selected, sessionId, images,
+    inputBusy, analyzeBusy, guidanceBusy, routeBusy, busyTasks,
+    autoAnalysisRequestedRef, sessionIdRef, taskLocksRef, setStatus, analyze, applyImageRecord,
+  });
 
   useEffect(() => {
     if (autoOverlayTimerRef.current) {
@@ -1756,37 +1330,8 @@ export default function App() {
   }
   keyHandlerRef.current = handleShortcutKeyDown;
 
-  useEffect(() => {
-    const onKeyDown = (event) => {
-      // 입력칸 밖의 ⌘A/Ctrl+A는 화면 글자 전체 선택만 일으키고 클릭을 방해하므로 막는다
-      const target = event.target;
-      const typing = ["INPUT", "TEXTAREA", "SELECT"].includes(target?.tagName) || target?.isContentEditable;
-      if ((event.metaKey || event.ctrlKey) && !event.altKey && event.code === "KeyA" && !typing) {
-        event.preventDefault();
-        return;
-      }
-      keyHandlerRef.current?.(event);
-    };
-    window.addEventListener("keydown", onKeyDown, true);
-    return () => window.removeEventListener("keydown", onKeyDown, true);
-  }, []);
-
-  // 미리보기 캔버스를 누르면 사이드 패널의 입력창에 남은 포커스를 풀어 방향키가 페이지 이동에 쓰이게 한다.
-  useEffect(() => {
-    const onPointerDown = (event) => {
-      if (!event.target?.closest?.("#stageHost, #overlayStageHost")) return;
-      const active = document.activeElement;
-      if (!active || active === document.body || active.closest?.(".floating-text-editor")) return;
-      const tag = active.tagName?.toLowerCase();
-      if (tag === "input" || tag === "textarea" || tag === "select" || active.isContentEditable) active.blur();
-    };
-    window.addEventListener("pointerdown", onPointerDown, true);
-    return () => window.removeEventListener("pointerdown", onPointerDown, true);
-  }, []);
-
-  useEffect(() => () => {
-    if (shortcutToastTimerRef.current) window.clearTimeout(shortcutToastTimerRef.current);
-  }, []);
+  // 전역 keydown(캡처)·캔버스 포인터 리스너. 두 effect는 이 자리에서 원래 순서대로 돈다.
+  useGlobalKeyboard(keyHandlerRef);
 
   // floating text editor의 Cmd/Ctrl+Enter: 초안 반영과 같은 render에서 갱신된 overlayGuidance로 적용한다.
   // 다른 overlay 렌더가 진행 중이면 끝난 뒤 한 번 적용한다.
@@ -1796,23 +1341,6 @@ export default function App() {
     handledOverlayApplyRequestRef.current = overlayApplyRequest;
     if (activeTab === "overlay" && canRenderOverlayImage(selected)) applyOverlay();
   }, [overlayApplyRequest, overlayBusy]);
-
-  async function runTask(kind, label, fn) {
-    if (taskLocksRef.current.has(kind)) return;
-    taskLocksRef.current.add(kind);
-    setBusyTasks((current) => ({ ...current, [kind]: true }));
-    setStatus(`${label}...`);
-    try {
-      const result = await fn();
-      setStatus(result?.logs || `${label} 완료`);
-      return result;
-    } catch (err) {
-      setStatus(String(err.message || err));
-    } finally {
-      taskLocksRef.current.delete(kind);
-      setBusyTasks((current) => ({ ...current, [kind]: false }));
-    }
-  }
 
   // 세션 id가 아직 없을 때 서버가 새 세션을 만들었다면 그 세션을 현재 세션으로 채택한다.
   async function adoptCreatedSession(requestSid, resultSid) {
@@ -1875,67 +1403,11 @@ export default function App() {
     });
   }
 
-  // 서버 재시작 뒤: 보던 위치를 기억하고 새로고침한다. 새 화면이 같은 프로젝트를 다시 연다.
-  function reloadAfterServerRestart() {
-    try {
-      if (sessionId) {
-        window.sessionStorage.setItem(RESUME_KEY, JSON.stringify({ session_id: sessionId, image_id: selectedIdRef.current || selectedId, tab: activeTab, home: !workspaceStarted }));
-      }
-    } catch { /* 저장소를 못 쓰면 시작 화면으로 돌아간다 */ }
-    window.location.reload();
-  }
-
-  // 프로젝트별로 마지막에 보던 페이지를 기억한다. 세션 전환 중 이전 세션의 선택이 섞이지 않도록 목록에 있는 페이지만 저장한다.
-  useEffect(() => {
-    if (!workspaceStarted || !sessionId || !selectedId) return;
-    if (!images.some((img) => img.id === selectedId)) return;
-    writeSessionSettings(sessionId, { lastImageId: selectedId });
-  }, [workspaceStarted, sessionId, selectedId, images]);
-
-  useEffect(() => {
-    if (!workspaceStarted || !sessionId) return;
-    try { window.sessionStorage.setItem(OPEN_WORKSPACE_KEY, JSON.stringify({ session_id: sessionId, tab: activeTab })); } catch { /* 저장소를 못 쓰면 새로고침 때 홈으로 간다 */ }
-  }, [workspaceStarted, sessionId, activeTab]);
-
-  function forgetOpenWorkspace() {
-    try { window.sessionStorage.removeItem(OPEN_WORKSPACE_KEY); } catch { /* 무시 */ }
-  }
-
-  useEffect(() => {
-    let resume = null;
-    let reopened = false;
-    try {
-      resume = JSON.parse(window.sessionStorage.getItem(RESUME_KEY) || "null");
-      window.sessionStorage.removeItem(RESUME_KEY);
-      // 검토·미리보기 링크는 자기 세션을 직접 연다
-      const query = new URLSearchParams(window.location.search);
-      if (!resume?.session_id && !query.get("generation_review") && !query.get("page_preview")) {
-        resume = JSON.parse(window.sessionStorage.getItem(OPEN_WORKSPACE_KEY) || "null");
-        reopened = Boolean(resume?.session_id);
-      }
-    } catch { resume = null; }
-    if (!resume?.session_id) return undefined;
-    let cancelled = false;
-    (async () => {
-      try {
-        // 홈에서 재시작했으면 편집기로 들어가지 않는다. 나누기·제외를 고르기 전에 분석이 시작되지 않게 한다.
-        if (resume.home) {
-          await openSessionForSetup({ session_id: resume.session_id });
-          if (!cancelled) setStatus("서버를 재시작하고 준비 화면으로 다시 불러왔습니다");
-          return;
-        }
-        await openRecentSession({ session_id: resume.session_id });
-        if (cancelled) return;
-        if (resume.image_id) { setSelectedId(resume.image_id); selectedIdRef.current = resume.image_id; }
-        if (resume.tab) setActiveTab(resume.tab);
-        if (!reopened) setStatus("서버를 재시작하고 프로젝트를 다시 불러왔습니다");
-      } catch (error) {
-        if (reopened) forgetOpenWorkspace();
-        if (!cancelled) setStatus(error.message);
-      }
-    })();
-    return () => { cancelled = true; };
-  }, []);
+  // 서버 재시작·새로고침 뒤 보던 프로젝트로 돌아가기, 마지막으로 보던 페이지 기억. 세 effect는 이 자리에서 돈다.
+  const { reloadAfterServerRestart, forgetOpenWorkspace } = useWorkspaceResume({
+    workspaceStarted, sessionId, selectedId, images, activeTab, selectedIdRef,
+    setSelectedId, setActiveTab, setStatus, openSessionForSetup, openRecentSession,
+  });
 
   async function openRecentSession(recent) {
     if (!recent?.session_id) return;
@@ -2042,14 +1514,8 @@ export default function App() {
     setWorkspaceStarted(true);
     setActiveTab("guidance");
     // 처음부터 다시 분석은 전체를 강제로 돈다. 그 외에는 바로 편집기로 들어가 보이는 페이지를 먼저 분석하고,
-    // 나머지는 '남은 페이지 미리 분석'을 켠 경우에만 화면을 잠그지 않고 한 장씩 이어간다.
+    // 그 뒤 페이지는 '다음 페이지 미리 분석'(기본 켜짐)이 화면을 잠그지 않고 한 장씩 이어간다.
     if (force) await analyze("all", { force });
-  }
-
-  function changePrefetchEnabled(value) {
-    setPrefetchEnabled(value);
-    writeStored(PREFETCH_SETTING_KEY, value);
-    setStatus(value ? "남은 페이지 미리 분석을 켰습니다." : `남은 페이지 미리 분석을 껐습니다.${prefetchingId ? " 진행 중인 한 장만 마치고 멈춥니다." : ""}`);
   }
 
   function changeSplitLandscape(value) {
@@ -2322,26 +1788,6 @@ export default function App() {
     });
   }
 
-  function dismissOcrPrompt() {
-    // 지금 넘은 기준까지 처리한 것으로 두고, 다음 기준(80%)에서 다시 묻는다
-    markOcrMilestone(ocrReachedMilestone);
-  }
-
-  function markOcrMilestone(value) {
-    setOcrMilestone(value);
-    if (sessionId) writeStored(`ct.ocrMilestone.${sessionId}`, value);
-  }
-
-  function setProjectOcrAutoStart(value) {
-    setOcrAutoStart(value);
-    if (sessionId) writeStored(`ct.ocrAutoStart.${sessionId}`, value);
-  }
-
-  function changeOcrPromptOff(value) {
-    setOcrPromptOff(value);
-    writeStored("ct.ocrPromptOff", value);
-  }
-
   // 확인한 페이지만 모아 OCR·번역을 백그라운드로 돌린다. 작업 잠금(busyTasks)을 쓰지 않아 다른 페이지는 계속 편집할 수 있다.
   async function startBackgroundOcr(idsOverride = null) {
     // 지금 보고 있는 페이지는 아직 편집 중이므로 번역 대상에서 뺀다(마지막 페이지 알림에서 포함을 고르면 넣는다).
@@ -2493,14 +1939,6 @@ export default function App() {
     setStatus("작업 결과 zip 다운로드를 시작했습니다.");
   }
 
-  function toggleExportGenerateId(imageId) {
-    setExportGenerateIds((current) => (
-      current.includes(imageId)
-        ? current.filter((id) => id !== imageId)
-        : [...current, imageId]
-    ));
-  }
-
   async function generateMissingFinals(options = {}) {
     if (!sessionId) {
       setStatus("세션이 없어 이미지 생성을 시작할 수 없습니다.");
@@ -2608,48 +2046,11 @@ export default function App() {
   }
 
   function ocrStateForImage(img) {
-    if (img.processing_excluded) return "skipped";
-    const liveStatus = imageStatuses[img.id];
-    const state = liveStatus?.phase === "ocr" ? liveStatus.status : null;
-    if (state === "failed" || state === "running" || state === "queued" || state === "skipped") return state;
-    if (state === "done" && img.final_url) return "done";
-    const savedState = img.ocr_status?.status;
-    if (savedState === "failed" || savedState === "skipped") return savedState;
-    if (savedState === "done") return "done";
-    if (img.integrated_skipped || img.integrated?.skipped) return "skipped";
-    if (img.has_integrated_json) return "done";
-    if (img.final_url) return "done";
-    // 영역 분석 전인 페이지는 실패가 아니라 아직 손대지 않은 대기열이다. 실패는 OCR·번역 호출이 실제로 실패한 경우만.
-    if (!img.indexed_sheet_url) return "unanalyzed";
-    return "idle";
+    return ocrStateOf(img, imageStatuses);
   }
 
   function ocrDetailForImage(img) {
-    const liveStatus = imageStatuses[img.id];
-    const detail = liveStatus?.phase === "ocr" ? liveStatus.detail : "";
-    if (detail) return detail;
-    if (img.ocr_status?.detail) return img.ocr_status.detail;
-    if (img.ocr_status?.message) return img.ocr_status.message;
-    if (img.integrated_skipped || img.integrated?.skipped) return img.integrated_message || img.integrated?.message || "OCR/번역 스킵";
-    if (img.has_integrated_json) return "integrated.json 있음";
-    if (img.final_url) return "final ready";
-    if (img.indexed_sheet_url) return "ready";
-    return "영역 분석을 마치면 번역할 수 있습니다";
-  }
-
-  function ocrProgressForImage(img, state, detail) {
-    if (state === "done" || state === "skipped") return 100;
-    if (state === "queued" || state === "idle") return 0;
-    const text = String(detail || "");
-    const percentMatch = text.match(/(\d{1,3})\s*%/);
-    if (percentMatch) return Math.max(0, Math.min(100, Number(percentMatch[1])));
-    const stepMatch = text.match(/(\d+)\s*\/\s*(\d+)/);
-    if (stepMatch) {
-      const current = Number(stepMatch[1]);
-      const total = Math.max(1, Number(stepMatch[2]));
-      return Math.max(0, Math.min(100, Math.round((current / total) * 100)));
-    }
-    return state === "running" ? 38 : 0;
+    return ocrDetailOf(img, imageStatuses);
   }
 
   function renderOcrImageButton(img) {
@@ -2771,74 +2172,6 @@ export default function App() {
     });
   }
 
-  function guidanceHistoryItems() {
-    const items = [];
-    (guidance.manual_seed_points || []).forEach((item, index) => {
-      const point = item.point || item.seed || [];
-      items.push({ key: `seed-${index}`, kind: "manual_seed_points", index, label: `Seed ${index + 1}`, detail: Array.isArray(point) ? `${Math.round(point[0])}, ${Math.round(point[1])}` : "" });
-    });
-    (guidance.virtual_walls || []).forEach((item, index) => {
-      items.push({ key: `wall-${index}`, kind: "virtual_walls", index, boxId: item.box_id || "", label: item.box_id ? `Edge ${item.box_id}` : `Edge ${index + 1}`, detail: item.source || "" });
-    });
-    (guidance.split_guides || []).forEach((item, index) => {
-      items.push({ key: `split-${index}`, kind: "split_guides", index, label: `Split line ${index + 1}`, detail: item.source || "" });
-    });
-    (guidance.manual_regions || []).forEach((item, index) => {
-      const type = regionTypeLabel(item);
-      const forcedLama = regionProcessingBasis(item) === TEXT_BASED && item.inpaint_engine === "lama";
-      items.push({
-        key: `region-${index}`,
-        kind: "manual_regions",
-        index,
-        label: `${type} ${index + 1}`,
-        detail: forcedLama ? "LaMa 강제" : item.source || "",
-        isTextBased: regionProcessingBasis(item) === TEXT_BASED,
-        forcedLama,
-      });
-    });
-    (guidance.tg_splits || []).forEach((item, index) => {
-      items.push({ key: `tg-split-${index}`, kind: "tg_splits", index, label: `TG${item.text_group_id || "?"} split`, detail: "" });
-    });
-    (guidance.disabled_tg_ids || []).forEach((id) => {
-      items.push({ key: `tg-off-${id}`, kind: "disabled_tg_ids", id, label: `TG${id} off`, detail: "" });
-    });
-    (guidance.suppressed_regions || []).forEach((item, index) => {
-      items.push({ key: `region-off-${index}`, kind: "suppressed_regions", index, label: `R${item.display_region_id || item.region_id || item.source_region_id || "?"} 제외 기록`, detail: "자동 처리 대상에서 제외" });
-    });
-    (guidance.inpaint_engine_overrides || []).forEach((item, index) => {
-      items.push({ key: `engine-${index}`, kind: "inpaint_engine_overrides", index, label: `R${item.display_region_id || "?"} ${ENGINE_NAMES[item.engine] || item.engine} 고정`, detail: `지우기 엔진을 ${ENGINE_NAMES[item.engine] || item.engine}로 고정` });
-    });
-    (guidance.custom_masks || []).forEach((item, index) => {
-      // R에 붙인 기록은 R마다 한 줄, R 지정 없이 칠한 기록(가장 많이 겹치는 영역에 자동 배정)은 한 줄이다.
-      const attached = Boolean(item.instance_ref || item.region_ref || item.target_key);
-      const dormant = attached && !guidanceRegions.some((region) => recordTargetsRegion(item, region));
-      const shapes = `붓 ${(item.strokes || []).length} · 다각형 ${(item.polygons || []).length} · 사각형 ${(item.rects || []).length}`;
-      items.push({
-        key: `custom-mask-${index}`, kind: "custom_masks", index,
-        label: attached ? `R${item.display_region_id || "?"} 지우기 보정` : "지우기 보정(자동 배정)",
-        detail: dormant ? `${shapes} · 영역 없음: 흰칠만` : shapes,
-      });
-    });
-    return items;
-  }
-
-  function stripGuidanceHistoryItem(baseGuidance, historyItem) {
-    const next = cloneJson(baseGuidance || defaultGuidance(null));
-    if (!historyItem?.kind) return next;
-    if (historyItem.kind === "virtual_walls" && historyItem.boxId) {
-      next.virtual_walls = (next.virtual_walls || []).filter((item) => item.box_id !== historyItem.boxId);
-      return next;
-    }
-    if (historyItem.kind === "disabled_tg_ids") {
-      next.disabled_tg_ids = (next.disabled_tg_ids || []).filter((id) => Number(id) !== Number(historyItem.id));
-      return next;
-    }
-    const list = [...(next[historyItem.kind] || [])];
-    if (historyItem.index >= 0 && historyItem.index < list.length) list.splice(historyItem.index, 1);
-    next[historyItem.kind] = list;
-    return next;
-  }
-
   // 텍스트 기반 영역 지우기 엔진: 기본은 배경 분류(Telea/LaMa) 자동, 켜면 LaMa로 고정한다.
   function toggleTextBasedForcedLama(historyItem) {
     setGuidanceTracked((current) => {
@@ -2879,11 +2212,6 @@ export default function App() {
       : "지우기 보정(자동 배정) · 칠한 곳은 흰칠되고 가장 많이 겹치는 영역의 OCR에 들어갑니다");
   }
 
-  // 선택한 R이 바뀌면 메모 입력칸을 저장된 값으로 되돌린다.
-  useEffect(() => { setContextDraft(null); }, [selectedRegionKey, selectedPageId]);
-  const savedRegionContext = selectedGuidanceRegion ? contextByRegion[regionStoreKey(selectedGuidanceRegion)] || "" : "";
-  const regionContextValue = contextDraft ?? savedRegionContext;
-
   // 입력칸을 벗어나면 저장한다. 번역은 실행하지 않는다.
   // 화자·번역 메모를 바꾼 뒤 이 페이지만 OCR·번역을 다시 돌린다(OCR 탭의 Force Current와 같음).
   // 적어 둔 메모가 아직 저장 전이면 먼저 저장해 이번 번역에 들어가게 한다.
@@ -2902,22 +2230,6 @@ export default function App() {
       setStatus("기존 번역을 유지합니다.");
     } catch (err) {
       setStatus(`기존 번역 유지 실패: ${err.message}`);
-    }
-  }
-
-  async function saveRegionContext() {
-    const region = selectedGuidanceRegion;
-    if (!region || contextDraft == null || contextDraft.trim() === savedRegionContext) { setContextDraft(null); return; }
-    const pageId = selectedPageId;
-    try {
-      const result = await api("/api/region-context", { method: "POST", body: JSON.stringify({
-        session_id: sessionId, image_id: pageId, region_id: regionId(region), region_key: regionBindingKey(region), region_ref: region.region_ref || null, text: contextDraft,
-      }) });
-      if (selectedPageId === pageId) setContextByRegion(result.context_by_region_ref || result.context_by_region || {});
-      setContextDraft(null);
-      setStatus(`R${regionId(region)} 번역 메모 ${contextDraft.trim() ? "저장" : "삭제"} · 다음 OCR/번역 때 반영됩니다.`);
-    } catch (err) {
-      setStatus(`번역 메모 저장 실패: ${err.message}`);
     }
   }
 
@@ -2940,6 +2252,10 @@ export default function App() {
     }
     if (!enginePending && value === autoEngine) return; // 이미 선택된 칸이면 고정을 새로 만들지 않는다
     setSelectedRegionEngine(value);
+  }
+
+  function guidanceHistoryItems() {
+    return buildGuidanceHistoryItems(guidance, guidanceRegions);
   }
 
   function removeGuidanceHistoryItem(historyItem, options = {}) {
@@ -3283,9 +2599,9 @@ export default function App() {
                       <div className="prefetch-setting">
                         <label className="check">
                           <input type="checkbox" checked={prefetchEnabled} onChange={(e) => changePrefetchEnabled(e.target.checked)} />
-                          남은 페이지 미리 분석{prefetchEnabled ? " (켜짐)" : " (꺼짐)"}
+                          다음 페이지 미리 분석{prefetchEnabled ? " (켜짐)" : " (꺼짐)"}
                         </label>
-                        <p className="hint">보고 있는 페이지 분석이 끝나면 아직 분석하지 않은 페이지를 한 장씩 미리 분석합니다. 유료 분석(Cloud Vision)이 페이지마다 호출됩니다.</p>
+                        <p className="hint">보고 있는 페이지 분석이 끝나면 뒤의 {PREFETCH_LOOKAHEAD}장까지 미리 분석합니다. 페이지마다 Cloud Vision이 호출됩니다.</p>
                       </div>
                       <details className="guidance-disclosure">
                         <summary>표시 설정{Object.values(layers).some((visible) => !visible) ? <span>일부 숨김</span> : null}</summary>

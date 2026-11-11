@@ -34,7 +34,8 @@ NEW_COMIC_TRANSLATOR/
 │   ├── package.json
 │   └── src/
 │       ├── main.jsx            # React 엔트리포인트
-│       ├── App.jsx              # 세션/이미지 목록/워크플로우 탭 전체 상태
+│       ├── App.jsx              # 세션/이미지 목록/워크플로우 탭 상태와 화면 조립 (떼어 낼 수 있는 상태는 hooks/로)
+│       ├── hooks/               # App.jsx에서 떼어 낸 커스텀 훅 (상태 묶음별, 아래 표 참고)
 │       ├── StartScreen.jsx      # 홈: 파일·폴더 불러오기, 최근 프로젝트, 분석 방법
 │       ├── ServerFolderPicker.jsx # 홈: 서버 폴더(외장 /Volumes 포함) 둘러보기·선택 창
 │       ├── PagePreparation.jsx  # 가로 이미지 나누기: 미리보기 창(시작 화면)과 같은 프로젝트에 적용
@@ -52,7 +53,14 @@ NEW_COMIC_TRANSLATOR/
 │       ├── ImageGenProgress.jsx  # AI로 통번역(이미지 생성) 진행 창: 모델·경과 시간·진행 메시지, 완료 뒤 결과 보기
 │       ├── ShortcutHelp.jsx      # ? 단축키 도움말
 │       ├── regionTypes.js        # 경계 기반/텍스트 기반 용어 및 과거 타입 호환
-│       ├── prefetchPlan.js       # 남은 페이지 미리 분석 대상 선택(설정이 꺼져 있으면 없음)
+│       ├── prefetchPlan.js       # 다음 페이지 미리 분석 대상 선택(보던 페이지 뒤 5장까지, 설정이 꺼져 있으면 없음)
+│       ├── storage.js            # 화면 설정 localStorage 읽기·쓰기(막혀 있어도 기본값)
+│       ├── overlayNormalize.js   # 글자 입히기 수동값 정리(크기·굵기·외곽선·안전 영역 범위)
+│       ├── overlayHistory.js     # 글자 입히기 편집 기록 쌓기·Undo/Redo 한 칸
+│       ├── guidanceHistory.js    # 영역 분석 가이드 편집 기록 목록·항목 빼기
+│       ├── ocrStatus.js          # OCR·번역 대기열 페이지 상태·진행률 판정
+│       ├── reviewProgress.js     # 확인한 페이지 진행률·번역 알림 기준 계산
+│       ├── workspaceResume.js    # 서버 재시작·새로고침 뒤 다시 열 프로젝트 고르기
 │       ├── RegionTypeBadge.jsx   # 공통 처리 기준 배지
 │       └── lib.js                # 공용 순수 헬퍼 함수 + 상수
 ├── run_pipeline.py             # CLI 진입점
@@ -224,14 +232,24 @@ guidance(수동 보정)가 있는 이미지는 `guidance_digest`(guidance 내용
 | `frontend/src/OverlayCanvas.jsx` | Step 5 캔버스 — 오버레이 안전 영역 이동/리사이즈/회전, eraser rect 편집. 화면 기준 3px 이상 끌었을 때만 수동 위치로 저장 |
 | `frontend/src/keymap.js` | 단축키 단일 정의(키 조합, 탭 범위, 조건, 동작 id, 설명). App 디스패처·툴바 tooltip·도움말이 읽고, `tests/test_docs_sync.py`가 `docs/editor_manual.html` 단축키 표와 대조 |
 | `frontend/src/viewportControls.js` | 두 Konva 캔버스 공용 보기 조작 — 휠=이동, 핀치·Ctrl/Cmd+휠=확대, Space·휠버튼·Hand 도구 드래그 이동, 맞춤/100%/선택 확대 |
-| `frontend/src/OcrBatchPrompt.jsx` | 확인한 페이지(영역 분석 탭에서 적용 안 한 변경 없이 넘긴 페이지, `App.jsx`가 브라우저에 세션별로 기억)의 비율이 처리 대상 페이지의 60%, 80%를 넘을 때마다 한 번씩 비차단 알림을 띄우고, 시작하면 `image_id: "batch"`로 백그라운드 OCR·번역을 돌린다. 진행 중에는 그 페이지만 편집을 잠그고, 번역이 끝난 페이지는 묶음이 끝나기 전이라도 바로 풀린다(`bgOcr.finishedIds`). 마지막 처리 대상 페이지에 도착하면 60%·80% 설정과 상관없이 항상 `LastPagePrompt`로 남은 페이지(분석 끝, 번역 전) 전부를 번역할지 묻는다(지금 페이지 포함 선택 가능) |
+| `frontend/src/OcrBatchPrompt.jsx` | 확인한 페이지(영역 분석 탭에서 적용 안 한 변경 없이 넘긴 페이지, `hooks/useReviewProgress.js`가 브라우저에 세션별로 기억)의 비율이 처리 대상 페이지의 60%, 80%를 넘을 때마다 한 번씩 비차단 알림을 띄우고, 시작하면 `image_id: "batch"`로 백그라운드 OCR·번역을 돌린다. 진행 중에는 그 페이지만 편집을 잠그고, 번역이 끝난 페이지는 묶음이 끝나기 전이라도 바로 풀린다(`bgOcr.finishedIds`). 마지막 처리 대상 페이지에 도착하면 60%·80% 설정과 상관없이 항상 `LastPagePrompt`로 남은 페이지(분석 끝, 번역 전) 전부를 번역할지 묻는다(지금 페이지 포함 선택 가능) |
 | `frontend/src/ImageGenProgress.jsx` | 편집기의 AI로 통번역·내보내기 탭 이미지 생성(`/api/export/generate-missing/stream`)의 비차단 진행 창. 모델·페이지·경과 시간과 서버 진행 메시지 마지막 4줄을 보여 준다. 생성 중에는 그 페이지만 잠그고(`App.jsx`의 `selectedInImageGen`), 이미지 생성(export) 작업은 화면 전체 잠금(`anyBusy`)에서 뺀다. 이미지 모델은 OCR·번역 모델의 제공자를 따르고(Gemini면 나노바나나), 확인 창에 따라간 모델을 적는다 |
 | `frontend/src/ShortcutHelp.jsx` | `?`로 여는 단축키 도움말. 현재 탭의 keymap 항목을 묶어 표시 |
 | `frontend/src/AiErasePanel.jsx` | 영역 분석 탭의 AI 글자 지우기. 텍스트 기반 영역의 "지우기" 줄 `AI` 칸(`App.jsx`)이 여는 확인 창(경로·시간·비용 안내, 취소 포커스, Esc 닫기)에서 시작한다. 쪽 전체는 상단 `⋯` 메뉴의 `AI로 쪽 전체 지우기`가 같은 확인 창을 쪽 모드로 연다(`App.jsx`의 `aiEraseTarget`). 오른쪽 패널에는 진행·후보·적용됨 상태일 때만 카드가 뜨고, 후보는 비교 미리보기 "AI 지움 후보" 탭에 띄워 적용·버리기·해제한다. 영역 모드 결과는 같은 영역 패치만, 쪽 전체 결과는 이전 쪽 전체 패치만 교체한다. 적용된 패치 목록은 `onPatches`로 `App.jsx`에 알려 `AI` 칸의 선택 표시에 쓴다 |
 | `frontend/src/PageJump.jsx` | 상단 파일 이동의 `[쪽 번호] / 전체 쪽수` 입력. Enter나 포커스 이탈 때 이동하고, 범위 밖 번호는 가까운 쪽으로 맞춘다 |
 | `frontend/src/DialogueList.jsx` | 글자 입히기 탭 오른쪽 패널의 대사 리스트 — 읽는 순서, 원문·번역, 확인/질문 상태, 빈 번역 경고, 필터. Shift/Cmd+클릭으로 여러 박스를 고르면 `extraKeys`에 든 행을 `grouped`로 강조하고, 클릭 이벤트를 `onSelect(rid, event)`로 넘긴다. 상태 계산과 J/K/Y/Q 동작, 다중 선택 처리는 `App.jsx`가 맡는다 |
-| `frontend/src/App.jsx` | 세션 관리, 이미지 목록, 워크플로우 탭(분석/OCR/오버레이/내보내기) 전체 상태. Action History의 텍스트 기반 줄에서 LaMa 강제 토글(`manual_regions[].inpaint_engine = "lama"`). 선택한 텍스트 기반 영역(자동·수동 모두)은 도구 모음 LaMa 버튼·오른쪽 패널로 영역 키에 고정하며(`guidance.inpaint_engine_overrides = [{target_key, engine: "lama"}]`), 분석 적용 때 Step 3가 반영한다 |
+| `frontend/src/App.jsx` | 세션 관리, 이미지 목록·페이지 선택, 워크플로우 탭(분석/OCR/오버레이/내보내기)의 편집 상태와 화면 조립. 탭끼리 함께 쓰는 상태(선택 페이지, guidance·overlayGuidance, 편집 버전, 단축키 디스패처)는 여기 두고, 따로 떼어 낼 수 있는 상태 묶음은 아래 `hooks/` 훅이 맡는다. Action History의 텍스트 기반 줄에서 LaMa 강제 토글(`manual_regions[].inpaint_engine = "lama"`). 선택한 텍스트 기반 영역(자동·수동 모두)은 도구 모음 LaMa 버튼·오른쪽 패널로 영역 키에 고정하며(`guidance.inpaint_engine_overrides = [{target_key, engine: "lama"}]`), 분석 적용 때 Step 3가 반영한다 |
 | `frontend/src/main.jsx` | React 엔트리포인트 |
+| `frontend/src/hooks/useRecentSessions.js` | 홈 최근 프로젝트 목록: 정렬(브라우저에 기억), 12개씩 이어 받기, 프로젝트 메뉴 열림 상태 |
+| `frontend/src/hooks/useBusyTasks.js` | 화면을 잠그는 작업 종류별 진행 표시(`busyTasks`)와 중복 실행 잠금, `runTask` |
+| `frontend/src/hooks/useAutoAnalysis.js` | 영역 분석 탭에서 보고 있는 페이지 자동 분석과 다음 페이지 미리 분석(설정, 기본 켜짐, 뒤 5장까지). 두 effect의 실행 순서(자동 분석 → 미리 분석)는 App이 훅을 부르는 자리로 지킨다 |
+| `frontend/src/hooks/useWorkspaceResume.js` | 서버 재시작·새로고침 뒤 보던 프로젝트·페이지·탭으로 돌아가기, 프로젝트별 마지막 페이지 기억 |
+| `frontend/src/hooks/useExportSettings.js` | 내보내기 탭 이미지 생성 설정·후보 선택·로그. OCR·번역 제공자를 바꾸면 이미지 모델을 같은 제공자로 맞춘다 |
+| `frontend/src/hooks/useTopbarMenu.js` | 영역 분석 상단 `기록`·`⋯` 펼침 메뉴 상태와 바깥 클릭·Esc 닫기 |
+| `frontend/src/hooks/useGlobalKeyboard.js` | 캡처 단계 keydown을 App 단축키 디스패처로 넘기는 전역 리스너, 캔버스 클릭 시 입력칸 포커스 해제, 단축키 알림(`useShortcutToast`) |
+| `frontend/src/hooks/useReviewProgress.js` | 확인한 페이지 집계, 60%·80%·마지막 페이지 번역 알림과 프로젝트별 자동 번역, 대사 검수 상태(세션별로 브라우저에 기억) |
+| `frontend/src/hooks/useSpeakerNotes.js` | 영역 분석 탭 화자 지정(작품 메모 인물 표, 숫자 단축키)과 영역별 번역 메모 |
+| `frontend/src/storage.js`, `overlayNormalize.js`, `overlayHistory.js`, `guidanceHistory.js`, `ocrStatus.js`, `reviewProgress.js`, `workspaceResume.js` | `App.jsx`에서 떼어 낸 순수 함수 모듈. React 없이 `proof/src/test_*.mjs`가 `proof/src/frontend_module_loader.mjs`로 불러 검사한다(`npm test`) |
 
 프론트엔드 코드를 수정하면 `frontend/`에서 `npm install`(최초 1회) 후 `npm run build`로 `web/app.bundle.js`를 다시 생성해야 한다. `web/app.bundle.js`는 결과물이므로 커밋 대상이며, 앱을 실행만 할 때는 Node.js가 필요 없다.
 
