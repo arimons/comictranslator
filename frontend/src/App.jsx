@@ -162,6 +162,16 @@ export default function App() {
   const [aiEraseTarget, setAiEraseTarget] = useState("region");
   // 불러온 가로 이미지를 분석 시작 때 나눌지(기본 켜짐). 표지처럼 가운데 한 장인 이미지는 가운데만 남긴다.
   const [splitLandscape, setSplitLandscape] = useState(() => readStored("ct.splitLandscape", true, (v) => typeof v === "boolean"));
+  // 좁은 창(영역 분석 1279px 이하, 글자 입히기 1400px 이하)에서 보조 창(비교 미리보기·원본)을 접어 캔버스에 자리를 준다.
+  // 넓은 창에서는 CSS가 토글과 접힘을 무시하므로 레이아웃이 그대로다.
+  const [secondaryPanes, setSecondaryPanes] = useState(() => readStored("ct.secondaryPanes", { compare: true, original: true }, (v) => v && typeof v === "object"));
+  function toggleSecondaryPane(name) {
+    setSecondaryPanes((current) => {
+      const next = { ...current, [name]: current[name] === false };
+      writeStored("ct.secondaryPanes", next);
+      return next;
+    });
+  }
   const [dialogueFilter, setDialogueFilter] = useState("all");
   // 대사 편집을 ⌘Enter로 확정한 영역. 반영된 새 번역문으로 확인을 다시 기록한다.
   const dialogueConfirmAfterCommitRef = useRef(null);
@@ -2546,7 +2556,7 @@ export default function App() {
       <main className="workspace">
         {activeTab === "guidance" ? (
         <div className="guidance-workspace">
-          <div className="viewer-grid guidance-grid">
+          <div className={`viewer-grid guidance-grid${secondaryPanes.compare === false ? " secondary-collapsed" : ""}`}>
             <section className="preview-card guidance-preview-card">
               <div className="card-head">
                 <span>비교 미리보기</span>
@@ -2581,6 +2591,8 @@ export default function App() {
             <section className="viewer-card guidance-editor-card">
               <div className="card-head editor-head">
                 <div className="editor-title">
+                  <button type="button" className="secondary-pane-toggle" onClick={() => toggleSecondaryPane("compare")} aria-pressed={secondaryPanes.compare !== false}
+                    title={secondaryPanes.compare === false ? "비교 미리보기 펼치기" : "비교 미리보기 접기 · 캔버스를 넓게"}>{secondaryPanes.compare === false ? "비교 ▸" : "◂ 비교"}</button>
                   <span>Analysis Workspace</span>
                   {images.length ? <span className="page-counter" title="현재 페이지 / 전체 페이지. 괄호는 결과 이미지가 생성된 페이지 수(수동 검토 완료를 뜻하지 않음)">
                     {currentIndex + 1}<small>({images.filter((img) => img.final_url).length})</small> / {images.length}
@@ -2911,7 +2923,7 @@ export default function App() {
         ) : null}
 
         {activeTab === "overlay" ? (
-          <div className="overlay-grid">
+          <div className={`overlay-grid${secondaryPanes.original === false ? " secondary-collapsed" : ""}`}>
             <section className="viewer-card overlay-stage-card overlay-final-card">
               <div className="card-head editor-head">
                 <div className="editor-title">
@@ -2926,6 +2938,8 @@ export default function App() {
             <section className="viewer-card overlay-stage-card overlay-source-card">
               <div className="card-head editor-head">
                 <div className="editor-title">
+                  <button type="button" className="secondary-pane-toggle" onClick={() => toggleSecondaryPane("original")} aria-pressed={secondaryPanes.original !== false}
+                    title={secondaryPanes.original === false ? "원본 이미지 펼치기" : "원본 이미지 접기 · 캔버스를 넓게"}>{secondaryPanes.original === false ? "원본 ▸" : "◂ 원본"}</button>
                   <span>Overlay Result Editor</span>
                   <strong>{selectedRegion ? overlayItemLabel(selectedRegion) : "-"}</strong>
                 </div>

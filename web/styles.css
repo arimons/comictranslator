@@ -1094,6 +1094,8 @@ button.wide {
 
 .guidance-editor-card {
   position: relative;
+  /* 열 폭을 명시해 캔버스가 이전 폭에 묶여 카드가 줄지 못하는 일을 막는다(비교 미리보기를 다시 펼칠 때) */
+  grid-template-columns: minmax(0, 1fr);
   grid-template-rows: 44px minmax(0, 1fr);
 }
 
@@ -2979,15 +2981,17 @@ button.wide {
 }
 
 @media (max-width: 1180px) {
-  .app {
+  /* 편집기(workspace-mode) 이전의 3단 레이아웃용 규칙이다. 편집기에서 오른쪽 패널을 숨기면
+     글자 입히기·내보내기의 주요 버튼이 사라지므로 편집기에는 적용하지 않는다. */
+  .app:not(.workspace-mode) {
     grid-template-columns: 260px minmax(0, 1fr);
   }
 
-  .tools {
+  .app:not(.workspace-mode) .tools {
     display: none;
   }
 
-  .viewer-grid {
+  .app:not(.workspace-mode) .viewer-grid {
     grid-template-columns: 1fr;
   }
 
@@ -3741,3 +3745,37 @@ select.memo-key { width: 100%; padding: 2px; font-size: 12px; }
 .ai-erase-scope legend { font-size: 12px; padding: 0 4px; color: var(--muted, #475569); }
 .ai-erase-scope label { display: block; margin: 4px 0; font-size: 13px; cursor: pointer; }
 .ai-erase-scope small { display: block; margin-left: 22px; color: var(--muted, #64748b); font-size: 11px; line-height: 1.4; }
+
+/* 좁은 창(약 960〜1400px) 편집기. 1440px 이상에서는 아무것도 바꾸지 않는다.
+   보조 창(영역 분석의 비교 미리보기, 글자 입히기의 원본 이미지)은 세로로 쌓으면 쓸 수 없는 띠가 되므로
+   옆에 좁게 두고, 머리줄의 토글로 접어 캔버스에 자리를 줄 수 있게 한다. 캔버스는 ResizeObserver로 다시 맞춘다. */
+.secondary-pane-toggle { display: none; }
+.secondary-pane-toggle { min-height: 26px; padding: 2px 8px; font-size: 11px; white-space: nowrap; }
+@media (max-width: 1279px) {
+  .guidance-workspace .secondary-pane-toggle { display: inline-flex; align-items: center; }
+  .guidance-grid { grid-template-columns: minmax(240px, 36fr) minmax(0, 100fr); }
+  .guidance-grid.secondary-collapsed { grid-template-columns: minmax(0, 1fr); }
+  .guidance-grid.secondary-collapsed > .guidance-preview-card { display: none; }
+  .guidance-preview-card .card-head { flex-wrap: wrap; height: auto; }
+  .guidance-preview-card .preview-tabs { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  /* 편집 머리줄: 위쪽 페이지 탐색과 겹치는 제목·쪽수와 '변경 없음' 표시는 숨겨 기록·더 보기 버튼이 잘리지 않게 한다 */
+  .guidance-editor-card .editor-title > span:first-of-type,
+  .guidance-editor-card .editor-title > .page-counter,
+  .guidance-change-state:not(.dirty) { display: none; }
+  /* 글자인식: 제목과 실행 버튼을 두 줄로 나눠 버튼이 카드 밖으로 밀리지 않게 한다 */
+  .ocr-job-header { grid-template-columns: minmax(0, 1fr); }
+  .ocr-job-actions { grid-template-columns: minmax(70px, 0.75fr) repeat(4, minmax(0, 1fr)); }
+  /* 글자 입히기: 오른쪽 패널을 조금 줄여 원본과 캔버스가 둘 다 쓸 만한 폭을 갖게 한다 */
+  .app.workspace-mode.overlay-mode:not(.tools-collapsed) { grid-template-columns: minmax(0, 1fr) clamp(340px, 36vw, 420px); }
+}
+@media (max-width: 1400px) {
+  .overlay-grid .secondary-pane-toggle { display: inline-flex; align-items: center; }
+  .overlay-grid { grid-template-columns: minmax(0, 2fr) minmax(0, 3fr); grid-template-rows: minmax(0, 1fr); }
+  .overlay-grid.secondary-collapsed { grid-template-columns: minmax(0, 1fr); }
+  .overlay-grid.secondary-collapsed > .overlay-final-card { display: none; }
+  /* 내보내기: 왼쪽 목록 폭을 줄여 미리보기 머리줄의 다시 만들기·ZIP 버튼이 가려지지 않게 한다 */
+  .export-workspace { grid-template-columns: minmax(300px, 45fr) minmax(0, 55fr); }
+  .export-preview-head { flex-wrap: wrap; align-items: start; }
+  .export-preview-actions { flex-wrap: wrap; justify-content: flex-start; }
+  .export-preview-actions button { min-width: 0; }
+}

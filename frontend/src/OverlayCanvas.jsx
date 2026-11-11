@@ -1484,10 +1484,14 @@ const OverlayCanvas = forwardRef(function OverlayCanvas({ image, overlayGuidance
       onUp(event);
     };
     window.addEventListener("resize", resize);
+    // 창 크기는 그대로인데 원본 창을 접거나 패널 폭이 바뀌어 캔버스 자리만 달라져도 다시 맞춘다.
+    const observer = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(() => resize());
+    observer?.observe(host);
     window.addEventListener("mousemove", onWindowMove, true);
     window.addEventListener("mouseup", onWindowUp, true);
     return () => {
       vp.detach();
+      observer?.disconnect();
       window.removeEventListener("resize", resize);
       window.removeEventListener("mousemove", onWindowMove, true);
       window.removeEventListener("mouseup", onWindowUp, true);
