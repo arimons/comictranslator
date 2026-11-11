@@ -165,6 +165,15 @@ export default function App() {
   // 좁은 창(영역 분석 1279px 이하, 글자 입히기 1400px 이하)에서 보조 창(비교 미리보기·원본)을 접어 캔버스에 자리를 준다.
   // 넓은 창에서는 CSS가 토글과 접힘을 무시하므로 레이아웃이 그대로다.
   const [secondaryPanes, setSecondaryPanes] = useState(() => readStored("ct.secondaryPanes", { compare: true, original: true }, (v) => v && typeof v === "object"));
+  // 글자 입히기 오른쪽 패널의 스타일 설정 접기. 대사 리스트가 이 탭의 주 작업이라 접으면 그 자리를 리스트가 쓴다.
+  // 접어도 스타일 숫자 키(1〜9)는 그대로 선택한 영역에 적용된다.
+  const [overlayStyleOpen, setOverlayStyleOpen] = useState(() => readStored("ct.overlayStyleOpen", true, (v) => typeof v === "boolean"));
+  function toggleOverlayStyleOpen() {
+    setOverlayStyleOpen((open) => {
+      writeStored("ct.overlayStyleOpen", !open);
+      return !open;
+    });
+  }
   function toggleSecondaryPane(name) {
     setSecondaryPanes((current) => {
       const next = { ...current, [name]: current[name] === false };
@@ -3108,10 +3117,17 @@ export default function App() {
                 </div>
               ) : selectedRegion ? null : <div className="empty compact-empty">Region을 선택하세요. Shift/Cmd+클릭으로 여러 개를 고를 수 있습니다.</div>}
             </div>
-            <div className="selected-overlay-pane overlay-style-section">
+            <div className={`selected-overlay-pane overlay-style-section${overlayStyleOpen ? "" : " collapsed"}`}>
               <div className="side-section-head overlay-style-head">
-                <h2>Selected Style</h2>
+                <button type="button" className="overlay-style-toggle" onClick={toggleOverlayStyleOpen} aria-expanded={overlayStyleOpen}
+                  title={overlayStyleOpen ? "스타일 설정 접기 · 대사 리스트를 넓게" : "스타일 설정 펼치기"}>
+                  <span aria-hidden="true">{overlayStyleOpen ? "▾" : "▸"}</span><h2>Selected Style</h2>
+                </button>
+                {!overlayStyleOpen ? <span className="overlay-style-summary">
+                  {FONT_STYLES.find(([id]) => id === (isGroupSelection ? groupFontStyle : selectedEffectiveFontStyle))?.[2] || "-"} · 숫자 키 1〜9로 바꿈
+                </span> : null}
               </div>
+              {overlayStyleOpen ? <>
               <div className="font-style-toolbar">
                 {FONT_STYLES.map(([id, _short, label, sample]) => (
                   <button
@@ -3178,10 +3194,11 @@ export default function App() {
                 </div>
                 {renderColorField("Outline color", "stroke_color", "#ffffff", "외곽선색. 기본은 흰색입니다")}
               </div>
+              </> : null}
             </div>
           </div>
         </div>
-        <div className="section compact-section">
+        <div className="section compact-section dialogue-section">
           <DialogueList
             rows={dialogueRows()}
             selectedKey={selectedRegionRefValue()}

@@ -3779,3 +3779,17 @@ select.memo-key { width: 100%; padding: 2px; font-size: 12px; }
   .export-preview-actions { flex-wrap: wrap; justify-content: flex-start; }
   .export-preview-actions button { min-width: 0; }
 }
+
+/* 글자 입히기 오른쪽 패널: 대사 리스트가 패널 높이의 절반 이상과 남은 높이를 쓰고 안에서 스크롤한다.
+   스타일 설정은 접을 수 있고, 펼쳐도 남는 자리만 차지한 뒤 안에서 스크롤한다. */
+.app.workspace-mode.overlay-mode .tools.open { display: flex; flex-direction: column; overflow: hidden; }
+.app.workspace-mode.overlay-mode .tools.open > * { flex: 0 0 auto; }
+.app.workspace-mode.overlay-mode .tools.open > .selected-overlay-section { flex: 0 1 auto; min-height: 0; max-height: 45%; overflow: auto; }
+.app.workspace-mode.overlay-mode .tools.open > .dialogue-section { flex: 1 1 0; min-height: max(180px, 50%); display: flex; flex-direction: column; }
+.overlay-region-section > .compact-empty { min-height: 0; padding: 6px 8px; font-size: 12px; text-align: left; }
+.dialogue-section .dialogue-list { flex: 1 1 0; min-height: 0; max-height: none; align-content: start; }
+.overlay-style-toggle { display: inline-flex; align-items: center; gap: 6px; min-height: 0; padding: 2px 4px; margin-left: -4px; border: 0; background: transparent; color: var(--muted); cursor: pointer; }
+.overlay-style-toggle h2 { margin: 0; }
+.overlay-style-toggle:hover { color: var(--text); }
+.overlay-style-summary { font-size: 11px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.overlay-style-section.collapsed .overlay-style-head { margin-bottom: 0; }
