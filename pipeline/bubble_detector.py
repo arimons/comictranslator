@@ -3453,78 +3453,12 @@ def _finalize_region_validity(
         )
 
 
-def build_ocr_region_sheet(
-    image_path: str,
-    clusters_json: str,
-    output_masked_path: str = None,
-    output_sheet_path: str = None,
-    output_json_path: str = None,
-    indexed_output_sheet_path: Optional[str] = None,
-    output_regions_only_path: Optional[str] = None,
-    output_vis_path: Optional[str] = None,
-    debug_mode: bool = False,
-    erode_pixels: int = 3,
-    max_area_ratio: float = MAX_SAFE_AREA_RATIO,
-    min_bubble_tg_ratio: float = 1.0,
-    max_bubble_tg_ratio: float = 20.0,
-    indexed_label_gutter: int = 48,
-    dark_bg_mean_threshold: int = 130,
-    enable_edge_barrier_rescue: bool = True,
-    image: Optional[np.ndarray] = None,
-    gray: Optional[np.ndarray] = None,
-    manual_virtual_walls: Optional[List[Dict[str, Any]]] = None,
-) -> Dict[str, Any]:
-    # 호출자가 이미지를 미리 읽어 넘겨준 경우 재독(disk I/O) 생략
-    if image is None or gray is None:
-        image, gray, img_h, img_w = _load_image_and_gray(image_path)
-    else:
-        img_h, img_w = image.shape[:2]
-    clusters = _load_json(clusters_json)
-    image_area = img_w * img_h
-
-    grouped: Dict[Tuple[Any, ...], Dict[str, Any]] = {}
-    diagnostics: List[Dict[str, Any]] = []
-    skipped: List[Dict[str, Any]] = []
-    noise_like_anchors: List[Dict[str, Any]] = []
-
-    # black contour probe용 페이지 mask는 이 호출 안에서 한 번만 만든다(호출 간 공유 없음).
-    page_black_contour: List[np.ndarray] = []
-
-    def _page_black_contour() -> np.ndarray:
-        if not page_black_contour:
-            page_black_contour.append(_black_contour_binary(gray))
-        return page_black_contour[0]
-
-    for idx, cluster in enumerate(clusters, start=1):
-        _probe_text_group(
-            idx, cluster, image, gray, img_w, img_h, image_area,
-            erode_pixels, max_area_ratio, min_bubble_tg_ratio, max_bubble_tg_ratio,
-            dark_bg_mean_threshold, _page_black_contour,
-            grouped, diagnostics, skipped, noise_like_anchors,
-        )
-
-    _merge_fallback_anchors_into_valid(grouped)
-    _attach_english_anchors_to_bubbles(grouped, skipped)
-
-    clusters_by_id = {_text_group_id(c, i + 1): c for i, c in enumerate(clusters)}
-
-    if enable_edge_barrier_rescue:
-        _run_edge_barrier_rescue(
-            image, gray, img_w, img_h, grouped, diagnostics, noise_like_anchors,
-            clusters_by_id, manual_virtual_walls, _page_black_contour,
-        )
-
-    _merge_nearby_rescue_regions(grouped, clusters_by_id)
-    grouped = _merge_same_rect_regions(grouped)
-    _finalize_region_validity(grouped, gray, _page_black_contour)
-
-    # Cross-split and rescue merging is omitted or simplified for valid bubbles.
-    # We just group overlapping valid bubbles directly by their identical bounding rects.
-
-    regions = sorted(grouped.values(), key=_pre_split_reading_key)
-    for sort_group_index, region in enumerate(regions):
-        region["sort_group_index"] = sort_group_index
-
+def _split_and_crop_regions(
+    image: np.ndarray,
+    regions: List[Dict[str, Any]],
+    clusters_by_id: Dict[int, Dict[str, Any]],
+) -> Tuple[List[Dict[str, Any]], int, int]:
+    """Split·crop: 읽기 순서로 정렬된 region을 다중 앵커·단일 TG split으로 나누고 OCR crop 목록과 시트 크기(total_width, max_height)를 돌려준다."""
     crops: List[Dict[str, Any]] = []
     total_width = 0
     max_height = 0
@@ -3743,6 +3677,83 @@ def build_ocr_region_sheet(
         total_width += w
         max_height = max(max_height, h)
         region_id_counter += 1
+
+    return crops, total_width, max_height
+
+
+def build_ocr_region_sheet(
+    image_path: str,
+    clusters_json: str,
+    output_masked_path: str = None,
+    output_sheet_path: str = None,
+    output_json_path: str = None,
+    indexed_output_sheet_path: Optional[str] = None,
+    output_regions_only_path: Optional[str] = None,
+    output_vis_path: Optional[str] = None,
+    debug_mode: bool = False,
+    erode_pixels: int = 3,
+    max_area_ratio: float = MAX_SAFE_AREA_RATIO,
+    min_bubble_tg_ratio: float = 1.0,
+    max_bubble_tg_ratio: float = 20.0,
+    indexed_label_gutter: int = 48,
+    dark_bg_mean_threshold: int = 130,
+    enable_edge_barrier_rescue: bool = True,
+    image: Optional[np.ndarray] = None,
+    gray: Optional[np.ndarray] = None,
+    manual_virtual_walls: Optional[List[Dict[str, Any]]] = None,
+) -> Dict[str, Any]:
+    # 호출자가 이미지를 미리 읽어 넘겨준 경우 재독(disk I/O) 생략
+    if image is None or gray is None:
+        image, gray, img_h, img_w = _load_image_and_gray(image_path)
+    else:
+        img_h, img_w = image.shape[:2]
+    clusters = _load_json(clusters_json)
+    image_area = img_w * img_h
+
+    grouped: Dict[Tuple[Any, ...], Dict[str, Any]] = {}
+    diagnostics: List[Dict[str, Any]] = []
+    skipped: List[Dict[str, Any]] = []
+    noise_like_anchors: List[Dict[str, Any]] = []
+
+    # black contour probe용 페이지 mask는 이 호출 안에서 한 번만 만든다(호출 간 공유 없음).
+    page_black_contour: List[np.ndarray] = []
+
+    def _page_black_contour() -> np.ndarray:
+        if not page_black_contour:
+            page_black_contour.append(_black_contour_binary(gray))
+        return page_black_contour[0]
+
+    for idx, cluster in enumerate(clusters, start=1):
+        _probe_text_group(
+            idx, cluster, image, gray, img_w, img_h, image_area,
+            erode_pixels, max_area_ratio, min_bubble_tg_ratio, max_bubble_tg_ratio,
+            dark_bg_mean_threshold, _page_black_contour,
+            grouped, diagnostics, skipped, noise_like_anchors,
+        )
+
+    _merge_fallback_anchors_into_valid(grouped)
+    _attach_english_anchors_to_bubbles(grouped, skipped)
+
+    clusters_by_id = {_text_group_id(c, i + 1): c for i, c in enumerate(clusters)}
+
+    if enable_edge_barrier_rescue:
+        _run_edge_barrier_rescue(
+            image, gray, img_w, img_h, grouped, diagnostics, noise_like_anchors,
+            clusters_by_id, manual_virtual_walls, _page_black_contour,
+        )
+
+    _merge_nearby_rescue_regions(grouped, clusters_by_id)
+    grouped = _merge_same_rect_regions(grouped)
+    _finalize_region_validity(grouped, gray, _page_black_contour)
+
+    # Cross-split and rescue merging is omitted or simplified for valid bubbles.
+    # We just group overlapping valid bubbles directly by their identical bounding rects.
+
+    regions = sorted(grouped.values(), key=_pre_split_reading_key)
+    for sort_group_index, region in enumerate(regions):
+        region["sort_group_index"] = sort_group_index
+
+    crops, total_width, max_height = _split_and_crop_regions(image, regions, clusters_by_id)
 
     # 원본 bubble 순서를 먼저 고정하고, split 자식만 그 자리에서 연속으로 펼친다.
     crops.sort(key=_reading_order_key)
