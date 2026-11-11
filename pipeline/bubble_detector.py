@@ -3316,6 +3316,143 @@ def _run_edge_barrier_rescue(
         _edge_rescue_postprocess(grouped, noise_like_anchors, clusters_by_id)
 
 
+def _merge_nearby_rescue_regions(
+    grouped: Dict[Tuple[Any, ...], Dict[str, Any]],
+    clusters_by_id: Dict[int, Dict[str, Any]],
+) -> None:
+    """Rescue 뒤 병합: 앵커 중심이 다른 구제 bubble의 100px 확장 rect 안에 들면 같은 말풍선으로 보고 합친다(grouped 제자리 수정)."""
+    # edge_barrier_rescue 결과 중 인접한 단일-앵커 region을 합친다.
+    # 동일 말풍선에서 시작점이 달라 flood_rect가 달랐던 TG들은 각자 rescue를 받아
+    # 서로 근접한 bubble_rect를 갖게 된다. 앵커 center가 상대 bubble_rect 100px 확장 안에
+    # 들어오면 동일 말풍선으로 판단하여 병합한다.
+    _RESCUE_PROXIMITY_PAD = 100
+    _rescue_regions = [
+        (key, region)
+        for key, region in grouped.items()
+        if region.get("is_valid") and region.get("method") == "edge_barrier_rescue"
+    ]
+    _merged_into: Dict[Any, Any] = {}  # key → target_key
+    for i, (ki, ri) in enumerate(_rescue_regions):
+        if ki in _merged_into:
+            continue
+        br = ri["bubble_rect"]
+        exp = [
+            br[0] - _RESCUE_PROXIMITY_PAD,
+            br[1] - _RESCUE_PROXIMITY_PAD,
+            br[2] + _RESCUE_PROXIMITY_PAD * 2,
+            br[3] + _RESCUE_PROXIMITY_PAD * 2,
+        ]
+        for kj, rj in _rescue_regions[i + 1:]:
+            if kj in _merged_into:
+                continue
+            # rj 의 앵커 중 하나라도 ri 의 확장 bubble_rect 안에 있으면 병합
+            for aid in rj.get("anchor_ids", []):
+                if aid not in clusters_by_id:
+                    continue
+                ac = _bbox_center(_tight_text_group_rect(clusters_by_id[aid]))
+                if (exp[0] <= ac[0] <= exp[0] + exp[2] and
+                        exp[1] <= ac[1] <= exp[1] + exp[3]):
+                    # rj → ri 로 병합
+                    ri["mask"] = cv2.bitwise_or(ri["mask"], rj["mask"])
+                    for aid2 in rj.get("anchor_ids", []):
+                        if aid2 not in ri["anchor_ids"]:
+                            ri["anchor_ids"].append(aid2)
+                    for sp in rj.get("seed_points", []):
+                        if sp not in ri.get("seed_points", []):
+                            ri.setdefault("seed_points", []).append(sp)
+                    # bubble_rect 를 합집합으로 갱신
+                    bx1 = min(br[0], rj["bubble_rect"][0])
+                    by1 = min(br[1], rj["bubble_rect"][1])
+                    bx2 = max(br[0] + br[2], rj["bubble_rect"][0] + rj["bubble_rect"][2])
+                    by2 = max(br[1] + br[3], rj["bubble_rect"][1] + rj["bubble_rect"][3])
+                    ri["bubble_rect"] = [bx1, by1, bx2 - bx1, by2 - by1]
+                    br = ri["bubble_rect"]
+                    exp = [
+                        br[0] - _RESCUE_PROXIMITY_PAD,
+                        br[1] - _RESCUE_PROXIMITY_PAD,
+                        br[2] + _RESCUE_PROXIMITY_PAD * 2,
+                        br[3] + _RESCUE_PROXIMITY_PAD * 2,
+                    ]
+                    # 병합을 일으킨 rj의 anchor를 기록한다(aid2는 위 루프의 마지막 값이라 다를 수 있다).
+                    ri["quality_flags"].append(f"rescue_proximity_merged:A{aid}")
+                    _merged_into[kj] = ki
+                    break
+    # 병합된 region 제거
+    for kj in _merged_into:
+        grouped.pop(kj, None)
+
+
+def _merge_same_rect_regions(
+    grouped: Dict[Tuple[Any, ...], Dict[str, Any]],
+) -> Dict[Tuple[Any, ...], Dict[str, Any]]:
+    """Rescue 뒤 병합: 같은 bubble rect로 수렴한 유효 region을 하나로 합친 새 grouped를 돌려준다."""
+    # rescue 이후 같은 bubble rect로 수렴한 region은 다시 하나로 합친다.
+    # 열린 말풍선은 TG별 flood 시작점이 달라도 같은 mask로 수렴하는 경우가 흔하다.
+    merged_grouped: Dict[Tuple[Any, ...], Dict[str, Any]] = {}
+    for key, region in grouped.items():
+        merge_key = ("valid", *region["bubble_rect"]) if region.get("is_valid") else key
+        if merge_key not in merged_grouped:
+            merged_grouped[merge_key] = region
+            continue
+
+        target = merged_grouped[merge_key]
+        target["mask"] = cv2.bitwise_or(target["mask"], region["mask"])
+        for aid in region.get("anchor_ids", []):
+            if aid not in target["anchor_ids"]:
+                target["anchor_ids"].append(aid)
+        for seed in region.get("seed_points", []):
+            if seed not in target["seed_points"]:
+                target["seed_points"].append(seed)
+        for flag in region.get("quality_flags", []):
+            if flag not in target["quality_flags"]:
+                target["quality_flags"].append(flag)
+        target["is_valid"] = bool(target.get("is_valid") or region.get("is_valid"))
+        if target["is_valid"] and target.get("method") == "bbox_fallback":
+            target["method"] = region.get("method", target["method"])
+        if target["is_valid"] and target.get("region_type") == "bbox_fallback":
+            target["region_type"] = region.get("region_type", target["region_type"])
+
+    return merged_grouped
+
+
+def _finalize_region_validity(
+    grouped: Dict[Tuple[Any, ...], Dict[str, Any]],
+    gray: np.ndarray,
+    _page_black_contour: Callable[[], np.ndarray],
+) -> None:
+    """Finalize 검증: 옆면이 파고든 flood bubble을 fallback으로 내리고, 실패 region에 검은 윤곽 probe 결과를 붙인다(제자리 수정)."""
+    for region in grouped.values():
+        if not region.get("is_valid") or region.get("method") != "flood":
+            continue
+        reject_reason = _rect_side_intrusion_reject_reason(
+            region.get("mask"),
+            region.get("quality_flags", []),
+        )
+        if reject_reason is None:
+            continue
+        region["is_valid"] = False
+        region["method"] = "bbox_fallback"
+        region["region_type"] = "bbox_fallback"
+        region.setdefault("quality_flags", []).append(reject_reason)
+
+    for region in grouped.values():
+        if region.get("is_valid"):
+            continue
+        probe = _black_contour_probe(
+            gray,
+            [int(v) for v in region.get("bubble_rect", [0, 0, 0, 0])[:4]],
+            region.get("mask"),
+            black=_page_black_contour(),
+        )
+        region["black_contour_probe"] = probe
+        region.setdefault("quality_flags", []).append(
+            "black_contour="
+            f"{probe['status']},cov={probe['coverage']:.2f},"
+            f"quad={probe['quadrants']},gap={probe['max_gap']:.2f},"
+            f"cv={probe['distance_cv']:.2f}"
+        )
+
+
 def build_ocr_region_sheet(
     image_path: str,
     clusters_json: str,
@@ -3377,123 +3514,9 @@ def build_ocr_region_sheet(
             clusters_by_id, manual_virtual_walls, _page_black_contour,
         )
 
-    # edge_barrier_rescue 결과 중 인접한 단일-앵커 region을 합친다.
-    # 동일 말풍선에서 시작점이 달라 flood_rect가 달랐던 TG들은 각자 rescue를 받아
-    # 서로 근접한 bubble_rect를 갖게 된다. 앵커 center가 상대 bubble_rect 100px 확장 안에
-    # 들어오면 동일 말풍선으로 판단하여 병합한다.
-    _RESCUE_PROXIMITY_PAD = 100
-    _rescue_regions = [
-        (key, region)
-        for key, region in grouped.items()
-        if region.get("is_valid") and region.get("method") == "edge_barrier_rescue"
-    ]
-    _merged_into: Dict[Any, Any] = {}  # key → target_key
-    for i, (ki, ri) in enumerate(_rescue_regions):
-        if ki in _merged_into:
-            continue
-        br = ri["bubble_rect"]
-        exp = [
-            br[0] - _RESCUE_PROXIMITY_PAD,
-            br[1] - _RESCUE_PROXIMITY_PAD,
-            br[2] + _RESCUE_PROXIMITY_PAD * 2,
-            br[3] + _RESCUE_PROXIMITY_PAD * 2,
-        ]
-        for kj, rj in _rescue_regions[i + 1:]:
-            if kj in _merged_into:
-                continue
-            # rj 의 앵커 중 하나라도 ri 의 확장 bubble_rect 안에 있으면 병합
-            for aid in rj.get("anchor_ids", []):
-                if aid not in clusters_by_id:
-                    continue
-                ac = _bbox_center(_tight_text_group_rect(clusters_by_id[aid]))
-                if (exp[0] <= ac[0] <= exp[0] + exp[2] and
-                        exp[1] <= ac[1] <= exp[1] + exp[3]):
-                    # rj → ri 로 병합
-                    ri["mask"] = cv2.bitwise_or(ri["mask"], rj["mask"])
-                    for aid2 in rj.get("anchor_ids", []):
-                        if aid2 not in ri["anchor_ids"]:
-                            ri["anchor_ids"].append(aid2)
-                    for sp in rj.get("seed_points", []):
-                        if sp not in ri.get("seed_points", []):
-                            ri.setdefault("seed_points", []).append(sp)
-                    # bubble_rect 를 합집합으로 갱신
-                    bx1 = min(br[0], rj["bubble_rect"][0])
-                    by1 = min(br[1], rj["bubble_rect"][1])
-                    bx2 = max(br[0] + br[2], rj["bubble_rect"][0] + rj["bubble_rect"][2])
-                    by2 = max(br[1] + br[3], rj["bubble_rect"][1] + rj["bubble_rect"][3])
-                    ri["bubble_rect"] = [bx1, by1, bx2 - bx1, by2 - by1]
-                    br = ri["bubble_rect"]
-                    exp = [
-                        br[0] - _RESCUE_PROXIMITY_PAD,
-                        br[1] - _RESCUE_PROXIMITY_PAD,
-                        br[2] + _RESCUE_PROXIMITY_PAD * 2,
-                        br[3] + _RESCUE_PROXIMITY_PAD * 2,
-                    ]
-                    # 병합을 일으킨 rj의 anchor를 기록한다(aid2는 위 루프의 마지막 값이라 다를 수 있다).
-                    ri["quality_flags"].append(f"rescue_proximity_merged:A{aid}")
-                    _merged_into[kj] = ki
-                    break
-    # 병합된 region 제거
-    for kj in _merged_into:
-        grouped.pop(kj, None)
-
-    # rescue 이후 같은 bubble rect로 수렴한 region은 다시 하나로 합친다.
-    # 열린 말풍선은 TG별 flood 시작점이 달라도 같은 mask로 수렴하는 경우가 흔하다.
-    merged_grouped: Dict[Tuple[Any, ...], Dict[str, Any]] = {}
-    for key, region in grouped.items():
-        merge_key = ("valid", *region["bubble_rect"]) if region.get("is_valid") else key
-        if merge_key not in merged_grouped:
-            merged_grouped[merge_key] = region
-            continue
-
-        target = merged_grouped[merge_key]
-        target["mask"] = cv2.bitwise_or(target["mask"], region["mask"])
-        for aid in region.get("anchor_ids", []):
-            if aid not in target["anchor_ids"]:
-                target["anchor_ids"].append(aid)
-        for seed in region.get("seed_points", []):
-            if seed not in target["seed_points"]:
-                target["seed_points"].append(seed)
-        for flag in region.get("quality_flags", []):
-            if flag not in target["quality_flags"]:
-                target["quality_flags"].append(flag)
-        target["is_valid"] = bool(target.get("is_valid") or region.get("is_valid"))
-        if target["is_valid"] and target.get("method") == "bbox_fallback":
-            target["method"] = region.get("method", target["method"])
-        if target["is_valid"] and target.get("region_type") == "bbox_fallback":
-            target["region_type"] = region.get("region_type", target["region_type"])
-    grouped = merged_grouped
-
-    for region in grouped.values():
-        if not region.get("is_valid") or region.get("method") != "flood":
-            continue
-        reject_reason = _rect_side_intrusion_reject_reason(
-            region.get("mask"),
-            region.get("quality_flags", []),
-        )
-        if reject_reason is None:
-            continue
-        region["is_valid"] = False
-        region["method"] = "bbox_fallback"
-        region["region_type"] = "bbox_fallback"
-        region.setdefault("quality_flags", []).append(reject_reason)
-
-    for region in grouped.values():
-        if region.get("is_valid"):
-            continue
-        probe = _black_contour_probe(
-            gray,
-            [int(v) for v in region.get("bubble_rect", [0, 0, 0, 0])[:4]],
-            region.get("mask"),
-            black=_page_black_contour(),
-        )
-        region["black_contour_probe"] = probe
-        region.setdefault("quality_flags", []).append(
-            "black_contour="
-            f"{probe['status']},cov={probe['coverage']:.2f},"
-            f"quad={probe['quadrants']},gap={probe['max_gap']:.2f},"
-            f"cv={probe['distance_cv']:.2f}"
-        )
+    _merge_nearby_rescue_regions(grouped, clusters_by_id)
+    grouped = _merge_same_rect_regions(grouped)
+    _finalize_region_validity(grouped, gray, _page_black_contour)
 
     # Cross-split and rescue merging is omitted or simplified for valid bubbles.
     # We just group overlapping valid bubbles directly by their identical bounding rects.
