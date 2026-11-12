@@ -137,8 +137,9 @@ export default function App() {
   const [maskBrushWidth, setMaskBrushWidth] = useState(12);
   const [dotsBusy, setDotsBusy] = useState(false);
   const dotsBusyRef = useRef(false);
-  const [lastDotPatchId, setLastDotPatchId] = useState(null);
-  useEffect(() => { setLastDotPatchId(null); }, [selectedId]);
+  const dotsHistoryRef = useRef({ done: [], undone: [] });
+  const [dotsDoneCount, setDotsDoneCount] = useState(0);
+  useEffect(() => { dotsHistoryRef.current = { done: [], undone: [] }; setDotsDoneCount(0); }, [selectedId]);
   const [selectedTg, setSelectedTg] = useState(null);
   const [selectedGuidanceRegionId, setSelectedGuidanceRegionId] = useState(null);
   const [selectedRegionId, setSelectedRegionId] = useState(null);
@@ -1250,8 +1251,8 @@ export default function App() {
       }
       return false;
     },
-    undo: () => (activeTab === "overlay" ? stepOverlayHistory(-1) : undoGuidance()),
-    redo: () => (activeTab === "overlay" ? stepOverlayHistory(1) : redoGuidance()),
+    undo: () => (activeTab === "overlay" ? stepOverlayHistory(-1) : tool === "dots" ? undoDotFill() : undoGuidance()),
+    redo: () => (activeTab === "overlay" ? stepOverlayHistory(1) : tool === "dots" ? redoDotFill() : redoGuidance()),
     "guidance.tg.delete": () => editorCanvasRef.current?.excludeSelection() ?? false,
     delete: () => {
       if (activeTab === "guidance") return editorCanvasRef.current?.deleteSelection() ?? false;
@@ -2309,16 +2310,14 @@ export default function App() {
 
   // 주변 채우기: 칠한 모양을 서버로 보내 지금 지우기 결과의 주변 도트로 채운 패치를 만든다. 유료 호출 없음.
   // 결과는 바로 왼쪽 마스크 미리보기와 이 캔버스에 반영되고, 글자 입히기 렌더에도 쓰인다.
-  async function fillDotsShape(shape) {
+  // 실행 취소(Ctrl+Z)는 방금 채운 패치를 지우고, 다시 실행(Ctrl+Shift+Z)은 그 모양을 지금 결과에서 다시 채운다.
+  async function runDotsStep(work) {
     if (dotsBusyRef.current || !selected?.id) return;
     dotsBusyRef.current = true;
     setDotsBusy(true);
     try {
-      const info = await api("/api/restore/dot-fill", { method: "POST", body: JSON.stringify({ session_id: sessionId, image_id: selected.id, ...shape }) });
-      const dots = (info.patches || []).filter((p) => p.engine === "dot-fill");
-      setLastDotPatchId(dots.length ? dots[dots.length - 1].id : null);
+      await work();
       await reloadSelectedPage();
-      setStatus("주변 도트로 채웠습니다. 왼쪽 마스크 미리보기에 반영됐습니다.");
     } catch (exc) {
       setStatus(String(exc.message || exc));
     } finally {
@@ -2327,22 +2326,43 @@ export default function App() {
     }
   }
 
-  async function undoDotFill() {
-    if (!lastDotPatchId || dotsBusyRef.current || !selected?.id) return;
-    dotsBusyRef.current = true;
-    setDotsBusy(true);
-    try {
-      const info = await api("/api/restore/patch/remove", { method: "POST", body: JSON.stringify({ session_id: sessionId, image_id: selected.id, patch_id: lastDotPatchId }) });
-      const dots = (info.patches || []).filter((p) => p.engine === "dot-fill");
-      setLastDotPatchId(dots.length ? dots[dots.length - 1].id : null);
-      await reloadSelectedPage();
+  async function postDotFill(shape) {
+    const info = await api("/api/restore/dot-fill", { method: "POST", body: JSON.stringify({ session_id: sessionId, image_id: selected.id, ...shape }) });
+    const dots = (info.patches || []).filter((p) => p.engine === "dot-fill");
+    return dots.length ? dots[dots.length - 1].id : null;
+  }
+
+  function fillDotsShape(shape) {
+    return runDotsStep(async () => {
+      const id = await postDotFill(shape);
+      dotsHistoryRef.current = { done: [...dotsHistoryRef.current.done, { id, shape }], undone: [] };
+      setDotsDoneCount(dotsHistoryRef.current.done.length);
+      setStatus("주변 도트로 채웠습니다. 왼쪽 마스크 미리보기에 반영됐습니다 (Ctrl+Z로 되돌리기).");
+    });
+  }
+
+  function undoDotFill() {
+    const last = dotsHistoryRef.current.done[dotsHistoryRef.current.done.length - 1];
+    if (!last) { setStatus("되돌릴 주변 채우기가 없습니다."); return; }
+    return runDotsStep(async () => {
+      await api("/api/restore/patch/remove", { method: "POST", body: JSON.stringify({ session_id: sessionId, image_id: selected.id, patch_id: last.id }) });
+      const { done, undone } = dotsHistoryRef.current;
+      dotsHistoryRef.current = { done: done.slice(0, -1), undone: [...undone, last.shape] };
+      setDotsDoneCount(dotsHistoryRef.current.done.length);
       setStatus("방금 채운 곳을 되돌렸습니다.");
-    } catch (exc) {
-      setStatus(String(exc.message || exc));
-    } finally {
-      dotsBusyRef.current = false;
-      setDotsBusy(false);
-    }
+    });
+  }
+
+  function redoDotFill() {
+    const shape = dotsHistoryRef.current.undone[dotsHistoryRef.current.undone.length - 1];
+    if (!shape) { setStatus("다시 실행할 주변 채우기가 없습니다."); return; }
+    return runDotsStep(async () => {
+      const id = await postDotFill(shape);
+      const { done, undone } = dotsHistoryRef.current;
+      dotsHistoryRef.current = { done: [...done, { id, shape }], undone: undone.slice(0, -1) };
+      setDotsDoneCount(dotsHistoryRef.current.done.length);
+      setStatus("주변 채우기를 다시 실행했습니다.");
+    });
   }
 
   // 입력칸을 벗어나면 저장한다. 번역은 실행하지 않는다.
@@ -2894,7 +2914,7 @@ export default function App() {
               {TOOL_HINTS[tool] && !selected?.processing_excluded ? <div className="tool-hint" role="status">
                 <strong>{TOOL_LABELS.find(([id]) => id === tool)?.[1]} <kbd>{shortcutFor("guidance", "tool", tool)}</kbd></strong>
                 <span>{tool === "mask" || tool === "dots" ? `${TOOL_HINTS[tool]} · 굵기 ${maskBrushWidth}px ([ ])` : TOOL_HINTS[tool]}</span>
-                {tool === "dots" ? <button type="button" onClick={undoDotFill} disabled={dotsBusy || !lastDotPatchId} title="방금 채운 곳을 되돌립니다">되돌리기</button> : null}
+                {tool === "dots" ? <button type="button" onClick={undoDotFill} disabled={dotsBusy || dotsDoneCount === 0} title="방금 채운 곳을 되돌립니다 (Ctrl+Z)">되돌리기</button> : null}
                 <em>Esc 취소</em>
               </div> : null}
               <div className="floating-toolbox" aria-label="영역 분석 도구">
