@@ -331,7 +331,7 @@ def test_page_ai_erase_with_sfx_bundles_locate_and_erases_found_boxes(tmp_path, 
     out = page.copy()
     assert apply_restore_patches(out, Path(record["restore_state_json"])) == 1
     assert (out[40:70, 30:40] == 90).all()          # 대사는 지워짐
-    assert (out[130:180, 90:120] == 90).all()        # 찾은 효과음 박스는 사각형 전체가 바뀜
+    assert (out[140:170, 100:110] == 90).all()       # 찾은 효과음 박스 안의 굵은 획 자리는 지워진 배경
     assert (out[0:10, 0:10] == 255).all()            # 나머지는 그대로
 
 
@@ -378,3 +378,39 @@ def test_page_ai_erase_with_sfx_adds_sfx_instruction_to_the_prompt(tmp_path, mon
     assert prompts[-1] and "sound-effect" in prompts[-1] and "グッ" in prompts[-1]   # 기본 프롬프트는 효과음을 남기므로 지시를 덧붙인다
     run(False)
     assert prompts[-1] is None                                                      # 묶지 않으면 기본 프롬프트 그대로
+
+
+def test_sfx_stroke_mask_covers_thick_strokes_not_halftone_dots_and_falls_back_to_the_box():
+    from pipeline.ai_erase_region import sfx_stroke_mask
+
+    page = np.full((300, 300, 3), 255, np.uint8)
+    page[::6, ::6] = 0                                  # 점 톤처럼 작은 점(1px)
+    page[100:180, 150:166] = 0                          # 굵은 획
+    mask = sfx_stroke_mask(page, [100, 80, 150, 120])
+    assert mask[100:180, 150:166].min() == 255          # 획 자리는 칠한다
+    assert mask[:, :90].max() == 0 and mask[:70].max() == 0   # 박스 밖은 건드리지 않는다
+    assert 0 < np.count_nonzero(mask) < 150 * 120       # 박스 전체가 아니라 획 둘레만
+
+    flat = np.full((300, 300, 3), 255, np.uint8)        # 굵은 획이 없으면 박스 전체
+    full = sfx_stroke_mask(flat, [100, 80, 150, 120])
+    assert full[80:200, 100:250].min() == 255
+
+
+def test_refine_rect_asks_again_on_a_zoomed_crop_and_grows_until_stable():
+    import cv2 as _cv
+    from pipeline.sfx_locator import refine_rect
+
+    page = np.zeros((1000, 1000, 3), np.uint8)
+    calls = []
+
+    def fake_run(path, prompt, temperature, model_name):
+        crop = _cv.imread(path)
+        calls.append(crop.shape[:2])
+        # 첫 크롭은 위쪽 일부만 잡고, 두 번째 크롭은 전체(박스 0-1000)를 잡는다
+        return ({"box": [100, 100, 900, 500]} if len(calls) == 1 else {"box": [100, 50, 900, 950]}), 0.1
+
+    rect = refine_rect(page, [400, 300, 100, 100], "グッ", "m", fake_run)
+    assert len(calls) == 2                                 # 범위가 커져서 한 번 더 물었다
+    assert rect[3] > 100 and rect[0] >= 0 and rect[1] >= 0 and rect[0] + rect[2] <= 1000
+    broken = refine_rect(page, [400, 300, 100, 100], "グッ", "m", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("x")))
+    assert broken[2] >= 100 and broken[3] >= 100           # 실패하면 원래 박스(약간 넓힌 값)를 쓴다

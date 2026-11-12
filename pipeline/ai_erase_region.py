@@ -69,8 +69,8 @@ def region_patch_mask(page: np.ndarray, rect: list[int], crop: list[int]) -> np.
 def all_regions_patch_mask(page: np.ndarray, regions: list[dict], extra_rects: list[list[int]] | None = None) -> np.ndarray:
     """쪽 크기 합성 마스크: 모든 영역(R) 사각형 안의 글자 획 주변만 255. 영역 밖 글자는 건드리지 않는다.
 
-    extra_rects(효과음 찾기로 찾은 박스)는 획만이 아니라 사각형 전체를 255로 칠한다. 효과음은 점 톤 위에 얹히는 일이 많아
-    획 마스크가 배경 점까지 잡고, 나중에 그 자리에 한국어 효과음을 새로 얹을 것이라 사각형 전체를 바꿔 두는 편이 낫다."""
+    extra_rects(효과음 찾기로 찾은 박스)는 박스 안의 굵은 획 둘레만 칠한다(`sfx_stroke_mask`). 박스 전체를 바꾸면 모델이 다시 그린
+    점 톤 무늬가 사각형 모양으로 달라 보이기 때문이다. 굵은 획을 못 찾으면 박스 전체를 칠한다."""
     from pipeline.background_restore import MaskParams, build_text_stroke_mask
 
     page_h, page_w = page.shape[:2]
@@ -85,8 +85,32 @@ def all_regions_patch_mask(page: np.ndarray, regions: list[dict], extra_rects: l
     else:
         mask = np.zeros((page_h, page_w), dtype=np.uint8)
     for rect in extra_rects or []:
-        x, y, w, h = (int(v) for v in rect[:4])
-        mask[max(0, y):max(0, y) + h, max(0, x):max(0, x) + w] = 255
+        mask = cv2.bitwise_or(mask, sfx_stroke_mask(page, rect))
+    return mask
+
+
+SFX_DARK_LEVEL = 110       # 이보다 어두운 화소를 획 후보로 본다
+SFX_OPEN_PX = 9            # 이보다 얇은 것(점 톤의 점, 가는 선)은 지우고 굵은 획만 남긴다
+SFX_PAD_PX = 21            # 굵은 획 둘레로 넓히는 폭(글자 둘레의 흰 테두리까지 덮는다)
+SFX_MIN_COVER = 0.02       # 굵은 획이 박스 면적의 이 비율 미만이면 못 찾은 것으로 보고 박스 전체를 칠한다
+
+
+def sfx_stroke_mask(page: np.ndarray, rect: list[int]) -> np.ndarray:
+    """효과음 박스 안의 굵은 획 둘레만 255인 쪽 크기 마스크. 굵은 획을 못 찾으면 박스 전체를 칠한다."""
+    page_h, page_w = page.shape[:2]
+    x, y, w, h = (int(v) for v in rect[:4])
+    x1, y1, x2, y2 = max(0, x), max(0, y), min(page_w, x + w), min(page_h, y + h)
+    mask = np.zeros((page_h, page_w), dtype=np.uint8)
+    if x2 <= x1 or y2 <= y1:
+        return mask
+    gray = cv2.cvtColor(page[y1:y2, x1:x2], cv2.COLOR_BGR2GRAY)
+    dark = (gray < SFX_DARK_LEVEL).astype(np.uint8) * 255
+    strokes = cv2.morphologyEx(dark, cv2.MORPH_OPEN, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (SFX_OPEN_PX, SFX_OPEN_PX)))
+    if np.count_nonzero(strokes) < SFX_MIN_COVER * strokes.size:
+        mask[y1:y2, x1:x2] = 255
+        return mask
+    grown = cv2.dilate(strokes, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (SFX_PAD_PX, SFX_PAD_PX)))
+    mask[y1:y2, x1:x2] = grown
     return mask
 
 
