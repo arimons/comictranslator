@@ -2323,6 +2323,37 @@ export default function App() {
   }
 
   // 지우기 줄에서 AI 외의 방식을 고르면, 이 영역에 적용된 AI 지움을 먼저 해제한다(AI 패치가 위에 얹혀 있으면 다른 방식이 보이지 않는다).
+  // 효과음 찾기(요청할 때만): CV가 못 잡는 그림 위 효과음의 대략적인 위치를 모델에게 묻고, 찾은 박스를 텍스트 기반 영역으로
+  // 가이드에 추가한다. 변경사항 적용을 눌러야 영역이 만들어지고, 박스가 효과음 일부만 감싸면 영역 크기를 조절해 맞춘다.
+  async function locateSfx() {
+    if (!selected?.id || !sessionId) return;
+    setGuidanceMenu(null);
+    const modelLabel = ocrModels.find((model) => model.id === effectiveOcrModel)?.label || effectiveOcrModel || "기본 모델";
+    if (!await askConfirm({ title: "효과음 찾기", message: `이 페이지 이미지를 ${modelLabel}에 보내 그림 위의 효과음 위치를 찾습니다(쪽당 1회 호출, 비용은 센트 미만). 찾은 위치는 텍스트 기반 영역으로 추가되며 변경사항 적용을 눌러야 반영됩니다. 박스가 효과음 일부만 감싸면 크기를 조절하세요.`, confirmLabel: "효과음 찾기" })) return;
+    setStatus("효과음을 찾는 중…");
+    try {
+      const result = await api("/api/sfx/locate", { method: "POST", body: JSON.stringify({ session_id: sessionId, image_id: selected.id, ocr_model: effectiveOcrModel || null }) });
+      const items = result.items || [];
+      if (!items.length) {
+        setStatus("새로 찾은 효과음이 없습니다. 있다면 U 도구로 직접 지정하세요.");
+        return;
+      }
+      const stamp = Date.now();
+      setGuidanceTracked((value) => {
+        const next = cloneJson(value || defaultGuidance(null));
+        next.manual_regions = [
+          ...(next.manual_regions || []),
+          ...items.map((item, index) => ({ id: `manual_ubox_${stamp}_${index}`, type: "unboxed", unboxed_rect: item.rect, source_method: "manual_ubox_guide" })),
+        ];
+        return next;
+      }, `효과음 ${items.length}개 추가`);
+      const reads = items.map((item) => item.text).filter(Boolean).join(", ");
+      setStatus(`효과음 ${items.length}개${reads ? `(${reads})` : ""}를 텍스트 기반 영역으로 추가했습니다. 변경사항 적용(${shortcutById("guidance.apply")})으로 반영하고, 박스가 작으면 크기를 조절하세요.`);
+    } catch (err) {
+      setStatus(`효과음 찾기 실패: ${err.message}`);
+    }
+  }
+
   async function chooseRegionErase(value) {
     if (value === "ai") {
       setAiEraseTarget("region");
@@ -2679,6 +2710,8 @@ export default function App() {
                       <button type="button" disabled={!selected?.detail_loaded || anyBusy || selected?.processing_excluded}
                         onClick={() => { setAiEraseTarget("page"); setAiEraseConfirmOpen(true); setGuidanceMenu(null); }}
                         title={selected?.processing_excluded ? "처리 대상으로 복원한 뒤 쓸 수 있습니다" : "이미지 모델로 이 페이지의 글자를 지웁니다. 대화 영역만 지울지 쪽 전체 글자를 지울지 확인 창에서 고릅니다. 비용이 발생합니다."}>AI로 쪽 전체 지우기</button>
+                      <button type="button" disabled={!selected?.detail_loaded || anyBusy || selected?.processing_excluded} onClick={locateSfx}
+                        title={selected?.processing_excluded ? "처리 대상으로 복원한 뒤 쓸 수 있습니다" : "Cloud Vision이 못 잡는 그림 위 효과음의 위치를 모델에게 물어 텍스트 기반 영역으로 추가합니다. 요청할 때만 실행되며 쪽당 1회 호출됩니다."}>효과음 찾기<span className="paid-tag">유료</span></button>
                       <button type="button" className="danger-text-button" disabled={!selected || inputBusy || analyzeBusy || guidanceBusy}
                         onClick={() => { setGuidanceMenu(null); if (selected) removeLoadedImage(selected.id); }}
                         title="현재 페이지를 이 프로젝트에서 삭제합니다. 확인 창이 한 번 뜹니다.">이 페이지를 프로젝트에서 삭제</button>

@@ -111,6 +111,7 @@ NEW_COMIC_TRANSLATOR/
     ├── background_restore.py   # 배경 복원 엔진 (문맥 영역·마스크 분리, LaMa, 확정 패치 합성). 편집기 탭은 제거됐고 AI 글자 지우기가 쓴다
     ├── ai_text_erase.py        # 이미지 편집 모델로 페이지 글자 지우기 (16배수 덧대기·잘라내기, gemini-*는 gemini_image로)
     ├── ai_erase_region.py      # AI 지우기 영역 모드의 순수 계산(크롭 사각형·합성 마스크·사라진 영역 패치 판정)
+    ├── sfx_locator.py          # 효과음 찾기: CV가 못 잡는 효과음의 위치(읽기·대략 박스)를 비전 모델에게 묻는 후보 계산
     ├── gemini_image.py         # Gemini 이미지 모델(Nano Banana 2.1) 편집. 비율 프리셋 덧대기·축소·잘라내기
     ├── openai_image_redraw.py  # 렌더 생략 페이지 이미지 재생성 (app export, OpenAI·Gemini 분기)
     ├── vis/                    # pipeline 진단 시각화 도구
@@ -203,6 +204,7 @@ guidance(수동 보정)가 있는 이미지는 `guidance_digest`(guidance 내용
 | `GET /api/session/{id}/export`, `POST /api/export/generate-missing` | 결과 ZIP 내보내기, 실패 이미지 OpenAI 이미지 생성 fallback |
 | `GET /api/file` | 세션·입력 캐시·분석 캐시 폴더 아래 이미지 파일 서빙 |
 | `/api/restore/*` | 배경 복원 엔진 API: 상태·자동 마스크·마스크 저장·LaMa 작업 실행/조회·확정·패치 제거. 배경 복원 탭이 제거돼 현재 화면에서는 `ai-erase`·`info`·`job`·`accept`·`patch/remove`만 쓴다 (`pipeline/background_restore.py`) |
+| `POST /api/sfx/locate` | 영역 분석 탭 `⋯` 메뉴의 `효과음 찾기`(요청할 때만). 쪽 이미지를 줄여 프로젝트 OCR·번역 경로의 비전 모델에 직접 보내 효과음의 읽기와 대략의 박스를 받는다. CV·TG를 거치지 않는다. 이미 영역인 곳은 빼고 박스를 사방으로 넓힌 후보만 돌려주며 영역은 만들지 않는다. 화면이 후보를 가이드의 텍스트 기반 영역(`manual_ubox_guide`)으로 추가하고 `변경사항 적용`에서 영역이 만들어진다 (`pipeline/sfx_locator.py`, `routers/analysis.py`) |
 | `POST /api/restore/ai-erase` | 원본 페이지를 이미지 편집 모델로 보내 글자를 지운 후보를 만드는 작업. 조회·확정·제거는 위 `/api/restore/job`·`accept`·`patch/remove`를 그대로 쓴다. 확정하면 페이지 전체 패치(engine `ai-erase`). 요청의 `ocr_model`이 `gemini-*`이면 Gemini 이미지 모델로 지운다(`vertex:` 모델은 OpenAI 이미지로 간다). `region_id`를 주면 그 영역 크롭만 보내 그 영역만 지우는 영역 모드(`pipeline/ai_erase_region.py`). 쪽 전체 모드는 `scope`로 범위를 고른다: `regions`(기본 화면 선택)는 영역(R) 안의 글자 획 주변만 합성해 영역 밖 효과음은 원본을 유지하고(`all_regions_patch_mask`), `page`는 쪽 전체를 바꾼다. quality를 비우면 gpt-image는 medium, Gemini는 low(1K) (`pipeline/ai_text_erase.py`) |
 | `GET /manual` | 사용자 매뉴얼 `docs/editor_manual.html`을 그대로 제공. 시작 화면과 `?` 도움말에서 링크 |
 
@@ -519,6 +521,14 @@ LaMa·Telea 지우기 결과가 아쉬운 페이지를 이미지 편집 모델(`
 - 결과는 배경 복원 작업과 같은 형식(`crop_after.png`, 전부 255인 `crop_mask.png`, `context_rect`=페이지 전체)으로 남겨 기존 확정 흐름이 페이지 전체 패치로 저장한다. Step 3를 다시 돌려도 패치는 유지되고, 영역·OCR 시트는 원본에서 만든 기존 것을 쓴다.
 - 실측(2026-10-20·21, medium): 1350×1920 약 24초·2.7센트, 960×1080 약 20〜23초·2.1센트. 메타에 토큰 수와 추정 비용(입력 $8, 출력 $30 / 100만 토큰)을 남긴다.
 - `model`이 `gemini-*`이면 `gemini_image.edit_image()`로 보낸다. 앱은 세션의 OCR·번역 모델 제공자를 따라 모델을 고른다(`gemini_image.image_model_for`).
+
+### `pipeline/sfx_locator.py`
+
+Cloud Vision이 못 잡는 그림 위 효과음 글자의 위치를 찾는 일회성 요청의 계산부다(`POST /api/sfx/locate`). 쪽마다 사용자가 요청할 때만 쓰며 분석 흐름에는 들어 있지 않다.
+
+- 쪽 이미지를 긴 변 1600px로 줄여 `_run_model_json`(OpenAI·Gemini·Vertex 공통 분기)으로 보낸다. 응답은 `{"items": [{"text", "box": [x1,y1,x2,y2]}]}`(0-1000 좌표)다.
+- 모델 박스는 효과음 일부(꺾인 획과 사선)만 감싸는 경향이 있어 사방으로 12%(최소 14px) 넓혀 쪽 픽셀 사각형으로 돌려준다(`items_to_candidates`). 너무 작은 박스, 좌표가 잘못된 항목, 이미 영역과 50% 이상 겹치는 후보는 뺀다. 최종 범위는 사용자가 영역 크기 조절로 맞춘다.
+- 실측(2026-11-09, 006 왼쪽 면): 입력 1,234토큰·출력 35토큰, "グッ"의 읽기는 정확했고 박스는 일부만 감쌌다.
 
 ### `pipeline/ai_erase_region.py`
 

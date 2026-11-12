@@ -244,3 +244,56 @@ def test_page_ai_erase_regions_scope_only_replaces_strokes_inside_regions(tmp_pa
     assert (out[40:70, 30:40] == 90).all()      # 영역 안 글자 자리는 지워진 배경
     assert (out[140:170, 100:110] == 0).all()   # 영역 밖 효과음은 원본 그대로
     assert (out[0:10, 0:10] == 255).all()        # 글자 없는 곳도 그대로
+
+
+# ── 효과음 찾기(후보 변환과 API) ───────────────────────────────────────────────
+
+def test_sfx_candidates_convert_pad_and_filter():
+    from pipeline.sfx_locator import items_to_candidates
+
+    items = [
+        {"text": "グッ", "box": [500, 500, 600, 700]},          # 정상
+        {"text": "대사", "box": [100, 100, 200, 200]},           # 이미 영역과 겹침
+        {"text": "깨짐", "box": ["a", 1, 2, 3]},                  # 잘못된 좌표
+        {"text": "점", "box": [10, 10, 11, 11]},                  # 너무 작음
+        {"text": "거꾸로", "box": [900, 900, 800, 800]},          # 좌표 순서가 뒤집혀도 받아 줌
+        "문자열",                                                  # 잘못된 항목
+    ]
+    existing = [[95, 95, 120, 120]]                                # 1000x1000 쪽에서 100,100~200,200
+    cands = items_to_candidates(items, 1000, 1000, existing)
+    assert [c["text"] for c in cands] == ["グッ", "거꾸로"]
+    first = cands[0]["rect"]
+    assert first[0] < 500 and first[1] < 500 and first[0] + first[2] > 600 and first[1] + first[3] > 700  # 사방으로 넓어짐
+    assert all(0 <= v for c in cands for v in c["rect"][:2])
+
+
+def test_sfx_locate_api_returns_candidates_and_skips_existing_regions(tmp_path, monkeypatch):
+    _session_with_image(tmp_path, monkeypatch)
+    client = TestClient(app.create_app())
+    _write_regions(app._restore_record("s1", "p1"), [{"region_id": 1, "unboxed_rect": [10, 10, 40, 40]}])
+    import pipeline.gemini_ocr_translate_v5 as ocr
+
+    seen = {}
+    def fake_run(image_path, prompt, temperature, model_name=None, max_retries=4):
+        seen["model"] = model_name
+        return {"items": [{"text": "ドン", "box": [500, 500, 800, 800]}, {"text": "대사", "box": [60, 50, 250, 200]}]}, 0.5
+    monkeypatch.setattr(ocr, "_run_model_json", fake_run)
+    res = client.post("/api/sfx/locate", json={"session_id": "s1", "image_id": "p1", "ocr_model": "vertex:gemini-3.8-flash"})
+    assert res.status_code == 200, res.text
+    body = res.json()
+    assert seen["model"] == "vertex:gemini-3.8-flash"
+    assert [c["text"] for c in body["items"]] == ["ドン"]   # 이미 영역인 "대사"는 빠진다
+    assert len(body["items"][0]["rect"]) == 4
+
+
+def test_sfx_locate_api_reports_model_errors_as_502(tmp_path, monkeypatch):
+    _session_with_image(tmp_path, monkeypatch)
+    client = TestClient(app.create_app())
+    _write_regions(app._restore_record("s1", "p1"), [])
+    import pipeline.gemini_ocr_translate_v5 as ocr
+
+    def boom(*_a, **_k):
+        raise RuntimeError("키가 없습니다")
+    monkeypatch.setattr(ocr, "_run_model_json", boom)
+    res = client.post("/api/sfx/locate", json={"session_id": "s1", "image_id": "p1"})
+    assert res.status_code == 502 and "키가 없습니다" in res.json()["detail"]

@@ -196,6 +196,22 @@ def build_router(app_module) -> APIRouter:
         refreshed = app_module.rerender_final_after_analysis(req.session_id, req.image_id, source) or refreshed
         return {"ok": True, "image": refreshed}
 
+    @router.post("/api/sfx/locate")
+    def sfx_locate(req: app_module.SfxLocateRequest) -> dict[str, Any]:
+        """영역 분석 탭의 '효과음 찾기'(요청할 때만): CV가 못 잡는 효과음의 대략적인 위치를 모델에게 묻는다.
+        후보만 돌려주고 영역은 만들지 않는다. 영역은 화면이 가이드에 추가한 뒤 '변경사항 적용'에서 만들어진다."""
+        from pipeline.ai_erase_region import region_erase_rect
+        from pipeline.sfx_locator import locate_sfx
+
+        record = app_module._restore_record(req.session_id, req.image_id)
+        model = req.ocr_model or app_module.project_ocr_model(req.session_id)
+        regions = (app_module.load_json(record["regions_json"], default={}) or {}).get("regions", [])
+        existing = [rect for rect in (region_erase_rect(r) for r in regions) if rect]
+        try:
+            return locate_sfx(record["input_path"], model, existing)
+        except Exception as exc:  # noqa: BLE001 - 모델·키 오류는 화면에 그대로 알린다
+            raise HTTPException(status_code=502, detail=f"효과음 찾기 실패: {type(exc).__name__}: {exc}") from exc
+
     @router.post("/api/guidance/clear")
     def clear_guidance(req: app_module.ClearGuidanceRequest) -> dict[str, Any]:
         refreshed = app_module.clear_guidance_outputs(req.session_id, req.image_id)

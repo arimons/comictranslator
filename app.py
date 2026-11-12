@@ -435,6 +435,12 @@ class AiEraseRequest(BaseModel):
     scope: str = "page"  # 쪽 전체 모드의 범위: page=쪽 전체 글자, regions=영역(R) 안의 글자 획만(영역 밖 효과음 등은 원본 유지)
 
 
+class SfxLocateRequest(BaseModel):
+    session_id: str
+    image_id: str
+    ocr_model: str | None = None  # 비우면 프로젝트의 OCR·번역 경로 모델로 찾는다
+
+
 class RestorePatchRemoveRequest(BaseModel):
     session_id: str
     image_id: str
