@@ -82,6 +82,8 @@ import { askConfirm, askText } from "./dialogs.js";
 
 // OCR·번역 AI 경로 이름(홈 화면·편집기 공용)
 const ROUTE_NAMES = { openai: "OpenAI", gemini: "Gemini API", vertex: "Vertex" };
+// 모델(LLM·이미지 모델)을 호출해 토큰을 쓰는 동작의 표시. '유료'보다 무엇에 비용이 드는지가 보이게 토큰으로 적고, 같은 기준으로 모든 AI 호출 버튼에 붙인다.
+const TOKEN_TAG = <span className="paid-tag" title="모델을 호출해 토큰(API 비용)을 사용합니다">토큰</span>;
 // 텍스트 기반 영역의 지우기 방식. 처음 분석이 고른 방식이 미리 선택돼 있고, 마음에 안 들 때 다른 칸을 눌러 바꾼다.
 // 앞의 셋은 변경사항 적용 때 로컬에서 지우고, AI는 확인 후 외부 이미지 모델로 지워 바로 저장한다.
 const DEFAULT_ERASE_ENGINE = "lama";
@@ -2775,12 +2777,12 @@ export default function App() {
                     {guidanceMenu === "more" ? <div className="topbar-popover more-popover" role="dialog" aria-label="더 보기">
                       <button type="button" className={selected?.processing_excluded ? "page-excluded-control" : ""} disabled={!selected || anyBusy} onClick={togglePageProcessing} title={selected?.processing_excluded ? "현재 페이지는 원본 그대로 출력합니다. 클릭하면 처리 대상으로 복원합니다." : "이 페이지를 처리에서 제외하고 원본 그대로 출력합니다."}>{selected?.processing_excluded ? "처리 대상으로 복원" : "페이지 처리 제외"}</button>
                       <button type="button" disabled={!selected || anyBusy || selected.processing_excluded} onClick={translatePageWithImageModel}
-                        title={selected?.processing_excluded ? "처리 대상으로 복원한 뒤 쓸 수 있습니다" : "이미지 생성 모델로 이 페이지 전체를 한국어로 다시 그려 최종 출력으로 씁니다. 이미지 생성 비용이 발생합니다."}>AI로 통번역</button>
+                        title={selected?.processing_excluded ? "처리 대상으로 복원한 뒤 쓸 수 있습니다" : "이미지 생성 모델로 이 페이지 전체를 한국어로 다시 그려 최종 출력으로 씁니다. 이미지 생성 비용이 발생합니다."}>AI로 통번역{TOKEN_TAG}</button>
                       <button type="button" disabled={!selected?.detail_loaded || anyBusy || selected?.processing_excluded}
                         onClick={() => { setAiEraseTarget("page"); setAiEraseConfirmOpen(true); setGuidanceMenu(null); }}
-                        title={selected?.processing_excluded ? "처리 대상으로 복원한 뒤 쓸 수 있습니다" : "이미지 모델로 이 페이지의 글자를 지웁니다. 대화 영역만 지울지 쪽 전체 글자를 지울지 확인 창에서 고릅니다. 비용이 발생합니다."}>AI로 쪽 전체 지우기</button>
+                        title={selected?.processing_excluded ? "처리 대상으로 복원한 뒤 쓸 수 있습니다" : "이미지 모델로 이 페이지의 글자를 지웁니다. 대화 영역만 지울지 쪽 전체 글자를 지울지 확인 창에서 고릅니다. 비용이 발생합니다."}>AI로 쪽 전체 지우기{TOKEN_TAG}</button>
                       <button type="button" disabled={!selected?.detail_loaded || anyBusy || selected?.processing_excluded} onClick={locateSfx}
-                        title={selected?.processing_excluded ? "처리 대상으로 복원한 뒤 쓸 수 있습니다" : "Cloud Vision이 못 잡는 그림 위 효과음의 위치를 모델에게 물어 텍스트 기반 영역으로 추가합니다. 요청할 때만 실행되며 쪽당 1회 호출됩니다."}>효과음 찾기<span className="paid-tag">유료</span></button>
+                        title={selected?.processing_excluded ? "처리 대상으로 복원한 뒤 쓸 수 있습니다" : "Cloud Vision이 못 잡는 그림 위 효과음의 위치를 모델에게 물어 텍스트 기반 영역으로 추가합니다. 요청할 때만 실행되며 쪽당 1회 호출됩니다."}>효과음 찾기{TOKEN_TAG}</button>
                       <button type="button" className="danger-text-button" disabled={!selected || inputBusy || analyzeBusy || guidanceBusy}
                         onClick={() => { setGuidanceMenu(null); if (selected) removeLoadedImage(selected.id); }}
                         title="현재 페이지를 이 프로젝트에서 삭제합니다. 확인 창이 한 번 뜹니다.">이 페이지를 프로젝트에서 삭제</button>
@@ -2879,7 +2881,7 @@ export default function App() {
                         const active = value === "ai" ? Boolean(regionAiPatch) : !regionAiPatch && effectiveEngine === value;
                         return (
                           <button key={label} role="radio" aria-checked={active} className={active ? "active" : ""} disabled={anyBusy} onClick={() => chooseRegionErase(value)}
-                            title={hint}>{label}</button>
+                            title={hint}>{label}{value === "ai" ? TOKEN_TAG : null}</button>
                         );
                       })}
                     </div>
@@ -2963,10 +2965,10 @@ export default function App() {
                       onChange={(e) => setAnalyzeWorkers(Math.max(1, Math.min(12, Number(e.target.value) || 1)))}
                     />
                   </label>
-                  <button onClick={() => selected && runFinalStream(selected.id)} disabled={ocrBusy || !selected || selected.processing_excluded || !selected.indexed_sheet_url} title="현재 페이지의 글자인식·번역을 실행합니다. LLM 호출 비용이 발생합니다.">현재 페이지 실행<span className="paid-tag">유료</span></button>
-                  <button onClick={() => selected && runFinalStream(selected.id, true)} disabled={ocrBusy || !selected || selected.processing_excluded || !selected.indexed_sheet_url} title="현재 페이지의 기존 글자인식·번역 결과를 무시하고 다시 실행합니다. LLM 호출 비용이 발생합니다.">현재 페이지 다시 실행<span className="paid-tag">유료</span></button>
-                  <button className="danger" onClick={() => runFinalStream("failed")} disabled={ocrBusy || !ocrNeedsAttentionImages.length} title="실패한 페이지만 다시 실행합니다. LLM 호출 비용이 발생합니다.">실패 {ocrNeedsAttentionImages.length}장 재시도<span className="paid-tag">유료</span></button>
-                  <button className="primary" onClick={runUnfinishedOcr} disabled={ocrBusy || !ocrReadyImages.length} title="이미 결과가 있는 페이지는 건너뛰고 미완료 페이지만 실행합니다. 페이지마다 LLM 호출 비용이 발생합니다.">미완료 {ocrReadyImages.length}장 실행<span className="paid-tag">유료</span></button>
+                  <button onClick={() => selected && runFinalStream(selected.id)} disabled={ocrBusy || !selected || selected.processing_excluded || !selected.indexed_sheet_url} title="현재 페이지의 글자인식·번역을 실행합니다. LLM 호출 비용이 발생합니다.">현재 페이지 실행{TOKEN_TAG}</button>
+                  <button onClick={() => selected && runFinalStream(selected.id, true)} disabled={ocrBusy || !selected || selected.processing_excluded || !selected.indexed_sheet_url} title="현재 페이지의 기존 글자인식·번역 결과를 무시하고 다시 실행합니다. LLM 호출 비용이 발생합니다.">현재 페이지 다시 실행{TOKEN_TAG}</button>
+                  <button className="danger" onClick={() => runFinalStream("failed")} disabled={ocrBusy || !ocrNeedsAttentionImages.length} title="실패한 페이지만 다시 실행합니다. LLM 호출 비용이 발생합니다.">실패 {ocrNeedsAttentionImages.length}장 재시도{TOKEN_TAG}</button>
+                  <button className="primary" onClick={runUnfinishedOcr} disabled={ocrBusy || !ocrReadyImages.length} title="이미 결과가 있는 페이지는 건너뛰고 미완료 페이지만 실행합니다. 페이지마다 LLM 호출 비용이 발생합니다.">미완료 {ocrReadyImages.length}장 실행{TOKEN_TAG}</button>
                 </div>
               </div>
               <div className="ocr-panel">
@@ -3167,7 +3169,7 @@ export default function App() {
                       disabled={anyBusy || !exportFocusedImage}
                       title="이 페이지를 이미지 생성 모델로 다시 만듭니다. 이미지 생성 비용이 발생합니다."
                     >
-                      AI로 다시 생성<span className="paid-tag">유료</span>
+                      AI로 다시 생성{TOKEN_TAG}
                     </button>
                     <button className="primary" onClick={exportSession} disabled={anyBusy || !sessionId || !images.length}>
                       ZIP으로 내보내기
@@ -3201,7 +3203,7 @@ export default function App() {
         <div className="section compact-section">
           <div className="row">
             <button className="primary" onClick={applyOverlay} disabled={overlayBusy || !canRenderOverlayImage(selected)} title={`편집한 내용으로 결과 이미지를 다시 그립니다 (${shortcutById("overlay.apply")}). 비용이 들지 않습니다.`}>글자 입히기 적용</button>
-            <button onClick={() => runFinal(true)} disabled={ocrBusy || !selected || selected.processing_excluded} title="현재 추가 번역 프롬프트로 이 페이지의 글자인식·번역부터 다시 실행합니다. LLM 호출 비용이 발생합니다.">재번역<span className="paid-tag">유료</span></button>
+            <button onClick={() => runFinal(true)} disabled={ocrBusy || !selected || selected.processing_excluded} title="현재 추가 번역 프롬프트로 이 페이지의 글자인식·번역부터 다시 실행합니다. LLM 호출 비용이 발생합니다.">재번역{TOKEN_TAG}</button>
             {/* 기록은 ref라 편집·Undo마다 올라가는 overlayEditVersion 리렌더 때 개수를 다시 읽는다 */}
             <button className="icon-button" onClick={() => stepOverlayHistory(-1)} disabled={!overlayHistoryRef.current.undo.length} aria-label="Overlay 편집 실행 취소" title={`실행 취소 (${shortcutById("edit.undo")})`}>↶</button>
             <button className="icon-button" onClick={() => stepOverlayHistory(1)} disabled={!overlayHistoryRef.current.redo.length} aria-label="Overlay 편집 다시 실행" title={`다시 실행 (${shortcutById("edit.redo")})`}>↷</button>
@@ -3439,7 +3441,7 @@ export default function App() {
               disabled={anyBusy || !selectedExportMissingIds.length}
               title={selectedExportMissingIds.length ? "선택한 후보만 이미지 생성" : "왼쪽 후보를 먼저 선택하세요"}
             >
-              선택한 {selectedExportMissingIds.length || ""}장 생성<span className="paid-tag">유료</span>
+              선택한 {selectedExportMissingIds.length || ""}장 생성{TOKEN_TAG}
             </button>
           </div>
         </div>
