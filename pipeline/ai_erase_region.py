@@ -90,6 +90,25 @@ def all_regions_patch_mask(page: np.ndarray, regions: list[dict], extra_rects: l
     return mask
 
 
+def sfx_erase_prompt(base_prompt: str, sfx_items: list[dict], page_w: int, page_h: int) -> str:
+    """쪽 전체 지우기 프롬프트에 효과음 지시를 덧붙인다. 기본 프롬프트는 대사·설명글만 지우라고 해서 모델이 큰 효과음을
+    그림으로 보고 남기기 때문에, 찾은 효과음의 읽기와 위치(쪽 대비 %)를 알려 그 글자도 지우게 한다."""
+    areas = []
+    for item in sfx_items:
+        x, y, w, h = (int(v) for v in item["rect"][:4])
+        reading = f' (reads "{item["text"]}")' if item.get("text") else ""
+        areas.append(
+            f"left {round(x / page_w * 100)}%, top {round(y / page_h * 100)}%, width {round(w / page_w * 100)}%, height {round(h / page_h * 100)}%{reading}"
+        )
+    return (
+        base_prompt
+        + " ALSO remove the large sound-effect lettering (onomatopoeia) drawn over the artwork in these areas: "
+        + "; ".join(f"({a})" for a in areas)
+        + ". Erase every stroke of that lettering, including its small dots and slash marks, and restore the halftone pattern, "
+        "screentone and fabric lines behind it naturally. Do not draw any new text there."
+    )
+
+
 def overlap_ratio(rect: list[int], other: list[int]) -> float:
     """rect 면적 대비 other와 겹치는 면적 비율."""
     x1, y1 = max(rect[0], other[0]), max(rect[1], other[1])

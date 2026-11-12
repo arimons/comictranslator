@@ -3174,7 +3174,22 @@ def submit_ai_erase_job(req: AiEraseRequest) -> dict[str, Any]:
         try:
             job_dir.mkdir(parents=True, exist_ok=True)
             if region_info is None:
-                erased, meta = erase_page_text(page, job_dir, model=model, quality=quality)
+                erase_prompt = None
+                if req.scope == "regions" and req.include_sfx:
+                    # 효과음 찾기를 묶어 요청했으면 지우기 호출 전에 위치를 찾는다. 실패해도 대화 영역 지우기는 그대로 진행하고 사유만 남긴다.
+                    from pipeline.ai_erase_region import region_erase_rect, sfx_erase_prompt
+                    from pipeline.ai_text_erase import ERASE_PROMPT
+                    from pipeline.sfx_locator import locate_sfx
+
+                    try:
+                        found_regions = (load_json(record["regions_json"], default={}) or {}).get("regions", [])
+                        existing = [rect for rect in (region_erase_rect(r) for r in found_regions) if rect]
+                        sfx_items = locate_sfx(record["input_path"], req.ocr_model or project_ocr_model(req.session_id), existing)["items"]
+                    except Exception as exc:  # noqa: BLE001
+                        sfx_error = f"{type(exc).__name__}: {exc}"
+                    if sfx_items:
+                        erase_prompt = sfx_erase_prompt(ERASE_PROMPT, sfx_items, w, h)
+                erased, meta = erase_page_text(page, job_dir, model=model, quality=quality, **({"prompt": erase_prompt} if erase_prompt else {}))
                 # 배경 복원 확정 흐름이 그대로 쓰도록 같은 파일 이름으로 남긴다(페이지 전체 = rect)
                 cv2.imwrite(str(job_dir / "crop_before.png"), page)
                 cv2.imwrite(str(job_dir / "crop_after.png"), erased)
@@ -3184,16 +3199,6 @@ def submit_ai_erase_job(req: AiEraseRequest) -> dict[str, Any]:
                     from pipeline.ai_erase_region import all_regions_patch_mask
 
                     regions = (load_json(record["regions_json"], default={}) or {}).get("regions", [])
-                    # 효과음 찾기를 묶어 요청했으면 먼저 위치를 찾는다. 실패해도 대화 영역 지우기는 그대로 진행하고 사유만 남긴다.
-                    if req.include_sfx:
-                        from pipeline.ai_erase_region import region_erase_rect
-                        from pipeline.sfx_locator import locate_sfx
-
-                        try:
-                            existing = [rect for rect in (region_erase_rect(r) for r in regions) if rect]
-                            sfx_items = locate_sfx(record["input_path"], req.ocr_model or project_ocr_model(req.session_id), existing)["items"]
-                        except Exception as exc:  # noqa: BLE001
-                            sfx_error = f"{type(exc).__name__}: {exc}"
                     mask = all_regions_patch_mask(page, regions, extra_rects=[item["rect"] for item in sfx_items])
                     cv2.imwrite(str(job_dir / "crop_mask.png"), mask)
                     base_path = Path(record["masked_jpg"])

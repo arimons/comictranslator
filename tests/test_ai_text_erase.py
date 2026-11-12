@@ -351,3 +351,30 @@ def test_page_ai_erase_with_sfx_keeps_going_when_locate_fails(tmp_path, monkeypa
     job = _wait_job(client, started["job_id"])
     assert job["status"] == "done", job                          # 지우기는 계속 진행
     assert job["meta"]["sfx_items"] == [] and "모델 키가 없습니다" in job["meta"]["sfx_error"]
+
+
+def test_page_ai_erase_with_sfx_adds_sfx_instruction_to_the_prompt(tmp_path, monkeypatch):
+    import pipeline.sfx_locator as locator
+
+    _session_with_image(tmp_path, monkeypatch)
+    client = TestClient(app.create_app())
+    prompts = []
+
+    def fake_erase(image, work_dir, *, quality="medium", prompt=None, **_kw):
+        prompts.append(prompt)
+        out = image.copy(); out[:] = 90
+        return out, {"model": ate.ERASE_MODEL, "quality": quality, "request_size": [160, 208], "elapsed_sec": 1.0,
+                     "input_tokens": 10, "output_tokens": 20, "estimated_cost_usd": 0.001}
+
+    monkeypatch.setattr(ate, "erase_page_text", fake_erase)
+    _write_regions(app._restore_record("s1", "p1"), [{"region_id": 1, "unboxed_rect": [20, 30, 40, 50]}])
+    monkeypatch.setattr(locator, "locate_sfx", lambda *_a, **_k: {"items": [{"text": "グッ", "rect": [80, 120, 40, 60]}]})
+
+    def run(include_sfx):
+        started = client.post("/api/restore/ai-erase", json={"session_id": "s1", "image_id": "p1", "scope": "regions", "include_sfx": include_sfx}).json()
+        assert _wait_job(client, started["job_id"])["status"] == "done"
+
+    run(True)
+    assert prompts[-1] and "sound-effect" in prompts[-1] and "グッ" in prompts[-1]   # 기본 프롬프트는 효과음을 남기므로 지시를 덧붙인다
+    run(False)
+    assert prompts[-1] is None                                                      # 묶지 않으면 기본 프롬프트 그대로

@@ -201,7 +201,7 @@ export default function AiErasePanel({ sessionId, page, region, disabled, onCand
                 <legend>지울 범위</legend>
                 <label><input type="radio" name="ai-erase-scope" checked={scope === "regions_sfx"} onChange={() => setScope("regions_sfx")} /> 대화 영역 + 효과음 <small>대화 영역을 지우고, 같은 요청에서 그림 위 효과음의 위치도 찾아 함께 지웁니다. 찾은 효과음은 영역 후보로 추가되어 글자 입히기에서 번역을 올릴 수 있습니다. 위치 찾기에 모델 호출이 한 번 더 듭니다(센트 미만).</small></label>
                 <label><input type="radio" name="ai-erase-scope" checked={scope === "regions"} onChange={() => setScope("regions")} /> 대화 영역만 <small>영역(R) 안의 글자만 지웁니다. 영역 밖의 효과음·그림 속 글자는 원본 그대로 둡니다.</small></label>
-                <label><input type="radio" name="ai-erase-scope" checked={scope === "page"} onChange={() => setScope("page")} /> 쪽 전체 글자 <small>효과음을 포함해 모델이 찾은 모든 글자를 지웁니다.</small></label>
+                <label><input type="radio" name="ai-erase-scope" checked={scope === "page"} onChange={() => setScope("page")} /> 쪽 전체 글자 <small>대사·설명글·후리가나 등 글자를 모델이 알아서 지웁니다. 그림 위 효과음은 그림으로 보고 남기는 경우가 많습니다.</small></label>
               </fieldset>
             ) : null}
             {applied.some((p) => region ? p.region_id === region.id : p.region_id == null) ? <p className="ai-erase-note">{region ? "이 영역에 이미 적용된 AI 지움이 있습니다. 새 결과를 적용하면 교체됩니다." : "이미 적용된 쪽 전체 AI 지움이 있습니다. 새 결과를 적용하면 교체됩니다."}</p> : null}
