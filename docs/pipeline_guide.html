@@ -1265,12 +1265,12 @@ python3 run_pipeline.py \
     <tr><td><code>text_override</code></td><td>직접 고친 번역문. 빈 문자열이면 그 영역을 렌더·복원에서 모두 끕니다.</td></tr>
     <tr><td><code>font_size</code>, <code>font_size_delta</code></td><td>글자 크기 지정과 자동 크기에 더하는 보정.</td></tr>
     <tr><td><code>font_style</code>, <code>font_weight</code>, <code>font_path</code>, <code>custom_font_path</code></td><td>글꼴. <code>font_weight</code>는 <code>etc</code> 스타일일 때만 씁니다.</td></tr>
-    <tr><td><code>font_color</code>, <code>stroke_color</code>, <code>stroke_width</code></td><td>글자색·외곽선색(<code>#RRGGBB</code>)과 외곽선 두께(0〜12). 기본은 검정 글자, 흰 외곽선, 두께 1입니다.</td></tr>
+    <tr><td><code>font_color</code>, <code>stroke_color</code>, <code>stroke_width</code></td><td>글자색·외곽선색(<code>#RRGGBB</code>)과 외곽선 두께(0〜12). 기본은 검정 글자, 흰 외곽선이고, 두께는 밝은 배경 1, 어두운 배경 2입니다.</td></tr>
     <tr><td><code>text_align</code>, <code>rotation_deg</code>(±45), <code>force_horizontal</code>, <code>force_vertical</code></td><td>정렬, 회전, 쓰기 방향 지정.</td></tr>
     <tr><td><code>safe_text_rect</code>, <code>segment_mode</code></td><td>글자 영역 직접 지정, 세그먼트 합치기·나누기.</td></tr>
   </table></div>
   <p><strong>자동 배치는 처음 한 번.</strong> <code>font_size</code>와 <code>text_override</code>가 모두 있고 줄이 둘 이상이면(한 줄이어도 세로쓰기 지정이 아니면) 줄바꿈과 크기를 다시 계산하지 않고 <code>layout_from_manual_lines_with_font_size()</code>로 그대로 씁니다. 편집기는 박스를 처음 손댈 때 현재 렌더 값을 이 두 값에 채워 고정합니다.</p>
-  <p><strong>외곽선과 자간.</strong> 외곽선 기본 두께는 <code>TEXT_STROKE_WIDTH = 1</code>, <code>DARK_TEXT_STROKE_WIDTH = 1</code>입니다. 두께가 2 이상이면 이웃 글자의 외곽선이 붙어 겹쳐 보이므로, 박스별 두께가 1을 넘으면 자간을 <code>두께 − 1</code>px 넓힙니다. <code>set_stroke_tracking()</code>이 <code>tracking_for_font()</code>의 추가 값을 정하며, 박스마다 레이아웃 계산 전과 그리기 직전에 호출해서 측정과 그리기가 같은 자간을 씁니다. 두께 1이면 추가 자간이 0이라 결과가 달라지지 않습니다.</p>
+  <p><strong>외곽선과 자간.</strong> 외곽선 기본 두께는 <code>TEXT_STROKE_WIDTH = 1</code>(밝은 배경), <code>DARK_TEXT_STROKE_WIDTH = 2</code>(어두운 배경: 검정 글자 + 흰 외곽선)입니다. 두께가 2 이상이면 이웃 글자의 외곽선이 붙어 겹쳐 보이므로, 박스별 두께가 1을 넘으면 자간을 <code>두께 − 1</code>px 넓힙니다. <code>set_stroke_tracking()</code>이 <code>tracking_for_font()</code>의 추가 값을 정하며, 박스마다 레이아웃 계산 전과 그리기 직전에 호출해서 측정과 그리기가 같은 자간을 씁니다. 두께 1이면 추가 자간이 0이라 결과가 달라지지 않습니다.</p>
   <p><strong>draw 기록.</strong> <code>draw_text_block_pil(draw_record=…)</code>가 실제로 그린 줄 위치와 <code>font_size</code>, <code>line_height</code>, <code>ascent</code>, <code>descent</code>, <code>tracking</code>, <code>stroke_width</code>, <code>text_align</code>, <code>inner_rect</code>, <code>block_y</code> 등을 채우고, 렌더가 끝난 뒤 <code>*_overlay_layout.json</code>의 영역별 <code>draw</code>로 저장합니다. 편집기의 제자리 편집이 렌더와 같은 글자 위치를 그리는 데 쓰입니다.</p>
 
   <hr class="sep">
