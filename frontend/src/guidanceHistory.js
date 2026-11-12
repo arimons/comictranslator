@@ -55,7 +55,7 @@ export function guidanceHistoryItems(guidance, guidanceRegions) {
     const shapes = `붓 ${(item.strokes || []).length} · 다각형 ${(item.polygons || []).length} · 사각형 ${(item.rects || []).length}`;
     items.push({
       key: `custom-mask-${index}`, kind: "custom_masks", index,
-      label: attached ? `R${item.display_region_id || "?"} 지우기 보정` : "지우기 보정(자동 배정)",
+      label: `${attached ? `R${item.display_region_id || "?"} 지우기 보정` : "지우기 보정(자동 배정)"}${item.fill === "dots" ? " · 주변 도트" : ""}`,
       detail: dormant ? `${shapes} · 영역 없음: 흰칠만` : shapes,
     });
   });

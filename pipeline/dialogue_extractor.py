@@ -527,17 +527,100 @@ def _custom_mask_ids(shapes: List[Dict[str, Any]]) -> List[str]:
     return list(dict.fromkeys(str(shape["record"].get("id")) for shape in shapes if shape["record"].get("id")))
 
 
-def _whiten_custom_masks(masked_image: np.ndarray, shapes: List[Dict[str, Any]]) -> Dict[str, Any] | None:
-    """칠한 곳을 결과 이미지에서 흰색으로 칠한다. 모든 지우기가 끝난 뒤 부른다."""
+CUSTOM_MASK_FILLS = ("white", "dots")  # 기록의 fill: 기본 white(흰칠), dots(주변 도트로 채우기)
+DOT_TILE = 12      # 한 번에 채우는 타일 한 변
+DOT_RING = 6       # 타일 둘레에서 일치도를 보는 폭
+DOT_SEARCH_DY = 24  # 같은 행 부근으로 보는 세로 허용 범위
+DOT_SEARCH_DX = 60  # 칠한 곳 좌우로 조각을 찾는 가로 범위
+DOT_MIN_KNOWN = 30  # 둘레에서 이미 알려진 픽셀이 이보다 적으면 비교할 근거가 없어 흰색으로 둔다
+
+
+def _custom_mask_fill(shape: Dict[str, Any]) -> str:
+    fill = str(shape["record"].get("fill") or "white")
+    return fill if fill in CUSTOM_MASK_FILLS else "white"
+
+
+def _fill_dots_from_surroundings(
+    image: np.ndarray,
+    masked_image: np.ndarray,
+    mask: np.ndarray,
+) -> int:
+    """칠한 곳(mask)을 같은 행 부근의 글자와 무관한 원본 조각으로 채운다. 채운 타일 수를 돌려준다.
+
+    래스터 순서 타일마다, 이미 알려진 둘레 픽셀(칠하지 않았고 이번 마스킹이 건드리지 않은 곳과 먼저 채운 타일)과
+    가장 비슷한 조각을 cv2.matchTemplate(TM_SQDIFF, 마스크 지원)으로 찾아 복사한다. 못 찾은 타일은 호출 전 흰칠 그대로 남는다.
+    """
+    img_h, img_w = mask.shape
+    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY).astype(np.float32)
+    touched = np.any(masked_image != image, axis=2).astype(np.uint8)  # 이번 마스킹이 바꾼 곳은 원본 글자가 있던 자리
+    touched = cv2.dilate(touched, np.ones((3, 3), np.uint8))
+    bad = (cv2.dilate(mask, np.ones((3, 3), np.uint8)) > 0) | (touched > 0)
+    known = (~bad).astype(np.float32)  # 둘레 비교에 쓸 수 있는 곳. 채운 타일은 아래에서 더한다.
+    source_ok = (~bad).astype(np.float32)
+    work = gray.copy()
+    T, R = DOT_TILE, DOT_RING
+    th = tw = T + 2 * R
+    filled = 0
+    count, labels, stats, _ = cv2.connectedComponentsWithStats((mask > 0).astype(np.uint8), connectivity=8)
+    for label in range(1, count):
+        bx, by, bw, bh = (int(v) for v in stats[label][:4])
+        sx0, sx1 = max(0, bx - R - DOT_SEARCH_DX), min(img_w, bx + bw + R + DOT_SEARCH_DX)
+        for ty in range(by, by + bh, T):
+            for tx in range(bx, bx + bw, T):
+                tile = (labels[ty:ty + T, tx:tx + T] == label)
+                if not tile.any():
+                    continue
+                y0, x0 = ty - R, tx - R
+                if y0 < 0 or x0 < 0 or y0 + th > img_h or x0 + tw > img_w:
+                    continue
+                tmpl = work[y0:y0 + th, x0:x0 + tw].copy()
+                tmask = known[y0:y0 + th, x0:x0 + tw].copy()
+                tmask[R:R + T, R:R + T] = 0
+                total = float(tmask.sum())
+                if total < DOT_MIN_KNOWN:
+                    continue
+                sy0, sy1 = max(0, y0 - DOT_SEARCH_DY), min(img_h, y0 + th + DOT_SEARCH_DY)
+                if sy1 - sy0 < th or sx1 - sx0 < tw:
+                    continue
+                strip = work[sy0:sy1, sx0:sx1]
+                score = cv2.matchTemplate(strip, tmpl, cv2.TM_SQDIFF, mask=tmask) / total
+                # 조각 전체가 글자와 무관한 원본 픽셀인 위치만 쓴다.
+                window = cv2.boxFilter(source_ok[sy0:sy1, sx0:sx1], -1, (th, tw), anchor=(0, 0), normalize=False,
+                                       borderType=cv2.BORDER_CONSTANT)[:score.shape[0], :score.shape[1]]
+                score[window < th * tw - 0.5] = np.inf
+                if not np.isfinite(score).any():
+                    continue
+                iy, ix = np.unravel_index(int(np.argmin(score)), score.shape)
+                src_y, src_x = sy0 + iy + R, sx0 + ix + R
+                sub = image[src_y:src_y + T, src_x:src_x + T]
+                dst = masked_image[ty:ty + T, tx:tx + T]
+                h, w = dst.shape[:2]
+                tile = tile[:h, :w]
+                dst[tile] = sub[:h, :w][tile]
+                work[ty:ty + h, tx:tx + w][tile] = gray[src_y:src_y + h, src_x:src_x + w][tile]
+                known[ty:ty + h, tx:tx + w][tile] = 1.0
+                filled += 1
+    return filled
+
+
+def _whiten_custom_masks(masked_image: np.ndarray, shapes: List[Dict[str, Any]], image: np.ndarray | None = None) -> Dict[str, Any] | None:
+    """칠한 곳을 결과 이미지에서 흰색으로 칠한다. fill이 dots인 기록은 이어서 주변 도트로 덮는다. 모든 지우기가 끝난 뒤 부른다."""
     if not shapes:
         return None
     union = np.zeros(masked_image.shape[:2], dtype=np.uint8)
+    dots = np.zeros_like(union)
     for shape in shapes:
         union |= shape["mask"]
+        if image is not None and _custom_mask_fill(shape) == "dots":
+            dots |= shape["mask"]
     masked_image[union > 0] = (255, 255, 255)
     report = {"mask_ids": _custom_mask_ids(shapes), "pixels": int(np.count_nonzero(union))}
     for kind in ("strokes", "rects", "polygons"):
         report[kind] = sum(1 for shape in shapes if shape["kind"] == kind)
+    if dots.any():
+        # 못 채운 타일은 위에서 칠한 흰색으로 남는다.
+        report["dots_pixels"] = int(np.count_nonzero(dots))
+        report["dots_tiles"] = _fill_dots_from_surroundings(image, masked_image, dots)
     return report
 
 
@@ -3699,7 +3782,7 @@ def _finalize_masked_image(
     # 지우기 보정은 모든 지우기(말풍선 흰칠·텍스트 LaMa·보호 범위 복원)가 끝난 뒤 마지막에 흰색으로 칠한다.
     # 재사용한 이전 결과 위에도 다시 칠한다(보호 범위 복원이 이전 보정을 되돌렸을 수 있다).
     custom_shapes = _custom_mask_shapes(custom_masks, image.shape)
-    custom_mask_report = _whiten_custom_masks(masked_image, custom_shapes)
+    custom_mask_report = _whiten_custom_masks(masked_image, custom_shapes, image)
 
     cv2.imwrite(output_masked_path, masked_image)
 

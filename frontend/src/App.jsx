@@ -132,6 +132,7 @@ export default function App() {
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [tool, setTool] = useState("select");
   const [maskBrushWidth, setMaskBrushWidth] = useState(12);
+  const [maskFill, setMaskFill] = useState("white");
   const [selectedTg, setSelectedTg] = useState(null);
   const [selectedGuidanceRegionId, setSelectedGuidanceRegionId] = useState(null);
   const [selectedRegionId, setSelectedRegionId] = useState(null);
@@ -2747,6 +2748,7 @@ export default function App() {
                 onToolComplete={() => setTool("select")}
                 setStatus={setStatus}
                 maskBrushWidth={maskBrushWidth}
+                maskFill={maskFill}
               />
               <div className="guidance-ai-dock">
         <AiErasePanel
@@ -2815,6 +2817,10 @@ export default function App() {
               {TOOL_HINTS[tool] && !selected?.processing_excluded ? <div className="tool-hint" role="status">
                 <strong>{TOOL_LABELS.find(([id]) => id === tool)?.[1]} <kbd>{shortcutFor("guidance", "tool", tool)}</kbd></strong>
                 <span>{tool === "mask" ? `${TOOL_HINTS.mask} · 굵기 ${maskBrushWidth}px ([ ])` : TOOL_HINTS[tool]}</span>
+                {tool === "mask" ? <span className="mask-fill-choice" role="group" aria-label="칠한 곳 채우기 방식">
+                  <button type="button" className={maskFill === "white" ? "active" : ""} onClick={() => setMaskFill("white")} title="칠한 곳을 흰색으로 덮습니다. 말풍선 안이나 민무늬 배경에 알맞습니다">흰색</button>
+                  <button type="button" className={maskFill === "dots" ? "active" : ""} onClick={() => setMaskFill("dots")} title="같은 행 부근의 글자 없는 도트 조각을 복사해 채웁니다. 도트·망점 배경에 알맞고 규칙적인 줄무늬나 선화에는 어색할 수 있습니다">주변 도트</button>
+                </span> : null}
                 <em>Esc 취소</em>
               </div> : null}
               <div className="floating-toolbox" aria-label="영역 분석 도구">
