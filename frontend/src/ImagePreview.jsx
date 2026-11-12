@@ -1,5 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 
+// 파일은 같고 수정 시각(v=)만 바뀐 주소인지. 편집 결과를 반영할 때 이전 이미지를 남겨 깜박임을 막는 데 쓴다.
+const withoutVersion = (url) => String(url || "").replace(/([?&])v=\d+&?/, "$1").replace(/[?&]$/, "");
+
 export default function ImagePreview({ src }) {
   const host = useRef(null);
   const imageRef = useRef(null);
@@ -9,12 +12,16 @@ export default function ImagePreview({ src }) {
   const [mode, setMode] = useState("fit");
   const [manualScale, setManualScale] = useState(1);
   const requestSrc = src && attempt ? `${src}${src.includes("?") ? "&" : "?"}preview_retry=${attempt}` : src;
-  const image = loaded?.src === requestSrc ? loaded : { width: 0, height: 0 };
+  // 같은 파일의 새 버전을 불러오는 동안은 이전 이미지를 그대로 보여 준다(확대·스크롤 유지).
+  const stale = loaded && loaded.src !== requestSrc && !loaded.error && loaded.width && withoutVersion(loaded.src) === withoutVersion(requestSrc) ? loaded : null;
+  const image = loaded?.src === requestSrc ? loaded : stale || { width: 0, height: 0 };
+  const prevSrcRef = useRef(requestSrc);
   function readImage(node) {
     if (node?.naturalWidth) setLoaded({ src: requestSrc, width: node.naturalWidth, height: node.naturalHeight });
   }
   useEffect(() => {
-    setMode("fit");
+    if (withoutVersion(prevSrcRef.current) !== withoutVersion(requestSrc)) setMode("fit");
+    prevSrcRef.current = requestSrc;
     // 캐시된 이미지의 onLoad가 effect보다 먼저 와도 치수를 지우지 않는다.
     // 빠른 페이지 전환에서도 이미 로드된 치수를 복원한다.
     const node = imageRef.current;
@@ -38,9 +45,10 @@ export default function ImagePreview({ src }) {
     </div>
     <div className="scalable-preview-scroll" ref={host}>
       {image.error ? <div className="empty" role="status">미리보기를 불러오지 못했습니다. <button onClick={() => setAttempt((n) => n + 1)}>다시 불러오기</button></div> : null}
+      {stale ? <img key={stale.src} src={stale.src} alt="현재 페이지 비교 이미지" style={{ width: image.width * scale, height: image.height * scale }} /> : null}
       {src ? <img key={requestSrc} ref={imageRef} src={requestSrc} alt="현재 페이지 비교 이미지" onLoad={(event) => readImage(event.currentTarget)}
         onError={() => setLoaded({ src: requestSrc, width: 0, height: 0, error: true })}
-        style={image.width ? { width: image.width * scale, height: image.height * scale } : { display: "none" }} /> : <div className="empty">비교 이미지 없음</div>}
+        style={image.width && !stale ? { width: image.width * scale, height: image.height * scale } : { display: "none" }} /> : <div className="empty">비교 이미지 없음</div>}
     </div>
   </div>;
 }

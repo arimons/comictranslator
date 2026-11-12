@@ -1345,8 +1345,11 @@ const EditorCanvas = forwardRef(function EditorCanvas({ image, baseUrl, guidance
     };
   }, []);
 
+  const loadedImageIdRef = useRef(null);
   useEffect(() => {
-    imageObjRef.current = null;
+    // 같은 페이지에서 주소만 바뀔 때(주변 채우기 결과 반영 등)는 새 이미지가 올 때까지 이전 이미지를 그대로 둬 깜박임을 막는다.
+    if (loadedImageIdRef.current !== image?.id) imageObjRef.current = null;
+    loadedImageIdRef.current = image?.id;
     const sourceUrl = baseUrl || image?.input_url;
     if (!sourceUrl) {
       redraw();
