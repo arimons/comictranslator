@@ -17,6 +17,17 @@ function patchLabel(patch) {
   return "쪽 전체 · 모든 글자";
 }
 
+// 적용 목록 카드를 접어 둔 상태. 쪽을 옮겨도 유지되도록 브라우저에 한 번만 저장한다(쪽·프로젝트와 무관한 화면 환경설정).
+const COLLAPSED_KEY = "ai-erase-card-collapsed";
+
+function readCollapsed() {
+  try { return window.localStorage.getItem(COLLAPSED_KEY) === "1"; } catch { return false; }
+}
+
+function writeCollapsed(value) {
+  try { window.localStorage.setItem(COLLAPSED_KEY, value ? "1" : "0"); } catch { /* 저장소를 못 쓰면 이번 화면에서만 유지 */ }
+}
+
 function fmtUsage(meta) {
   const usage = meta?.usage || {};
   const sec = meta?.timing?.total_sec;
@@ -29,15 +40,16 @@ export default function AiErasePanel({ sessionId, page, region, disabled, onCand
   const [applied, setApplied] = useState([]);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
-  // 카드의 X로 닫아 둔 상태. 새 작업이 시작되거나 적용된 목록이 바뀌면 다시 보인다.
-  const [dismissed, setDismissed] = useState(false);
+  // 카드의 X로 접어 둔 상태. 쪽을 옮겨도 접힌 채 두고 작은 칩으로 다시 펼칠 수 있다. 작업 중·후보 준비·오류일 때는 접어 두었어도 카드가 보인다.
+  const [collapsed, setCollapsedState] = useState(readCollapsed);
+  const setCollapsed = (value) => { setCollapsedState(value); writeCollapsed(value); };
   // 쪽 전체 모드에서 지울 범위: regions_sfx=대화 영역 + 효과음 찾기(효과음 위치도 함께 찾아 지우고 영역 후보로 추가),
   // regions=영역(R) 안의 글자만(효과음 등은 원본 유지), page=쪽 전체 글자
   const [scope, setScope] = useState("regions_sfx");
   const pageKey = page ? `${sessionId}:${page.id}` : "";
 
   // 적용된 AI 지움 목록을 화면의 영역 정보 패널이 볼 수 있게 알린다(영역 옵션의 "AI" 선택 상태 표시용).
-  useEffect(() => { onPatches?.(applied); setDismissed(false); }, [applied]);
+  useEffect(() => { onPatches?.(applied); }, [applied]);
 
   // 페이지가 바뀌면 후보를 비우고, 이미 적용된 AI 지움 패치가 있는지 확인한다.
   useEffect(() => {
@@ -83,7 +95,6 @@ export default function AiErasePanel({ sessionId, page, region, disabled, onCand
       const regionId = region?.id ?? null;
       const started = await api("/api/restore/ai-erase", { method: "POST", body: JSON.stringify({ session_id: sessionId, image_id: page.id, ocr_model: ocrModel || null, region_id: regionId, scope: regionId == null ? (scope === "regions_sfx" ? "regions" : scope) : "page", include_sfx: regionId == null && scope === "regions_sfx" }) });
       setJob(started);
-      setDismissed(false);
       onCandidate?.(null);
       setStatus?.(regionId != null ? `R${regionId} 영역만 AI로 지웁니다. 20초 안팎 걸립니다.` : "AI 글자 지우기를 시작했습니다. 20초 안팎 걸립니다.");
     } catch (exc) {
@@ -155,14 +166,15 @@ export default function AiErasePanel({ sessionId, page, region, disabled, onCand
   if (!page) return null;
   const done = job?.status === "done";
   // 대기 상태에서는 아무것도 그리지 않는다. 시작은 도구 모음의 AI 지우개에서 한다.
-  const showCard = Boolean(running || done || error || (applied.length && !dismissed));
+  const showCard = Boolean(running || done || error || (applied.length && !collapsed));
+  const showChip = Boolean(!showCard && applied.length && collapsed);
   return (
     <>
       {showCard ? (
         <div className="section compact-section ai-erase-section">
           <div className="ai-erase-head">
             <h2>AI 글자 지우기</h2>
-            {!running ? <button className="icon-button ai-erase-close" onClick={() => { setDismissed(true); setError(""); }} aria-label="이 카드 닫기" title="이 카드를 닫습니다(적용된 AI 지움은 그대로 유지됩니다)">×</button> : null}
+            {!running && !done ? <button className="icon-button ai-erase-close" onClick={() => { setError(""); setCollapsed(true); }} aria-label="이 카드 접기" title="카드를 작은 칩으로 접습니다. 쪽을 옮겨도 접힌 채로 있고, 칩을 누르면 다시 펼칩니다(적용된 AI 지움은 그대로 유지됩니다)">×</button> : null}
           </div>
           {running ? <p className="hint">지우는 중… 20초 안팎 걸립니다.</p> : null}
           {applied.map((patch) => (
@@ -183,6 +195,9 @@ export default function AiErasePanel({ sessionId, page, region, disabled, onCand
           ) : null}
           {error ? <div className="restore-error">{error}</div> : null}
         </div>
+      ) : null}
+      {showChip ? (
+        <button className="ai-erase-chip" onClick={() => setCollapsed(false)} title="적용된 AI 지움 목록을 펼칩니다">AI 지움 {applied.length}건</button>
       ) : null}
       {confirmOpen ? (
         <div className="ai-erase-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) onConfirmClose?.(); }}>

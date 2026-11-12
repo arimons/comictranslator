@@ -3820,3 +3820,5 @@ button:disabled .paid-tag { opacity: .55; }
 .inplace-row.presets .preset-chip { padding: 3px 8px; font-size: 12px; border: 1px solid var(--line, #cbd5e1); border-radius: 999px; background: #fff; cursor: pointer; }
 .inplace-row.presets .preset-chip.active { background: #e0ecff; border-color: #93b4f0; font-weight: 700; }
 .inplace-row.presets .preset-chip:disabled { opacity: .45; cursor: default; }
+.ai-erase-chip { display: block; margin-left: auto; padding: 4px 11px; font-size: 12px; border: 1px solid var(--line, #cbd5e1); border-radius: 999px; background: rgba(255, 255, 255, 0.97); color: #7c3aed; font-weight: 700; cursor: pointer; box-shadow: var(--shadow); }
+.ai-erase-chip:hover { background: #f5f0ff; }
