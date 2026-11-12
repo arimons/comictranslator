@@ -433,6 +433,7 @@ class AiEraseRequest(BaseModel):
     ocr_model: str | None = None  # 세션의 OCR·번역 모델. gemini-*이면 Gemini 이미지 모델로 지운다
     region_id: int | None = None  # 주면 그 영역(R 번호)의 크롭만 보내 그 영역만 지운다. 비우면 쪽 전체
     scope: str = "page"  # 쪽 전체 모드의 범위: page=쪽 전체 글자, regions=영역(R) 안의 글자 획만(영역 밖 효과음 등은 원본 유지)
+    include_sfx: bool = False  # scope=regions일 때 효과음 위치도 함께 찾아(요청 1회 추가) 그 박스까지 지우고, 박스를 영역 후보로 돌려준다
 
 
 class SfxLocateRequest(BaseModel):
@@ -3168,6 +3169,8 @@ def submit_ai_erase_job(req: AiEraseRequest) -> dict[str, Any]:
 
         job["status"] = "running"
         job["started_at"] = time.time()
+        sfx_items: list[dict[str, Any]] = []
+        sfx_error = ""
         try:
             job_dir.mkdir(parents=True, exist_ok=True)
             if region_info is None:
@@ -3181,7 +3184,17 @@ def submit_ai_erase_job(req: AiEraseRequest) -> dict[str, Any]:
                     from pipeline.ai_erase_region import all_regions_patch_mask
 
                     regions = (load_json(record["regions_json"], default={}) or {}).get("regions", [])
-                    mask = all_regions_patch_mask(page, regions)
+                    # 효과음 찾기를 묶어 요청했으면 먼저 위치를 찾는다. 실패해도 대화 영역 지우기는 그대로 진행하고 사유만 남긴다.
+                    if req.include_sfx:
+                        from pipeline.ai_erase_region import region_erase_rect
+                        from pipeline.sfx_locator import locate_sfx
+
+                        try:
+                            existing = [rect for rect in (region_erase_rect(r) for r in regions) if rect]
+                            sfx_items = locate_sfx(record["input_path"], req.ocr_model or project_ocr_model(req.session_id), existing)["items"]
+                        except Exception as exc:  # noqa: BLE001
+                            sfx_error = f"{type(exc).__name__}: {exc}"
+                    mask = all_regions_patch_mask(page, regions, extra_rects=[item["rect"] for item in sfx_items])
                     cv2.imwrite(str(job_dir / "crop_mask.png"), mask)
                     base_path = Path(record["masked_jpg"])
                     preview = (_read_bgr(str(base_path)) if base_path.exists() else page.copy())
@@ -3217,6 +3230,8 @@ def submit_ai_erase_job(req: AiEraseRequest) -> dict[str, Any]:
                 "usage": {k: meta[k] for k in ("input_tokens", "output_tokens", "estimated_cost_usd", "request_size")},
                 **({k: region_info[k] for k in ("region_id", "region_ref", "region_rect")} if region_info else {}),
                 **({"scope": "regions"} if region_info is None and req.scope == "regions" else {}),
+                **({"sfx_items": sfx_items, "sfx_count": len(sfx_items)} if req.include_sfx and region_info is None else {}),
+                **({"sfx_error": sfx_error} if sfx_error else {}),
             }
             job["result"] = {
                 "crop_before_url": file_url(job_dir / "crop_before.png"),
@@ -3260,7 +3275,7 @@ def accept_restore_job(req: RestoreAcceptRequest) -> dict[str, Any]:
         "source": job.get("source"),
         "accepted_at": dt.datetime.now().isoformat(timespec="seconds"),
         # 영역 모드로 만든 패치는 어느 영역 것인지 남겨 두 가지에 쓴다: 같은 영역을 다시 지울 때 교체, 영역이 지워지면 정리
-        **{k: meta[k] for k in ("region_id", "region_ref", "region_rect", "scope") if meta.get(k) is not None},
+        **{k: meta[k] for k in ("region_id", "region_ref", "region_rect", "scope", "sfx_count") if meta.get(k) is not None},
     }
     with _RESTORE_STATE_LOCK:
         state = _restore_state(record)

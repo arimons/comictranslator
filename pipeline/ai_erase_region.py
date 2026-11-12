@@ -66,20 +66,28 @@ def region_patch_mask(page: np.ndarray, rect: list[int], crop: list[int]) -> np.
     return cv2.bitwise_and(stroke, inside)[cy:cy + ch, cx:cx + cw]
 
 
-def all_regions_patch_mask(page: np.ndarray, regions: list[dict]) -> np.ndarray:
-    """쪽 크기 합성 마스크: 모든 영역(R) 사각형 안의 글자 획 주변만 255. 영역 밖 글자는 건드리지 않는다."""
+def all_regions_patch_mask(page: np.ndarray, regions: list[dict], extra_rects: list[list[int]] | None = None) -> np.ndarray:
+    """쪽 크기 합성 마스크: 모든 영역(R) 사각형 안의 글자 획 주변만 255. 영역 밖 글자는 건드리지 않는다.
+
+    extra_rects(효과음 찾기로 찾은 박스)는 획만이 아니라 사각형 전체를 255로 칠한다. 효과음은 점 톤 위에 얹히는 일이 많아
+    획 마스크가 배경 점까지 잡고, 나중에 그 자리에 한국어 효과음을 새로 얹을 것이라 사각형 전체를 바꿔 두는 편이 낫다."""
     from pipeline.background_restore import MaskParams, build_text_stroke_mask
 
     page_h, page_w = page.shape[:2]
     seeds = [{"rect": rect, "fragments": []} for rect in (region_erase_rect(r) for r in regions) if rect]
-    if not seeds:
-        return np.zeros((page_h, page_w), dtype=np.uint8)
-    stroke = build_text_stroke_mask(page, seeds, MaskParams(dilate_px=STROKE_DILATE))
-    inside = np.zeros((page_h, page_w), dtype=np.uint8)
-    for seed in seeds:
-        x, y, w, h = seed["rect"]
-        inside[max(0, y):y + h, max(0, x):x + w] = 255
-    return cv2.bitwise_and(stroke, inside)
+    if seeds:
+        stroke = build_text_stroke_mask(page, seeds, MaskParams(dilate_px=STROKE_DILATE))
+        inside = np.zeros((page_h, page_w), dtype=np.uint8)
+        for seed in seeds:
+            x, y, w, h = seed["rect"]
+            inside[max(0, y):y + h, max(0, x):x + w] = 255
+        mask = cv2.bitwise_and(stroke, inside)
+    else:
+        mask = np.zeros((page_h, page_w), dtype=np.uint8)
+    for rect in extra_rects or []:
+        x, y, w, h = (int(v) for v in rect[:4])
+        mask[max(0, y):max(0, y) + h, max(0, x):max(0, x) + w] = 255
+    return mask
 
 
 def overlap_ratio(rect: list[int], other: list[int]) -> float:

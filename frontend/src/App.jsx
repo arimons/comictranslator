@@ -2389,6 +2389,21 @@ export default function App() {
   // 지우기 줄에서 AI 외의 방식을 고르면, 이 영역에 적용된 AI 지움을 먼저 해제한다(AI 패치가 위에 얹혀 있으면 다른 방식이 보이지 않는다).
   // 효과음 찾기(요청할 때만): CV가 못 잡는 그림 위 효과음의 대략적인 위치를 모델에게 묻고, 찾은 박스를 텍스트 기반 영역으로
   // 가이드에 추가한다. 변경사항 적용을 눌러야 영역이 만들어지고, 박스가 효과음 일부만 감싸면 영역 크기를 조절해 맞춘다.
+  // 찾은 효과음 박스를 텍스트 기반 영역(U 도구와 같은 수동 영역)으로 가이드에 추가한다.
+  function addSfxRegions(items) {
+    const stamp = Date.now();
+    setGuidanceTracked((value) => {
+      const next = cloneJson(value || defaultGuidance(null));
+      next.manual_regions = [
+        ...(next.manual_regions || []),
+        ...items.map((item, index) => ({ id: `manual_ubox_${stamp}_${index}`, type: "unboxed", unboxed_rect: item.rect, source_method: "manual_ubox_guide" })),
+      ];
+      return next;
+    }, `효과음 ${items.length}개 추가`);
+    const reads = items.map((item) => item.text).filter(Boolean).join(", ");
+    setStatus(`효과음 ${items.length}개${reads ? `(${reads})` : ""}를 텍스트 기반 영역으로 추가했습니다. 변경사항 적용(${shortcutById("guidance.apply")})으로 반영하고, 박스가 작으면 크기를 조절하세요.`);
+  }
+
   async function locateSfx() {
     if (!selected?.id || !sessionId) return;
     setGuidanceMenu(null);
@@ -2402,17 +2417,7 @@ export default function App() {
         setStatus("새로 찾은 효과음이 없습니다. 있다면 U 도구로 직접 지정하세요.");
         return;
       }
-      const stamp = Date.now();
-      setGuidanceTracked((value) => {
-        const next = cloneJson(value || defaultGuidance(null));
-        next.manual_regions = [
-          ...(next.manual_regions || []),
-          ...items.map((item, index) => ({ id: `manual_ubox_${stamp}_${index}`, type: "unboxed", unboxed_rect: item.rect, source_method: "manual_ubox_guide" })),
-        ];
-        return next;
-      }, `효과음 ${items.length}개 추가`);
-      const reads = items.map((item) => item.text).filter(Boolean).join(", ");
-      setStatus(`효과음 ${items.length}개${reads ? `(${reads})` : ""}를 텍스트 기반 영역으로 추가했습니다. 변경사항 적용(${shortcutById("guidance.apply")})으로 반영하고, 박스가 작으면 크기를 조절하세요.`);
+      addSfxRegions(items);
     } catch (err) {
       setStatus(`효과음 찾기 실패: ${err.message}`);
     }
@@ -2856,6 +2861,7 @@ export default function App() {
           onCandidate={handleAiEraseCandidate}
           onApplied={reloadSelectedPage}
           onPatches={setAiPatches}
+          onSfxFound={addSfxRegions}
           setStatus={setStatus}
           ocrModel={effectiveOcrModel}
           imageModel={ocrProvider === "gemini" ? imageModels.gemini : imageModels.openai}

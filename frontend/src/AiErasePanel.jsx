@@ -13,7 +13,8 @@ function providerOf(imageModel) {
 
 function patchLabel(patch) {
   if (patch.region_id != null) return `영역 R${patch.region_id}`;
-  return patch.scope === "regions" ? "쪽 전체 · 대화 영역만" : "쪽 전체 · 모든 글자";
+  if (patch.scope === "regions") return patch.sfx_count > 0 ? `쪽 전체 · 대화 영역 + 효과음 ${patch.sfx_count}개` : "쪽 전체 · 대화 영역만";
+  return "쪽 전체 · 모든 글자";
 }
 
 function fmtUsage(meta) {
@@ -23,15 +24,16 @@ function fmtUsage(meta) {
   return [sec != null ? `${Number(sec).toFixed(0)}초` : null, cost != null ? `약 $${Number(cost).toFixed(3)}` : null].filter(Boolean).join(" · ");
 }
 
-export default function AiErasePanel({ sessionId, page, region, disabled, onCandidate, onApplied, onPatches, setStatus, ocrModel, imageModel, confirmOpen, onConfirmClose, onRequestConfirm }) {
+export default function AiErasePanel({ sessionId, page, region, disabled, onCandidate, onApplied, onPatches, onSfxFound, setStatus, ocrModel, imageModel, confirmOpen, onConfirmClose, onRequestConfirm }) {
   const [job, setJob] = useState(null);
   const [applied, setApplied] = useState([]);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   // 카드의 X로 닫아 둔 상태. 새 작업이 시작되거나 적용된 목록이 바뀌면 다시 보인다.
   const [dismissed, setDismissed] = useState(false);
-  // 쪽 전체 모드에서 지울 범위: regions=영역(R) 안의 글자만(효과음 등은 원본 유지), page=쪽 전체 글자
-  const [scope, setScope] = useState("regions");
+  // 쪽 전체 모드에서 지울 범위: regions_sfx=대화 영역 + 효과음 찾기(효과음 위치도 함께 찾아 지우고 영역 후보로 추가),
+  // regions=영역(R) 안의 글자만(효과음 등은 원본 유지), page=쪽 전체 글자
+  const [scope, setScope] = useState("regions_sfx");
   const pageKey = page ? `${sessionId}:${page.id}` : "";
 
   // 적용된 AI 지움 목록을 화면의 영역 정보 패널이 볼 수 있게 알린다(영역 옵션의 "AI" 선택 상태 표시용).
@@ -63,7 +65,8 @@ export default function AiErasePanel({ sessionId, page, region, disabled, onCand
         setJob(next);
         if (next.status === "done") {
           onCandidate?.(next.result?.crop_after_url || null);
-          setStatus?.(`AI 글자 지우기 후보가 준비됐습니다 (${fmtUsage(next.meta)}). 미리보기에서 확인 후 적용하세요.`);
+          const sfxNote = next.meta?.sfx_error ? ` 효과음 찾기는 실패했습니다(${next.meta.sfx_error}).` : next.meta?.sfx_count ? ` 효과음 ${next.meta.sfx_count}개를 찾아 함께 지웠습니다.` : "";
+          setStatus?.(`AI 글자 지우기 후보가 준비됐습니다 (${fmtUsage(next.meta)}).${sfxNote} 미리보기에서 확인 후 적용하세요.`);
         } else if (next.status === "error") {
           setError(next.error || "실패했습니다");
         }
@@ -78,7 +81,7 @@ export default function AiErasePanel({ sessionId, page, region, disabled, onCand
     setError("");
     try {
       const regionId = region?.id ?? null;
-      const started = await api("/api/restore/ai-erase", { method: "POST", body: JSON.stringify({ session_id: sessionId, image_id: page.id, ocr_model: ocrModel || null, region_id: regionId, scope: regionId == null ? scope : "page" }) });
+      const started = await api("/api/restore/ai-erase", { method: "POST", body: JSON.stringify({ session_id: sessionId, image_id: page.id, ocr_model: ocrModel || null, region_id: regionId, scope: regionId == null ? (scope === "regions_sfx" ? "regions" : scope) : "page", include_sfx: regionId == null && scope === "regions_sfx" }) });
       setJob(started);
       setDismissed(false);
       onCandidate?.(null);
@@ -105,6 +108,8 @@ export default function AiErasePanel({ sessionId, page, region, disabled, onCand
       onCandidate?.(null);
       setStatus?.(job.meta?.region_id != null ? `R${job.meta.region_id} 영역의 AI 지움을 적용했습니다. 글자 입히기 렌더에 반영됩니다.` : "AI로 지운 배경을 적용했습니다. 글자 입히기 렌더에 반영됩니다.");
       onApplied?.();
+      // 함께 찾은 효과음은 텍스트 기반 영역 후보로 가이드에 추가한다(변경사항 적용을 눌러야 영역이 만들어진다).
+      if (job.meta?.sfx_items?.length) onSfxFound?.(job.meta.sfx_items);
     } catch (exc) {
       setError(String(exc.message || exc));
     } finally {
@@ -194,6 +199,7 @@ export default function AiErasePanel({ sessionId, page, region, disabled, onCand
             {!region ? (
               <fieldset className="ai-erase-scope">
                 <legend>지울 범위</legend>
+                <label><input type="radio" name="ai-erase-scope" checked={scope === "regions_sfx"} onChange={() => setScope("regions_sfx")} /> 대화 영역 + 효과음 <small>대화 영역을 지우고, 같은 요청에서 그림 위 효과음의 위치도 찾아 함께 지웁니다. 찾은 효과음은 영역 후보로 추가되어 글자 입히기에서 번역을 올릴 수 있습니다. 위치 찾기에 모델 호출이 한 번 더 듭니다(센트 미만).</small></label>
                 <label><input type="radio" name="ai-erase-scope" checked={scope === "regions"} onChange={() => setScope("regions")} /> 대화 영역만 <small>영역(R) 안의 글자만 지웁니다. 영역 밖의 효과음·그림 속 글자는 원본 그대로 둡니다.</small></label>
                 <label><input type="radio" name="ai-erase-scope" checked={scope === "page"} onChange={() => setScope("page")} /> 쪽 전체 글자 <small>효과음을 포함해 모델이 찾은 모든 글자를 지웁니다.</small></label>
               </fieldset>

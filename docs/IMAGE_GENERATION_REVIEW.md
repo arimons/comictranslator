@@ -156,3 +156,5 @@ UI 검증은 별도 headless Chromium에서 실행한다. `proof/src/run_headles
 <!-- 2026-11-12 app.py·routers/analysis.py(효과음 찾기 API /api/sfx/locate 추가: 쪽 이미지를 비전 모델에 보내 효과음 위치만 받는 일회성 요청) 변경 검토: 이 문서의 통번역 생성 요청·후보 등록 흐름에는 영향 없음 -->
 
 <!-- 변경 검토(2026-11-12): app.py·routers에 주변 채우기 API(`/api/restore/dot-fill`) 추가. 이미지 생성 흐름에는 영향 없음. -->
+
+<!-- 2026-11-12 app.py(쪽 전체 AI 지우기에 include_sfx 추가: 같은 작업에서 효과음 위치를 찾아 그 박스까지 합성) 변경 검토: 이 문서의 통번역 생성 요청·후보 등록 흐름에는 영향 없음 -->
