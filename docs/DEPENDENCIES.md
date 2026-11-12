@@ -115,3 +115,4 @@ projects 아래 폴더 ID는 기존 timestamp ID를 유지한다. project.json�
 
 <!-- 변경 검토(2026-11-11): 검출기 긴 함수의 단계 분리(결과 동일 확인), App.jsx 훅 분리로 소스가 바뀜. 이 문서 내용 영향 없음 -->
 <!-- 2026-11-12 dialogue_extractor.py 지우기 보정 fill 보고 추가: 의존성 영향 없음 -->
+<!-- 2026-11-12 render_text_overlay.py 배경 박스 제거: 의존성 영향 없음 -->

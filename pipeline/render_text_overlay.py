@@ -90,12 +90,8 @@ _GLOBAL_TRACKING_OFFSET: int = 0
 _STROKE_TRACKING_EXTRA: int = 0
 
 UNBOXED_MAX_FONT_SIZE = 38
-UNBOXED_BG_ALPHA = 38          # 15% — LaMa 적용 unboxed (배경 이미 inpainting 완료)
-UNBOXED_FALLBACK_BG_ALPHA = 64 # 25% — bbox_fallback unboxed
-UNBOXED_DARK_BG_ALPHA = 0      # 외곽선으로 가독성 확보, 배경 박스는 거의 사용하지 않음
 UNBOXED_TG_FALLBACK_FONT_SCALE = 0.90
 SPLIT_PARENT_FONT_CAP_RATIO = 1.20
-BUBBLE_BG_ALPHA = 0
 # 외곽선 기본 두께: 밝은 배경은 1, 어두운 배경(검정 글자 + 흰 외곽선)은 2. 어두운 배경에서는 외곽선이 얇으면 글자가 묻혀
 # 두께 2가 알맞다. 2 이상이면 이웃 글자의 외곽선이 붙으므로 자간을 (두께 - 1)px 넓혀 보정한다(박스별로 바꿀 수 있다).
 TEXT_STROKE_WIDTH = 1
@@ -3031,9 +3027,7 @@ def draw_text_block(
     layout: Layout | None = None,
     edge_anchor: dict | None = None,
     is_unboxed: bool = False,
-    bg_alpha: int = 128,
     text_fill: tuple[int, int, int] = (0, 0, 0),
-    bg_color: tuple[int, int, int] = (255, 255, 255),
     text_stroke_width: int = 0,
     text_stroke_fill: tuple[int, int, int] | None = None,
     rotation_deg: float = 0.0,
@@ -3049,9 +3043,7 @@ def draw_text_block(
         layout=layout,
         edge_anchor=edge_anchor,
         is_unboxed=is_unboxed,
-        bg_alpha=bg_alpha,
         text_fill=text_fill,
-        bg_color=bg_color,
         text_stroke_width=text_stroke_width,
         text_stroke_fill=text_stroke_fill,
         rotation_deg=rotation_deg,
@@ -3069,9 +3061,7 @@ def draw_text_block_pil(
     layout: Layout | None = None,
     edge_anchor: dict | None = None,
     is_unboxed: bool = False,
-    bg_alpha: int = 128,
     text_fill: tuple[int, int, int] = (0, 0, 0),
-    bg_color: tuple[int, int, int] = (255, 255, 255),
     text_stroke_width: int = 0,
     text_stroke_fill: tuple[int, int, int] | None = None,
     rotation_deg: float = 0.0,
@@ -3119,20 +3109,6 @@ def draw_text_block_pil(
         base_rgba = pil.convert("RGBA")
         render_layer = Image.new("RGBA", base_rgba.size, (0, 0, 0, 0))
         draw = ImageDraw.Draw(render_layer)
-
-    if is_unboxed:
-        # 투명도 있는 흰색 배경 박스: RGBA 레이어를 별도 생성 후 alpha_composite
-        # LaMa 대상: unboxed_rect 전체를 흰 배경으로 커버
-        bg_rect = [bx, by, bx + bw, by + bh]
-        if render_layer is not None:
-            draw.rectangle(bg_rect, fill=(*bg_color, bg_alpha))
-        else:
-            pil_rgba = pil.convert("RGBA")
-            alpha_layer = Image.new("RGBA", pil_rgba.size, (0, 0, 0, 0))
-            draw_layer = ImageDraw.Draw(alpha_layer)
-            draw_layer.rectangle(bg_rect, fill=(*bg_color, bg_alpha))
-            pil = Image.alpha_composite(pil_rgba, alpha_layer).convert("RGB")
-            draw = ImageDraw.Draw(pil)
 
     if draw_record is not None:
         try:
@@ -5079,21 +5055,11 @@ def apply_text_overlay(
             or "dark_flood_success" in _flags_str
         )
         has_dark_background = "dark_background" in (cluster.get("quality_flags") or [])
-        # bbox_fallback(LaMa 미적용)은 배경이 미정리 → 90%, LaMa 적용 unboxed → 80%, bubble → 50%
-        is_bbox_fallback = cluster.get("source_method") == "bbox_fallback"
         if has_dark_background or is_dark_flood:
-            bg_alpha = UNBOXED_DARK_BG_ALPHA
-        elif is_unboxed:
-            bg_alpha = UNBOXED_FALLBACK_BG_ALPHA if is_bbox_fallback else UNBOXED_BG_ALPHA
-        else:
-            bg_alpha = BUBBLE_BG_ALPHA
-        if has_dark_background or is_dark_flood:
-            bg_color  = (0, 0, 0)        # 검은 반투명 박스
             text_fill = (0, 0, 0)
             text_stroke_width = DARK_TEXT_STROKE_WIDTH
             text_stroke_fill = (255, 255, 255)
         else:
-            bg_color  = (255, 255, 255)
             text_fill = (0, 0, 0)
             text_stroke_width = TEXT_STROKE_WIDTH
             text_stroke_fill = (255, 255, 255)
@@ -5108,7 +5074,7 @@ def apply_text_overlay(
             page_pil = Image.fromarray(cv2.cvtColor(image, cv2.COLOR_BGR2RGB))
         page_pil, layout = draw_text_block_pil(
             page_pil, text, bbox, cluster_font_path, layout=layout,
-            is_unboxed=is_unboxed, bg_alpha=bg_alpha, text_fill=text_fill, bg_color=bg_color,
+            is_unboxed=is_unboxed, text_fill=text_fill,
             text_stroke_width=text_stroke_width, text_stroke_fill=text_stroke_fill,
             rotation_deg=rotation_deg,
             font_weight=font_weight,

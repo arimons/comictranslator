@@ -184,7 +184,6 @@ class RenderTextOverlayTest(unittest.TestCase):
             [20, 20, 120, 80],
             FONT_PATH,
             layout=layout,
-            bg_alpha=0,
             text_stroke_width=0,
         )
         dark_pixels = np.where(np.all(rendered < 80, axis=2))
@@ -211,7 +210,6 @@ class RenderTextOverlayTest(unittest.TestCase):
             [30, 30, 120, 80],
             FONT_PATH,
             layout=layout,
-            bg_alpha=0,
             text_stroke_width=0,
         )
         rotated, _ = draw_text_block(
@@ -220,7 +218,6 @@ class RenderTextOverlayTest(unittest.TestCase):
             [30, 30, 120, 80],
             FONT_PATH,
             layout=layout,
-            bg_alpha=0,
             text_stroke_width=0,
             rotation_deg=12,
         )
@@ -925,7 +922,6 @@ class RenderTextOverlayTest(unittest.TestCase):
             [25, 15, 70, 90],
             FONT_PATH,
             layout=layout,
-            bg_alpha=0,
             text_fill=(0, 0, 0),
             text_stroke_width=0,
         )
@@ -952,7 +948,6 @@ class RenderTextOverlayTest(unittest.TestCase):
             [20, 20, 60, 60],
             FONT_PATH,
             layout=layout,
-            bg_alpha=0,
             text_fill=(0, 0, 0),
             text_stroke_width=3,
             text_stroke_fill=(255, 255, 255),
@@ -979,7 +974,6 @@ class RenderTextOverlayTest(unittest.TestCase):
             [20, 20, 60, 60],
             FONT_PATH,
             layout=layout,
-            bg_alpha=0,
             text_fill=(0, 0, 0),
             text_stroke_width=0,
         )
@@ -1005,7 +999,6 @@ class RenderTextOverlayTest(unittest.TestCase):
             [20, 20, 140, 80],
             FONT_PATH,
             layout=layout,
-            bg_alpha=0,
             text_fill=(0, 0, 0),
             text_stroke_width=0,
         )
@@ -1035,7 +1028,6 @@ class RenderTextOverlayTest(unittest.TestCase):
             [20, 20, 140, 80],
             FONT_PATH,
             layout=layout,
-            bg_alpha=0,
             text_fill=(0, 0, 0),
             text_stroke_width=0,
         )
@@ -1100,7 +1092,6 @@ class RenderTextOverlayTest(unittest.TestCase):
             [20, 20, 80, 140],
             FONT_PATH,
             layout=layout,
-            bg_alpha=0,
             text_fill=(0, 0, 0),
             text_stroke_width=0,
         )
@@ -1125,7 +1116,6 @@ class RenderTextOverlayTest(unittest.TestCase):
             [20, 20, 80, 180],
             FONT_PATH,
             layout=layout,
-            bg_alpha=0,
             text_fill=(0, 0, 0),
             text_stroke_width=0,
         )
@@ -1150,7 +1140,6 @@ class RenderTextOverlayTest(unittest.TestCase):
             [20, 20, 140, 140],
             FONT_PATH,
             layout=layout,
-            bg_alpha=0,
             text_fill=(0, 0, 0),
             text_stroke_width=0,
         )
@@ -1324,7 +1313,6 @@ class RenderTextOverlayTest(unittest.TestCase):
             [20, 20, 80, 220],
             FONT_PATH,
             layout=layout,
-            bg_alpha=0,
             text_fill=(0, 0, 0),
             text_stroke_width=0,
         )

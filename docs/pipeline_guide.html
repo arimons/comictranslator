@@ -1234,7 +1234,7 @@ python3 run_pipeline.py \
   Freesentation 폰트에는 U+FF65·U+30FB 글리프가 없어서 그대로 그리면 점이 보이지 않기 때문입니다. 점만 있는 텍스트나 세로쓰기 줄 끝 점 run은 기존처럼 합성 점으로 직접 그립니다.</p>
 
   <h4>텍스트 기반 렌더링 및 원본 보존</h4>
-  <p>배경 박스의 alpha는 영역 종류별 상수로 정합니다. LaMa 적용 텍스트 기반 영역 <code>UNBOXED_BG_ALPHA=38</code>(약 15%), bbox_fallback 텍스트 기반 영역 <code>UNBOXED_FALLBACK_BG_ALPHA=64</code>(약 25%), dark_background/dark_flood는 <code>UNBOXED_DARK_BG_ALPHA=0</code>, 경계 기반 영역 <code>BUBBLE_BG_ALPHA=0</code>입니다. 어두운 배경도 흰 글씨가 아니라 검정 글씨 + 흰 외곽선으로 읽히게 하며, 배경 박스는 거의 쓰지 않습니다.</p>
+  <p>번역문 뒤에는 배경 박스를 깔지 않습니다(2026-11-12 제거). 예전에는 텍스트 기반 영역에 반투명 흰 박스를 깔아 덜 지워진 배경에서도 글자가 보이게 했지만, 지워진 배경이 하얗게 떠 보이는 부작용이 있어 없앴습니다. 가독성은 글자 외곽선이 맡습니다. 밝은 배경은 검정 글씨 + 흰 외곽선 1, 어두운 배경(dark_background/dark_flood)은 같은 색에 외곽선 2입니다. 덜 지워진 자리는 배경을 고치는 쪽(AI 지우기, 지우기 보정)으로 해결합니다.</p>
   <p><strong>원본 보존 처리</strong>: 다음 케이스는 번역 렌더링을 건너뛰고 원본 이미지 픽셀을 복원합니다.
   (<code>_should_preserve_original_cluster()</code>의 판정 조건)</p>
   <ul>

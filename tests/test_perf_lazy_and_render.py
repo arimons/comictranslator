@@ -63,7 +63,7 @@ def test_chained_pil_blocks_match_per_block_numpy_conversion():
     page[50:150, 20:280] = (30, 60, 200)
     blocks = [
         ("안녕하세요 반갑습니다", [20, 40, 120, 140], dict(is_unboxed=False)),
-        ("겹치는 두번째 블록", [60, 90, 150, 160], dict(is_unboxed=True, bg_alpha=200)),
+        ("겹치는 두번째 블록", [60, 90, 150, 160], dict(is_unboxed=True)),
         ("회전", [150, 250, 100, 100], dict(rotation_deg=15.0, text_stroke_width=2, text_stroke_fill=(255, 255, 255))),
     ]
 
