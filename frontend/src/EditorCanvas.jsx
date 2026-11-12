@@ -57,7 +57,7 @@ function pruneDeletedEdgeBoxes(guidance) {
   };
 }
 
-const EditorCanvas = forwardRef(function EditorCanvas({ image, baseUrl, guidance, setGuidance, tool, layers, selectedTg, setSelectedTg, selectedRegionId, setSelectedRegionId, onToolComplete, setStatus, maskBrushWidth = 12, maskFill = "white", stale = false }, ref) {
+const EditorCanvas = forwardRef(function EditorCanvas({ image, baseUrl, guidance, setGuidance, tool, layers, selectedTg, setSelectedTg, selectedRegionId, setSelectedRegionId, onToolComplete, setStatus, maskBrushWidth = 12, maskSink = null, stale = false }, ref) {
   const hostRef = useRef(null);
   const stageRef = useRef(null);
   const imageObjRef = useRef(null);
@@ -84,8 +84,9 @@ const EditorCanvas = forwardRef(function EditorCanvas({ image, baseUrl, guidance
   // region_id → 화자 이름. 라벨에 붙여 지정 상태를 캔버스에서 바로 본다.
   const maskBrushRef = useRef(maskBrushWidth);
   maskBrushRef.current = maskBrushWidth;
-  const maskFillRef = useRef(maskFill);
-  maskFillRef.current = maskFill;
+  // 주변 채우기 도구: 칠한 모양을 가이드에 쌓지 않고 바로 이 함수로 넘긴다.
+  const maskSinkRef = useRef(maskSink);
+  maskSinkRef.current = maskSink;
   const dragPreviewRef = useRef(null);
   // stage 핸들러는 mount 시점 클로저라 baseUrl은 ref로 읽어야 현재 페이지 key가 나온다.
   const baseUrlRef = useRef(baseUrl);
@@ -703,16 +704,24 @@ const EditorCanvas = forwardRef(function EditorCanvas({ image, baseUrl, guidance
   // 칠한 획·Shift+드래그 사각형·클릭 다각형을 보정 기록에 덧붙인다. R마다 기록 하나, R 지정 없는 기록 하나.
   // 칠한 곳은 결과 이미지에서 흰칠되고, 붙는 영역의 OCR 시트 crop에도 들어간다.
   function addCustomMaskShape(drag, end) {
+    const sink = maskSinkRef.current;
+    if (sink) {
+      if (drag.polygon) sink({ polygons: [drag.polygon] });
+      else if (drag.rect) {
+        const x1 = Math.min(drag.start.x, end.x), y1 = Math.min(drag.start.y, end.y);
+        const w = Math.abs(end.x - drag.start.x), h = Math.abs(end.y - drag.start.y);
+        if (w < 2 || h < 2) return false;
+        sink({ rects: [[x1, y1, w, h]] });
+      } else sink({ strokes: [{ points: drag.points, width: drag.width }] });
+      return true;
+    }
     const latest = guidanceRef.current || defaultGuidance(null);
     const list = [...(latest.custom_masks || [])];
     const region = maskTargetRegion();
-    const fill = maskFillRef.current === "dots" ? "dots" : "white";
-    // 채우기 방식이 다르면 기록을 따로 둔다(R마다 흰색 기록 하나, 주변 도트 기록 하나).
-    const index = list.findIndex((item) => (item.mode || "add") === "add" && (item.fill || "white") === fill && (region ? isRegionMaskRecord(item) && recordTargetsRegion(item, region) : !isRegionMaskRecord(item)));
+    const index = list.findIndex((item) => (item.mode || "add") === "add" && (region ? isRegionMaskRecord(item) && recordTargetsRegion(item, region) : !isRegionMaskRecord(item)));
     const entry = index >= 0 ? { ...list[index] } : {
       id: `custom_mask_${Date.now()}`,
       mode: "add",
-      ...(fill === "dots" ? { fill } : {}),
       ...(region ? {
         target_key: regionBindingKey(region),
         ...(region.region_instance_ref ? { instance_ref: region.region_instance_ref } : {}),
@@ -740,7 +749,7 @@ const EditorCanvas = forwardRef(function EditorCanvas({ image, baseUrl, guidance
     const label = region ? `R${regionId(region)} 지우기 보정` : "지우기 보정(자동 배정)";
     setGuidance(next, label);
     const count = (entry.strokes || []).length + (entry.rects || []).length + (entry.polygons || []).length;
-    setStatus(`${label} ${count}개 · 변경사항 적용 시 ${fill === "dots" ? "주변 도트 채우기" : "흰칠"}·OCR 반영`);
+    setStatus(`${label} ${count}개 · 변경사항 적용 시 흰칠·OCR 반영`);
     return true;
   }
 

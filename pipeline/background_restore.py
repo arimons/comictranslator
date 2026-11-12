@@ -478,7 +478,7 @@ def apply_restore_patches(image: np.ndarray, state_path: Path | None) -> int:
     return applied
 
 
-# ── 지우기 보정 후보정: 주변 도트로 채우기 ───────────────────────────────
+# ── 주변 도트로 채우기(배경 복원 패치 "dot-fill") ─────────────────────────
 
 DOT_TILE = 12       # 한 번에 채우는 타일 한 변
 DOT_RING = 6        # 타일 둘레에서 일치도를 보는 폭
@@ -541,24 +541,3 @@ def fill_dots_from_surroundings(image: np.ndarray, mask: np.ndarray) -> int:
                 known[ty:ty + h, tx:tx + w][tile] = 1.0
                 filled += 1
     return filled
-
-
-def apply_dots_corrections(image: np.ndarray, regions_json: Path | None) -> int:
-    """regions.json의 지우기 보정 보고(custom_masks_applied.dots_records)대로 최종 지우기 결과를 주변 도트로 후보정한다. 채운 타일 수 반환."""
-    if regions_json is None or not Path(regions_json).exists():
-        return 0
-    try:
-        data = json.loads(Path(regions_json).read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return 0
-    records = ((data.get("custom_masks_applied") or {}).get("dots_records")) if isinstance(data, dict) else None
-    if not records:
-        return 0
-    try:
-        from pipeline.dialogue_extractor import _custom_mask_shapes
-    except ImportError:
-        from dialogue_extractor import _custom_mask_shapes
-    mask = np.zeros(image.shape[:2], dtype=np.uint8)
-    for shape in _custom_mask_shapes(records, image.shape):
-        mask |= shape["mask"]
-    return fill_dots_from_surroundings(image, mask) if mask.any() else 0

@@ -527,21 +527,8 @@ def _custom_mask_ids(shapes: List[Dict[str, Any]]) -> List[str]:
     return list(dict.fromkeys(str(shape["record"].get("id")) for shape in shapes if shape["record"].get("id")))
 
 
-CUSTOM_MASK_FILLS = ("white", "dots")  # 기록의 fill: 기본 white(흰칠), dots(렌더 때 주변 도트로 후보정)
-
-
-def _custom_mask_fill(shape_or_record: Dict[str, Any]) -> str:
-    record = shape_or_record.get("record", shape_or_record)
-    fill = str(record.get("fill") or "white")
-    return fill if fill in CUSTOM_MASK_FILLS else "white"
-
-
 def _whiten_custom_masks(masked_image: np.ndarray, shapes: List[Dict[str, Any]]) -> Dict[str, Any] | None:
-    """칠한 곳을 결과 이미지에서 흰색으로 칠한다. 모든 지우기가 끝난 뒤 부른다.
-
-    fill이 dots인 기록도 여기서는 흰칠로 두고, 그 기록을 보고(dots_records)에 남긴다.
-    AI 지우기 패치까지 얹힌 최종 이미지에서의 주변 도트 후보정은 렌더가 맡는다(background_restore.apply_dots_corrections).
-    """
+    """칠한 곳을 결과 이미지에서 흰색으로 칠한다. 모든 지우기가 끝난 뒤 부른다."""
     if not shapes:
         return None
     union = np.zeros(masked_image.shape[:2], dtype=np.uint8)
@@ -551,13 +538,6 @@ def _whiten_custom_masks(masked_image: np.ndarray, shapes: List[Dict[str, Any]])
     report = {"mask_ids": _custom_mask_ids(shapes), "pixels": int(np.count_nonzero(union))}
     for kind in ("strokes", "rects", "polygons"):
         report[kind] = sum(1 for shape in shapes if shape["kind"] == kind)
-    dots = [shape for shape in shapes if _custom_mask_fill(shape) == "dots"]
-    if dots:
-        records = {id(shape["record"]): shape["record"] for shape in dots}
-        report["dots_records"] = [
-            {key: record.get(key) for key in ("id", "strokes", "rects", "polygons") if record.get(key)}
-            for record in records.values()
-        ]
     return report
 
 

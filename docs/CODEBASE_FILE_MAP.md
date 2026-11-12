@@ -631,3 +631,4 @@ OCR·번역 모델로 Gemini를 고른 세션의 이미지 작업(글자 지우�
 <!-- 2026-11-08 review: 쓰기 방향 자동 옵션 제거, layout writing_mode 기록과 첫 편집 때 방향 저장. 이 문서 내용 영향 없음 -->
 <!-- 변경 검토(2026-11-12): 지우기 보정에 fill: "dots" 추가. Step 3(`_whiten_custom_masks`)은 흰칠과 regions.json `custom_masks_applied.dots_records` 보존만 하고, 렌더(`render_text_overlay`)가 `background_restore.apply_dots_corrections`로 LaMa·AI 패치가 얹힌 이미지를 주변 도트로 후보정함. -->
 <!-- 변경 검토(2026-11-12): render_text_overlay.py에서 텍스트 기반 영역의 반투명 배경 박스(UNBOXED_*_BG_ALPHA, bg_alpha·bg_color 인자)를 제거함 -->
+<!-- 변경 검토(2026-11-12): 주변 도트 후보정을 지우기 보정(M)의 fill 모드에서 신규 도구 "주변 채우기"(P)로 분리함. `POST /api/restore/dot-fill`(app.py `apply_dot_fill_patch`)이 지금 지우기 결과를 `background_restore.fill_dots_from_surroundings`로 채워 배경 복원 패치(engine `dot-fill`)로 저장하고, 렌더는 기존 `apply_restore_patches`가 합성함. 렌더 시점 `apply_dots_corrections`와 regions.json `dots_records`는 제거함. -->

@@ -18,7 +18,7 @@ from PIL import Image, ImageDraw, ImageFont
 logger = logging.getLogger(__name__)
 
 try:
-    from pipeline.background_restore import apply_dots_corrections, apply_restore_patches
+    from pipeline.background_restore import apply_restore_patches
     from pipeline.region_refs import (
         SCHEME as REGION_REF_SCHEME,
         annotate_regions,
@@ -30,7 +30,7 @@ try:
         tg_digest,
     )
 except ImportError:
-    from background_restore import apply_dots_corrections, apply_restore_patches
+    from background_restore import apply_restore_patches
     from region_refs import (
         SCHEME as REGION_REF_SCHEME,
         annotate_regions,
@@ -5013,8 +5013,6 @@ def apply_text_overlay(
     )
     # 배경 복원 탭에서 확정한 패치(PNG)를 마스크 내부에만 합성한다. masked.jpg를 다시 저장하지 않는다.
     apply_restore_patches(image, restore_state_path)
-    # 지우기 보정 중 "주변 도트"는 LaMa·AI 패치가 모두 얹힌 이 이미지 위에서 후보정한다.
-    apply_dots_corrections(image, regions_json)
     applied_eraser_count = apply_overlay_eraser_rects(image, overlay_eraser_rects(overlay_guidance))
 
     prepared = prepare_page_layouts(

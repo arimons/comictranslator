@@ -62,6 +62,10 @@ def build_router(app_module) -> APIRouter:
     def restore_accept(req: app_module.RestoreAcceptRequest) -> dict[str, Any]:
         return app_module.accept_restore_job(req)
 
+    @router.post("/api/restore/dot-fill")
+    def restore_dot_fill(req: app_module.RestoreDotFillRequest) -> dict[str, Any]:
+        return app_module.apply_dot_fill_patch(req)
+
     @router.post("/api/restore/patch/remove")
     def restore_patch_remove(req: app_module.RestorePatchRemoveRequest) -> dict[str, Any]:
         return app_module.remove_restore_patch(req)

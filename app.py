@@ -441,6 +441,14 @@ class SfxLocateRequest(BaseModel):
     ocr_model: str | None = None  # 비우면 프로젝트의 OCR·번역 경로 모델로 찾는다
 
 
+class RestoreDotFillRequest(BaseModel):
+    session_id: str
+    image_id: str
+    strokes: list[dict[str, Any]] = []
+    rects: list[list[float]] = []
+    polygons: list[list[list[float]]] = []
+
+
 class RestorePatchRemoveRequest(BaseModel):
     session_id: str
     image_id: str
@@ -3281,6 +3289,51 @@ def prune_stale_region_ai_patches(record: dict[str, Any]) -> list[str]:
     if stale:
         write_restore_preview(record)
     return stale
+
+
+def apply_dot_fill_patch(req: RestoreDotFillRequest) -> dict[str, Any]:
+    """칠한 곳을 지금 지우기 결과(마스크 + 확정 패치)의 주변 도트로 채워 배경 복원 패치로 저장한다. 유료 호출 없음."""
+    import uuid
+
+    import cv2
+    import numpy as np
+
+    from pipeline.background_restore import fill_dots_from_surroundings
+    from pipeline.dialogue_extractor import _custom_mask_shapes
+
+    record = _restore_record(req.session_id, req.image_id)
+    image, _ = restore_source_image(record, "masked")
+    mask = np.zeros(image.shape[:2], dtype=np.uint8)
+    for shape in _custom_mask_shapes([{"strokes": req.strokes, "rects": req.rects, "polygons": req.polygons}], image.shape):
+        mask |= shape["mask"]
+    ys, xs = np.nonzero(mask)
+    if xs.size == 0:
+        raise HTTPException(status_code=400, detail="칠한 곳이 없습니다")
+    result = image.copy()
+    tiles = fill_dots_from_surroundings(result, mask)
+    if tiles == 0:
+        raise HTTPException(status_code=400, detail="주변에서 맞출 도트 조각을 찾지 못했습니다. 칠한 곳 둘레에 지워지지 않은 배경이 더 필요합니다")
+    x1, y1, x2, y2 = int(xs.min()), int(ys.min()), int(xs.max()) + 1, int(ys.max()) + 1
+    patch_id = f"dots_{uuid.uuid4().hex[:10]}"
+    patches_dir = Path(record["restore_dir"]) / "patches"
+    patches_dir.mkdir(parents=True, exist_ok=True)
+    cv2.imwrite(str(patches_dir / f"{patch_id}_patch.png"), result[y1:y2, x1:x2])
+    cv2.imwrite(str(patches_dir / f"{patch_id}_mask.png"), mask[y1:y2, x1:x2])
+    patch = {
+        "id": patch_id,
+        "engine": "dot-fill",
+        "rect": [x1, y1, x2 - x1, y2 - y1],
+        "patch_png": f"patches/{patch_id}_patch.png",
+        "mask_png": f"patches/{patch_id}_mask.png",
+        "params": {"tiles": tiles},
+        "accepted_at": dt.datetime.now().isoformat(timespec="seconds"),
+    }
+    with _RESTORE_STATE_LOCK:
+        state = _restore_state(record)
+        state["patches"] = [*state.get("patches", []), patch]
+        write_json(record["restore_state_json"], state)
+    write_restore_preview(record)
+    return restore_info(record)
 
 
 def remove_restore_patch(req: RestorePatchRemoveRequest) -> dict[str, Any]:

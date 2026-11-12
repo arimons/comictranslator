@@ -11,6 +11,7 @@ export const TOOL_LABELS = [
   ["region-split", "영역 분할"],
   ["ubox", "텍스트 기반 영역"],
   ["mask", "지우기 보정"],
+  ["dots", "주변 채우기"],
 ];
 
 // 단축키는 keymap.js가 단일 정의다.
@@ -24,6 +25,7 @@ export const TOOL_ICONS = {
   ubox: "□",
   bubble: "●",
   mask: "✎",
+  dots: "▦",
 };
 
 export const OVERLAY_HANDLE_NAMES = ["nw", "n", "ne", "e", "se", "s", "sw", "w"];

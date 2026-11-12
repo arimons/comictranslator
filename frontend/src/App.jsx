@@ -98,9 +98,12 @@ const TOOL_HINTS = {
   bubble: "말풍선 안쪽 빈 곳을 클릭하세요",
   "region-split": "나눌 경계를 따라 선을 그으세요",
   ubox: "글자를 감싸도록 상자를 드래그하세요",
+  dots: "지워진 배경에서 어색한 곳을 칠하면 주변 도트로 바로 채웁니다 · 클릭은 점, 드래그는 붓, Shift+클릭은 다각형(첫 점·Enter로 닫기), Shift+드래그는 사각형",
   mask: "놓친 곳을 칠하세요(흰칠 + OCR 반영) · 클릭은 점, 드래그는 붓, Shift+클릭은 다각형(첫 점·Enter로 닫기), Shift+드래그는 사각형",
 };
 // 지우기 보정 붓 굵기(원본 px) 단계. [ ]로 한 단계씩 바꾼다.
+// 주변 채우기 도구에서는 글자·TG·R 표시를 모두 끄고 지워진 마스크 화면만 보여 준다.
+const DOTS_VIEW_LAYERS = { tg: false, regions: false, guidance: false };
 const MASK_BRUSH_STEPS = [2, 4, 6, 8, 12, 16, 24, 32, 48, 64];
 
 
@@ -132,7 +135,10 @@ export default function App() {
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [tool, setTool] = useState("select");
   const [maskBrushWidth, setMaskBrushWidth] = useState(12);
-  const [maskFill, setMaskFill] = useState("white");
+  const [dotsBusy, setDotsBusy] = useState(false);
+  const dotsBusyRef = useRef(false);
+  const [lastDotPatchId, setLastDotPatchId] = useState(null);
+  useEffect(() => { setLastDotPatchId(null); }, [selectedId]);
   const [selectedTg, setSelectedTg] = useState(null);
   const [selectedGuidanceRegionId, setSelectedGuidanceRegionId] = useState(null);
   const [selectedRegionId, setSelectedRegionId] = useState(null);
@@ -1181,8 +1187,8 @@ export default function App() {
 
   const shortcutConditions = {
     regionSelected: () => Boolean(selectedRegionRefValue()),
-    maskTool: () => activeTab === "guidance" && tool === "mask",
-    maskPolygon: () => activeTab === "guidance" && tool === "mask" && Boolean(editorCanvasRef.current?.hasMaskPolygon()),
+    maskTool: () => activeTab === "guidance" && (tool === "mask" || tool === "dots"),
+    maskPolygon: () => activeTab === "guidance" && (tool === "mask" || tool === "dots") && Boolean(editorCanvasRef.current?.hasMaskPolygon()),
     nothingSelected: () => {
       if (activeTab === "overlay") return !selectedRegionRefValue() && !overlayCanvasRef.current?.hasSelectedEraser();
       if (activeTab === "guidance") return selectedTg == null && selectedGuidanceRegionId == null;
@@ -2301,6 +2307,44 @@ export default function App() {
       : "지우기 보정(자동 배정) · 칠한 곳은 흰칠되고 가장 많이 겹치는 영역의 OCR에 들어갑니다");
   }
 
+  // 주변 채우기: 칠한 모양을 서버로 보내 지금 지우기 결과의 주변 도트로 채운 패치를 만든다. 유료 호출 없음.
+  // 결과는 바로 왼쪽 마스크 미리보기와 이 캔버스에 반영되고, 글자 입히기 렌더에도 쓰인다.
+  async function fillDotsShape(shape) {
+    if (dotsBusyRef.current || !selected?.id) return;
+    dotsBusyRef.current = true;
+    setDotsBusy(true);
+    try {
+      const info = await api("/api/restore/dot-fill", { method: "POST", body: JSON.stringify({ session_id: sessionId, image_id: selected.id, ...shape }) });
+      const dots = (info.patches || []).filter((p) => p.engine === "dot-fill");
+      setLastDotPatchId(dots.length ? dots[dots.length - 1].id : null);
+      await reloadSelectedPage();
+      setStatus("주변 도트로 채웠습니다. 왼쪽 마스크 미리보기에 반영됐습니다.");
+    } catch (exc) {
+      setStatus(String(exc.message || exc));
+    } finally {
+      dotsBusyRef.current = false;
+      setDotsBusy(false);
+    }
+  }
+
+  async function undoDotFill() {
+    if (!lastDotPatchId || dotsBusyRef.current || !selected?.id) return;
+    dotsBusyRef.current = true;
+    setDotsBusy(true);
+    try {
+      const info = await api("/api/restore/patch/remove", { method: "POST", body: JSON.stringify({ session_id: sessionId, image_id: selected.id, patch_id: lastDotPatchId }) });
+      const dots = (info.patches || []).filter((p) => p.engine === "dot-fill");
+      setLastDotPatchId(dots.length ? dots[dots.length - 1].id : null);
+      await reloadSelectedPage();
+      setStatus("방금 채운 곳을 되돌렸습니다.");
+    } catch (exc) {
+      setStatus(String(exc.message || exc));
+    } finally {
+      dotsBusyRef.current = false;
+      setDotsBusy(false);
+    }
+  }
+
   // 입력칸을 벗어나면 저장한다. 번역은 실행하지 않는다.
   // 화자·번역 메모를 바꾼 뒤 이 페이지만 OCR·번역을 다시 돌린다(OCR 탭의 Force Current와 같음).
   // 적어 둔 메모가 아직 저장 전이면 먼저 저장해 이번 번역에 들어가게 한다.
@@ -2768,12 +2812,13 @@ export default function App() {
                 <EditorCanvas
                   ref={editorCanvasRef}
                   image={selected}
-                  baseUrl={guidanceEditorUrl}
+                  baseUrl={tool === "dots" ? (selected?.restore_preview_url || selected?.masked_url || guidanceEditorUrl) : guidanceEditorUrl}
                   guidance={guidance}
                   stale={guidanceDirty}
                   setGuidance={setGuidanceTracked}
-                  tool={tool}
-                  layers={layers}
+                  tool={tool === "dots" ? "mask" : tool}
+                  layers={tool === "dots" ? DOTS_VIEW_LAYERS : layers}
+                  maskSink={tool === "dots" ? fillDotsShape : null}
                   selectedTg={selectedTg}
                 setSelectedTg={setSelectedTg}
                 selectedRegionId={selectedGuidanceRegionId}
@@ -2781,7 +2826,6 @@ export default function App() {
                 onToolComplete={() => setTool("select")}
                 setStatus={setStatus}
                 maskBrushWidth={maskBrushWidth}
-                maskFill={maskFill}
               />
               <div className="guidance-ai-dock">
         <AiErasePanel
@@ -2849,11 +2893,8 @@ export default function App() {
               </FloatingPanel> : null}
               {TOOL_HINTS[tool] && !selected?.processing_excluded ? <div className="tool-hint" role="status">
                 <strong>{TOOL_LABELS.find(([id]) => id === tool)?.[1]} <kbd>{shortcutFor("guidance", "tool", tool)}</kbd></strong>
-                <span>{tool === "mask" ? `${TOOL_HINTS.mask} · 굵기 ${maskBrushWidth}px ([ ])` : TOOL_HINTS[tool]}</span>
-                {tool === "mask" ? <span className="mask-fill-choice" role="group" aria-label="칠한 곳 채우기 방식">
-                  <button type="button" className={maskFill === "white" ? "active" : ""} onClick={() => setMaskFill("white")} title="칠한 곳을 흰색으로 덮습니다. 말풍선 안이나 민무늬 배경에 알맞습니다">흰색</button>
-                  <button type="button" className={maskFill === "dots" ? "active" : ""} onClick={() => setMaskFill("dots")} title="같은 행 부근의 글자 없는 도트 조각을 복사해 채웁니다. 도트·망점 배경에 알맞고 규칙적인 줄무늬나 선화에는 어색할 수 있습니다">주변 도트</button>
-                </span> : null}
+                <span>{tool === "mask" || tool === "dots" ? `${TOOL_HINTS[tool]} · 굵기 ${maskBrushWidth}px ([ ])` : TOOL_HINTS[tool]}</span>
+                {tool === "dots" ? <button type="button" onClick={undoDotFill} disabled={dotsBusy || !lastDotPatchId} title="방금 채운 곳을 되돌립니다">되돌리기</button> : null}
                 <em>Esc 취소</em>
               </div> : null}
               <div className="floating-toolbox" aria-label="영역 분석 도구">

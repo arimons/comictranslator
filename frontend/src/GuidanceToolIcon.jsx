@@ -9,6 +9,7 @@ export default function GuidanceToolIcon({ tool }) {
     'region-split':<><rect x="3" y="4" width="18" height="16" rx="4" /><path d="m17 2-10 20" strokeDasharray="3 3" /></>,
     ubox:<><path d="M8 3H3v5m13-5h5v5M3 16v5h5m13-5v5h-5M8 8h8m-4 0v9m-2 0h4" /></>,
     mask:<><path d="M15 4l5 5-8 8-5-5Z" /><path d="M7 12c-3 1-4 3-4 8 3 0 6-1 8-4" /></>,
+    dots:<><rect x="3" y="3" width="18" height="18" rx="2" /><path d="M8 8h.01M12 8h.01M16 8h.01M8 12h.01M16 12h.01M8 16h.01M12 16h.01M16 16h.01" strokeWidth="2.6" /><path d="M12 12h.01" /></>,
     bubble:<><path d="M20 9c2 5-2 11-8 11H5l-3 2 1-6C-1 7 5 2 12 3c4 0 7 2 8 6Z" /><circle cx="12" cy="11" r="2" fill="currentColor" /></>,
   };
   return <svg viewBox="0 0 24 24" width="19" height="19" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" focusable="false">{paths[tool]}</svg>;

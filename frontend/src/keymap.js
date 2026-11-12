@@ -59,6 +59,7 @@ export const KEYMAP = [
   { id: "guidance.tool.region-split", context: "guidance", group: "도구", label: "영역 분할", kind: "key", keys: [["S"]], match: { code: "KeyS" }, action: "tool", arg: "region-split" },
   { id: "guidance.tool.ubox", context: "guidance", group: "도구", label: "텍스트 기반 영역", kind: "key", keys: [["U"]], match: { code: "KeyU" }, action: "tool", arg: "ubox" },
   { id: "guidance.tool.mask", context: "guidance", group: "도구", label: "지우기 보정: 놓친 곳을 칠해 흰칠하고 영역의 OCR 마스크에 더하기 (선택한 R, 없으면 가장 많이 겹치는 영역)", kind: "key", keys: [["M"]], match: { code: "KeyM" }, action: "tool", arg: "mask" },
+  { id: "guidance.tool.dots", context: "guidance", group: "도구", label: "주변 채우기: 지워진 마스크 화면에서 어색한 곳을 칠하면 주변 도트로 바로 채움 (배경 복원 패치로 저장)", kind: "key", keys: [["P"]], match: { code: "KeyP" }, action: "tool", arg: "dots" },
   { id: "guidance.mask.brushSmaller", context: "guidance", group: "도구", label: "지우기 보정 붓 굵기 줄이기", kind: "key", when: ["maskTool"], keys: [["["]], match: { code: "BracketLeft" }, action: "guidance.maskBrush", arg: -1 },
   { id: "guidance.mask.brushBigger", context: "guidance", group: "도구", label: "지우기 보정 붓 굵기 키우기", kind: "key", when: ["maskTool"], keys: [["]"]], match: { code: "BracketRight" }, action: "guidance.maskBrush", arg: 1 },
   { id: "guidance.mask.rect", context: "guidance", group: "도구", label: "지우기 보정: 사각형으로 칠하기", kind: "pointer", keys: [["Shift", "드래그"]] },

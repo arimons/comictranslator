@@ -180,33 +180,41 @@ def _dot_page():
 POLY = [[78, 78], [122, 78], [122, 112], [78, 112]]
 
 
-def test_dots_record_is_whitened_in_step3_and_reported_for_render():
-    from pipeline.dialogue_extractor import _whiten_custom_masks
-
-    page = _dot_page()
-    masked = page.copy()
-    shapes = _custom_mask_shapes([{"id": "d", "fill": "dots", "polygons": [POLY]}, {"id": "w", "polygons": [POLY]}], page.shape)
-    report = _whiten_custom_masks(masked, shapes)
-    assert (masked[85:105, 85:115] == 255).all()
-    assert [r["id"] for r in report["dots_records"]] == ["d"] and report["dots_records"][0]["polygons"] == [POLY]
-
-
-def test_dots_correction_refills_the_final_result_from_its_own_surroundings(tmp_path):
-    from pipeline.background_restore import apply_dots_corrections, fill_dots_from_surroundings
+def test_dot_fill_refills_a_smudged_result_from_its_own_surroundings():
+    from pipeline.background_restore import fill_dots_from_surroundings
 
     expected = _dot_page()
     result = expected.copy()
     result[80:110, 80:120] = (200, 200, 200)  # AI 후보가 남긴 회색 번짐
     result[92:96, 90:110] = (0, 0, 0)         # 글자 흔적
-    regions = tmp_path / "regions.json"
-    regions.write_text(json.dumps({"custom_masks_applied": {"dots_records": [{"id": "d", "polygons": [POLY]}]}}), encoding="utf-8")
-    assert apply_dots_corrections(result, regions) > 0
+    mask = np.zeros((200, 200), dtype=np.uint8)
+    cv2.fillPoly(mask, [np.array(POLY, dtype=np.int32)], 255)
+    assert fill_dots_from_surroundings(result, mask) > 0
     area = (slice(80, 110), slice(80, 120))
     assert float(np.abs(result[area].astype(int) - expected[area].astype(int)).mean()) < 15
     assert np.array_equal(result[:70], expected[:70])
-    # 기록이 없거나 파일이 없으면 아무것도 하지 않는다.
-    untouched = expected.copy()
-    assert apply_dots_corrections(untouched, tmp_path / "none.json") == 0 and np.array_equal(untouched, expected)
     # 쪽 전체를 칠해 둘레 근거가 없으면 그대로 둔다.
-    mask = np.full((200, 200), 255, dtype=np.uint8)
-    assert fill_dots_from_surroundings(untouched, mask) == 0 and np.array_equal(untouched, expected)
+    untouched = expected.copy()
+    assert fill_dots_from_surroundings(untouched, np.full((200, 200), 255, dtype=np.uint8)) == 0
+    assert np.array_equal(untouched, expected)
+
+
+def test_dot_fill_patch_is_saved_as_a_restore_patch_and_composited(tmp_path, monkeypatch):
+    import app
+    from pipeline.background_restore import apply_restore_patches
+
+    page = _dot_page()
+    masked = page.copy()
+    masked[80:110, 80:120] = 255
+    record = {"restore_dir": str(tmp_path / "restore"), "restore_state_json": str(tmp_path / "restore" / "state.json")}
+    monkeypatch.setattr(app, "_restore_record", lambda sid, iid: record)
+    monkeypatch.setattr(app, "restore_source_image", lambda rec, source: (masked.copy(), "masked"))
+    monkeypatch.setattr(app, "write_restore_preview", lambda rec: None)
+    monkeypatch.setattr(app, "restore_info", lambda rec: {"state": app._restore_state(rec)})
+    app.apply_dot_fill_patch(app.RestoreDotFillRequest(session_id="s", image_id="i", polygons=[POLY]))
+    patches = app._restore_state(record)["patches"]
+    assert len(patches) == 1 and patches[0]["engine"] == "dot-fill" and patches[0]["rect"][:2] == [78, 78]
+    out = masked.copy()
+    assert apply_restore_patches(out, Path(record["restore_state_json"])) == 1
+    area = (slice(82, 108), slice(82, 118))
+    assert float(np.abs(out[area].astype(int) - page[area].astype(int)).mean()) < 15
