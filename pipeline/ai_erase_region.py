@@ -90,8 +90,11 @@ def all_regions_patch_mask(page: np.ndarray, regions: list[dict], extra_rects: l
 
 
 SFX_DARK_LEVEL = 110       # 이보다 어두운 화소를 획 후보로 본다
-SFX_OPEN_PX = 9            # 이보다 얇은 것(점 톤의 점, 가는 선)은 지우고 굵은 획만 남긴다
-SFX_PAD_PX = 21            # 굵은 획 둘레로 넓히는 폭(글자 둘레의 흰 테두리까지 덮는다)
+SFX_OPEN_PX = 7            # 이보다 얇은 것(점 톤의 점, 가는 선)은 지우고 굵은 획만 남긴다(9로 하면 효과음의 얇은 가로획이 떨어져 나간다)
+SFX_TIP_PX = 31            # 굵은 획에서 이 거리 안의 어두운 화소는 획 끝으로 보고 되살린다
+SFX_BORDER_SPAN = 0.9      # 획 덩어리가 박스 가로·세로의 이 비율 이상을 가로지르면서 가늘면 컷 테두리로 보고 뺀다
+SFX_BORDER_THIN = 0.14
+SFX_PAD_PX = 33            # 굵은 획 둘레로 넓히는 폭(획 끝과 글자 둘레의 흰 테두리까지 덮는다)
 SFX_MIN_COVER = 0.02       # 굵은 획이 박스 면적의 이 비율 미만이면 못 찾은 것으로 보고 박스 전체를 칠한다
 
 
@@ -106,9 +109,19 @@ def sfx_stroke_mask(page: np.ndarray, rect: list[int]) -> np.ndarray:
     gray = cv2.cvtColor(page[y1:y2, x1:x2], cv2.COLOR_BGR2GRAY)
     dark = (gray < SFX_DARK_LEVEL).astype(np.uint8) * 255
     strokes = cv2.morphologyEx(dark, cv2.MORPH_OPEN, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (SFX_OPEN_PX, SFX_OPEN_PX)))
+    # 컷 테두리 같은 길고 가는 덩어리는 효과음 획이 아니므로 뺀다
+    count, labels, stats, _ = cv2.connectedComponentsWithStats(strokes)
+    bh, bw = strokes.shape
+    for lab in range(1, count):
+        cw, ch = stats[lab, cv2.CC_STAT_WIDTH], stats[lab, cv2.CC_STAT_HEIGHT]
+        if (cw >= SFX_BORDER_SPAN * bw and ch <= SFX_BORDER_THIN * bh) or (ch >= SFX_BORDER_SPAN * bh and cw <= SFX_BORDER_THIN * bw):
+            strokes[labels == lab] = 0
     if np.count_nonzero(strokes) < SFX_MIN_COVER * strokes.size:
         mask[y1:y2, x1:x2] = 255
         return mask
+    # 획 끝은 가늘게 빠져서 열기에 잘려 나가므로, 굵은 획 가까이에 있는 어두운 화소(끝부분)를 되살린 뒤 넓힌다
+    near = cv2.dilate(strokes, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (SFX_TIP_PX, SFX_TIP_PX)))
+    strokes = cv2.bitwise_or(strokes, cv2.bitwise_and(dark, near))
     grown = cv2.dilate(strokes, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (SFX_PAD_PX, SFX_PAD_PX)))
     mask[y1:y2, x1:x2] = grown
     return mask

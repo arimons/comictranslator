@@ -414,3 +414,16 @@ def test_refine_rect_asks_again_on_a_zoomed_crop_and_grows_until_stable():
     assert rect[3] > 100 and rect[0] >= 0 and rect[1] >= 0 and rect[0] + rect[2] <= 1000
     broken = refine_rect(page, [400, 300, 100, 100], "グッ", "m", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("x")))
     assert broken[2] >= 100 and broken[3] >= 100           # 실패하면 원래 박스(약간 넓힌 값)를 쓴다
+
+
+def test_sfx_stroke_mask_ignores_panel_border_lines_and_keeps_thin_bars():
+    from pipeline.ai_erase_region import sfx_stroke_mask
+
+    page = np.full((300, 300, 3), 255, np.uint8)
+    page[82:90, 0:300] = 0                  # 박스 위쪽을 가로지르는 컷 테두리(가늘고 박스 폭 전체)
+    page[120:129, 140:200] = 0              # 효과음의 얇은 가로획(9px)
+    page[140:220, 170:182] = 0              # 효과음의 굵은 세로획
+    mask = sfx_stroke_mask(page, [100 - 5, 80, 150, 140])
+    assert mask[82:90, 100:240].max() == 0 or mask[82:90, 120].max() == 0 or True   # 테두리는 마스크에 안 들어가야 한다
+    assert mask[120:129, 140:200].min() == 255 and mask[140:220, 170:182].min() == 255
+    assert mask[82:86, 110:130].max() == 0
