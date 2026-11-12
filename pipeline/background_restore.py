@@ -476,3 +476,89 @@ def apply_restore_patches(image: np.ndarray, state_path: Path | None) -> int:
         region[m] = pixels[m]
         applied += 1
     return applied
+
+
+# ── 지우기 보정 후보정: 주변 도트로 채우기 ───────────────────────────────
+
+DOT_TILE = 12       # 한 번에 채우는 타일 한 변
+DOT_RING = 6        # 타일 둘레에서 일치도를 보는 폭
+DOT_SEARCH_DY = 24  # 같은 행 부근으로 보는 세로 허용 범위
+DOT_SEARCH_DX = 60  # 칠한 곳 좌우로 조각을 찾는 가로 범위
+DOT_MIN_KNOWN = 30  # 둘레에서 이미 알려진 픽셀이 이보다 적으면 비교할 근거가 없어 그대로 둔다
+
+
+def fill_dots_from_surroundings(image: np.ndarray, mask: np.ndarray) -> int:
+    """이미 지워진 결과 이미지에서, 칠한 곳(mask)을 같은 행 부근의 칠하지 않은 조각으로 다시 채운다(in-place). 채운 타일 수를 돌려준다.
+
+    래스터 순서 타일마다, 알려진 둘레(칠하지 않은 곳과 먼저 채운 타일)와 가장 비슷한 조각을
+    cv2.matchTemplate(TM_SQDIFF, 마스크 지원)로 찾아 복사한다. 근거가 없는 타일은 그대로 둔다.
+    """
+    img_h, img_w = mask.shape
+    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY).astype(np.float32)
+    outside = (cv2.dilate((mask > 0).astype(np.uint8), np.ones((3, 3), np.uint8)) == 0)
+    known = outside.astype(np.float32)   # 둘레 비교에 쓸 수 있는 곳. 채운 타일은 아래에서 더한다.
+    source_ok = outside.astype(np.float32)
+    work = gray.copy()
+    source = image.copy()                # 조각은 후보정 전 결과에서 가져온다
+    T, R = DOT_TILE, DOT_RING
+    th = tw = T + 2 * R
+    filled = 0
+    count, labels, stats, _ = cv2.connectedComponentsWithStats((mask > 0).astype(np.uint8), connectivity=8)
+    for label in range(1, count):
+        bx, by, bw, bh = (int(v) for v in stats[label][:4])
+        sx0, sx1 = max(0, bx - R - DOT_SEARCH_DX), min(img_w, bx + bw + R + DOT_SEARCH_DX)
+        for ty in range(by, by + bh, T):
+            for tx in range(bx, bx + bw, T):
+                tile = labels[ty:ty + T, tx:tx + T] == label
+                if not tile.any():
+                    continue
+                y0, x0 = ty - R, tx - R
+                if y0 < 0 or x0 < 0 or y0 + th > img_h or x0 + tw > img_w:
+                    continue
+                tmpl = work[y0:y0 + th, x0:x0 + tw].copy()
+                tmask = known[y0:y0 + th, x0:x0 + tw].copy()
+                tmask[R:R + T, R:R + T] = 0
+                total = float(tmask.sum())
+                if total < DOT_MIN_KNOWN:
+                    continue
+                sy0, sy1 = max(0, y0 - DOT_SEARCH_DY), min(img_h, y0 + th + DOT_SEARCH_DY)
+                if sy1 - sy0 < th or sx1 - sx0 < tw:
+                    continue
+                score = cv2.matchTemplate(work[sy0:sy1, sx0:sx1], tmpl, cv2.TM_SQDIFF, mask=tmask) / total
+                # 조각 전체가 칠하지 않은 원래 픽셀인 위치만 쓴다.
+                window = cv2.boxFilter(source_ok[sy0:sy1, sx0:sx1], -1, (tw, th), anchor=(0, 0), normalize=False,
+                                       borderType=cv2.BORDER_CONSTANT)[:score.shape[0], :score.shape[1]]
+                score[window < th * tw - 0.5] = np.inf
+                if not np.isfinite(score).any():
+                    continue
+                iy, ix = np.unravel_index(int(np.argmin(score)), score.shape)
+                src_y, src_x = sy0 + iy + R, sx0 + ix + R
+                dst = image[ty:ty + T, tx:tx + T]
+                h, w = dst.shape[:2]
+                tile = tile[:h, :w]
+                dst[tile] = source[src_y:src_y + h, src_x:src_x + w][tile]
+                work[ty:ty + h, tx:tx + w][tile] = gray[src_y:src_y + h, src_x:src_x + w][tile]
+                known[ty:ty + h, tx:tx + w][tile] = 1.0
+                filled += 1
+    return filled
+
+
+def apply_dots_corrections(image: np.ndarray, regions_json: Path | None) -> int:
+    """regions.json의 지우기 보정 보고(custom_masks_applied.dots_records)대로 최종 지우기 결과를 주변 도트로 후보정한다. 채운 타일 수 반환."""
+    if regions_json is None or not Path(regions_json).exists():
+        return 0
+    try:
+        data = json.loads(Path(regions_json).read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return 0
+    records = ((data.get("custom_masks_applied") or {}).get("dots_records")) if isinstance(data, dict) else None
+    if not records:
+        return 0
+    try:
+        from pipeline.dialogue_extractor import _custom_mask_shapes
+    except ImportError:
+        from dialogue_extractor import _custom_mask_shapes
+    mask = np.zeros(image.shape[:2], dtype=np.uint8)
+    for shape in _custom_mask_shapes(records, image.shape):
+        mask |= shape["mask"]
+    return fill_dots_from_surroundings(image, mask) if mask.any() else 0

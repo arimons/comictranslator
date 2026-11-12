@@ -169,7 +169,7 @@ def test_changing_custom_masks_disables_unboxed_inpaint_reuse():
 
 
 def _dot_page():
-    """4px 간격 도트 무늬 위에 검은 글자 덩어리가 있는 쪽."""
+    """4px 간격 도트 무늬 쪽."""
     image = np.full((200, 200, 3), 255, dtype=np.uint8)
     for y in range(0, 200, 4):
         for x in range(0, 200, 4):
@@ -177,38 +177,36 @@ def _dot_page():
     return image
 
 
-def test_dots_fill_continues_the_dot_pattern_instead_of_white():
+POLY = [[78, 78], [122, 78], [122, 112], [78, 112]]
+
+
+def test_dots_record_is_whitened_in_step3_and_reported_for_render():
     from pipeline.dialogue_extractor import _whiten_custom_masks
 
     page = _dot_page()
-    expected = page.copy()
-    page[80:110, 80:120] = (0, 0, 0)  # 글자
     masked = page.copy()
-    polygon = [[78, 78], [122, 78], [122, 112], [78, 112]]
-    shapes = _custom_mask_shapes([{"id": "d", "fill": "dots", "polygons": [polygon]}], page.shape)
-    report = _whiten_custom_masks(masked, shapes, page)
+    shapes = _custom_mask_shapes([{"id": "d", "fill": "dots", "polygons": [POLY]}, {"id": "w", "polygons": [POLY]}], page.shape)
+    report = _whiten_custom_masks(masked, shapes)
+    assert (masked[85:105, 85:115] == 255).all()
+    assert [r["id"] for r in report["dots_records"]] == ["d"] and report["dots_records"][0]["polygons"] == [POLY]
+
+
+def test_dots_correction_refills_the_final_result_from_its_own_surroundings(tmp_path):
+    from pipeline.background_restore import apply_dots_corrections, fill_dots_from_surroundings
+
+    expected = _dot_page()
+    result = expected.copy()
+    result[80:110, 80:120] = (200, 200, 200)  # AI 후보가 남긴 회색 번짐
+    result[92:96, 90:110] = (0, 0, 0)         # 글자 흔적
+    regions = tmp_path / "regions.json"
+    regions.write_text(json.dumps({"custom_masks_applied": {"dots_records": [{"id": "d", "polygons": [POLY]}]}}), encoding="utf-8")
+    assert apply_dots_corrections(result, regions) > 0
     area = (slice(80, 110), slice(80, 120))
-    assert report["dots_tiles"] > 0 and report["dots_pixels"] > 0
-    assert int(masked[area].min()) >= 90  # 글자색이 남지 않는다
-    assert float(np.abs(masked[area].astype(int) - expected[area].astype(int)).mean()) < 15  # 흰칠이면 평균 차가 70 안팎
-    assert np.array_equal(masked[:70], page[:70])  # 칠하지 않은 곳은 그대로
-
-
-def test_default_fill_stays_white_and_dots_without_source_falls_back_to_white():
-    from pipeline.dialogue_extractor import _whiten_custom_masks
-
-    page = _dot_page()
-    page[80:110, 80:120] = (0, 0, 0)
-    masked = page.copy()
-    polygon = [[78, 78], [122, 78], [122, 112], [78, 112]]
-    report = _whiten_custom_masks(masked, _custom_mask_shapes([{"id": "w", "polygons": [polygon]}], page.shape), page)
-    assert "dots_tiles" not in report and (masked[85:105, 85:115] == 255).all()
-    # 알 수 없는 fill 값은 흰칠로 본다.
-    masked = page.copy()
-    report = _whiten_custom_masks(masked, _custom_mask_shapes([{"id": "x", "fill": "weird", "polygons": [polygon]}], page.shape), page)
-    assert "dots_tiles" not in report and (masked[85:105, 85:115] == 255).all()
-    # 쪽 가장자리를 통째로 칠해 둘레 근거가 없으면 흰색으로 남는다.
-    masked = page.copy()
-    whole = [[0, 0], [199, 0], [199, 199], [0, 199]]
-    report = _whiten_custom_masks(masked, _custom_mask_shapes([{"id": "y", "fill": "dots", "polygons": [whole]}], page.shape), page)
-    assert report["dots_tiles"] == 0 and (masked == 255).all()
+    assert float(np.abs(result[area].astype(int) - expected[area].astype(int)).mean()) < 15
+    assert np.array_equal(result[:70], expected[:70])
+    # 기록이 없거나 파일이 없으면 아무것도 하지 않는다.
+    untouched = expected.copy()
+    assert apply_dots_corrections(untouched, tmp_path / "none.json") == 0 and np.array_equal(untouched, expected)
+    # 쪽 전체를 칠해 둘레 근거가 없으면 그대로 둔다.
+    mask = np.full((200, 200), 255, dtype=np.uint8)
+    assert fill_dots_from_surroundings(untouched, mask) == 0 and np.array_equal(untouched, expected)
