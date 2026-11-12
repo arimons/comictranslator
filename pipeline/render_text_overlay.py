@@ -96,9 +96,10 @@ UNBOXED_DARK_BG_ALPHA = 0      # 외곽선으로 가독성 확보, 배경 박스
 UNBOXED_TG_FALLBACK_FONT_SCALE = 0.90
 SPLIT_PARENT_FONT_CAP_RATIO = 1.20
 BUBBLE_BG_ALPHA = 0
-# 외곽선 기본 두께. 2 이상이면 이웃 글자의 외곽선이 붙어 겹쳐 보여 1로 둔다(박스별로 바꿀 수 있다).
+# 외곽선 기본 두께: 밝은 배경은 1, 어두운 배경(검정 글자 + 흰 외곽선)은 2. 어두운 배경에서는 외곽선이 얇으면 글자가 묻혀
+# 두께 2가 알맞다. 2 이상이면 이웃 글자의 외곽선이 붙으므로 자간을 (두께 - 1)px 넓혀 보정한다(박스별로 바꿀 수 있다).
 TEXT_STROKE_WIDTH = 1
-DARK_TEXT_STROKE_WIDTH = 1
+DARK_TEXT_STROKE_WIDTH = 2
 
 
 @dataclass

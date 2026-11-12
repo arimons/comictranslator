@@ -59,6 +59,38 @@ function ColorLetterIcon({ color, outlined }) {
 
 const COLOR_PRESETS = [["#000000", "검정"], ["#ffffff", "흰색"]];
 
+// 스타일 프리셋: 글자색·외곽선색·외곽선 두께를 한 번에 맞춘다. 기본값도 같은 기준이다(밝은 배경 1, 어두운 배경 2).
+const STYLE_PRESETS = [
+  { id: "light-bg", label: "밝은 배경", hint: "검정 글자 · 흰 외곽선 1", style: { font_color: "#000000", stroke_color: "#ffffff", stroke_width: 1 } },
+  { id: "dark-bg", label: "어두운 배경", hint: "검정 글자 · 흰 외곽선 2", style: { font_color: "#000000", stroke_color: "#ffffff", stroke_width: 2 } },
+];
+// 직전에 쓴 글꼴·색·외곽선 조합을 기억해 다른 박스에 한 번에 붙인다. 브라우저에 저장하며 프로젝트와 무관하다.
+const LAST_STYLE_KEY = "overlay-last-style";
+const LAST_STYLE_KEYS = ["font_style", "font_path", "custom_font_path", "font_weight", "font_color", "stroke_color", "stroke_width"];
+
+function readLastStyle() {
+  try {
+    const value = JSON.parse(window.localStorage.getItem(LAST_STYLE_KEY) || "null");
+    return value && typeof value === "object" ? value : null;
+  } catch {
+    return null;
+  }
+}
+
+function writeLastStyle(value) {
+  try { window.localStorage.setItem(LAST_STYLE_KEY, JSON.stringify(value)); } catch { /* 저장소를 못 쓰면 이번 화면에서만 유지 */ }
+}
+
+function describeLastStyle(style) {
+  if (!style) return "아직 기억한 스타일이 없습니다";
+  const parts = [];
+  if (style.font_style) parts.push(style.font_style);
+  if (style.font_color) parts.push(`글자 ${style.font_color}`);
+  if (style.stroke_color) parts.push(`외곽선 ${style.stroke_color}`);
+  if (style.stroke_width !== undefined && style.stroke_width !== "") parts.push(`두께 ${style.stroke_width}`);
+  return parts.length ? `직전 스타일: ${parts.join(" · ")}` : "아직 기억한 스타일이 없습니다";
+}
+
 // 제자리 편집 글꼴: 렌더가 쓰는 폰트 파일(/fonts/<이름>)을 FontFace로 한 번만 불러 둔다.
 const editorFontFaces = new Map();
 const editorFontListeners = new Set();
@@ -167,6 +199,7 @@ const OverlayCanvas = forwardRef(function OverlayCanvas({ image, overlayGuidance
   const dragSeqRef = useRef(0);
   const [viewTick, setViewTick] = useState(0);
   const [colorPopover, setColorPopover] = useState(null);
+  const [lastStyle, setLastStyle] = useState(readLastStyle);
   const floatingEditorRef = useRef(null);
   const floatingEditorStateRef = useRef(null);
   const onFocusRectRef = useRef(null);
@@ -1635,6 +1668,25 @@ const OverlayCanvas = forwardRef(function OverlayCanvas({ image, overlayGuidance
         const patch = (value, key) => {
           commitEditorText();
           updateRegionOverride(floatingEditor.rid, value, key);
+          // 글꼴·색·외곽선을 바꾸면 그 조합을 기억해 둔다(비운 값은 기억하지 않는다).
+          const picked = {};
+          for (const name of LAST_STYLE_KEYS) {
+            if (name in (value || {}) && value[name] !== "" && value[name] != null) picked[name] = value[name];
+          }
+          if (Object.keys(picked).length) {
+            const merged = { ...(readLastStyle() || {}), ...picked };
+            writeLastStyle(merged);
+            setLastStyle(merged);
+          }
+        };
+        // 직전 스타일을 붙일 때는 글꼴 관련 값을 한꺼번에 맞춘다(스타일 버튼과 같은 규칙: 폰트 경로·굵기는 비움).
+        const applyLastStyle = () => {
+          const last = readLastStyle();
+          if (!last) return;
+          const value = {};
+          if (last.font_style) Object.assign(value, { font_style: last.font_style, font_path: last.font_path || "", custom_font_path: last.custom_font_path || "", font_weight: last.font_weight || "" });
+          for (const name of ["font_color", "stroke_color", "stroke_width"]) if (last[name] !== undefined && last[name] !== "") value[name] = last[name];
+          if (Object.keys(value).length) patch(value);
         };
         const colorKey = colorPopover === "stroke" ? "stroke_color" : "font_color";
         const hexOr = (value, fallback) => (/^#[0-9a-f]{6}$/i.test(String(value || "")) ? value : fallback);
@@ -1746,6 +1798,16 @@ const OverlayCanvas = forwardRef(function OverlayCanvas({ image, overlayGuidance
                   <button type="button" onClick={() => patch({ stroke_width: Math.min(12, strokeNow + 1) }, `stroke:${floatingEditor.rid}`)}>+</button>
                 </span>
                 <button type="button" className="icon-button inplace-close" onClick={() => closeFloatingEditor({ fit: true })} title="닫고 원래 배율로 (Esc)">×</button>
+              </div>
+              <div className="inplace-row presets" role="group" aria-label="스타일 프리셋">
+                <span className="inplace-mini-label">프리셋</span>
+                {STYLE_PRESETS.map((preset) => {
+                  const active = textColor.toLowerCase() === preset.style.font_color && outlineColor.toLowerCase() === preset.style.stroke_color && strokeNow === preset.style.stroke_width;
+                  return (
+                    <button key={preset.id} type="button" className={`preset-chip ${active ? "active" : ""}`} title={`${preset.hint} (글자색·외곽선색·두께를 한 번에 맞춥니다)`} onClick={() => patch(preset.style)}>{preset.label}</button>
+                  );
+                })}
+                <button type="button" className="preset-chip" disabled={!lastStyle} title={describeLastStyle(lastStyle)} onClick={applyLastStyle}>직전 스타일</button>
               </div>
               <div className="inplace-row styles" role="group" aria-label="글꼴 스타일">
                 {FONT_STYLES.filter(([id]) => id !== "etc").map(([id, _short, label]) => {

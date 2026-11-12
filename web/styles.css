@@ -3814,3 +3814,7 @@ button:disabled .paid-tag { opacity: .55; }
 /* 홈: '최근 프로젝트' 제목이 정렬 상자에 밀려 꺾이지 않게 한다 */
 .home-recent .section-title-row h2 { white-space: nowrap; }
 .home-recent .recent-sort { width: auto; flex: 0 0 auto; }
+.inplace-row.presets { gap: 4px; padding-top: 4px; border-top: 1px solid var(--line); }
+.inplace-row.presets .preset-chip { padding: 3px 8px; font-size: 12px; border: 1px solid var(--line, #cbd5e1); border-radius: 999px; background: #fff; cursor: pointer; }
+.inplace-row.presets .preset-chip.active { background: #e0ecff; border-color: #93b4f0; font-weight: 700; }
+.inplace-row.presets .preset-chip:disabled { opacity: .45; cursor: default; }

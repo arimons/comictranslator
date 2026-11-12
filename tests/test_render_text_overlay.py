@@ -139,7 +139,7 @@ class RenderTextOverlayTest(unittest.TestCase):
         from pipeline import render_text_overlay as renderer
 
         self.assertEqual(renderer.TEXT_STROKE_WIDTH, 1)
-        self.assertEqual(renderer.DARK_TEXT_STROKE_WIDTH, 1)
+        self.assertEqual(renderer.DARK_TEXT_STROKE_WIDTH, 2)
 
     def test_draw_text_block_pil_records_drawn_line_positions(self) -> None:
         from pipeline.render_text_overlay import draw_text_block_pil
